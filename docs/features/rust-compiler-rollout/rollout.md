@@ -26,7 +26,9 @@ units governed by [ADR-0003](../../adr/0003-retire-babel-preset.md).
 The machine-readable phase and default backend live in
 [`compiler-rollout-state.json`](../../../.github/compiler-rollout-state.json).
 Do not copy or infer the current phase from release prose. The readiness check
-rejects a mismatch between that file and the Vite implementation.
+rejects a mismatch between that file and the Vite implementation. State schema
+v2 also records the Rust-default, completed compatibility-minor, final legacy,
+and planned legacy-removal releases; beta keeps all four values `null`.
 
 ## Rollout states
 
@@ -38,13 +40,41 @@ stateDiagram-v2
   Candidate2 --> Reviewed: maintainer approves bound checklist
   Reviewed --> RustDefault: Vite Core default changes
   RustDefault --> Beta: rollback trigger
-  RustDefault --> LegacyRemoval: compatibility release window completes
+  RustDefault --> LegacyRemoval: stable minor window + removal review complete
 ```
 
 This state machine shows that candidate history and human review precede the
 default switch, while any blocking signal returns the whole build to legacy.
 Verification: `node scripts/compiler-rollout-readiness.mjs` and the
 `compiler-rollout` CI job.
+
+## Legacy removal gate
+
+M9 is a separate, fail-closed transition. While `phase` is `rust-default`, the
+state keeps `rollbackBackend: legacy`; it may record a completed
+`compatibilityRelease`, but it cannot claim a removal release. Entering
+`legacy-removal` requires all of the following:
+
+- the same intact candidate and rollout review needed for Rust default;
+- Vite still defaults to Rust and the removed rollback backend is recorded as
+  `rust`;
+- an exact stable `rustDefaultRelease`;
+- a `compatibilityRelease` at `x.y.0` in a later minor of the same release line;
+- a stable `finalLegacyRelease` at or after that compatibility minor and before
+  removal;
+- a `legacyRemovalRelease` at a later semver major's `x.0.0` boundary;
+- an approved
+  [`compiler-legacy-removal-review.json`](../../../.github/compiler-legacy-removal-review.json)
+  whose versions exactly match state and whose checklist covers replacement
+  availability, migration guidance, published releases, final preset
+  publication, Core scope changes, and dependency removal.
+
+These fields do not assert that a release happened merely because a version was
+typed into JSON: the bound human checklist is the publication attestation. Any
+missing version, prerelease, patch-only window, same-major removal, mismatched
+review, retained Babel-preset/legacy-IR path, production Babel dependency, or
+stale Core scope/maturity/Changesets/publish/CI boundary reference blocks the
+phase, as does any incomplete review area.
 
 ## Backend modes
 

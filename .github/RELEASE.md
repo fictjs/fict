@@ -92,6 +92,16 @@ Do not manufacture a second candidate by running the sealer twice locally.
 Only distinct CI runs from committed source count. Raw benchmark values remain
 in CI artifacts and are not copied into release prose.
 
+Legacy removal is a later release operation, not part of candidate approval.
+Before entering `legacy-removal`, update the four exact stable release fields
+in `.github/compiler-rollout-state.json` and complete
+`.github/compiler-legacy-removal-review.json`. The readiness check requires a
+completed subsequent `x.y.0` compatibility release, a final legacy release,
+and a later breaking `x.0.0` removal release, with the removal review bound to
+those exact versions. It also rejects retained preset/legacy-IR paths and
+production Babel dependency edges, plus stale scope, maturity, Changesets,
+publish allowlist, CI, and API-boundary references.
+
 For an emergency reversal, follow
 `docs/operations/runbooks/compiler-backend-rollback.md`. Roll back the whole
 build, purge compiler/metadata/bundler/generated caches, and retain the failing

@@ -18,6 +18,25 @@ const approvedAreas = {
   performanceAndRss: true,
   rollbackDrill: true,
 }
+const approvedRemovalAreas = {
+  replacementAvailability: true,
+  migrationGuidance: true,
+  candidateAndRollbackEvidence: true,
+  rustDefaultPublished: true,
+  subsequentMinorCompleted: true,
+  finalPresetPublished: true,
+  coreScopeChanges: true,
+  legacyDependencyRemoval: true,
+}
+
+function rustDefaultState(overrides = {}) {
+  return {
+    phase: 'rust-default',
+    viteDefaultBackend: 'rust',
+    rustDefaultRelease: '0.29.0',
+    ...overrides,
+  }
+}
 
 function candidateEvidence(overrides = {}) {
   const artifactDigest = `sha256:${'b'.repeat(64)}`
@@ -46,17 +65,22 @@ function candidateEvidence(overrides = {}) {
   }
 }
 
-async function fixture(state, review, evidence) {
+async function fixture(state, review, evidence, removalReview) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fict-rollout-'))
   await mkdir(path.join(root, '.github'), { recursive: true })
   await mkdir(path.join(root, 'packages', 'vite-plugin', 'src'), { recursive: true })
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-state.json'),
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rollbackBackend: 'legacy',
+      rustDefaultRelease: null,
+      compatibilityRelease: null,
+      finalLegacyRelease: null,
+      legacyRemovalRelease: null,
       candidateEvidencePath: '.github/compiler-rollout-evidence.json',
       reviewPath: '.github/compiler-rollout-review.json',
+      legacyRemovalReviewPath: '.github/compiler-legacy-removal-review.json',
       ...state,
     }),
   )
@@ -74,6 +98,12 @@ async function fixture(state, review, evidence) {
     await writeFile(
       path.join(root, '.github', 'compiler-rollout-evidence.json'),
       JSON.stringify(evidence),
+    )
+  }
+  if (removalReview) {
+    await writeFile(
+      path.join(root, '.github', 'compiler-legacy-removal-review.json'),
+      JSON.stringify(removalReview),
     )
   }
   return root
@@ -94,7 +124,7 @@ test('rust default requires chained candidates and a checklist bound to their di
   const { candidateDigest } = evidence
   const areas = approvedAreas
   const root = await fixture(
-    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    rustDefaultState(),
     { schemaVersion: 2, status: 'approved', candidateDigest, reviewer: 'maintainer', areas },
     evidence,
   )
@@ -117,7 +147,7 @@ test('rust default requires chained candidates and a checklist bound to their di
 test('rust default rejects candidate content modified after sealing', async t => {
   const evidence = candidateEvidence()
   const root = await fixture(
-    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    rustDefaultState(),
     {
       schemaVersion: 2,
       status: 'approved',
@@ -143,7 +173,7 @@ test('rust default rejects non-main candidate provenance', async t => {
     previousCandidateDigest: null,
   })
   const root = await fixture(
-    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    rustDefaultState(),
     {
       schemaVersion: 2,
       status: 'approved',
@@ -164,7 +194,7 @@ test('human approval cannot substitute arbitrary checklist area names', async t 
   const evidence = candidateEvidence()
   const { candidateDigest } = evidence
   const root = await fixture(
-    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    rustDefaultState(),
     {
       schemaVersion: 2,
       status: 'approved',
@@ -186,7 +216,7 @@ test('human approval cannot substitute arbitrary checklist area names', async t 
 test('human approval explicitly covers the candidate native package size budget', async t => {
   const evidence = candidateEvidence()
   const root = await fixture(
-    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    rustDefaultState(),
     {
       schemaVersion: 2,
       status: 'approved',
@@ -198,4 +228,121 @@ test('human approval explicitly covers the candidate native package size budget'
   )
   t.after(() => rm(root, { recursive: true }))
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /nativePackageSizeBudget/)
+})
+
+test('beta cannot claim a Rust-default or compatibility release', async t => {
+  const root = await fixture({
+    phase: 'beta',
+    viteDefaultBackend: 'legacy',
+    rustDefaultRelease: '0.29.0',
+  })
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /cannot claim Rust-default compatibility releases/,
+  )
+})
+
+test('legacy removal requires a bound review and a completed stable minor window', async t => {
+  const evidence = candidateEvidence()
+  const candidateReview = {
+    schemaVersion: 2,
+    status: 'approved',
+    candidateDigest: evidence.candidateDigest,
+    reviewer: 'maintainer',
+    areas: approvedAreas,
+  }
+  const state = {
+    phase: 'legacy-removal',
+    viteDefaultBackend: 'rust',
+    rollbackBackend: 'rust',
+    rustDefaultRelease: '0.29.0',
+    compatibilityRelease: '0.30.0',
+    finalLegacyRelease: '0.30.1',
+    legacyRemovalRelease: '1.0.0',
+  }
+  const removalReview = {
+    schemaVersion: 1,
+    status: 'approved',
+    reviewer: 'release-maintainer',
+    rustDefaultRelease: state.rustDefaultRelease,
+    compatibilityRelease: state.compatibilityRelease,
+    finalLegacyRelease: state.finalLegacyRelease,
+    legacyRemovalRelease: state.legacyRemovalRelease,
+    areas: approvedRemovalAreas,
+  }
+  const root = await fixture(state, candidateReview, evidence, removalReview)
+  t.after(() => rm(root, { recursive: true }))
+  assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
+
+  await writeFile(
+    path.join(root, '.github', 'compiler-legacy-removal-review.json'),
+    JSON.stringify({
+      ...removalReview,
+      areas: { ...approvedRemovalAreas, subsequentMinorCompleted: false },
+    }),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /subsequentMinorCompleted/)
+
+  await writeFile(
+    path.join(root, '.github', 'compiler-legacy-removal-review.json'),
+    JSON.stringify(removalReview),
+  )
+  await mkdir(path.join(root, 'packages', 'babel-preset'), { recursive: true })
+  await writeFile(
+    path.join(root, 'packages', 'babel-preset', 'package.json'),
+    JSON.stringify({ name: '@fictjs/babel-preset' }),
+  )
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /Legacy compiler removal is incomplete/,
+  )
+
+  await rm(path.join(root, 'packages', 'babel-preset'), { recursive: true })
+  await writeFile(
+    path.join(root, 'packages', 'vite-plugin', 'package.json'),
+    JSON.stringify({
+      name: '@fictjs/vite-plugin',
+      dependencies: { '@babel/parser': '7.0.0' },
+    }),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /dependencies\.@babel\/parser/)
+
+  await rm(path.join(root, 'packages', 'vite-plugin', 'package.json'))
+  await writeFile(path.join(root, 'SCOPE.md'), '@fictjs/babel-preset is still Core')
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /SCOPE\.md/)
+})
+
+test('legacy removal rejects a same-major release after 1.0', async t => {
+  const root = await fixture({
+    phase: 'legacy-removal',
+    viteDefaultBackend: 'rust',
+    rollbackBackend: 'rust',
+    rustDefaultRelease: '1.2.0',
+    compatibilityRelease: '1.3.0',
+    finalLegacyRelease: '1.3.1',
+    legacyRemovalRelease: '1.4.0',
+  })
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /later stable semver major release/,
+  )
+})
+
+test('legacy removal rejects a patch release as the compatibility window', async t => {
+  const root = await fixture({
+    phase: 'legacy-removal',
+    viteDefaultBackend: 'rust',
+    rollbackBackend: 'rust',
+    rustDefaultRelease: '0.29.0',
+    compatibilityRelease: '0.29.1',
+    finalLegacyRelease: '0.30.0',
+    legacyRemovalRelease: '1.0.0',
+  })
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /complete subsequent stable minor/,
+  )
 })

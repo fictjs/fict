@@ -177,6 +177,14 @@ preset version when known, and remaining dependency edges. M9 fails if the
 preset remains in the fixed group, a production package imports it, or a build
 can silently mix backends.
 
+The machine-readable rollout state uses exact stable release versions for the
+Rust-default release, the completed subsequent-minor release, the final legacy
+release, and the breaking legacy-removal release. A separate legacy-removal
+review binds those versions and the Phase D checklist. The readiness gate
+rejects beta release claims, patch-only compatibility windows, same-major
+removal, retained legacy source/dependency edges, stale Core release-boundary
+references, or removal without the approved checklist.
+
 ## Human review requirements
 
 Maintainers MUST explicitly approve entry into Phase B, the Rust-default
