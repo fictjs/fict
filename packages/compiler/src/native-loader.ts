@@ -1,6 +1,13 @@
 import { createRequire } from 'node:module'
 
-import type { CompileRequest, CompileResult, ScanRequest, ScanResult } from './types'
+import type { AnalyzeResult } from './tooling/types'
+import type {
+  AnalyzeRequest,
+  CompileRequest,
+  CompileResult,
+  ScanRequest,
+  ScanResult,
+} from './types'
 
 export type NativeLibc = 'gnu' | 'musl'
 
@@ -26,6 +33,8 @@ export interface NativeCompilerBinding {
   transform(request: CompileRequest): Promise<CompileResult>
   scanSync(request: ScanRequest): ScanResult
   scan(request: ScanRequest): Promise<ScanResult>
+  analyzeSync(request: AnalyzeRequest): AnalyzeResult
+  analyze(request: AnalyzeRequest): Promise<AnalyzeResult>
 }
 
 export interface NativeLoaderOptions {
@@ -99,7 +108,9 @@ function toNativeBinding(value: unknown, candidate: string): NativeCompilerBindi
     typeof binding.transformSync !== 'function' ||
     typeof binding.transform !== 'function' ||
     typeof binding.scanSync !== 'function' ||
-    typeof binding.scan !== 'function'
+    typeof binding.scan !== 'function' ||
+    typeof binding.analyzeSync !== 'function' ||
+    typeof binding.analyze !== 'function'
   ) {
     throw new Error(`Native package ${candidate} does not expose the Fict compiler binding.`)
   }

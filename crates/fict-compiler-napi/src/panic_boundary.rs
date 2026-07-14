@@ -1,8 +1,9 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use fict_compiler::{
-    CompileRequest, CompileResult, ScanRequest, ScanResult, compile, internal_error_result,
-    internal_scan_error_result, scan,
+    AnalyzeRequest, AnalyzeResult, CompileRequest, CompileResult, ScanRequest, ScanResult, analyze,
+    compile, internal_analyze_error_result, internal_error_result, internal_scan_error_result,
+    scan,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,10 @@ pub(crate) fn compile_safely(request: CompileRequest) -> CompileResult {
 
 pub(crate) fn scan_safely(request: ScanRequest) -> ScanResult {
     catch_panic(|| scan(request)).unwrap_or_else(|_| internal_scan_error_result())
+}
+
+pub(crate) fn analyze_safely(request: AnalyzeRequest) -> AnalyzeResult {
+    catch_panic(|| analyze(request)).unwrap_or_else(|_| internal_analyze_error_result())
 }
 
 #[cfg(test)]

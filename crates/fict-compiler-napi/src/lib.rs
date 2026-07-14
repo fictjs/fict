@@ -6,9 +6,10 @@ mod async_task;
 mod convert;
 mod panic_boundary;
 
-use async_task::{CompileTask, ScanTask};
+use async_task::{AnalyzeTask, CompileTask, ScanTask};
 use convert::{
-    CompileWork, ScanWork, prepare_compile, prepare_scan, serialize_result, serialize_scan_result,
+    AnalyzeWork, CompileWork, ScanWork, prepare_analyze, prepare_compile, prepare_scan,
+    serialize_analyze_result, serialize_result, serialize_scan_result,
 };
 use fict_compiler::{
     COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe,
@@ -16,7 +17,7 @@ use fict_compiler::{
 };
 use napi::{Env, Result, Task, bindgen_prelude::AsyncTask};
 use napi_derive::napi;
-use panic_boundary::{catch_panic, compile_safely, scan_safely};
+use panic_boundary::{analyze_safely, catch_panic, compile_safely, scan_safely};
 use serde_json::Value;
 
 /// Native compiler build information exposed to the JavaScript loader.
@@ -137,4 +138,26 @@ pub fn scan(request: Value) -> AsyncTask<ScanTask> {
     let work = catch_panic(|| prepare_scan(request))
         .unwrap_or_else(|_| ScanWork::Immediate(fict_compiler::internal_scan_error_result()));
     AsyncTask::new(ScanTask::new(work))
+}
+
+/// Analyze one source file synchronously for editor and local tooling consumers.
+#[napi]
+pub fn analyze_sync(request: Value) -> Result<Value> {
+    let work = catch_panic(|| prepare_analyze(request))
+        .unwrap_or_else(|_| AnalyzeWork::Immediate(fict_compiler::internal_analyze_error_result()));
+    let result = match work {
+        AnalyzeWork::Request(request) => analyze_safely(request),
+        AnalyzeWork::Immediate(result) => result,
+    };
+    catch_panic(|| serialize_analyze_result(result)).unwrap_or_else(|_| {
+        serialize_analyze_result(fict_compiler::internal_analyze_error_result())
+    })
+}
+
+/// Analyze one source file in the libuv worker pool after JS-value conversion.
+#[napi]
+pub fn analyze(request: Value) -> AsyncTask<AnalyzeTask> {
+    let work = catch_panic(|| prepare_analyze(request))
+        .unwrap_or_else(|_| AnalyzeWork::Immediate(fict_compiler::internal_analyze_error_result()));
+    AsyncTask::new(AnalyzeTask::new(work))
 }

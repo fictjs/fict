@@ -106,6 +106,8 @@ function binding() {
     transform: native.transform,
     scanSync: native.scanSync,
     scan: native.scan,
+    analyzeSync: vi.fn(),
+    analyze: vi.fn(),
   }
 }
 

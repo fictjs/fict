@@ -306,7 +306,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result
 }
 
-fn oxc_language(language: SourceLanguage) -> OxcSourceLanguage {
+pub(crate) fn oxc_language(language: SourceLanguage) -> OxcSourceLanguage {
     match language {
         SourceLanguage::JavaScript => OxcSourceLanguage::JavaScript,
         SourceLanguage::JavaScriptJsx => OxcSourceLanguage::JavaScriptJsx,
@@ -315,7 +315,7 @@ fn oxc_language(language: SourceLanguage) -> OxcSourceLanguage {
     }
 }
 
-fn oxc_module_kind(module_kind: ModuleKind) -> OxcModuleKind {
+pub(crate) fn oxc_module_kind(module_kind: ModuleKind) -> OxcModuleKind {
     match module_kind {
         ModuleKind::Module => OxcModuleKind::Module,
         ModuleKind::Script => OxcModuleKind::Script,

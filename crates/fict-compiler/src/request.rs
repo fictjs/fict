@@ -255,6 +255,73 @@ pub struct ScanRequest {
     pub module_kind: Option<ModuleKind>,
 }
 
+/// Trace density requested by editor and playground analysis hosts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnalyzeVerbosity {
+    /// Report only compiler decisions that affect reactive behavior.
+    #[default]
+    Minimal,
+    /// Also report source operations that execute once during setup.
+    Verbose,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+/// Serializable controls for the native tooling analysis pipeline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct AnalyzeOptions {
+    /// Include the recursive reactive-region tree for every component or hook.
+    #[serde(default = "default_true")]
+    pub include_regions: bool,
+    /// Include compiler diagnostics normalized to line and column locations.
+    #[serde(default = "default_true")]
+    pub include_diagnostics: bool,
+    /// Requested trace density.
+    pub verbosity: AnalyzeVerbosity,
+    /// Pure compiler policy and frontend options used during analysis.
+    pub compiler_options: CompilerOptions,
+}
+
+impl Default for AnalyzeOptions {
+    fn default() -> Self {
+        Self {
+            include_regions: true,
+            include_diagnostics: true,
+            verbosity: AnalyzeVerbosity::Minimal,
+            compiler_options: CompilerOptions::default(),
+        }
+    }
+}
+
+/// Public serializable request accepted by native analysis entrypoints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AnalyzeRequest {
+    /// Protocol version; defaults to the current version when omitted.
+    #[serde(default = "protocol_version")]
+    pub protocol_version: u32,
+    /// Complete source text.
+    pub code: String,
+    /// Physical identity used for diagnostics and source-language inference.
+    pub filename: String,
+    /// Optional complete graph identity; query and fragment suffixes are preserved.
+    #[serde(default)]
+    pub module_id: Option<String>,
+    /// Explicit grammar, or infer from a recognized filename extension.
+    #[serde(default)]
+    pub language: Option<SourceLanguage>,
+    /// Explicit module grammar, or infer from the filename.
+    #[serde(default)]
+    pub module_kind: Option<ModuleKind>,
+    /// Tooling and compiler analysis controls.
+    #[serde(default)]
+    pub options: AnalyzeOptions,
+}
+
 impl CompileRequest {
     /// Validate and make all inferred identities/source modes explicit.
     pub fn normalize(self) -> Result<NormalizedCompileRequest, CompileRequestError> {
@@ -366,6 +433,39 @@ impl ScanRequest {
     }
 }
 
+impl AnalyzeRequest {
+    /// Validate the public request through the same identity and compiler-option contract as a
+    /// compilation, while retaining tooling-only controls separately.
+    pub fn normalize(self) -> Result<NormalizedAnalyzeRequest, CompileRequestError> {
+        let normalized = CompileRequest {
+            protocol_version: self.protocol_version,
+            code: self.code,
+            filename: self.filename,
+            module_id: self.module_id,
+            language: self.language,
+            module_kind: self.module_kind,
+            input_source_map: None,
+            options: self.options.compiler_options,
+            metadata: Vec::new(),
+            integration_diagnostics: Vec::new(),
+        }
+        .normalize()?;
+
+        Ok(NormalizedAnalyzeRequest {
+            protocol_version: normalized.protocol_version,
+            code: normalized.code,
+            filename: normalized.filename,
+            module_id: normalized.module_id,
+            language: normalized.language,
+            module_kind: normalized.module_kind,
+            include_regions: self.options.include_regions,
+            include_diagnostics: self.options.include_diagnostics,
+            verbosity: self.options.verbosity,
+            compiler_options: normalized.options,
+        })
+    }
+}
+
 /// Fully validated request consumed by native compiler passes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedCompileRequest {
@@ -406,6 +506,31 @@ pub struct NormalizedScanRequest {
     pub language: SourceLanguage,
     /// Explicit module grammar.
     pub module_kind: ModuleKind,
+}
+
+/// Fully validated analysis request consumed by the native tooling pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedAnalyzeRequest {
+    /// Validated protocol version.
+    pub protocol_version: u32,
+    /// Source text.
+    pub code: String,
+    /// Physical diagnostic identity with query and fragment removed.
+    pub filename: String,
+    /// Complete graph identity with query and fragment preserved.
+    pub module_id: String,
+    /// Explicit source grammar.
+    pub language: SourceLanguage,
+    /// Explicit module grammar.
+    pub module_kind: ModuleKind,
+    /// Whether recursive regions are included.
+    pub include_regions: bool,
+    /// Whether compiler diagnostics are included.
+    pub include_diagnostics: bool,
+    /// Trace density.
+    pub verbosity: AnalyzeVerbosity,
+    /// Validated pure compiler policy/options.
+    pub compiler_options: CompilerOptions,
 }
 
 /// Fail-closed request normalization error.

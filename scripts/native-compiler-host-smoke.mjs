@@ -109,6 +109,33 @@ for (const [format, facade] of [
   assert.equal(malformedScan.moduleRequests.length, 0)
   assert.equal(malformedScan.diagnostics[0]?.code, 'FICT-REQUEST')
 
+  const analyzeRequest = {
+    code: `
+      import { $effect, $state } from 'fict'
+      export function Counter() {
+        const count = $state(0)
+        $effect(() => { count })
+        return <button>{count}</button>
+      }
+    `,
+    filename: '/fixtures/counter.tsx?worker#physical',
+    moduleId: '/@id/counter.tsx?worker#client',
+    options: { includeRegions: true, includeDiagnostics: true, verbosity: 'verbose' },
+  }
+  const syncAnalysis = binding.analyzeSync(analyzeRequest)
+  const asyncAnalysis = await binding.analyze(analyzeRequest)
+  assert.deepEqual(asyncAnalysis, syncAnalysis)
+  assert.equal(syncAnalysis.fileName, '/fixtures/counter.tsx')
+  assert.deepEqual(syncAnalysis.diagnostics, [])
+  const counter = syncAnalysis.components.find(component => component.name === 'Counter')
+  assert.ok(counter)
+  assert.ok(counter.regions.length > 0)
+  assert.ok(counter.trace.some(line => line.markers.some(marker => marker.kind === 'effect')))
+
+  const malformedAnalysis = binding.analyzeSync({ code: 42, filename: 'malformed.ts' })
+  assert.equal(malformedAnalysis.components.length, 0)
+  assert.equal(malformedAnalysis.diagnostics[0]?.code, 'FICT-REQUEST')
+
   console.log(
     JSON.stringify({
       format,

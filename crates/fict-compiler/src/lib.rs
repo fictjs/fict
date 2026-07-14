@@ -5,6 +5,7 @@
 //! The crate coordinates Fict-owned passes and the OXC adapter without owning
 //! filesystem, network, Node, N-API, or bundler state.
 
+mod analysis;
 mod control_flow_diagnostics;
 mod diagnostic_policy;
 mod metadata_analysis;
@@ -15,6 +16,11 @@ mod result;
 mod scan;
 mod source_map;
 
+pub use analysis::{
+    AnalyzeDiagnostic, AnalyzeDiagnosticSeverity, AnalyzeResult, ComponentAnalysis, LineTrace,
+    RegionInfo, TraceMarker, TraceMarkerKind, analyze, internal_analyze_error_result,
+    invalid_analyze_request_result,
+};
 pub use fict_compiler_oxc::{OXC_VERSION, ParseProbe};
 pub use fict_metadata::MODULE_REACTIVE_METADATA_VERSION;
 pub use pass_manager::{
@@ -23,9 +29,10 @@ pub use pass_manager::{
 };
 pub use pipeline::{compile, internal_error_result, invalid_request_result};
 pub use request::{
-    CompileRequest, CompileRequestError, CompilerOptions, CompilerPreviewOptions,
-    CompilerTypeScriptOptions, ModuleKind, NormalizedCompileRequest, NormalizedScanRequest,
-    OptimizeLevel, ScanRequest, SourceLanguage, WarningLevel, WarningsAsErrors,
+    AnalyzeOptions, AnalyzeRequest, AnalyzeVerbosity, CompileRequest, CompileRequestError,
+    CompilerOptions, CompilerPreviewOptions, CompilerTypeScriptOptions, ModuleKind,
+    NormalizedAnalyzeRequest, NormalizedCompileRequest, NormalizedScanRequest, OptimizeLevel,
+    ScanRequest, SourceLanguage, WarningLevel, WarningsAsErrors,
 };
 pub use result::{
     CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,

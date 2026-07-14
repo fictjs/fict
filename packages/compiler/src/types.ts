@@ -262,6 +262,27 @@ export interface ScanResult {
   compilerBuildId: string
 }
 
+export type NativeAnalyzeVerbosity = 'minimal' | 'verbose'
+
+/** Serializable controls accepted by native editor/tooling analysis. */
+export interface NativeAnalyzeOptions {
+  includeRegions?: boolean
+  includeDiagnostics?: boolean
+  verbosity?: NativeAnalyzeVerbosity
+  compilerOptions?: NativeCompilerOptions
+}
+
+/** Source-file request accepted by native sync and worker-pool analysis. */
+export interface AnalyzeRequest {
+  protocolVersion?: CompilerProtocolVersion
+  code: string
+  filename: string
+  moduleId?: string | null
+  language?: SourceLanguage | null
+  moduleKind?: ModuleKind | null
+  options?: NativeAnalyzeOptions
+}
+
 export type CompilerArtifactKind = 'handlerModule' | 'auxiliaryModule'
 
 export interface CompilerArtifact {

@@ -8,6 +8,7 @@ import {
   resolveNativeTarget,
   type NativeCompilerBinding,
 } from '../src/native-loader'
+import type { AnalyzeResult } from '../src/tooling'
 import {
   COMPILER_PROTOCOL_VERSION,
   MODULE_REACTIVE_METADATA_VERSION,
@@ -42,6 +43,14 @@ function createScanResult(): ScanResult {
   }
 }
 
+function createAnalyzeResult(): AnalyzeResult {
+  return {
+    fileName: 'module.tsx',
+    components: [],
+    diagnostics: [],
+  }
+}
+
 function createBinding(): NativeCompilerBinding {
   return {
     nativeCompilerInfo: () => ({
@@ -58,6 +67,8 @@ function createBinding(): NativeCompilerBinding {
     transform: async () => createCompileResult(),
     scanSync: () => createScanResult(),
     scan: async () => createScanResult(),
+    analyzeSync: () => createAnalyzeResult(),
+    analyze: async () => createAnalyzeResult(),
   }
 }
 
@@ -131,6 +142,19 @@ describe('native compiler loader', () => {
 
   it('rejects bindings that do not expose the scan protocol', () => {
     const binding = { ...createBinding(), scan: undefined }
+
+    expect(() =>
+      loadNativeCompilerBinding({
+        nativePath: '/tmp/incomplete.node',
+        platform: 'darwin',
+        arch: 'arm64',
+        load: () => binding,
+      }),
+    ).toThrow('does not expose the Fict compiler binding')
+  })
+
+  it('rejects bindings that do not expose the analysis protocol', () => {
+    const binding = { ...createBinding(), analyzeSync: undefined }
 
     expect(() =>
       loadNativeCompilerBinding({
