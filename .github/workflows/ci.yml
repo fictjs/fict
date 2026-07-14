@@ -177,7 +177,7 @@ jobs:
         env:
           FICT_COMPILER_BACKEND: rust
           FICT_COMPILER_NATIVE_PATH: ${{ github.workspace }}/target/release/fict_compiler_napi.node
-        run: pnpm -C examples/real-apps build
+        run: pnpm --filter fict-example-real-apps... build
 
       - name: Run privacy-safe legacy/Rust shadow comparison
         run: >-

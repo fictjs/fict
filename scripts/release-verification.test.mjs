@@ -78,6 +78,13 @@ test('native bundler typechecks wait for compiler declarations in clean checkout
   }
 })
 
+test('rollout representative application builds its workspace dependency closure', () => {
+  assert.match(
+    ciWorkflow,
+    /name: Build a representative application with the Rust backend[\s\S]*?run: pnpm --filter fict-example-real-apps\.\.\. build/,
+  )
+})
+
 test('compiler and top-level release gates enforce Rust architecture and complexity budgets', () => {
   assert.match(rootPackage.scripts['release:verify'], /pnpm guardrails:rust-crates/)
   assert.match(rootPackage.scripts['release:compiler:verify'], /pnpm guardrails:rust-crates/)
