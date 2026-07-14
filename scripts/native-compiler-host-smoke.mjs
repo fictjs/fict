@@ -24,6 +24,18 @@ const request = {
   options: { sourcemap: true, explain: true },
 }
 
+function withoutStageTimings(result) {
+  return {
+    ...result,
+    stats: result.stats
+      ? {
+          ...result.stats,
+          stageDurationsNs: {},
+        }
+      : null,
+  }
+}
+
 let expectedBuildId
 for (const [format, facade] of [
   ['cjs', cjsFacade],
@@ -42,7 +54,7 @@ for (const [format, facade] of [
 
   const syncResult = binding.transformSync(request)
   const asyncResult = await binding.transform(request)
-  assert.deepEqual(asyncResult, syncResult)
+  assert.deepEqual(withoutStageTimings(asyncResult), withoutStageTimings(syncResult))
   assert.equal(syncResult.protocolVersion, 1)
   assert.equal(syncResult.compilerBuildId, info.compilerBuildId)
   assert.equal(syncResult.diagnostics.length, 0)
@@ -66,6 +78,36 @@ for (const [format, facade] of [
   const malformed = binding.transformSync({ code: 42, filename: 'malformed.ts' })
   assert.equal(malformed.code, '')
   assert.equal(malformed.diagnostics[0]?.code, 'FICT-REQUEST')
+
+  const scanRequest = {
+    code: `
+      import './setup'
+      export * from './dep'
+      import legacy = require('./legacy')
+      import('./dynamic')
+    `,
+    filename: '/fixtures/module.ts?worker#client',
+    moduleId: '/@id/module.ts?worker#client',
+  }
+  const syncScan = binding.scanSync(scanRequest)
+  const asyncScan = await binding.scan(scanRequest)
+  assert.deepEqual(asyncScan, syncScan)
+  assert.equal(syncScan.protocolVersion, 1)
+  assert.equal(syncScan.compilerBuildId, info.compilerBuildId)
+  assert.equal(syncScan.hasModuleSyntax, true)
+  assert.deepEqual(
+    syncScan.moduleRequests.map(({ source, kind, typeOnly }) => ({ source, kind, typeOnly })),
+    [
+      { source: './setup', kind: 'import', typeOnly: false },
+      { source: './dep', kind: 'reExport', typeOnly: false },
+      { source: './legacy', kind: 'importEquals', typeOnly: false },
+    ],
+  )
+  assert.equal(syncScan.diagnostics.length, 0)
+
+  const malformedScan = binding.scanSync({ code: 42, filename: 'malformed.ts' })
+  assert.equal(malformedScan.moduleRequests.length, 0)
+  assert.equal(malformedScan.diagnostics[0]?.code, 'FICT-REQUEST')
 
   console.log(
     JSON.stringify({

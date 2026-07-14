@@ -5,6 +5,8 @@ import {
   MODULE_REACTIVE_METADATA_VERSION,
   type CompileRequest,
   type CompileResult,
+  type ScanRequest,
+  type ScanResult,
 } from '../src/index'
 
 describe('native compile protocol', () => {
@@ -46,6 +48,34 @@ describe('native compile protocol', () => {
       compilerBuildId: 'fict:test-build',
     }
 
+    expect(JSON.parse(JSON.stringify(result))).toEqual(result)
+  })
+
+  it('exposes JSON-safe static module scan request and result shapes', () => {
+    const request: ScanRequest = {
+      protocolVersion: COMPILER_PROTOCOL_VERSION,
+      code: `import './dep'`,
+      filename: '/src/module.ts',
+      moduleId: '/src/module.ts?worker#client',
+      language: 'ts',
+      moduleKind: 'module',
+    }
+    const result: ScanResult = {
+      protocolVersion: COMPILER_PROTOCOL_VERSION,
+      moduleRequests: [
+        {
+          source: './dep',
+          kind: 'import',
+          typeOnly: false,
+          span: { start: 7, end: 14 },
+        },
+      ],
+      hasModuleSyntax: true,
+      diagnostics: [],
+      compilerBuildId: 'fict:test-build',
+    }
+
+    expect(JSON.parse(JSON.stringify(request))).toEqual(request)
     expect(JSON.parse(JSON.stringify(result))).toEqual(result)
   })
 })

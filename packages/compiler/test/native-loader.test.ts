@@ -12,6 +12,7 @@ import {
   COMPILER_PROTOCOL_VERSION,
   MODULE_REACTIVE_METADATA_VERSION,
   type CompileResult,
+  type ScanResult,
 } from '../src/types'
 
 function createCompileResult(): CompileResult {
@@ -31,6 +32,16 @@ function createCompileResult(): CompileResult {
   }
 }
 
+function createScanResult(): ScanResult {
+  return {
+    protocolVersion: COMPILER_PROTOCOL_VERSION,
+    moduleRequests: [],
+    hasModuleSyntax: false,
+    diagnostics: [],
+    compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'0'.repeat(64)}`,
+  }
+}
+
 function createBinding(): NativeCompilerBinding {
   return {
     nativeCompilerInfo: () => ({
@@ -45,6 +56,8 @@ function createBinding(): NativeCompilerBinding {
     parseTsxProbeAsync: async () => ({ statementCount: 1, diagnosticCount: 0 }),
     transformSync: () => createCompileResult(),
     transform: async () => createCompileResult(),
+    scanSync: () => createScanResult(),
+    scan: async () => createScanResult(),
   }
 }
 
@@ -114,6 +127,19 @@ describe('native compiler loader', () => {
         load: () => binding,
       }),
     ).toThrow('reported incompatible compiler metadata')
+  })
+
+  it('rejects bindings that do not expose the scan protocol', () => {
+    const binding = { ...createBinding(), scan: undefined }
+
+    expect(() =>
+      loadNativeCompilerBinding({
+        nativePath: '/tmp/incomplete.node',
+        platform: 'darwin',
+        arch: 'arm64',
+        load: () => binding,
+      }),
+    ).toThrow('does not expose the Fict compiler binding')
   })
 
   it('fails clearly without invoking a legacy compiler fallback', () => {

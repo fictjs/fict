@@ -233,6 +233,28 @@ pub struct CompileRequest {
     pub integration_diagnostics: Vec<Diagnostic>,
 }
 
+/// Serializable parse-only request used by module-graph hosts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScanRequest {
+    /// Protocol version; defaults to the current version when omitted.
+    #[serde(default = "protocol_version")]
+    pub protocol_version: u32,
+    /// Complete source text.
+    pub code: String,
+    /// Physical identity used for diagnostics and language inference.
+    pub filename: String,
+    /// Complete graph identity. Query and fragment suffixes are preserved.
+    #[serde(default)]
+    pub module_id: Option<String>,
+    /// Explicit grammar, or infer from a recognized filename extension.
+    #[serde(default)]
+    pub language: Option<SourceLanguage>,
+    /// Explicit module grammar, or infer from the filename.
+    #[serde(default)]
+    pub module_kind: Option<ModuleKind>,
+}
+
 impl CompileRequest {
     /// Validate and make all inferred identities/source modes explicit.
     pub fn normalize(self) -> Result<NormalizedCompileRequest, CompileRequestError> {
@@ -310,6 +332,40 @@ impl CompileRequest {
     }
 }
 
+impl ScanRequest {
+    /// Validate and make all inferred identities/source modes explicit.
+    pub fn normalize(self) -> Result<NormalizedScanRequest, CompileRequestError> {
+        if self.protocol_version != COMPILER_PROTOCOL_VERSION {
+            return Err(CompileRequestError::UnsupportedProtocolVersion(
+                self.protocol_version,
+            ));
+        }
+        validate_identity("filename", &self.filename, false)?;
+        if let Some(module_id) = &self.module_id {
+            validate_identity("moduleId", module_id, false)?;
+        }
+
+        let physical_name = strip_query_and_fragment(&self.filename);
+        validate_identity("filename", physical_name, false)?;
+        let language = self
+            .language
+            .or_else(|| infer_language(physical_name))
+            .ok_or_else(|| CompileRequestError::CannotInferLanguage(self.filename.clone()))?;
+        let module_kind = self
+            .module_kind
+            .unwrap_or_else(|| infer_module_kind(physical_name));
+
+        Ok(NormalizedScanRequest {
+            protocol_version: self.protocol_version,
+            code: self.code,
+            filename: physical_name.to_owned(),
+            module_id: self.module_id.unwrap_or(self.filename),
+            language,
+            module_kind,
+        })
+    }
+}
+
 /// Fully validated request consumed by native compiler passes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedCompileRequest {
@@ -333,6 +389,23 @@ pub struct NormalizedCompileRequest {
     pub metadata: Vec<ResolvedMetadataInput>,
     /// Integration-owned diagnostics.
     pub integration_diagnostics: Vec<Diagnostic>,
+}
+
+/// Fully validated scan request consumed by the OXC adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedScanRequest {
+    /// Validated protocol version.
+    pub protocol_version: u32,
+    /// Source text.
+    pub code: String,
+    /// Physical diagnostic identity with query/fragment removed.
+    pub filename: String,
+    /// Complete graph identity with query/fragment preserved.
+    pub module_id: String,
+    /// Explicit source grammar.
+    pub language: SourceLanguage,
+    /// Explicit module grammar.
+    pub module_kind: ModuleKind,
 }
 
 /// Fail-closed request normalization error.
@@ -472,7 +545,10 @@ fn infer_module_kind(filename: &str) -> ModuleKind {
 mod tests {
     use serde_json::json;
 
-    use super::{CompileRequest, CompileRequestError, CompilerOptions, ModuleKind, SourceLanguage};
+    use super::{
+        CompileRequest, CompileRequestError, CompilerOptions, ModuleKind, ScanRequest,
+        SourceLanguage,
+    };
     use crate::COMPILER_PROTOCOL_VERSION;
 
     fn request(filename: &str) -> CompileRequest {
@@ -509,6 +585,25 @@ mod tests {
             .expect("normalize request");
         assert_eq!(normalized.language, SourceLanguage::TypeScript);
         assert_eq!(normalized.module_kind, ModuleKind::CommonJs);
+    }
+
+    #[test]
+    fn scan_normalization_preserves_graph_identity_and_strips_physical_suffixes() {
+        let normalized = ScanRequest {
+            protocol_version: COMPILER_PROTOCOL_VERSION,
+            code: "import './dep'".into(),
+            filename: "/src/module.ts?worker#physical".into(),
+            module_id: Some("/@id/module.ts?worker#client".into()),
+            language: None,
+            module_kind: None,
+        }
+        .normalize()
+        .expect("normalize scan request");
+
+        assert_eq!(normalized.filename, "/src/module.ts");
+        assert_eq!(normalized.module_id, "/@id/module.ts?worker#client");
+        assert_eq!(normalized.language, SourceLanguage::TypeScript);
+        assert_eq!(normalized.module_kind, ModuleKind::Module);
     }
 
     #[test]

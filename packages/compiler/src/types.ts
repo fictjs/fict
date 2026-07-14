@@ -232,6 +232,36 @@ export interface CompileRequest {
   integrationDiagnostics?: FictDiagnostic[]
 }
 
+export type ScanModuleRequestKind = 'import' | 'reExport' | 'importEquals'
+
+/** Parse-only request used by bundler module-graph hosts. */
+export interface ScanRequest {
+  protocolVersion?: CompilerProtocolVersion
+  code: string
+  filename: string
+  moduleId?: string | null
+  language?: SourceLanguage | null
+  moduleKind?: ModuleKind | null
+}
+
+/** One static import, re-export, or TypeScript import-equals edge. */
+export interface ScanModuleRequest {
+  source: string
+  kind: ScanModuleRequestKind
+  typeOnly: boolean
+  /** Half-open UTF-8 byte span of the module string literal. */
+  span: FictSourceSpan
+}
+
+/** Arena-independent result returned by native scan entrypoints. */
+export interface ScanResult {
+  protocolVersion: CompilerProtocolVersion
+  moduleRequests: ScanModuleRequest[]
+  hasModuleSyntax: boolean
+  diagnostics: FictDiagnostic[]
+  compilerBuildId: string
+}
+
 export type CompilerArtifactKind = 'handlerModule' | 'auxiliaryModule'
 
 export interface CompilerArtifact {

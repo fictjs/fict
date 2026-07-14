@@ -6,15 +6,17 @@ mod async_task;
 mod convert;
 mod panic_boundary;
 
-use async_task::CompileTask;
-use convert::{CompileWork, prepare_compile, serialize_result};
+use async_task::{CompileTask, ScanTask};
+use convert::{
+    CompileWork, ScanWork, prepare_compile, prepare_scan, serialize_result, serialize_scan_result,
+};
 use fict_compiler::{
     COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe,
     compiler_build_id, parse_tsx_probe,
 };
 use napi::{Env, Result, Task, bindgen_prelude::AsyncTask};
 use napi_derive::napi;
-use panic_boundary::{catch_panic, compile_safely};
+use panic_boundary::{catch_panic, compile_safely, scan_safely};
 use serde_json::Value;
 
 /// Native compiler build information exposed to the JavaScript loader.
@@ -114,4 +116,25 @@ pub fn transform(request: Value) -> AsyncTask<CompileTask> {
     let work = catch_panic(|| prepare_compile(request))
         .unwrap_or_else(|_| CompileWork::Immediate(fict_compiler::internal_error_result()));
     AsyncTask::new(CompileTask::new(work))
+}
+
+/// Scan static module requests synchronously without running compiler passes.
+#[napi]
+pub fn scan_sync(request: Value) -> Result<Value> {
+    let work = catch_panic(|| prepare_scan(request))
+        .unwrap_or_else(|_| ScanWork::Immediate(fict_compiler::internal_scan_error_result()));
+    let result = match work {
+        ScanWork::Request(request) => scan_safely(request),
+        ScanWork::Immediate(result) => result,
+    };
+    catch_panic(|| serialize_scan_result(result))
+        .unwrap_or_else(|_| serialize_scan_result(fict_compiler::internal_scan_error_result()))
+}
+
+/// Scan static module requests in the libuv worker pool after JS-value conversion.
+#[napi]
+pub fn scan(request: Value) -> AsyncTask<ScanTask> {
+    let work = catch_panic(|| prepare_scan(request))
+        .unwrap_or_else(|_| ScanWork::Immediate(fict_compiler::internal_scan_error_result()));
+    AsyncTask::new(ScanTask::new(work))
 }

@@ -57,6 +57,8 @@ function binding() {
     parseTsxProbeAsync: async () => ({ statementCount: 1, diagnosticCount: 0 }),
     transformSync: vi.fn(),
     transform: native.transform,
+    scanSync: vi.fn(),
+    scan: vi.fn(),
   }
 }
 

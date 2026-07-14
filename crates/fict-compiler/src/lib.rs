@@ -12,6 +12,7 @@ mod pass_manager;
 mod pipeline;
 mod request;
 mod result;
+mod scan;
 mod source_map;
 
 pub use fict_compiler_oxc::{OXC_VERSION, ParseProbe};
@@ -23,12 +24,16 @@ pub use pass_manager::{
 pub use pipeline::{compile, internal_error_result, invalid_request_result};
 pub use request::{
     CompileRequest, CompileRequestError, CompilerOptions, CompilerPreviewOptions,
-    CompilerTypeScriptOptions, ModuleKind, NormalizedCompileRequest, OptimizeLevel, SourceLanguage,
-    WarningLevel, WarningsAsErrors,
+    CompilerTypeScriptOptions, ModuleKind, NormalizedCompileRequest, NormalizedScanRequest,
+    OptimizeLevel, ScanRequest, SourceLanguage, WarningLevel, WarningsAsErrors,
 };
 pub use result::{
     CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
     CompilerExplainEvent, CompilerExplainEventKind, CompilerStats,
+};
+pub use scan::{
+    ScanModuleRequest, ScanModuleRequestKind, ScanResult, internal_scan_error_result,
+    invalid_scan_request_result, scan,
 };
 pub use source_map::{RawSourceMap, SourceMapValidationError};
 

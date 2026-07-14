@@ -13,6 +13,7 @@ mod facts;
 mod frontend;
 mod hir_builder;
 mod jsx_text;
+mod scan;
 mod typescript;
 
 pub use compile::{
@@ -30,6 +31,9 @@ pub use frontend::{
     FrontendSummary, NamespaceMacroCall, analyze_frontend,
 };
 pub use hir_builder::{HirBuildOptions, HirBuildOutput, OxcSyntaxFragment, build_hir};
+pub use scan::{
+    OxcScanOutput, ScanModuleRequest, ScanModuleRequestKind, scan_static_module_requests,
+};
 pub use typescript::{
     OxcTypeScriptOptions, TypeScriptCompatibilityOutput, TypeScriptCompatibilityPlan,
     TypeScriptFeature, TypeScriptFeatureKind, TypeScriptLoweringOwner,

@@ -4980,6 +4980,10 @@ export type {
   RawSourceMap,
   ReactiveExportKind,
   ResolvedMetadataInput,
+  ScanModuleRequest,
+  ScanModuleRequestKind,
+  ScanRequest,
+  ScanResult,
   SourceLanguage,
 } from './types'
 export { COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION } from './types'
