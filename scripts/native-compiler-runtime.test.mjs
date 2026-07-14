@@ -530,7 +530,7 @@ test('Rust compiler emits executable CommonJS with live exports and collision-fr
       }
     `,
     'commonjs-module',
-    /const __fict_cjs_require_1 = require/,
+    /const __fict_cjs_import_1 = __fict_cjs_load\(require/,
   )
 
   const container = document.createElement('div')
