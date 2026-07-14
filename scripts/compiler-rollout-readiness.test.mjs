@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
 import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
 import { NATIVE_COMPILER_NODE_LANES, NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
+
+const readinessScript = fileURLToPath(new URL('./compiler-rollout-readiness.mjs', import.meta.url))
 
 const approvedAreas = {
   coreSemantics: true,
@@ -254,6 +258,17 @@ async function fixture(state, review, evidence, removalReview, certificationOver
   )
   return root
 }
+
+test('rollout readiness CLI rejects unknown arguments', () => {
+  const result = spawnSync(process.execPath, [readinessScript, '--require-legacy-removal-ready'], {
+    encoding: 'utf8',
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(
+    result.stderr,
+    /Unknown compiler rollout readiness argument: --require-legacy-removal-ready/,
+  )
+})
 
 test('beta keeps legacy default without claiming human approval', async t => {
   const root = await fixture({ phase: 'beta', viteDefaultBackend: 'legacy' })

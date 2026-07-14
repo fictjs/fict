@@ -13,6 +13,7 @@ import {
 import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const SUPPORTED_CLI_ARGUMENTS = new Set(['--require-default-ready'])
 const REQUIRED_REVIEW_AREAS = [
   'coreSemantics',
   'strictGuarantee',
@@ -708,8 +709,13 @@ export function validateCompilerRolloutReadiness(options = {}) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isMain) {
+  const cliArguments = process.argv.slice(2)
+  const unknownArgument = cliArguments.find(argument => !SUPPORTED_CLI_ARGUMENTS.has(argument))
+  if (unknownArgument) {
+    throw new Error(`Unknown compiler rollout readiness argument: ${unknownArgument}`)
+  }
   validateCompilerRolloutReadiness({
-    requireDefaultReady: process.argv.includes('--require-default-ready'),
+    requireDefaultReady: cliArguments.includes('--require-default-ready'),
   })
   process.stdout.write('[compiler-rollout-readiness] Rollout phase and evidence are consistent.\n')
 }
