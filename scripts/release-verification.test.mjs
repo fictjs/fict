@@ -154,7 +154,7 @@ test('musl native releases use a pinned Zig cdylib build path', () => {
   )
   assert.match(
     nativeBuild,
-    /test "\$\(cargo zigbuild --version\)" = "cargo-zigbuild \$\{CARGO_ZIGBUILD_VERSION\}"/,
+    /test "\$\(cargo-zigbuild --version\)" = "cargo-zigbuild \$\{CARGO_ZIGBUILD_VERSION\}"/,
   )
   assert.match(nativeBuild, /name: Build target N-API binary\n\s+if: \$\{\{ !matrix\.musl \}\}/)
   assert.match(

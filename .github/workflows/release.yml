@@ -103,7 +103,7 @@ jobs:
       - name: Verify pinned cargo-zigbuild for musl targets
         if: matrix.musl
         shell: bash
-        run: test "$(cargo zigbuild --version)" = "cargo-zigbuild ${CARGO_ZIGBUILD_VERSION}"
+        run: test "$(cargo-zigbuild --version)" = "cargo-zigbuild ${CARGO_ZIGBUILD_VERSION}"
 
       - name: Build target N-API binary
         if: ${{ !matrix.musl }}
