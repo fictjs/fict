@@ -34,7 +34,7 @@ const originalNodeEnv = process.env.NODE_ENV
 const originalStrictGuaranteeEnv = process.env.FICT_STRICT_GUARANTEE
 
 afterEach(() => {
-  vi.doUnmock('@fictjs/compiler')
+  vi.doUnmock('@fictjs/compiler/legacy')
   vi.doUnmock('../cache-fingerprint')
   vi.resetModules()
   process.env.NODE_ENV = originalNodeEnv
@@ -138,7 +138,7 @@ async function transformWithFingerprints(
   cacheDir: string,
 ) {
   vi.resetModules()
-  vi.doMock('@fictjs/compiler', () => ({
+  vi.doMock('@fictjs/compiler/legacy', () => ({
     getCompilerCacheFingerprint: () => compilerFingerprint,
     createFictPlugin: () => ({
       name: 'mock-fict-compiler',
@@ -167,7 +167,7 @@ async function transformWithSplitMode(
   cacheDir: string,
 ): Promise<TransformResult> {
   vi.resetModules()
-  vi.doUnmock('@fictjs/compiler')
+  vi.doUnmock('@fictjs/compiler/legacy')
   vi.doUnmock('../cache-fingerprint')
 
   const { default: fict } = await import('..')
