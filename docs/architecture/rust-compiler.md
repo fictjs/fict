@@ -230,6 +230,12 @@ Verification: compiler differential benchmarks, HIR/output guardrails, repeated
 thread-count comparisons, fuzz targets, and clean native-package installation
 are required before default switching.
 
+The executable M7 promotion policy, candidate chain, privacy-safe allowlist,
+performance/RSS budget, and human approval are owned by the
+[Rust compiler rollout](../features/rust-compiler-rollout/rollout.md). Operational
+recovery is owned by the
+[compiler backend rollback runbook](../operations/runbooks/compiler-backend-rollback.md).
+
 ## Failure modes and monitoring
 
 The build MUST stop or roll back the backend on:

@@ -61,6 +61,30 @@ Do not export `FICT_STRICT_GUARANTEE` around either verification command. The
 root release scripts scope it to the compiler contract, build, and bundler gates
 so behavior-first test suites keep their documented non-strict configuration.
 
+### Rust compiler rollout evidence
+
+The `compiler-rollout` CI job uploads one `compiler-rollout-candidate` artifact
+containing privacy-safe shadow differences, paired large-project performance
+and peak-RSS samples, runtime parity, rollback-drill evidence, and the sealed
+candidate record. A successful main-branch run chains the previous green
+candidate digest when one exists.
+
+Before changing the Vite default to Rust, download the latest candidate and
+confirm `consecutiveGreenCandidates >= 2`. Copy the reviewed candidate record
+to the evidence path named by `.github/compiler-rollout-state.json`, then have a
+maintainer bind every item in `.github/compiler-rollout-review.json` to that
+exact `candidateDigest`. `node scripts/compiler-rollout-readiness.mjs
+--require-default-ready` MUST pass before the state may enter `rust-default`.
+
+Do not manufacture a second candidate by running the sealer twice locally.
+Only distinct CI runs from committed source count. Raw benchmark values remain
+in CI artifacts and are not copied into release prose.
+
+For an emergency reversal, follow
+`docs/operations/runbooks/compiler-backend-rollback.md`. Roll back the whole
+build, purge compiler/metadata/bundler/generated caches, and retain the failing
+candidate artifact.
+
 #### Step 3: Create and Push a Tag
 
 ```bash

@@ -35,6 +35,8 @@ export default defineConfig({
       tsconfigPath: './tsconfig.json',
       // Optional plugin debug logs (or set FICT_VITE_PLUGIN_DEBUG=1)
       debug: false,
+      // Native compiler beta. The current compatibility-window default is 'legacy'.
+      backend: 'rust',
       // Required for resumable builds only when no named package.json owns the Vite root
       // publicIdentityNamespace: 'com.example.my-app',
       // Allow $state/$effect inside reactive-scope callbacks (e.g., renderHook(() => ...))
@@ -59,9 +61,41 @@ Core defaults:
   and Vite-root subpath; a root with neither source fails closed before emitting
   an ambiguous manifest.
 
-The Vite plugin owns an isolated Babel pass and does not load project `.babelrc` or
-`babel.config.*` files. Use `@fictjs/babel-preset` in an explicit Babel pipeline when other Babel
-plugins must compose with Fict compilation.
+The Rust backend owns an OXC-native whole-file compiler stage and does not load
+project `.babelrc` or `babel.config.*` files. The compatibility-window
+`legacy` backend and the delivered side of `shadow` use an isolated Babel pass.
+Custom Babel plugins must run as a separate stage; `@fictjs/babel-preset` is a
+deprecated legacy-only adapter and cannot mix Rust and Babel output in one
+build.
+
+## Native compiler beta and shadow mode
+
+`backend` accepts `legacy`, `rust`, or `shadow`. The current beta keeps
+`legacy` as the default. `FICT_COMPILER_BACKEND` selects the same mode for a
+whole build when no explicit option is present; use
+`FICT_COMPILER_BACKEND=legacy` for rollback.
+
+```ts
+fict({
+  backend: 'shadow',
+  shadow: {
+    reportPath: '.fict-cache/compiler-shadow.json',
+    allowlistPath: '.github/compiler-shadow-allowlist.json',
+    failOnDifference: true,
+  },
+})
+```
+
+Shadow mode always returns the legacy result. It records only hashes and
+structured difference categories, never source, generated code, absolute
+paths, or project names. Unknown differences fail at `buildEnd` when
+`failOnDifference` is enabled; no individual module falls back.
+
+The native backend does not yet support Preview `resumable: true`. Keep a
+resumable build on `legacy` until the separate Preview native milestone is
+complete. See the repository
+[rollout](../../docs/features/rust-compiler-rollout/rollout.md) and
+[rollback runbook](../../docs/operations/runbooks/compiler-backend-rollback.md).
 
 Decorator syntax is parsed and preserved, not lowered: the plugin accepts the current standard
 2023-11 grammar (including auto-accessors and decorators on either side of `export`) and falls back

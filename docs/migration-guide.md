@@ -17,6 +17,62 @@ compiles to a fine-grained graph with fail-closed reactivity guarantees.
 Use `strictGuarantee: false` as an inventory tool, not as a long-term app
 profile. Production builds force strict guarantee back on.
 
+## Compiler Backend Migration
+
+The OXC-native compiler is available as an explicit beta while Vite keeps the
+legacy backend as its default. Select one backend for the entire build:
+
+```ts
+import fict from '@fictjs/vite-plugin'
+
+export default {
+  plugins: [fict({ backend: 'rust' })],
+}
+```
+
+Use `FICT_COMPILER_BACKEND=rust` for an application-wide CI trial and
+`FICT_COMPILER_BACKEND=legacy` for operational rollback. An explicit plugin
+option takes precedence over the environment. Do not choose the backend from a
+per-file callback or retry a failed Rust file through Babel.
+
+Before changing an application, run shadow mode. It returns legacy output but
+creates a privacy-safe comparison artifact:
+
+```ts
+fict({
+  backend: 'shadow',
+  shadow: {
+    reportPath: '.fict-cache/compiler-shadow.json',
+    allowlistPath: '.github/compiler-shadow-allowlist.json',
+    failOnDifference: true,
+  },
+})
+```
+
+Copy and review the repository allowlist instead of adding a wildcard for a
+semantic category. Output-printer and helper-composition differences may be
+structural; diagnostics, metadata, semantic events, maps, and artifacts remain
+blocking.
+
+Webpack users should migrate from `@fictjs/babel-preset` to the native
+`@fictjs/webpack-plugin` loader. Direct compiler integrations can load the
+platform binding from `@fictjs/compiler/native` and call its serializable
+`transformSync` or `transform` request API. Custom Babel pipelines that still
+need sibling plugins should run native Fict compilation as a separate first
+stage and compose source maps explicitly.
+
+`@fictjs/babel-preset` remains a tested whole-build legacy rollback during the
+compatibility window, but emits one development-time deprecation warning per
+process. Do not suppress that warning in committed configuration; migrate to an
+official Vite, Webpack, or direct native integration.
+
+Preview `resumable: true` remains on legacy until the separate Preview native
+milestone completes. Core Rust readiness does not graduate Preview.
+
+See the [Rust compiler rollout](features/rust-compiler-rollout/rollout.md) and
+[rollback runbook](operations/runbooks/compiler-backend-rollback.md) for the
+candidate, cache, and review gates.
+
 ## Concept Map
 
 | Source concept           | Fict equivalent                                    |

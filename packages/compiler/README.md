@@ -25,6 +25,35 @@ longer relies on zero-argument function arity to infer reactivity, so user
 callbacks such as `() => start()` stay callbacks unless code explicitly wraps
 them with `reactive(fn)`.
 
+## Native compiler beta
+
+Official Vite and Webpack integrations own module graphs and are preferred for
+applications. A direct integration can load the prebuilt OXC/Rust binding from
+the platform package selected by `@fictjs/compiler/native`:
+
+```ts
+import { loadNativeCompilerBinding } from '@fictjs/compiler/native'
+
+const compiler = loadNativeCompilerBinding()
+const result = compiler.transformSync({
+  code: source,
+  filename: 'src/App.tsx',
+  moduleId: 'src/App.tsx',
+  options: { strictGuarantee: true, sourcemap: true },
+  metadata: [],
+})
+```
+
+The request boundary is serializable. Host callbacks, filesystem resolution,
+and bundler graph objects must stay outside Rust. A build must use one compiler
+build identifier and one backend; do not catch a native failure and compile
+only that file with the legacy Babel plugin.
+
+Platform support and installation behavior are defined by
+[ADR-0002](../../docs/adr/0002-native-compiler-support-matrix.md). Promotion,
+performance/RSS evidence, and rollback are defined by the
+[Rust compiler rollout](../../docs/features/rust-compiler-rollout/rollout.md).
+
 ## Options
 
 ```ts
