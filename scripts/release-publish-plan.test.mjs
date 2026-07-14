@@ -2,12 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildAtomicPublishOrder,
   buildPublishPlan,
   fetchRegistryDocument,
   getPublishedVersions,
   normalizeRegistryDocument,
+  validateAtomicNativeReleaseConfiguration,
   validateReleaseConfiguration,
 } from './release-publish-plan.mjs'
+import { NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
 const publicPackage = {
   name: '@fictjs/example',
@@ -47,6 +50,71 @@ test('distinguishes pending versions from first publications', () => {
 
   assert.equal(pending[0]?.status, 'pending')
   assert.equal(firstPublication[0]?.status, 'new-package')
+})
+
+test('orders every native compiler package before the facade', () => {
+  const plan = [
+    { name: '@fictjs/compiler', version: '1.2.3', status: 'pending' },
+    { name: '@fictjs/runtime', version: '1.2.3', status: 'pending' },
+    ...NATIVE_COMPILER_TARGETS.map(target => ({
+      name: target.packageName,
+      version: '1.2.3',
+      status: 'pending',
+    })),
+  ]
+  const ordered = buildAtomicPublishOrder(plan).map(entry => entry.name)
+  const facadeIndex = ordered.indexOf('@fictjs/compiler')
+  assert.ok(facadeIndex >= NATIVE_COMPILER_TARGETS.length)
+  for (const target of NATIVE_COMPILER_TARGETS) {
+    assert.ok(ordered.indexOf(target.packageName) < facadeIndex)
+  }
+})
+
+test('orders workspace dependencies before their publishable consumers', () => {
+  const plan = [
+    { name: '@fictjs/plugin', version: '1.2.3', status: 'pending' },
+    { name: '@fictjs/compiler', version: '1.2.3', status: 'pending' },
+    ...NATIVE_COMPILER_TARGETS.map(target => ({
+      name: target.packageName,
+      version: '1.2.3',
+      status: 'pending',
+    })),
+  ]
+  const manifests = [
+    { name: '@fictjs/plugin', dependencies: { '@fictjs/compiler': '1.2.3' } },
+    {
+      name: '@fictjs/compiler',
+      optionalDependencies: Object.fromEntries(
+        NATIVE_COMPILER_TARGETS.map(target => [target.packageName, '1.2.3']),
+      ),
+    },
+  ]
+  const ordered = buildAtomicPublishOrder(plan, manifests).map(entry => entry.name)
+  assert.ok(ordered.indexOf('@fictjs/compiler') < ordered.indexOf('@fictjs/plugin'))
+})
+
+test('requires native packages, facade optional dependencies, and versions to be atomic', () => {
+  const compiler = {
+    name: '@fictjs/compiler',
+    version: '1.2.3',
+    optionalDependencies: Object.fromEntries(
+      NATIVE_COMPILER_TARGETS.map(target => [target.packageName, 'workspace:*']),
+    ),
+  }
+  const nativePackages = NATIVE_COMPILER_TARGETS.map(target => ({
+    name: target.packageName,
+    version: '1.2.3',
+  }))
+  const allowlist = ['@fictjs/compiler', ...nativePackages.map(pkg => pkg.name)]
+  assert.deepEqual(
+    validateAtomicNativeReleaseConfiguration([compiler, ...nativePackages], allowlist),
+    [],
+  )
+
+  assert.deepEqual(
+    validateAtomicNativeReleaseConfiguration([compiler, ...nativePackages.slice(1)], allowlist),
+    [`native release matrix is missing ${nativePackages[0].name}`],
+  )
 })
 
 test('retries a cached 404 with a cache-busting registry request', async () => {

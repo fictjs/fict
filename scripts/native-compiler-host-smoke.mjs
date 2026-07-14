@@ -44,6 +44,8 @@ for (const [format, facade] of [
   const binding = facade.loadNativeCompilerBinding({ nativePath })
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')
+  assert.equal(typeof info.nativeTarget, 'string')
+  assert.ok(info.nativeTarget.length > 0)
   assert.equal(info.oxcVersion, '0.139.0')
   assert.equal(info.nodeApiVersion, 10)
   assert.equal(info.compilerProtocolVersion, 1)

@@ -78,7 +78,8 @@ git push origin v0.1.0
 #### Step 4: Automatic Publishing
 
 - Pushing the tag triggers the Release workflow
-- Packages are automatically built and published to NPM
+- Eight native compiler packages are built and certified on Node 22.18/24
+- Native packages are published first; the facade and remaining packages follow
 - GitHub Release is created
 
 ## Important Notes
@@ -120,6 +121,34 @@ must set `private: true` and must not define `publishConfig`. The release plan
 queries the registry directly, records `already-published`, `pending`, and
 `new-package` states, and runs both before and immediately after the full release
 gate.
+
+### Native compiler release unit
+
+`@fictjs/compiler` and its eight `@fictjs/compiler-<target>` optional packages
+are one release unit. Their versions must match exactly. The release workflow:
+
+1. builds every ADR-0002 target on its native OS and architecture, using a
+   native Linux host plus an Alpine container for musl runtime evidence;
+2. emits a package-local binary checksum, npm tarball checksum, and build
+   evidence for every target;
+3. installs each tarball with lifecycle scripts disabled and no Rust toolchain,
+   then executes ESM/CJS and sync/async compiler calls on Node 22.18 and 24;
+4. preflights all eight artifacts before any npm publish;
+5. publishes every pending tarball in dependency order, waiting for registry
+   visibility after each package; all native packages precede `@fictjs/compiler`.
+
+Npm has no multi-package transaction. Fict's atomicity guarantee therefore
+means complete preflight plus native-first, resumable publication. If a native
+publish succeeds and a later one fails, rerun the failed workflow: already
+published platform versions are skipped and missing ones resume. If the facade
+is visible while a same-version platform package is missing, automation fails
+closed; publish the missing certified tarball, confirm registry visibility, and
+only then rerun. Never move the tag or publish a different binary under the same
+version.
+
+The `fict-native-package-*` and `fict-native-evidence-*` workflow artifacts are
+retained for 90 days. Preserve them with the release plan when investigating a
+registry-side partial publication.
 
 Before tagging a release, make sure each publishable NPM package is configured
 on npmjs.com with:
@@ -177,3 +206,11 @@ then rerun the failed workflow.
 
 Do not push or move the release tag until the new package is no longer reported
 as `new-package` and its trusted publisher is configured.
+
+For the eight native compiler packages, manually dispatch `release.yml`. Manual
+dispatch builds and certifies the full matrix but deliberately skips the npm
+release job. Download every `fict-native-package-*` artifact, publish its `.tgz`
+once with an authenticated maintainer account and `--provenance=false`, then
+configure the same `release.yml` trusted publisher for each package. Run
+`pnpm release:plan --require-existing-packages` only after all eight names are
+visible. A partial bootstrap is not sufficient to tag a release.

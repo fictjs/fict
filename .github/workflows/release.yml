@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -14,8 +15,146 @@ env:
   NPM_VERSION: 11.18.0
 
 jobs:
+  native-matrix:
+    name: Prepare native compiler matrix
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.matrix.outputs.build }}
+      runtime: ${{ steps.matrix.outputs.runtime }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        name: Generate the accepted support matrix
+        shell: bash
+        run: |
+          echo "build=$(node scripts/native-compiler-packages.mjs matrix --kind build)" >> "$GITHUB_OUTPUT"
+          echo "runtime=$(node scripts/native-compiler-packages.mjs matrix --kind runtime)" >> "$GITHUB_OUTPUT"
+
+  native-build:
+    name: Build native compiler packages (${{ matrix.target }})
+    needs: native-matrix
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.native-matrix.outputs.build) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install musl linker
+        if: matrix.musl
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Build target N-API binary
+        run: |
+          rustup target add ${{ matrix.rustTarget }}
+          cargo build --release -p fict-compiler-napi --target ${{ matrix.rustTarget }}
+
+      - name: Assemble checksummed platform tarball
+        run: >-
+          node scripts/native-compiler-packages.mjs bundle
+          --target ${{ matrix.target }}
+          --binary ${{ matrix.binary }}
+          --output "${{ runner.temp }}/native-package"
+
+      - name: Verify assembled platform tarball
+        run: >-
+          node scripts/native-compiler-packages.mjs verify-bundle
+          --target ${{ matrix.target }}
+          --bundle "${{ runner.temp }}/native-package"
+
+      - name: Upload native platform package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fict-native-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-package
+          if-no-files-found: error
+          retention-days: 90
+
+  native-runtime:
+    name: Certify native compiler packages (${{ matrix.target }}, Node ${{ matrix.node }})
+    needs: [native-matrix, native-build]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.native-matrix.outputs.runtime) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download target platform package
+        uses: actions/download-artifact@v4
+        with:
+          name: fict-native-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-package
+
+      - uses: pnpm/action-setup@v3
+        if: ${{ !matrix.musl }}
+        with:
+          version: 9.1.1
+
+      - uses: actions/setup-node@v4
+        if: ${{ !matrix.musl }}
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install facade dependencies
+        if: ${{ !matrix.musl }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Build JavaScript facade
+        if: ${{ !matrix.musl }}
+        run: pnpm --filter @fictjs/compiler build
+
+      - name: Clean-install and execute ESM/CJS on the native host
+        if: ${{ !matrix.musl }}
+        run: >-
+          node scripts/native-compiler-package-smoke.mjs
+          --target ${{ matrix.target }}
+          --bundle "${{ runner.temp }}/native-package"
+          --evidence "${{ runner.temp }}/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"
+
+      - name: Clean-install and execute ESM/CJS in musl
+        if: matrix.musl
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/native-evidence"
+          docker run --rm \
+            -e CI=true \
+            -e HUSKY=0 \
+            -v "${PWD}:/workspace" \
+            -v "${RUNNER_TEMP}/native-package:/native-package:ro" \
+            -v "${RUNNER_TEMP}/native-evidence:/native-evidence" \
+            -w /workspace \
+            "${{ matrix.dockerImage }}" \
+            sh -lc 'corepack enable && corepack prepare pnpm@9.1.1 --activate && pnpm install --frozen-lockfile && pnpm --filter @fictjs/compiler build && node scripts/native-compiler-package-smoke.mjs --target "${{ matrix.target }}" --bundle /native-package --evidence "/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"'
+
+      - name: Upload native runtime evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fict-native-evidence-${{ matrix.target }}-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/native-evidence/*.json
+          if-no-files-found: error
+          retention-days: 90
+
   release:
     name: Release
+    if: github.event_name == 'push'
+    needs: [native-build, native-runtime]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -63,6 +202,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+      - name: Download all certified native packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fict-native-package-*
+          path: ${{ runner.temp }}/native-packages
+
+      - name: Preflight the complete atomic native publish set
+        run: >-
+          node scripts/publish-native-compiler-packages.mjs
+          --verify-only
+          --plan "${RUNNER_TEMP}/npm-publish-plan.json"
+          --artifacts "${RUNNER_TEMP}/native-packages"
+
       - name: Install Playwright browser for release e2e
         run: pnpm exec playwright install --with-deps chromium
 
@@ -79,10 +231,39 @@ jobs:
           retention-days: 90
 
       - name: Recheck NPM release plan
-        run: pnpm release:plan --tag "${GITHUB_REF_NAME}" --require-existing-packages
+        run: >-
+          pnpm release:plan
+          --tag "${GITHUB_REF_NAME}"
+          --require-existing-packages
+          --output "${RUNNER_TEMP}/npm-publish-plan.json"
 
-      - name: Publish to NPM
-        run: pnpm exec changeset publish
+      - name: Upload final NPM release plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-final-publish-plan-${{ github.ref_name }}
+          path: ${{ runner.temp }}/npm-publish-plan.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Build publishable packages in the release checkout
+        run: pnpm build
+
+      - name: Preflight and publish the dependency-ordered release set
+        run: >-
+          node scripts/publish-release-packages.mjs
+          --publish
+          --plan "${RUNNER_TEMP}/npm-publish-plan.json"
+          --native-artifacts "${RUNNER_TEMP}/native-packages"
+          --output "${RUNNER_TEMP}/release-tarballs"
         env:
           NPM_CONFIG_PROVENANCE: 'true'
           CI: true
+
+      - name: Upload checksummed release tarballs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-tarballs-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release-tarballs
+          if-no-files-found: warn
+          retention-days: 90

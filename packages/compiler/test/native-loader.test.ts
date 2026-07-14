@@ -5,6 +5,7 @@ import {
   detectLinuxLibc,
   loadNativeCompilerBinding,
   nativeCompilerPackageName,
+  nativeCompilerRustTarget,
   resolveNativeCompilerRuntimeHelper,
   resolveNativeTarget,
   type NativeCompilerBinding,
@@ -56,6 +57,7 @@ function createBinding(): NativeCompilerBinding {
   return {
     nativeCompilerInfo: () => ({
       backend: 'rust',
+      nativeTarget: 'aarch64-apple-darwin',
       oxcVersion: '0.139.0',
       nodeApiVersion: 10,
       compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'0'.repeat(64)}`,
@@ -93,6 +95,10 @@ describe('native compiler loader', () => {
 
   it('loads and validates the platform optional package', () => {
     const binding = createBinding()
+    binding.nativeCompilerInfo = () => ({
+      ...createBinding().nativeCompilerInfo(),
+      nativeTarget: 'x86_64-unknown-linux-gnu',
+    })
     const load = vi.fn((id: string) => {
       expect(id).toBe('@fictjs/compiler-linux-x64-gnu')
       return binding
@@ -134,6 +140,23 @@ describe('native compiler loader', () => {
     expect(() =>
       loadNativeCompilerBinding({
         nativePath: '/tmp/incompatible.node',
+        platform: 'darwin',
+        arch: 'arm64',
+        load: () => binding,
+      }),
+    ).toThrow('reported incompatible compiler metadata')
+  })
+
+  it('rejects a package containing a binding for a different native target', () => {
+    const binding = createBinding()
+    binding.nativeCompilerInfo = () => ({
+      ...createBinding().nativeCompilerInfo(),
+      nativeTarget: 'x86_64-apple-darwin',
+    })
+
+    expect(() =>
+      loadNativeCompilerBinding({
+        nativePath: '/tmp/wrong-target.node',
         platform: 'darwin',
         arch: 'arm64',
         load: () => binding,
@@ -195,11 +218,20 @@ describe('native compiler loader', () => {
     expect(() => loadNativeCompilerBinding({ platform: 'aix', arch: 'ppc64', load })).toThrow(
       /aix\/ppc64/,
     )
+    expect(() =>
+      loadNativeCompilerBinding({
+        platform: 'linux',
+        arch: 'ppc64',
+        report: { header: { glibcVersionRuntime: '2.39' } },
+        load,
+      }),
+    ).toThrow(/linux\/ppc64 \(gnu\)/)
     expect(load).not.toHaveBeenCalled()
   })
 
   it('uses stable optional package names', () => {
     expect(nativeCompilerPackageName('linux-x64-musl')).toBe('@fictjs/compiler-linux-x64-musl')
+    expect(nativeCompilerRustTarget('linux-x64-musl')).toBe('x86_64-unknown-linux-musl')
   })
 
   it('resolves only canonical helpers from the pinned OXC runtime', () => {

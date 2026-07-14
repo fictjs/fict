@@ -289,9 +289,9 @@ pnpm test:compiler:native-packages
 pnpm release:verify
 ```
 
-Commands not yet present are rollout gates, not evidence of current
-implementation. The architecture decision can be accepted independently of
-claiming that the migration is complete.
+These commands are live gates. Passing the native packaging commands proves the
+distribution boundary only; the migration is complete only when every
+milestone and completion condition in `plan.md` is also satisfied.
 
 # Citations
 

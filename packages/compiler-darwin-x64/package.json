@@ -1,0 +1,35 @@
+{
+  "name": "@fictjs/compiler-darwin-x64",
+  "version": "0.28.0",
+  "description": "Fict Rust compiler native binding for macOS x64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/compiler-darwin-x64"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "fict_compiler_napi.node",
+  "files": [
+    "fict_compiler_napi.node",
+    "binding-manifest.json",
+    "SHASUMS256.txt"
+  ],
+  "fictNative": {
+    "target": "darwin-x64",
+    "rustTarget": "x86_64-apple-darwin",
+    "binary": "fict_compiler_napi.node"
+  }
+}

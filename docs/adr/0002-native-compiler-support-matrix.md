@@ -158,7 +158,7 @@ cargo test --workspace
 pnpm -C packages/compiler test -- native-loader.test.ts
 ```
 
-M6 release evidence, once implemented:
+M6 release evidence:
 
 ```bash
 pnpm test:compiler:native-packages
@@ -169,6 +169,11 @@ pnpm release:verify
 
 The native-package gate MUST emit a machine-readable result for every table row
 and Node lane. A skipped or missing row is a failure, not an inconclusive pass.
+The tag-triggered Release workflow builds eight checksummed tarballs and runs
+the resulting 16 target/Node certifications before the publish job becomes
+eligible. A manual workflow dispatch builds and certifies the same artifacts
+without publishing, which is the supported bootstrap path for new npm package
+names.
 
 ## Related decisions
 

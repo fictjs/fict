@@ -156,6 +156,11 @@ e2e-dist
 *.fict.meta.json
 __fict_cross_module__/
 
+# Native compiler release artifacts are assembled from CI binaries.
+packages/compiler-*/fict_compiler_napi.node
+packages/compiler-*/binding-manifest.json
+packages/compiler-*/SHASUMS256.txt
+
 js-framework-benchmark/
 hooks/
 ui-primitives/

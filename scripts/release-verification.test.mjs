@@ -9,6 +9,7 @@ import {
   collectNonNodeImportTargets,
   collectExportTargets,
   findConsumerCoverageGaps,
+  findNativeCompilerVersionMismatches,
   findWorkspaceProtocols,
   verifyReleaseContract,
 } from './package-tarball-smoke.mjs'
@@ -32,6 +33,14 @@ const ssrPackage = JSON.parse(
 
 test('release verification retains regression, tarball, SSR, browser, and clean-checkout gates', () => {
   assert.deepEqual(verifyReleaseContract(rootPackage, releaseWorkflow), [])
+})
+
+test('release publishing uses one dependency-ordered publisher after native certification', () => {
+  assert.match(releaseWorkflow, /name: Build native compiler packages/)
+  assert.match(releaseWorkflow, /name: Certify native compiler packages/)
+  assert.match(releaseWorkflow, /node scripts\/publish-release-packages\.mjs/)
+  assert.doesNotMatch(releaseWorkflow, /changeset publish/)
+  assert.equal(rootPackage.scripts.release, 'pnpm release:plan --require-existing-packages')
 })
 
 test('precommit and release verification retain the Preview maturity boundary gate', () => {
@@ -60,6 +69,29 @@ test('packed manifests reject unresolved workspace protocols', () => {
       peerDependencies: { fict: 'workspace:^' },
     }),
     ['dependencies.@fictjs/runtime', 'peerDependencies.fict'],
+  )
+})
+
+test('compiler tarballs pin all eight native packages to the facade version', () => {
+  const optionalDependencies = Object.fromEntries(
+    Array.from({ length: 8 }, (_, index) => [`@fictjs/compiler-platform-${index}`, '1.2.3']),
+  )
+  assert.deepEqual(
+    findNativeCompilerVersionMismatches({
+      name: '@fictjs/compiler',
+      version: '1.2.3',
+      optionalDependencies,
+    }),
+    [],
+  )
+  optionalDependencies['@fictjs/compiler-platform-7'] = '1.2.2'
+  assert.deepEqual(
+    findNativeCompilerVersionMismatches({
+      name: '@fictjs/compiler',
+      version: '1.2.3',
+      optionalDependencies,
+    }),
+    ['@fictjs/compiler-platform-7@1.2.2'],
   )
 })
 
@@ -160,12 +192,14 @@ test('consumer overrides force transitive workspace dependencies to local tarbal
         fict: 'file:../packs/fict.tgz',
         '@fictjs/runtime': 'file:../packs/runtime.tgz',
       },
+      new Set(['@fictjs/compiler-linux-x64-gnu']),
     ),
     {
       overrides: {
         vulnerable: '1.0.1',
         'fict>@fictjs/runtime': 'file:../packs/runtime.tgz',
         '@fictjs/router>@fictjs/runtime': 'file:../packs/runtime.tgz',
+        '@fictjs/compiler>@fictjs/compiler-linux-x64-gnu': '-',
       },
     },
   )

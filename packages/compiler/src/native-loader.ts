@@ -13,6 +13,7 @@ export type NativeLibc = 'gnu' | 'musl'
 
 export interface NativeCompilerInfo {
   backend: 'rust'
+  nativeTarget: string
   oxcVersion: string
   nodeApiVersion: number
   compilerBuildId: string
@@ -78,24 +79,46 @@ export function resolveNativeTarget(
   arch: string = process.arch,
   report?: unknown,
 ): string {
+  const libc = platform === 'linux' ? detectLinuxLibc(report) : null
   if (platform === 'darwin' && (arch === 'arm64' || arch === 'x64')) {
     return `darwin-${arch}`
   }
   if (platform === 'linux' && (arch === 'arm64' || arch === 'x64')) {
-    return `linux-${arch}-${detectLinuxLibc(report)}`
+    return `linux-${arch}-${libc}`
   }
   if (platform === 'win32' && (arch === 'arm64' || arch === 'x64')) {
     return `win32-${arch}-msvc`
   }
 
   throw new NativeCompilerLoadError(
-    `The Fict Rust compiler does not provide a native package for ${platform}/${arch}.`,
-    `${platform}-${arch}`,
+    `The Fict Rust compiler does not provide a native package for ${platform}/${arch}${libc ? ` (${libc})` : ''}.`,
+    `${platform}-${arch}${libc ? `-${libc}` : ''}`,
   )
 }
 
 export function nativeCompilerPackageName(target: string): string {
   return `@fictjs/compiler-${target}`
+}
+
+export function nativeCompilerRustTarget(target: string): string {
+  const rustTargets: Readonly<Record<string, string>> = {
+    'darwin-arm64': 'aarch64-apple-darwin',
+    'darwin-x64': 'x86_64-apple-darwin',
+    'linux-arm64-gnu': 'aarch64-unknown-linux-gnu',
+    'linux-arm64-musl': 'aarch64-unknown-linux-musl',
+    'linux-x64-gnu': 'x86_64-unknown-linux-gnu',
+    'linux-x64-musl': 'x86_64-unknown-linux-musl',
+    'win32-arm64-msvc': 'aarch64-pc-windows-msvc',
+    'win32-x64-msvc': 'x86_64-pc-windows-msvc',
+  }
+  const rustTarget = rustTargets[target]
+  if (!rustTarget) {
+    throw new NativeCompilerLoadError(
+      `The Fict Rust compiler does not recognize native target ${target}.`,
+      target,
+    )
+  }
+  return rustTarget
 }
 
 /** Resolve an OXC-generated helper from the compiler's pinned runtime dependency. */
@@ -108,7 +131,11 @@ export function resolveNativeCompilerRuntimeHelper(request: string): string | un
   return requireFromCompiler.resolve(request)
 }
 
-function toNativeBinding(value: unknown, candidate: string): NativeCompilerBinding {
+function toNativeBinding(
+  value: unknown,
+  candidate: string,
+  expectedNativeTarget: string,
+): NativeCompilerBinding {
   const possibleDefault = isRecord(value) ? value.default : undefined
   const binding = isRecord(possibleDefault) ? possibleDefault : value
   if (
@@ -134,6 +161,7 @@ function toNativeBinding(value: unknown, candidate: string): NativeCompilerBindi
   const sourceHash = info.compilerBuildId?.slice(expectedBuildPrefix.length)
   if (
     info.backend !== 'rust' ||
+    info.nativeTarget !== expectedNativeTarget ||
     info.nodeApiVersion < 10 ||
     info.oxcVersion !== EXPECTED_OXC_VERSION ||
     info.compilerProtocolVersion !== EXPECTED_COMPILER_PROTOCOL_VERSION ||
@@ -157,13 +185,14 @@ export function loadNativeCompilerBinding(
   const arch = options.arch ?? process.arch
   const report = options.report ?? process.report?.getReport()
   const target = resolveNativeTarget(platform, arch, report)
+  const expectedNativeTarget = nativeCompilerRustTarget(target)
   const load = options.load ?? requireFromCompiler
   const candidates = options.nativePath ? [options.nativePath] : [nativeCompilerPackageName(target)]
   const failures: string[] = []
 
   for (const candidate of candidates) {
     try {
-      return toNativeBinding(load(candidate), candidate)
+      return toNativeBinding(load(candidate), candidate, expectedNativeTarget)
     } catch (error) {
       failures.push(`${candidate}: ${errorMessage(error)}`)
     }

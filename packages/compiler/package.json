@@ -56,6 +56,11 @@
   "peerDependencies": {
     "@babel/core": "^7.0.0-0"
   },
+  "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "@babel/helper-plugin-utils": "^7.28.6",
     "@babel/plugin-transform-destructuring": "^7.27.1",
@@ -63,6 +68,16 @@
     "@babel/traverse": "^7.29.0",
     "@oxc-project/runtime": "0.137.0",
     "@types/babel__core": "^7.20.5"
+  },
+  "optionalDependencies": {
+    "@fictjs/compiler-darwin-arm64": "workspace:*",
+    "@fictjs/compiler-darwin-x64": "workspace:*",
+    "@fictjs/compiler-linux-arm64-gnu": "workspace:*",
+    "@fictjs/compiler-linux-arm64-musl": "workspace:*",
+    "@fictjs/compiler-linux-x64-gnu": "workspace:*",
+    "@fictjs/compiler-linux-x64-musl": "workspace:*",
+    "@fictjs/compiler-win32-arm64-msvc": "workspace:*",
+    "@fictjs/compiler-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

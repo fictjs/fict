@@ -1,0 +1,38 @@
+{
+  "name": "@fictjs/compiler-linux-arm64-musl",
+  "version": "0.28.0",
+  "description": "Fict Rust compiler native binding for Linux ARM64 (musl)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/compiler-linux-arm64-musl"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "musl"
+  ],
+  "main": "fict_compiler_napi.node",
+  "files": [
+    "fict_compiler_napi.node",
+    "binding-manifest.json",
+    "SHASUMS256.txt"
+  ],
+  "fictNative": {
+    "target": "linux-arm64-musl",
+    "rustTarget": "aarch64-unknown-linux-musl",
+    "binary": "fict_compiler_napi.node"
+  }
+}

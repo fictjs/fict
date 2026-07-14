@@ -107,6 +107,19 @@ export function findWorkspaceProtocols(manifest) {
   return violations
 }
 
+export function findNativeCompilerVersionMismatches(manifest) {
+  if (manifest.name !== '@fictjs/compiler') return []
+  const nativeDependencies = Object.entries(manifest.optionalDependencies ?? {}).filter(([name]) =>
+    name.startsWith('@fictjs/compiler-'),
+  )
+  const failures = nativeDependencies
+    .filter(([, version]) => version !== manifest.version)
+    .map(([name, version]) => `${name}@${version}`)
+  if (nativeDependencies.length !== 8)
+    failures.push(`native-package-count:${nativeDependencies.length}`)
+  return failures
+}
+
 export function collectExportTargets(exportsField) {
   const targets = []
   function visit(value) {
@@ -235,6 +248,14 @@ function validateArchive(expected, packed, entries, tarballPath) {
     )
   }
 
+  const nativeVersionMismatches = findNativeCompilerVersionMismatches(packed)
+  if (nativeVersionMismatches.length > 0) {
+    throw new Error(
+      `${packed.name} tarball native versions do not match ${packed.version}: ` +
+        nativeVersionMismatches.join(', '),
+    )
+  }
+
   const missingTargets = collectExportTargets(packed.exports).filter(target => !entries.has(target))
   if (missingTargets.length > 0) {
     throw new Error(
@@ -297,7 +318,14 @@ function installedTargetUrl(consumerDir, entry) {
   return pathToFileURL(targetPath).href
 }
 
-function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPaths, resolutions) {
+function consumerDependencies(
+  rootDir,
+  sourcePackages,
+  packedPackages,
+  tarballPaths,
+  resolutions,
+  excludedDependencyNames = new Set(),
+) {
   const declaredVersions = declaredDependencyVersions(rootDir)
   const internalNames = new Set(packedPackages.map(manifest => manifest.name))
   const dependencies = {}
@@ -315,7 +343,9 @@ function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPa
     const sourceDir = path.dirname(sourcePackages[index].manifestPath)
     for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
       for (const [name, range] of Object.entries(manifest[field] ?? {})) {
-        if (internalNames.has(name) || dependencies[name]) continue
+        if (internalNames.has(name) || dependencies[name] || excludedDependencyNames.has(name)) {
+          continue
+        }
         const declared = declaredVersions.get(name)
         const version =
           resolutions.get(sourceDir)?.get(name) ??
@@ -336,6 +366,7 @@ function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPa
 export function verifyReleaseContract(rootPackage, releaseWorkflow) {
   const releaseVerify = rootPackage.scripts?.['release:verify'] ?? ''
   const requiredGates = [
+    'pnpm test:compiler:native-packages',
     'pnpm test:review-regressions',
     'pnpm test:package-tarballs',
     'pnpm test:ssr-matrix',
@@ -348,10 +379,24 @@ export function verifyReleaseContract(rootPackage, releaseWorkflow) {
   if (!releaseWorkflow.includes('pnpm release:verify:clean')) {
     missing.push('release workflow clean-checkout invocation')
   }
+  if (!releaseWorkflow.includes('name: Build native compiler packages')) {
+    missing.push('release workflow native build matrix')
+  }
+  if (!releaseWorkflow.includes('name: Certify native compiler packages')) {
+    missing.push('release workflow native runtime matrix')
+  }
+  if (!releaseWorkflow.includes('node scripts/publish-release-packages.mjs')) {
+    missing.push('dependency-ordered atomic package publisher')
+  }
   return missing
 }
 
-export function buildConsumerPnpmConfig(rootConfig, packages, dependencies) {
+export function buildConsumerPnpmConfig(
+  rootConfig,
+  packages,
+  dependencies,
+  excludedDependencies = new Set(),
+) {
   const tarballOverrides = {}
   for (const manifest of packages) {
     for (const field of ['dependencies', 'optionalDependencies']) {
@@ -361,6 +406,9 @@ export function buildConsumerPnpmConfig(rootConfig, packages, dependencies) {
         tarballOverrides[`${manifest.name}>${name}`] = dependency
       }
     }
+  }
+  for (const dependencyName of excludedDependencies) {
+    tarballOverrides[`@fictjs/compiler>${dependencyName}`] = '-'
   }
   return {
     ...rootConfig,
@@ -374,11 +422,17 @@ export function buildConsumerPnpmConfig(rootConfig, packages, dependencies) {
 async function main() {
   const config = readJson(path.join(repoRoot, '.github/npm-publish-packages.json'))
   const packages = packageByName(repoRoot)
-  const selected = config.packages.map(name => {
+  const configured = config.packages.map(name => {
     const packageInfo = packages.get(name)
     if (!packageInfo) throw new Error(`Publish allowlist references missing package ${name}`)
     return packageInfo
   })
+  const nativePackageNames = new Set(
+    configured
+      .filter(packageInfo => packageInfo.manifest.fictNative)
+      .map(packageInfo => packageInfo.manifest.name),
+  )
+  const selected = configured.filter(packageInfo => !packageInfo.manifest.fictNative)
 
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-package-tarballs-'))
   const packsDir = path.join(tempRoot, 'packs')
@@ -398,6 +452,7 @@ async function main() {
       packedPackages,
       tarballPaths,
       resolutions,
+      nativePackageNames,
     )
     const rootResolutions = resolutions.get(repoRoot)
     const devDependencies = {
@@ -407,7 +462,12 @@ async function main() {
     if (!devDependencies['@types/node'] || !devDependencies.typescript) {
       throw new Error('Root TypeScript consumer dependencies are missing from the frozen install')
     }
-    const pnpmConfig = buildConsumerPnpmConfig(rootManifest.pnpm, packedPackages, dependencies)
+    const pnpmConfig = buildConsumerPnpmConfig(
+      rootManifest.pnpm,
+      packedPackages,
+      dependencies,
+      nativePackageNames,
+    )
 
     writeFileSync(
       path.join(consumerDir, 'package.json'),

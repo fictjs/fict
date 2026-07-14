@@ -25,6 +25,8 @@ use serde_json::Value;
 pub struct NativeCompilerInfo {
     /// Backend identifier used by compatibility and diagnostics code.
     pub backend: String,
+    /// Exact Rust target triple used to build this addon.
+    pub native_target: String,
     /// Exact OXC release compiled into this native addon.
     pub oxc_version: String,
     /// Node-API level required by this addon.
@@ -60,6 +62,7 @@ impl From<ParseProbe> for ParseProbeResult {
 pub fn native_compiler_info() -> NativeCompilerInfo {
     NativeCompilerInfo {
         backend: "rust".to_owned(),
+        native_target: env!("FICT_NATIVE_TARGET").to_owned(),
         oxc_version: OXC_VERSION.to_owned(),
         node_api_version: 10,
         compiler_build_id: compiler_build_id().to_owned(),

@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const native = vi.hoisted(() => {
   const info = {
     backend: 'rust' as const,
+    nativeTarget: 'aarch64-apple-darwin',
     oxcVersion: '0.139.0',
     nodeApiVersion: 10,
     compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'1'.repeat(64)}`,
