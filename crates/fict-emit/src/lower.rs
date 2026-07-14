@@ -4,11 +4,12 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, ImportedHookPropertyMatch, ImportedHookReturn, ImportedName,
-    ImportedReactiveKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName,
-    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, PlaceBase,
-    ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
+    ArrayElement, CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirFunction,
+    HirInstruction, HirInstructionKind, ImportedHookPropertyMatch, ImportedHookReturn,
+    ImportedName, ImportedReactiveKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName,
+    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, ObjectEntry,
+    ObjectPropertyKind, PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId,
+    ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
@@ -1038,6 +1039,7 @@ fn lower_function(
     let mut temporaries = Vec::new();
     let mut value_temporaries = BTreeMap::new();
     let mut operations = Vec::new();
+    let hook_return_accessor_reads = hook_return_accessor_reads(function);
     let mut declared_templates = BTreeSet::new();
     let cleanup = regions
         .top_level_regions
@@ -1189,6 +1191,13 @@ fn lower_function(
             }
             match &instruction.kind {
                 HirInstructionKind::Read { place } => {
+                    if instruction
+                        .result
+                        .is_some_and(|result| hook_return_accessor_reads.contains(&result))
+                    {
+                        preserve(&mut operations, block.id, instruction_index, instruction);
+                        continue;
+                    }
                     let direct_slot = place_local(place.base)
                         .and_then(|local| slot_by_local.get(&local).copied())
                         .map(|slot| (slot, 0_usize));
@@ -3378,6 +3387,85 @@ fn function_value(function: &fict_hir::HirFunction, value: ValueId) -> Option<Fu
     match function.values.get(value.as_usize())?.kind {
         ValueKind::Function(function) => Some(function),
         _ => None,
+    }
+}
+
+fn hook_return_accessor_reads(function: &HirFunction) -> BTreeSet<ValueId> {
+    if function.kind != FunctionKind::Hook {
+        return BTreeSet::new();
+    }
+
+    let mut visited = BTreeSet::new();
+    let mut reads = BTreeSet::new();
+    for value in function.blocks.iter().filter_map(|block| {
+        let TerminatorKind::Return { value: Some(value) } = block.terminator.kind else {
+            return None;
+        };
+        Some(value)
+    }) {
+        collect_hook_return_accessor_reads(function, value, &mut visited, &mut reads);
+    }
+    reads
+}
+
+fn collect_hook_return_accessor_reads(
+    function: &HirFunction,
+    value: ValueId,
+    visited: &mut BTreeSet<ValueId>,
+    reads: &mut BTreeSet<ValueId>,
+) {
+    if !visited.insert(value) {
+        return;
+    }
+    let Some(instruction) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))
+    else {
+        return;
+    };
+
+    match &instruction.kind {
+        HirInstructionKind::Read { .. } => {
+            reads.insert(value);
+        }
+        HirInstructionKind::Object { entries } => {
+            for entry in entries {
+                let ObjectEntry::Property {
+                    value,
+                    kind: ObjectPropertyKind::Init,
+                    prototype_setter: false,
+                    ..
+                } = entry
+                else {
+                    continue;
+                };
+                collect_hook_return_accessor_reads(function, *value, visited, reads);
+            }
+        }
+        HirInstructionKind::Array { elements } => {
+            for element in elements {
+                let ArrayElement::Value(value) = element else {
+                    continue;
+                };
+                collect_hook_return_accessor_reads(function, *value, visited, reads);
+            }
+        }
+        HirInstructionKind::Conditional {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_hook_return_accessor_reads(function, *consequent, visited, reads);
+            collect_hook_return_accessor_reads(function, *alternate, visited, reads);
+        }
+        HirInstructionKind::Sequence { values } => {
+            for value in values {
+                collect_hook_return_accessor_reads(function, *value, visited, reads);
+            }
+        }
+        _ => {}
     }
 }
 

@@ -478,14 +478,16 @@ fn infer_hook_return(
     if function.kind != FunctionKind::Hook {
         return None;
     }
-    let mut infos = function.blocks.iter().filter_map(|block| {
+    let mut returns = function.blocks.iter().filter_map(|block| {
         let TerminatorKind::Return { value: Some(value) } = block.terminator.kind else {
             return None;
         };
-        hook_info_for_value(function, analysis, value)
+        Some(value)
     });
-    let first = infos.next()?;
-    infos.all(|info| info == first).then_some(first)
+    let first = hook_info_for_value(function, analysis, returns.next()?)?;
+    returns
+        .all(|value| hook_info_for_value(function, analysis, value).as_ref() == Some(&first))
+        .then_some(first)
 }
 
 fn hook_info_for_value(
@@ -557,6 +559,7 @@ fn classify_value(
     if !visited.insert(value) {
         return None;
     }
+    let instruction = defining_instruction(function, value)?;
     if let Some([path]) = analysis
         .dependencies
         .value_dependencies
@@ -564,6 +567,7 @@ fn classify_value(
         .map(Vec::as_slice)
         && path.segments.is_empty()
         && let DependencyBase::Ssa(name) = path.base
+        && matches!(&instruction.kind, HirInstructionKind::Read { .. })
         && let Some(kind) = analysis
             .scopes
             .bindings
@@ -573,7 +577,6 @@ fn classify_value(
     {
         return Some(kind);
     }
-    let instruction = defining_instruction(function, value)?;
     match &instruction.kind {
         HirInstructionKind::Call(call) => classify_call(call),
         HirInstructionKind::Sequence { values } => values

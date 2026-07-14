@@ -619,6 +619,95 @@ mod tests {
     }
 
     #[test]
+    fn preserves_accessor_identity_in_published_hook_returns() {
+        let result = compile(request(
+            r#"
+                import { $state } from 'fict';
+                export function useDirect() {
+                    const count = $state(0);
+                    return count;
+                }
+                export function useObject(flag) {
+                    const count = $state(0);
+                    const alternate = $state(1);
+                    return {
+                        direct: count,
+                        nested: [alternate],
+                        conditional: flag ? count : alternate,
+                        value: count + 1,
+                    };
+                }
+                export function useArray() {
+                    const count = $state(0);
+                    return [count];
+                }
+                export function useDerived() {
+                    const count = $state(0);
+                    return count + 1;
+                }
+                export function useMixed(flag) {
+                    const count = $state(0);
+                    if (flag) return count;
+                    return count + 1;
+                }
+            "#,
+            "hook-return-accessors.ts",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.module_metadata.hooks.get("useDirect"),
+            Some(&HookReturnInfo {
+                direct_accessor: Some(ReactiveExportKind::Signal),
+                ..HookReturnInfo::default()
+            })
+        );
+        assert_eq!(
+            result.module_metadata.hooks.get("useObject"),
+            Some(&HookReturnInfo {
+                object_props: BTreeMap::from([
+                    ("conditional".into(), ReactiveExportKind::Signal),
+                    ("direct".into(), ReactiveExportKind::Signal),
+                ]),
+                ..HookReturnInfo::default()
+            })
+        );
+        assert_eq!(
+            result.module_metadata.hooks.get("useArray"),
+            Some(&HookReturnInfo {
+                array_props: BTreeMap::from([("0".into(), ReactiveExportKind::Signal)]),
+                ..HookReturnInfo::default()
+            })
+        );
+        assert!(!result.module_metadata.hooks.contains_key("useDerived"));
+        assert!(!result.module_metadata.hooks.contains_key("useMixed"));
+
+        assert!(result.code.contains("return count;"), "{}", result.code);
+        assert!(result.code.contains("direct: count"), "{}", result.code);
+        assert!(
+            result.code.contains("nested: [alternate]"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("flag ? count : alternate"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("value: count() + 1"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("return [count];"), "{}", result.code);
+        assert!(
+            result.code.contains("return count() + 1;"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn propagates_resolved_reexports_and_namespace_metadata() {
         let mut input = request(
             r#"
