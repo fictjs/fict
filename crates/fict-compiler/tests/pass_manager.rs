@@ -366,10 +366,10 @@ fn propagates_structured_imported_hook_members_into_scopes_and_regions() {
     let frontend = build_hir(
         r#"
             import { useCounter } from './hooks';
-            export function App(key) {
+            export function App() {
                 const api = useCounter();
                 const derived = api.count === 1;
-                const dynamic = api[key] === 1;
+                const dynamic = api[globalThis.key] === 1;
                 const reader = () => {
                     const nestedDerived = api.count === 2;
                     return nestedDerived;

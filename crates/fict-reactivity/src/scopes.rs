@@ -160,6 +160,16 @@ pub fn analyze_reactive_scopes(
             ShapeSource::Alias(_) if shape.kind == ShapeKind::Reactive => {
                 Some(ReactiveBindingKind::Alias)
             }
+            ShapeSource::Parameter
+                if function.kind == fict_hir::FunctionKind::Component
+                    && function.binding.is_some_and(|binding| {
+                        file.bindings[binding.as_usize()]
+                            .display_name
+                            .starts_with(char::is_uppercase)
+                    }) =>
+            {
+                Some(ReactiveBindingKind::Alias)
+            }
             ShapeSource::Entry
             | ShapeSource::Parameter
             | ShapeSource::Literal(_)

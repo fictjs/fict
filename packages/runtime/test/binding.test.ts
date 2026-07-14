@@ -487,6 +487,41 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('insert', () => {
+    it('tracks a reactive accessor returned by the outer getter', async () => {
+      const child = createSignal({
+        type: 'span',
+        props: { children: 'first' },
+        key: undefined,
+      })
+      const root = createRoot(() => insert(container, () => child, createElement))
+
+      expect(container.textContent).toBe('first')
+      child({ type: 'span', props: { children: 'second' }, key: undefined })
+      await tick()
+      expect(container.textContent).toBe('second')
+
+      root.dispose()
+      expect(container.childNodes.length).toBe(0)
+    })
+
+    it('tracks reactive function items nested in arrays', async () => {
+      const value = createSignal('first')
+      const child = reactive(() => ({
+        type: 'span',
+        props: { children: value() },
+        key: undefined,
+      }))
+      const root = createRoot(() => insert(container, () => [child], createElement))
+
+      expect(container.textContent).toBe('first')
+      value('second')
+      await tick()
+      expect(container.textContent).toBe('second')
+
+      root.dispose()
+      expect(container.childNodes.length).toBe(0)
+    })
+
     it('cleans up fragment outputs and lifecycles when swapped', async () => {
       const show = createSignal(true)
       const cleanups: string[] = []

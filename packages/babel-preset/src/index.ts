@@ -21,15 +21,17 @@ import syntaxTypeScript from '@babel/plugin-syntax-typescript'
 import transformModulesCommonJS from '@babel/plugin-transform-modules-commonjs'
 import transformTypeScript from '@babel/plugin-transform-typescript'
 import {
-  DiagnosticCode,
   invalidateModuleMetadata,
   resolveModuleMetadata as resolveCompilerModuleMetadata,
   setModuleMetadata,
+} from '@fictjs/compiler/graph-host'
+import {
+  DiagnosticCode,
+  createFictPlugin,
   type CompilerWarning,
   type FictCompilerOptions,
   type ModuleReactiveMetadata,
-} from '@fictjs/compiler'
-import { createFictPlugin } from '@fictjs/compiler/legacy'
+} from '@fictjs/compiler/legacy'
 
 declare module '@babel/core' {
   interface BabelFileMetadata {
@@ -1728,5 +1730,5 @@ export default function fictPreset(
   }
 }
 
-export type { FictCompilerOptions } from '@fictjs/compiler'
+export type { FictCompilerOptions } from '@fictjs/compiler/legacy'
 export { createFictPlugin } from '@fictjs/compiler/legacy'

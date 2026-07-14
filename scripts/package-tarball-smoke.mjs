@@ -357,6 +357,7 @@ const nativeFacade = {
   }),
 }
 const originalLoad = Module._load
+delete process.env.FICT_COMPILER_BACKEND
 Module._load = function (request, parent, isMain) {
   if (request === '@fictjs/compiler/native') return nativeFacade
   if (forbidden.has(request)) throw new Error('Rust tarball path loaded ' + request)
@@ -367,7 +368,6 @@ Module._load = function (request, parent, isMain) {
   const viteModule = require('@fictjs/vite-plugin')
   const fict = viteModule.default ?? viteModule
   const plugin = fict({
-    backend: 'rust',
     functionSplitting: false,
     useTypeScriptProject: false,
     publicIdentityNamespace: 'tarball-test@1',

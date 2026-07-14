@@ -1,9 +1,9 @@
 {
   "schemaVersion": 3,
-  "phase": "beta",
-  "viteDefaultBackend": "legacy",
+  "phase": "rust-default",
+  "viteDefaultBackend": "rust",
   "rollbackBackend": "legacy",
-  "rustDefaultRelease": null,
+  "rustDefaultRelease": "0.29.0",
   "compatibilityRelease": null,
   "finalLegacyRelease": null,
   "legacyRemovalRelease": null,

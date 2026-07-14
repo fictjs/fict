@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { parseModuleReactiveMetadata } from '../src/graph-host'
 import {
   MODULE_REACTIVE_METADATA_VERSION,
-  parseModuleReactiveMetadata,
   type ReactiveExportKind,
   type ResolvedMetadataInput,
 } from '../src/index'

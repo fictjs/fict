@@ -148,11 +148,34 @@ describe('Rust compiler backend', () => {
     else process.env.FICT_COMPILER_BACKEND = originalCompilerBackend
   })
 
+  it('uses Rust as the whole-build default', async () => {
+    delete process.env.FICT_COMPILER_BACKEND
+    native.transform.mockResolvedValue(
+      compileResult({ code: 'export const selectedByDefault = true;\n' }),
+    )
+    const plugin = fict({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    plugin.configResolved?.(config as never)
+
+    const result = (await plugin.transform?.call(
+      context() as never,
+      'export const source = true',
+      '/project/src/default.ts',
+    )) as { code: string }
+
+    expect(result.code).toContain('selectedByDefault')
+    expect(native.transform).toHaveBeenCalledOnce()
+  })
+
   it('selects a whole-build backend from the environment below an explicit option', async () => {
     native.transform.mockResolvedValue(
-      compileResult({ code: 'export const selectedByEnvironment = true;\n' }),
+      compileResult({ code: 'export const selectedByExplicitOption = true;\n' }),
     )
-    process.env.FICT_COMPILER_BACKEND = 'rust'
+    process.env.FICT_COMPILER_BACKEND = 'legacy'
     const environmentPlugin = fict({
       cache: false,
       functionSplitting: false,
@@ -165,12 +188,12 @@ describe('Rust compiler backend', () => {
       'export const source = true',
       '/project/src/environment.ts',
     )) as { code: string }
-    expect(environmentResult.code).toContain('selectedByEnvironment')
-    expect(native.transform).toHaveBeenCalledOnce()
+    expect(environmentResult.code).toContain('source')
+    expect(environmentResult.code).not.toContain('selectedByExplicitOption')
+    expect(native.transform).not.toHaveBeenCalled()
 
-    native.transform.mockClear()
     const explicitPlugin = fict({
-      backend: 'legacy',
+      backend: 'rust',
       cache: false,
       functionSplitting: false,
       useTypeScriptProject: false,
@@ -182,9 +205,8 @@ describe('Rust compiler backend', () => {
       'export const source = true',
       '/project/src/explicit.ts',
     )) as { code: string }
-    expect(explicitResult.code).toContain('source')
-    expect(explicitResult.code).not.toContain('selectedByEnvironment')
-    expect(native.transform).not.toHaveBeenCalled()
+    expect(explicitResult.code).toContain('selectedByExplicitOption')
+    expect(native.transform).toHaveBeenCalledOnce()
   })
 
   it('fails closed for an unknown environment backend', () => {

@@ -5,7 +5,13 @@ import path from 'node:path'
 import { build } from 'vite'
 import { describe, expect, it, vi } from 'vitest'
 
-import fict from '..'
+import createFictVitePlugin from '..'
+
+function fict(
+  options?: Parameters<typeof createFictVitePlugin>[0],
+): ReturnType<typeof createFictVitePlugin> {
+  return createFictVitePlugin({ backend: 'legacy', ...options })
+}
 
 function createTransformPlugin(options: Parameters<typeof fict>[0] = {}) {
   const plugin = fict({

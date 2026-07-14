@@ -15,6 +15,7 @@ import {
   __fictSetComponentMeta,
   clearDelegatedEvents,
   hydrateComponent,
+  insert,
   resolvePath,
   spread,
   template,
@@ -423,6 +424,34 @@ describe('DOM Module', () => {
   })
 
   describe('hydrateComponent', () => {
+    it('aligns compiled marker paths past server-rendered dynamic text', async () => {
+      container.innerHTML =
+        '<section><span>US East<!----></span><strong>65<!---->%</strong></section>'
+      const label = createSignal('US East')
+      const capacity = createSignal(65)
+      const section = container.firstChild
+
+      const teardown = hydrateComponent(() => {
+        const root = template('<section><span><!----></span><strong><!---->%</strong></section>')()
+        const labelParent = resolvePath(root, [0])!
+        const labelMarker = resolvePath(root, [0, 0])!
+        const capacityParent = resolvePath(root, [1])!
+        const capacityMarker = resolvePath(root, [1, 0])!
+        insert(labelParent as ParentNode & Node, label, labelMarker)
+        insert(capacityParent as ParentNode & Node, capacity, capacityMarker)
+      }, container)
+
+      expect(container.firstChild).toBe(section)
+      expect(container.querySelector('span')?.textContent).toBe('US East')
+      expect(container.querySelector('strong')?.textContent).toBe('65%')
+
+      capacity(70)
+      await tick()
+
+      expect(container.querySelector('strong')?.textContent).toBe('70%')
+      teardown()
+    })
+
     it('claims matching nested resumable component hosts as opaque boundaries', () => {
       container.innerHTML =
         '<fict-host data-fict-host data-fict-s="sChild" data-fict-t="Child@test" data-fict-h="/child.js#resume"><button>1</button></fict-host>'
@@ -2240,6 +2269,16 @@ describe('DOM Module', () => {
 
       expect(node2).not.toBe(node1)
       expect((node2 as HTMLDivElement).className).toBe('test')
+    })
+
+    it('preserves an explicit single-child fragment root', () => {
+      const factory = template('<!---->', undefined, undefined, undefined, true)
+
+      const node = factory()
+
+      expect(node).toBeInstanceOf(DocumentFragment)
+      expect(node.childNodes).toHaveLength(1)
+      expect(node.firstChild).toBeInstanceOf(Comment)
     })
 
     it('caches the template element', () => {

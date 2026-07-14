@@ -127,7 +127,7 @@ fn maps_reactivity_props_events_and_control_flow_origins() {
     );
     let output = MappedOutput::compile(source, "origins.tsx");
 
-    output.assert_maps("__fictUseSignal(__fictCtx, 0)", 0, "$state", 1);
+    output.assert_maps("__fictUseSignal(__fictCtx, 0,", 0, "$state", 1);
     output.assert_maps("document.title", 0, "document.title", 0);
     output.assert_maps("const value = prop", 0, "value", 0);
     output.assert_maps("String(value())", 0, "String(value)", 0);

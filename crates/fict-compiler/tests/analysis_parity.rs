@@ -146,6 +146,11 @@ fn normalize_reactive_bindings(
     analysis: &FunctionPassAnalysis,
     user_names: &BTreeSet<String>,
 ) -> Vec<ReactiveBindingSnapshot> {
+    #[rustfmt::skip]
+    let has_root = analysis.scopes.bindings.iter().any(|binding| reactive_kind_priority(binding.kind) == 3);
+    if !has_root {
+        return Vec::new();
+    }
     let mut grouped: BTreeMap<String, (ReactiveBindingKind, BTreeSet<String>)> = BTreeMap::new();
     for binding in &analysis.scopes.bindings {
         let Some(name) = local_name(function, binding.name.local) else {

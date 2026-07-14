@@ -14,7 +14,7 @@ import { gzipSync } from 'zlib'
 const require = createRequire(import.meta.url)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const compilerDistPath = path.join(__dirname, '../packages/compiler/dist/index.cjs')
+const compilerDistPath = path.join(__dirname, '../packages/compiler/dist/legacy.cjs')
 const baselinePath = path.join(__dirname, 'hir-guardrails.baseline.json')
 const updateBaseline = process.argv.includes('--update')
 

@@ -19,21 +19,22 @@ profile. Production builds force strict guarantee back on.
 
 ## Compiler Backend Migration
 
-The OXC-native compiler is available as an explicit beta while Vite keeps the
-legacy backend as its default. Select one backend for the entire build:
+The OXC-native compiler is the Vite/Core default starting with the planned
+0.29.0 release. A build still selects exactly one backend:
 
 ```ts
 import fict from '@fictjs/vite-plugin'
 
 export default {
-  plugins: [fict({ backend: 'rust' })],
+  plugins: [fict()],
 }
 ```
 
-Use `FICT_COMPILER_BACKEND=rust` for an application-wide CI trial and
-`FICT_COMPILER_BACKEND=legacy` for operational rollback. An explicit plugin
-option takes precedence over the environment. Do not choose the backend from a
-per-file callback or retry a failed Rust file through Babel.
+Use `FICT_COMPILER_BACKEND=legacy` for operational rollback. An explicit plugin
+option takes precedence over the environment, so `backend: 'legacy'` can pin a
+committed recovery build while `backend: 'rust'` can pin the normal default.
+Do not choose the backend from a per-file callback or retry a failed Rust file
+through Babel.
 
 With `backend: 'rust'`, the Vite runtime graph uses the native compiler and the
 Babel-free compiler graph host. Babel packages can remain installed during the
@@ -62,9 +63,10 @@ structural; diagnostics, metadata, semantic events, maps, and artifacts remain
 blocking.
 
 Webpack users should migrate from `@fictjs/babel-preset` to the native
-`@fictjs/webpack-plugin` loader. Direct compiler integrations can import the
-serializable `transformSync`, `transform`, `scan`, or `analyze` facade from
-`@fictjs/compiler/native`; the facade lazily selects and reuses the validated
+`@fictjs/webpack-plugin` loader. Direct compiler integrations import the
+serializable `transformSync`, `transform`, `scan`, or `analyze` API from
+`@fictjs/compiler`; the lower-level loader remains available from
+`@fictjs/compiler/native`. Both facades lazily select and reuse the validated
 platform binding. Custom Babel pipelines that still
 need sibling plugins should run native Fict compilation as a separate first
 stage and compose source maps explicitly.
@@ -74,7 +76,7 @@ compatibility window, but emits one development-time deprecation warning per
 process. Do not suppress that warning in committed configuration; migrate to an
 official Vite, Webpack, or direct native integration.
 
-Preview `resumable: true` is available with the Rust beta through compiler-owned
+Preview `resumable: true` is available with the Rust compiler through compiler-owned
 structured handler artifacts. It remains explicit and Preview; native support
 does not graduate it or make it a Core default.
 

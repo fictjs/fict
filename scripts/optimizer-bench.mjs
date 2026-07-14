@@ -207,7 +207,7 @@ function getBaselinePath(argv, fallbackPath) {
 function getFictPlugin() {
   if (createFictPlugin) return createFictPlugin
 
-  const modulePath = path.join(__dirname, '../packages/compiler/dist/index.cjs')
+  const modulePath = path.join(__dirname, '../packages/compiler/dist/legacy.cjs')
   const loaded = require(modulePath)
   createFictPlugin = loaded?.default ?? loaded
   if (typeof createFictPlugin !== 'function') {

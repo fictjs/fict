@@ -15,13 +15,13 @@ import { transformSync } from '@babel/core'
 import syntaxJsx from '@babel/plugin-syntax-jsx'
 import { describe, expect, it } from 'vitest'
 
-import createFictPlugin, { type CompilerWarning } from '../src'
+import createFictPlugin, { type CompilerWarning } from '../src/legacy'
 import {
   clearModuleMetadata,
   invalidateModuleMetadata,
   resolveModuleMetadata,
   setModuleMetadata,
-} from '../src'
+} from '../src/graph-host'
 import type { ModuleReactiveMetadata } from '../src/types'
 
 describe('module metadata safety', () => {

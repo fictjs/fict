@@ -1,6 +1,7 @@
 use fict_emit::{
     CleanupOwner, DomNamespace, EmitOperation, NoJsxLoweringOptions, ReactiveSlotKind,
-    RuntimeFamily, RuntimeHelper, lower_core, lower_no_jsx,
+    RuntimeFamily, RuntimeHelper, lower_core as lower_core_with_scopes,
+    lower_no_jsx as lower_no_jsx_with_scopes,
 };
 use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
@@ -17,6 +18,11 @@ use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
     analyze_reactive_cycles, analyze_reactive_scopes, analyze_regions, analyze_shapes, analyze_ssa,
 };
+
+#[rustfmt::skip]
+macro_rules! lower_no_jsx { ($hir:expr, $regions:expr, $cycles:expr, $options:expr $(,)?) => { lower_no_jsx_with_scopes($hir, $regions, $cycles, None, $options) }; }
+#[rustfmt::skip]
+macro_rules! lower_core { ($hir:expr, $regions:expr, $cycles:expr, $options:expr $(,)?) => { lower_core_with_scopes($hir, $regions, $cycles, None, $options) }; }
 
 fn origin() -> Origin {
     Origin::source(SourceSpan::empty(0))
@@ -239,7 +245,7 @@ fn lowers_module_state_reads_writes_updates_and_effects() {
     let hir = fixture(FunctionKind::Module);
     verify_hir(&hir).expect("valid lowering fixture");
     let (regions, cycles) = analyses(&hir);
-    let program = lower_no_jsx(
+    let program = lower_no_jsx!(
         &hir,
         &regions,
         &cycles,
@@ -358,7 +364,7 @@ fn lowers_reactive_targets_inside_assignment_patterns() {
 
     verify_hir(&hir).expect("valid reactive pattern lowering fixture");
     let (regions, cycles) = analyses(&hir);
-    let program = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let program = lower_no_jsx!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("reactive pattern lowering");
     let operation = program.functions[0]
         .operations
@@ -387,7 +393,7 @@ fn lowers_reactive_targets_inside_assignment_patterns() {
 fn selects_hook_context_helpers_inside_components() {
     let hir = fixture(FunctionKind::Component);
     let (regions, cycles) = analyses(&hir);
-    let program = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let program = lower_no_jsx!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("component lowering");
     assert!(
         program
@@ -525,7 +531,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
     }];
     verify_hir(&hir).expect("valid JSX fixture");
     let (regions, cycles) = analyses(&hir);
-    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let program = lower_core!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("intrinsic JSX lowering");
     let declare = program.functions[0]
         .operations
@@ -631,7 +637,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
     assert!(!declare.0.contains("onClick"));
     assert!(!declare.0.contains(" ref"));
 
-    let vnode = lower_core(
+    let vnode = lower_core!(
         &hir,
         &regions,
         &cycles,
@@ -665,7 +671,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             .any(|operation| { matches!(operation, EmitOperation::DeclareTemplate { .. }) })
     );
 
-    let diagnostics = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let diagnostics = lower_no_jsx!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect_err("no-JSX phase rejects JSX");
     assert!(
         diagnostics
@@ -687,7 +693,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
         })));
     hir.templates[0].contains_fragment = true;
     verify_hir(&hir).expect("valid nested fragment fixture");
-    let fragment_vnode = lower_core(
+    let fragment_vnode = lower_core!(
         &hir,
         &regions,
         &cycles,
@@ -787,7 +793,7 @@ fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
     }];
     verify_hir(&hir).expect("valid component JSX fixture");
     let (regions, cycles) = analyses(&hir);
-    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let program = lower_core!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("component JSX lowering");
     let operation = program.functions[0]
         .operations
@@ -840,7 +846,7 @@ fn carries_structured_conditional_plan_into_emit_function() {
     }
     verify_hir(&hir).expect("valid conditional fixture");
     let (regions, cycles) = analyses(&hir);
-    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let program = lower_core!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("conditional lowering");
     assert!(
         program.functions[0]
@@ -948,7 +954,7 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
     verify_hir(&hir).expect("valid keyed-list fixture");
 
     let (regions, cycles) = analyses(&hir);
-    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let program = lower_core!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("keyed-list lowering");
     assert!(
         program
@@ -972,7 +978,7 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
 
     hir.bindings[0].import.as_mut().expect("import").source = "third-party/list".into();
     let (regions, cycles) = analyses(&hir);
-    let spoofed = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let spoofed = lower_core!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("same-named third-party helper remains ordinary HIR");
     assert!(
         !spoofed
@@ -1097,7 +1103,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
     };
     verify_hir(&hir).expect("valid runtime reactive fixture");
     let (regions, cycles) = analyses(&hir);
-    let program = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+    let program = lower_no_jsx!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect("runtime reactive tracking");
     assert_eq!(
         program.functions[0]
@@ -1171,7 +1177,7 @@ fn allocates_collision_free_module_helpers_and_temporaries() {
     ));
     verify_hir(&hir).expect("valid collision fixture");
     let (regions, cycles) = analyses(&hir);
-    let program = lower_no_jsx(
+    let program = lower_no_jsx!(
         &hir,
         &regions,
         &cycles,

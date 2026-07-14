@@ -17,7 +17,6 @@ use fict_reactivity::{
     ReactiveBindingKind, SsaDefinitionKind, analyze_aliases, analyze_dependencies,
     analyze_reactive_scopes, analyze_shapes, analyze_ssa,
 };
-
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
     OxcCompileOptions {
         language,
@@ -26,7 +25,6 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
         sourcemap: false,
     }
 }
-
 #[test]
 fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
     let output = build_hir(
@@ -150,7 +148,6 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
             .as_ref()
             .and_then(|import| import.reactive)
     };
-
     assert_eq!(reactive("primary"), Some(ImportedReactiveKind::Signal));
     assert_eq!(reactive("localCount"), Some(ImportedReactiveKind::Signal));
     assert_eq!(reactive("doubled"), Some(ImportedReactiveKind::Memo));
@@ -177,7 +174,6 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
             }],
         })
     );
-
     let members = |name: &str| {
         hir.bindings
             .iter()
@@ -245,7 +241,6 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
             .map(|property| (property.key.as_str(), property.kind)),
         Some(("0", ImportedReactiveKind::Memo))
     );
-
     let app = hir
         .functions
         .iter()
@@ -300,7 +295,6 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
     assert_eq!(static_path(calls[2]), ["deep", "usePair"]);
     assert_eq!(static_path(calls[3]), ["<dynamic>"]);
 }
-
 #[test]
 fn remaps_owned_module_exports_after_typescript_runtime_erasure() {
     let output = build_hir(
@@ -318,7 +312,6 @@ fn remaps_owned_module_exports_after_typescript_runtime_erasure() {
     let hir = output.hir.expect("verified HIR");
     let module_plan = output.module_plan.expect("verified module plan");
     verify_module_plan(&hir, &module_plan).expect("module plan must own valid HIR identities");
-
     let value = hir
         .bindings
         .iter()
@@ -347,7 +340,6 @@ fn remaps_owned_module_exports_after_typescript_runtime_erasure() {
             if exported == "forwarded" && source == "./dep"
     ));
 }
-
 #[test]
 fn retains_simple_explicit_and_arrow_return_values_in_terminators() {
     let output = build_hir(
@@ -371,7 +363,6 @@ fn retains_simple_explicit_and_arrow_return_values_in_terminators() {
             })
             .unwrap_or_else(|| panic!("missing function {name}"))
     };
-
     for name in ["useObject", "read"] {
         let function = named(name);
         let TerminatorKind::Return { value: Some(value) } = function.blocks[0].terminator.kind
@@ -390,7 +381,6 @@ fn retains_simple_explicit_and_arrow_return_values_in_terminators() {
         TerminatorKind::Return { value: None }
     ));
 }
-
 #[test]
 fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
     let source = r#"
@@ -413,7 +403,6 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
         .iter()
         .find(|function| function.kind == FunctionKind::Component)
         .expect("component function");
-
     assert_eq!(app.blocks.len(), 4);
     let source_hint = app.blocks[0]
         .source_hint
@@ -491,7 +480,6 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
                 } if left == reactive_read
             )
     }));
-
     let consequent_block = &app.blocks[consequent.as_usize()];
     let TerminatorKind::Return {
         value: Some(big_value),
@@ -503,7 +491,6 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
         instruction.result == Some(big_value)
             && matches!(instruction.kind, HirInstructionKind::Jsx { .. })
     }));
-
     let TerminatorKind::Goto { target: join } = app.blocks[alternate.as_usize()].terminator.kind
     else {
         panic!("empty false branch must flow to the join")
@@ -530,7 +517,6 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
         )
     );
 }
-
 #[test]
 fn lowers_throw_values_into_their_conditional_block() {
     let source = r#"
@@ -568,7 +554,6 @@ fn lowers_throw_values_into_their_conditional_block() {
         instruction.result == Some(value) && matches!(instruction.kind, HirInstructionKind::Call(_))
     }));
 }
-
 #[test]
 fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
     let source = r#"
@@ -606,7 +591,6 @@ fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
         .iter()
         .find(|function| function.binding == Some(work))
         .expect("work function");
-
     let header = function
         .blocks
         .iter()
@@ -627,7 +611,6 @@ fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
         1
     );
     assert!(hint.exit.is_some());
-
     let test_blocks: Vec<_> = hint
         .switch_cases
         .iter()
@@ -638,7 +621,6 @@ fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
         header.terminator.kind,
         TerminatorKind::Goto { target } if target == test_blocks[0]
     ));
-
     let comparisons: Vec<_> = test_blocks
         .iter()
         .map(|block| {
@@ -711,7 +693,6 @@ fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
                     ))
         );
     }
-
     assert!(matches!(
         function.blocks[hint.switch_cases[1].body.as_usize()]
             .terminator
@@ -745,7 +726,6 @@ fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
             })
     );
 }
-
 #[test]
 fn lowers_try_catch_finally_and_catch_patterns_into_structured_cfg() {
     let source = r#"
@@ -828,7 +808,6 @@ fn lowers_try_catch_finally_and_catch_patterns_into_structured_cfg() {
             .map(|hint| &hint.kind),
         Some(StructuredSourceKind::Finally)
     ));
-
     for (call, expected_block) in [
         ("action()", body),
         ("fallbackMessage()", catch),
@@ -848,7 +827,6 @@ fn lowers_try_catch_finally_and_catch_patterns_into_structured_cfg() {
             .unwrap_or_else(|| panic!("missing {call}"));
         assert_eq!(block.id, expected_block, "{call}");
     }
-
     let catch_block = &function.blocks[catch.as_usize()];
     let fallback_value = catch_block
         .instructions
@@ -925,7 +903,6 @@ fn lowers_try_catch_finally_and_catch_patterns_into_structured_cfg() {
             })
     );
 }
-
 #[test]
 fn lowers_catch_only_and_finally_only_try_variants() {
     let source = r#"
@@ -992,7 +969,6 @@ fn lowers_catch_only_and_finally_only_try_variants() {
         }
     }
 }
-
 #[test]
 fn lowers_classic_loops_and_labeled_control_edges() {
     let source = r#"
@@ -1031,7 +1007,6 @@ fn lowers_classic_loops_and_labeled_control_edges() {
         .iter()
         .find(|function| function.binding == Some(loops))
         .expect("loops function");
-
     let loop_headers: Vec<_> = function
         .blocks
         .iter()
@@ -1077,7 +1052,6 @@ fn lowers_classic_loops_and_labeled_control_edges() {
         })
         .expect("for update block")
         .id;
-
     let terminator_for = |text: &str| {
         function.blocks.iter().find_map(|block| {
             let span = block.terminator.origin.primary_span?;
@@ -1104,7 +1078,6 @@ fn lowers_classic_loops_and_labeled_control_edges() {
         Some(TerminatorKind::Goto { target }) if Some(*target) == do_while_loop.1.exit
     ));
 }
-
 #[test]
 fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targets() {
     let source = r#"
@@ -1143,7 +1116,6 @@ fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targe
         .iter()
         .find(|function| function.binding == Some(iterate))
         .expect("iterate function");
-
     let headers: Vec<_> = function
         .blocks
         .iter()
@@ -1159,7 +1131,6 @@ fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targe
         })
         .collect();
     assert_eq!(headers.len(), 3, "{headers:#?}");
-
     let binding = |name: &str| {
         hir.bindings
             .iter()
@@ -1179,7 +1150,6 @@ fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targe
     let item = local("item");
     let value = local("value");
     let rest = local("rest");
-
     for header in &headers {
         let (kind, source_value, body, exit) = match header.terminator.kind {
             TerminatorKind::ForIn { object, body, exit } => (IterationKind::In, object, body, exit),
@@ -1219,7 +1189,6 @@ fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targe
             source_block.terminator.kind,
             TerminatorKind::Goto { target } if target == header.id
         ));
-
         let iteration = function.blocks[body.as_usize()]
             .instructions
             .iter()
@@ -1257,7 +1226,6 @@ fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targe
             }
         }
     }
-
     let terminator_for = |text: &str| {
         function.blocks.iter().find_map(|block| {
             let span = block.terminator.origin.primary_span?;
@@ -1288,7 +1256,6 @@ fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targe
         Some(TerminatorKind::Goto { target }) if *target == await_of.id
     ));
 }
-
 #[test]
 fn builds_verified_binding_aware_hir_for_tsx_components_and_macros() {
     let source = r#"
@@ -1305,7 +1272,6 @@ fn builds_verified_binding_aware_hir_for_tsx_components_and_macros() {
     );
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let hir = output.hir.expect("verified HIR");
-
     let app = hir
         .functions
         .iter()
@@ -1372,7 +1338,6 @@ fn builds_verified_binding_aware_hir_for_tsx_components_and_macros() {
             .any(|instruction| matches!(instruction.kind, HirInstructionKind::Jsx { .. }))
     );
 }
-
 #[test]
 fn alias_and_shadow_calls_keep_distinct_binding_identity() {
     let source = r#"
@@ -1410,7 +1375,6 @@ fn alias_and_shadow_calls_keep_distinct_binding_identity() {
     };
     assert_ne!(imported, shadow);
 }
-
 #[test]
 fn classifies_runtime_reactive_calls_by_import_identity() {
     let source = r#"
@@ -1419,7 +1383,6 @@ fn classifies_runtime_reactive_calls_by_import_identity() {
         import { createSelector as selector } from '@fictjs/runtime/advanced';
         import * as F from 'fict';
         import { $store as fakeStore } from 'third-party';
-
         const one = store({ value: 1 });
         const two = resource(() => 2);
         const three = selector(() => 3);
@@ -1470,7 +1433,6 @@ fn classifies_runtime_reactive_calls_by_import_identity() {
         "wrong-module and shadowed same-name calls remain ordinary"
     );
 }
-
 #[test]
 fn materializes_binding_resolved_macro_reads_in_hir() {
     let source = r#"
@@ -1503,7 +1465,6 @@ fn materializes_binding_resolved_macro_reads_in_hir() {
             )
         })
         .collect();
-
     assert_eq!(reads.len(), 2);
     for read in reads {
         let span = read.origin.primary_span.expect("read source span");
@@ -1535,7 +1496,6 @@ fn materializes_binding_resolved_macro_reads_in_hir() {
         Some("doubled")
     );
 }
-
 #[test]
 fn materializes_reactive_assignments_compounds_and_updates() {
     let source = r#"
@@ -1578,7 +1538,6 @@ fn materializes_reactive_assignments_compounds_and_updates() {
             _ => false,
         })
         .collect();
-
     assert_eq!(mutations.len(), 4);
     assert!(
         mutations
@@ -1664,7 +1623,6 @@ fn materializes_reactive_assignments_compounds_and_updates() {
         }),
         "ordinary assignment expressions must not fall back to syntax fragments"
     );
-
     let shadow = hir
         .functions
         .iter()
@@ -1704,7 +1662,6 @@ fn materializes_reactive_assignments_compounds_and_updates() {
         ["count += 1", "count++"]
     );
 }
-
 #[test]
 fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
     let source = r#"
@@ -1753,13 +1710,7 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
             .find(|instruction| authored(instruction) == text)
             .unwrap_or_else(|| panic!("instruction for {text}"))
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for {value:?}"))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -1778,7 +1729,6 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
             })
             .unwrap_or_else(|| panic!("{name} initializer"))
     };
-
     let assignment_roots: Vec<_> = [
         "simple",
         "projected",
@@ -1810,13 +1760,11 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
             ]
             .contains(&authored(instruction))
     }));
-
     let simple = instruction_for_result(initializer("simple"));
     let HirInstructionKind::Write { value, .. } = simple.kind else {
         panic!("simple assignment must be a typed write")
     };
     assert_eq!(authored(instruction_for_result(value)), "make('simple')");
-
     let projected = instruction_for_result(initializer("projected"));
     let HirInstructionKind::Write { place, value } = &projected.kind else {
         panic!("projected assignment must be a typed write")
@@ -1851,7 +1799,6 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
     };
     assert!(position(*key) < position(*value));
     assert!(position(*value) < position(projected.result.expect("projected result")));
-
     for (name, operator, rhs) in [
         (
             "andResult",
@@ -1902,7 +1849,6 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
             "plain assignment RHS must remain eager: {text}"
         );
     }
-
     let argument_assignment = instruction("value = make('argument')");
     let argument_result = argument_assignment
         .result
@@ -1914,7 +1860,6 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
     assert_eq!(call.arguments.len(), 1);
     assert_eq!(call.arguments[0].value, argument_result);
 }
-
 #[test]
 fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
     let source = r#"
@@ -1956,13 +1901,7 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
             .as_deref()
             .expect("named local")
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for {value:?}"))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -1981,7 +1920,6 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
             })
             .unwrap_or_else(|| panic!("{name} initializer"))
     };
-
     let assignments: Vec<_> = instructions
         .iter()
         .copied()
@@ -2008,7 +1946,6 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
             .iter()
             .all(|instruction| instruction.result.is_some())
     );
-
     let first = assignments[0];
     let HirInstructionKind::PatternAssignment {
         value: first_value,
@@ -2062,7 +1999,6 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
             .collect::<Vec<_>>(),
         ["key", "fallback"]
     );
-
     let second = assignments[1];
     let HirInstructionKind::PatternAssignment {
         value: second_value,
@@ -2112,7 +2048,6 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
         initializer("argument"),
         invocation.result.expect("call result")
     );
-
     for deferred in ["key()", "fallback()", "object.slot"] {
         assert!(
             instructions
@@ -2133,7 +2068,6 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
                     .contains(&authored(instruction.origin))
         )
     }));
-
     let ssa = analyze_ssa(function).expect("destructuring-assignment SSA");
     assert_eq!(
         ssa.definitions
@@ -2145,7 +2079,6 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
     );
     analyze_dependencies(&hir, function.id, &ssa).expect("destructuring-assignment dependencies");
 }
-
 #[test]
 fn plain_assignment_results_do_not_escape_reactive_pattern_targets() {
     let source = r#"
@@ -2172,7 +2105,6 @@ fn plain_assignment_results_do_not_escape_reactive_pattern_targets() {
         output.diagnostics
     );
 }
-
 #[test]
 fn propagates_reactive_dependencies_through_pattern_defaults() {
     let source = r#"
@@ -2228,7 +2160,6 @@ fn propagates_reactive_dependencies_through_pattern_defaults() {
     assert!(derived.dependencies.iter().any(|path| {
         matches!(path.base, fict_reactivity::DependencyBase::Ssa(name) if name.local == state)
     }));
-
     let escaped_source = r#"
             import { $state } from 'fict';
             function App(consume) {
@@ -2250,7 +2181,6 @@ fn propagates_reactive_dependencies_through_pattern_defaults() {
                 &escaped_source[span.start() as usize..span.end() as usize] == "derived"
             })
     }));
-
     let callback_default = build_hir(
         r#"
             import { $state } from 'fict';
@@ -2269,7 +2199,6 @@ fn propagates_reactive_dependencies_through_pattern_defaults() {
         diagnostic.code.as_str() == "FICT-R005" && diagnostic.message.contains("state")
     }));
 }
-
 #[test]
 fn escape_diagnostics_keep_direct_props_roots_without_propagating_props_locals() {
     let accepted = build_hir(
@@ -2294,7 +2223,6 @@ fn escape_diagnostics_keep_direct_props_roots_without_propagating_props_locals()
             .iter()
             .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") })
     );
-
     let direct_props = build_hir(
         r#"
             export function App(props) {
@@ -2313,7 +2241,6 @@ fn escape_diagnostics_keep_direct_props_roots_without_propagating_props_locals()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-R002")
     );
 }
-
 #[test]
 fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
     let source = r#"
@@ -2341,7 +2268,6 @@ fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
                 .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "plain")
         })
         .expect("plain function");
-
     let input = plain
         .locals
         .iter()
@@ -2366,7 +2292,6 @@ fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
                 if place == &fict_hir::Place::local(value.id)
         )
     }));
-
     let ordered_effects: Vec<_> = plain.blocks[0]
         .instructions
         .iter()
@@ -2404,7 +2329,6 @@ fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
             && instruction.semantics.purity == Purity::Impure
     }));
 }
-
 #[test]
 fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order() {
     let source = r#"
@@ -2460,7 +2384,6 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
             .and_then(|instruction| instruction.result)
             .unwrap_or_else(|| panic!("result for {text}"))
     };
-
     let from_var = local("fromVar");
     let (var_declaration_block, var_initializer) = function
         .blocks
@@ -2491,7 +2414,6 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
             )
         })
     }));
-
     let from_let = local("fromLet");
     let let_value = find_result("effect('let')");
     let (let_block, let_call_index, let_declaration_index) = function
@@ -2517,7 +2439,6 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
         .expect("let declaration linked to its initializer");
     assert_ne!(let_block, function.entry);
     assert!(let_call_index < let_declaration_index);
-
     let from_member = local("fromMember");
     let member_value = find_result("input.value");
     assert!(function.blocks.iter().any(|block| {
@@ -2532,7 +2453,6 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
             )
         })
     }));
-
     let fallback_calls = function
         .blocks
         .iter()
@@ -2612,7 +2532,6 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
         }));
     }
 }
-
 #[test]
 fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
     let source = r#"
@@ -2669,7 +2588,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
             .and_then(|instruction| instruction.result)
             .unwrap_or_else(|| panic!("typed result for {text}"))
     };
-
     let zero = typed_result("0");
     assert!(matches!(
         function.values[zero.as_usize()].kind,
@@ -2686,7 +2604,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
                 } if argument == zero
             )
     }));
-
     let multiply = typed_result("2 * 3");
     let arithmetic = typed_result("0x10 + 2 * 3");
     assert!(instructions.iter().any(|instruction| {
@@ -2710,7 +2627,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
                 } if right == multiply
             )
     }));
-
     let exact = instructions
         .iter()
         .find(|instruction| authored(instruction) == "input === null")
@@ -2737,7 +2653,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
     assert_eq!(loose.semantics.purity, Purity::Unknown);
     assert_eq!(loose.semantics.mutation, MutationEffect::Unknown);
     assert!(loose.semantics.may_throw);
-
     for (text, operator) in [
         ("!input", UnaryOperator::Not),
         ("void side()", UnaryOperator::Void),
@@ -2755,7 +2670,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
         ));
         assert_eq!(unary.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
     }
-
     let literals: Vec<_> = instructions
         .iter()
         .filter_map(|instruction| match &instruction.kind {
@@ -2783,7 +2697,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
             .iter()
             .any(|(text, literal)| { *text == "true" && *literal == &LiteralValue::Boolean(true) })
     );
-
     for name in [
         "negativeZero",
         "arithmetic",
@@ -2812,7 +2725,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
             )
         }));
     }
-
     let branch = hir
         .functions
         .iter()
@@ -2836,7 +2748,6 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
             )
     }));
 }
-
 #[test]
 fn materializes_exact_utf16_strings_and_template_quasis() {
     let source = r#"
@@ -2870,13 +2781,7 @@ fn materializes_exact_utf16_strings_and_template_quasis() {
         .iter()
         .flat_map(|block| &block.instructions)
         .collect();
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -2902,12 +2807,10 @@ fn materializes_exact_utf16_strings_and_template_quasis() {
         };
         value
     };
-
     assert_eq!(literal("high").as_code_units(), &[0xd800]);
     assert_eq!(literal("lowTemplate").as_code_units(), &[0xdfff]);
     assert_eq!(literal("mixed").as_code_units(), &[0xfffd, 0xd800]);
     assert_eq!(literal("astral").as_code_units(), &[0xd83d, 0xde00]);
-
     let dynamic = instruction_for_result(initializer("dynamic"));
     let HirInstructionKind::TemplateLiteral {
         quasis,
@@ -2922,7 +2825,6 @@ fn materializes_exact_utf16_strings_and_template_quasis() {
     let expected_tail =
         JavaScriptString::from_code_units(vec![0xdc00]).concat(&JavaScriptString::from(" right"));
     assert_eq!(quasis, &[expected_head, expected_tail]);
-
     for name in ["high", "lowTemplate", "mixed", "astral", "dynamic"] {
         let root = instruction_for_result(initializer(name));
         assert!(
@@ -2931,7 +2833,6 @@ fn materializes_exact_utf16_strings_and_template_quasis() {
         );
     }
 }
-
 #[test]
 fn distinguishes_unresolved_typeof_from_binding_reads() {
     let source = r#"
@@ -2971,7 +2872,6 @@ fn distinguishes_unresolved_typeof_from_binding_reads() {
             .expect("authored typeof expression");
         &source[span.start() as usize..span.end() as usize]
     };
-
     for identifier in ["definitelyMissing", "console"] {
         let instruction = instructions
             .iter()
@@ -2989,7 +2889,6 @@ fn distinguishes_unresolved_typeof_from_binding_reads() {
             fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
         );
     }
-
     let bound = instructions
         .iter()
         .find(|instruction| authored(instruction) == "typeof local")
@@ -3002,7 +2901,6 @@ fn distinguishes_unresolved_typeof_from_binding_reads() {
         }
     ));
     assert_eq!(bound.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
-
     for name in ["absent", "host", "bound"] {
         let local = function
             .locals
@@ -3030,7 +2928,6 @@ fn distinguishes_unresolved_typeof_from_binding_reads() {
         );
     }
 }
-
 #[test]
 fn materializes_this_new_target_and_import_meta_as_context_values() {
     let source = r#"
@@ -3068,7 +2965,6 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
         .iter()
         .flat_map(|block| &block.instructions)
         .collect();
-
     for (kind, authored, expected_count) in [
         (ContextValueKind::This, "this", 2),
         (ContextValueKind::Arguments, "arguments", 2),
@@ -3098,14 +2994,7 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
             }
         }
     }
-
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -3124,7 +3013,6 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
             })
             .unwrap_or_else(|| panic!("{name} initializer"))
     };
-
     for (name, kind) in [
         ("receiver", ContextValueKind::This),
         ("args", ContextValueKind::Arguments),
@@ -3154,7 +3042,6 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
             HirInstructionKind::Context { kind: candidate } if candidate == kind
         ));
     }
-
     for name in [
         "receiver",
         "args",
@@ -3173,7 +3060,6 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
             "{name} must not fall back to adapter-owned syntax"
         );
     }
-
     let nested = hir
         .functions
         .iter()
@@ -3208,7 +3094,6 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
         "arrow-owned context values retain lexical function form"
     );
 }
-
 #[test]
 fn keeps_module_and_shadowed_arguments_outside_function_context_values() {
     let source = r#"
@@ -3250,7 +3135,6 @@ fn keeps_module_and_shadowed_arguments_outside_function_context_values() {
                 } if global == arguments_global
             ))
     );
-
     let shadow = hir
         .functions
         .iter()
@@ -3288,7 +3172,6 @@ fn keeps_module_and_shadowed_arguments_outside_function_context_values() {
             ))
     );
 }
-
 #[test]
 fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
     let source = r#"
@@ -3337,7 +3220,6 @@ fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
             .find(|instruction| authored(instruction) == text)
             .unwrap_or_else(|| panic!("instruction for {text}"))
     };
-
     for text in [
         "inspect('and-left', input)",
         "inspect('or-left', input)",
@@ -3372,7 +3254,6 @@ fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
             "short-circuit arms must stay lazy: {text}"
         );
     }
-
     for (text, operator, left, right) in [
         (
             "inspect('and-left', input) && fallback('and-right')",
@@ -3406,7 +3287,6 @@ fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
         ));
         assert_eq!(root.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
     }
-
     let conditional = instructions
         .iter()
         .copied()
@@ -3438,7 +3318,6 @@ fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
         conditional.semantics,
         fict_hir::InstructionSemantics::PURE_EAGER
     );
-
     for (name, expected) in [
         ("andValue", BinaryOperator::LogicalAnd),
         ("orValue", BinaryOperator::LogicalOr),
@@ -3487,7 +3366,6 @@ fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
         )
     }));
 }
-
 #[test]
 fn materializes_array_holes_spreads_and_element_evaluation_order() {
     let source = r#"
@@ -3534,7 +3412,6 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
             .find(|instruction| authored(instruction) == text)
             .unwrap_or_else(|| panic!("instruction for {text}"))
     };
-
     let dense = instruction("[1, make('second'), input.value]");
     let HirInstructionKind::Array {
         elements: dense_elements,
@@ -3549,7 +3426,6 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
     assert!(matches!(dense_elements[2], ArrayElement::Value(value)
         if Some(value) == instruction("input.value").result));
     assert_eq!(dense.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
-
     let sparse = instruction("[, 1, ,]");
     let HirInstructionKind::Array {
         elements: sparse_elements,
@@ -3561,7 +3437,6 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
     assert!(matches!(sparse_elements[0], ArrayElement::Hole(_)));
     assert!(matches!(sparse_elements[1], ArrayElement::Value(_)));
     assert!(matches!(sparse_elements[2], ArrayElement::Hole(_)));
-
     let spread = instruction("[make('before'), ...make('spread'), make('after'), , ...tail]");
     let HirInstructionKind::Array {
         elements: spread_elements,
@@ -3600,7 +3475,6 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
             "the array node owns evaluation from its first spread: {text}"
         );
     }
-
     let ordered_calls: Vec<_> = instructions
         .iter()
         .filter(|instruction| matches!(instruction.kind, HirInstructionKind::Call(_)))
@@ -3615,7 +3489,6 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
             "make('after')",
         ]
     );
-
     let nodes = instruction("[<div />, input ? <span /> : <p />]");
     let HirInstructionKind::Array {
         elements: node_elements,
@@ -3647,7 +3520,6 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
         instruction("<p />").semantics.evaluation,
         EvaluationMode::Deferred
     );
-
     for (name, value) in [
         ("dense", dense),
         ("sparse", sparse),
@@ -3671,7 +3543,6 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
         }));
     }
 }
-
 #[test]
 fn materializes_object_keys_entries_and_definition_order() {
     let source = r#"
@@ -3758,7 +3629,6 @@ fn materializes_object_keys_entries_and_definition_order() {
             .find(|instruction| instruction.result == Some(initializer))
             .unwrap_or_else(|| panic!("{name} object instruction"))
     };
-
     let plain = object_for_local("plain");
     let HirInstructionKind::Object {
         entries: plain_entries,
@@ -3824,7 +3694,6 @@ fn materializes_object_keys_entries_and_definition_order() {
             .evaluation,
         EvaluationMode::Eager
     );
-
     let complex = object_for_local("complex");
     let HirInstructionKind::Object {
         entries: complex_entries,
@@ -3887,7 +3756,6 @@ fn materializes_object_keys_entries_and_definition_order() {
             ..
         }
     ));
-
     assert_eq!(
         instruction("make('two')").semantics.evaluation,
         EvaluationMode::Eager
@@ -3910,7 +3778,6 @@ fn materializes_object_keys_entries_and_definition_order() {
             "the object node owns evaluation from its first computed key: {text}"
         );
     }
-
     let prototype = object_for_local("prototype");
     let HirInstructionKind::Object {
         entries: prototype_entries,
@@ -3940,7 +3807,6 @@ fn materializes_object_keys_entries_and_definition_order() {
             ..
         } if name == "safe"
     ));
-
     let shorthand_proto = object_for_local("shorthandProto");
     let HirInstructionKind::Object {
         entries: shorthand_proto_entries,
@@ -3958,7 +3824,6 @@ fn materializes_object_keys_entries_and_definition_order() {
             ..
         } if name == "__proto__"
     ));
-
     let numeric_keys = object_for_local("numericKeys");
     let HirInstructionKind::Object {
         entries: numeric_key_entries,
@@ -3980,7 +3845,6 @@ fn materializes_object_keys_entries_and_definition_order() {
         ));
     }
 }
-
 #[test]
 fn materializes_constructor_calls_and_spread_iteration_order() {
     let source = r#"
@@ -4054,7 +3918,6 @@ fn materializes_constructor_calls_and_spread_iteration_order() {
             .find(|instruction| instruction.result == Some(initializer))
             .unwrap_or_else(|| panic!("{name} constructor instruction"))
     };
-
     let empty = constructor_for_local("empty");
     let HirInstructionKind::New {
         callee: empty_callee,
@@ -4072,7 +3935,6 @@ fn materializes_constructor_calls_and_spread_iteration_order() {
         empty.semantics,
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
-
     let direct = constructor_for_local("direct");
     let HirInstructionKind::New {
         arguments: direct_arguments,
@@ -4106,7 +3968,6 @@ fn materializes_constructor_calls_and_spread_iteration_order() {
             EvaluationMode::Eager
         );
     }
-
     let spread = constructor_for_local("spread");
     let HirInstructionKind::New { callee, arguments } = &spread.kind else {
         panic!("typed spread constructor")
@@ -4152,7 +4013,6 @@ fn materializes_constructor_calls_and_spread_iteration_order() {
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
 }
-
 #[test]
 fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
     let source = r#"
@@ -4245,7 +4105,6 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
             .find(|instruction| instruction.result == Some(initializer))
             .unwrap_or_else(|| panic!("{name} call instruction"))
     };
-
     let direct = call_for_local("direct");
     let HirInstructionKind::Call(direct_call) = &direct.kind else {
         panic!("typed direct call")
@@ -4274,7 +4133,6 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
             EvaluationMode::Eager
         );
     }
-
     let spread = call_for_local("spread");
     let HirInstructionKind::Call(spread_call) = &spread.kind else {
         panic!("typed spread call")
@@ -4299,7 +4157,6 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
             "the call owns evaluation from its first spread: {text}"
         );
     }
-
     let optional = call_for_local("optional");
     let HirInstructionKind::Call(optional_call) = &optional.kind else {
         panic!("typed optional call")
@@ -4333,7 +4190,6 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
             EvaluationMode::Deferred
         );
     }
-
     for name in ["optionalMember", "continuedMember"] {
         let member = call_for_local(name);
         let HirInstructionKind::Call(member_call) = &member.kind else {
@@ -4377,7 +4233,6 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
             .evaluation,
         EvaluationMode::Deferred
     );
-
     let grouped = call_for_local("groupedMember");
     let HirInstructionKind::Call(grouped_call) = &grouped.kind else {
         panic!("typed grouped-member call")
@@ -4389,7 +4244,6 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
         EvaluationMode::Eager,
         "parentheses terminate the optional chain before the outer call"
     );
-
     let pure = call_for_local("pure");
     assert_eq!(pure.semantics.purity, Purity::Pure);
     assert_eq!(pure.semantics.mutation, MutationEffect::None);
@@ -4401,7 +4255,6 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
         EvaluationMode::Deferred
     );
 }
-
 #[test]
 fn preserves_exact_method_receivers_and_computed_keys_in_call_references() {
     let source = r#"
@@ -4484,7 +4337,6 @@ fn preserves_exact_method_receivers_and_computed_keys_in_call_references() {
         }));
         reference.clone()
     };
-
     let HirInstructionKind::Call(static_call) = &call_for_local("staticResult").kind else {
         panic!("static method call")
     };
@@ -4497,7 +4349,6 @@ fn preserves_exact_method_receivers_and_computed_keys_in_call_references() {
             optional: false,
         }] if name == "method"
     ));
-
     let HirInstructionKind::Call(computed_call) = &call_for_local("computedResult").kind else {
         panic!("computed method call")
     };
@@ -4525,7 +4376,6 @@ fn preserves_exact_method_receivers_and_computed_keys_in_call_references() {
         1,
         "a computed method key must be evaluated exactly once"
     );
-
     let HirInstructionKind::Call(temporary_call) = &call_for_local("temporaryResult").kind else {
         panic!("temporary-receiver method call")
     };
@@ -4548,12 +4398,10 @@ fn preserves_exact_method_receivers_and_computed_keys_in_call_references() {
         "a temporary method receiver must be evaluated exactly once"
     );
 }
-
 #[test]
 fn materializes_await_values_and_suspension_boundaries() {
     let source = r#"
         const top = await boot();
-
         async function run(load, consume, optional) {
             const direct = await load('direct');
             const nested = consume(await load('nested'));
@@ -4575,7 +4423,6 @@ fn materializes_await_values_and_suspension_boundaries() {
             .expect("authored await instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-
     let module = &hir.functions[0];
     assert_eq!(module.kind, FunctionKind::Module);
     let module_instructions: Vec<_> = module
@@ -4600,7 +4447,6 @@ fn materializes_await_values_and_suspension_boundaries() {
             && authored(instruction) == "boot()"
             && matches!(instruction.kind, HirInstructionKind::Call(_))
     }));
-
     let run = hir
         .functions
         .iter()
@@ -4623,7 +4469,6 @@ fn materializes_await_values_and_suspension_boundaries() {
             .find(|instruction| authored(instruction) == text)
             .unwrap_or_else(|| panic!("instruction for {text}"))
     };
-
     for (await_text, input_text) in [
         ("await load('direct')", "load('direct')"),
         ("await load('nested')", "load('nested')"),
@@ -4641,7 +4486,6 @@ fn materializes_await_values_and_suspension_boundaries() {
         );
         assert!(await_instruction.semantics.may_throw);
     }
-
     for text in [
         "load('direct')",
         "await load('direct')",
@@ -4662,7 +4506,6 @@ fn materializes_await_values_and_suspension_boundaries() {
         );
     }
 }
-
 #[test]
 fn materializes_yield_values_delegation_and_lazy_arguments() {
     let source = r#"
@@ -4711,7 +4554,6 @@ fn materializes_yield_values_delegation_and_lazy_arguments() {
             .find(|instruction| authored(instruction) == text)
             .unwrap_or_else(|| panic!("instruction for {text}"))
     };
-
     let bare = instruction("yield");
     assert!(matches!(
         bare.kind,
@@ -4724,7 +4566,6 @@ fn materializes_yield_values_delegation_and_lazy_arguments() {
         bare.semantics,
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
-
     for (yield_text, input_text, delegate) in [
         ("yield make('value')", "make('value')", false),
         ("yield make('nested')", "make('nested')", false),
@@ -4748,7 +4589,6 @@ fn materializes_yield_values_delegation_and_lazy_arguments() {
         );
         assert!(yield_instruction.semantics.may_throw);
     }
-
     for text in [
         "make('value')",
         "yield make('value')",
@@ -4771,7 +4611,6 @@ fn materializes_yield_values_delegation_and_lazy_arguments() {
         );
     }
 }
-
 #[test]
 fn materializes_sequence_values_in_authored_evaluation_order() {
     let source = r#"
@@ -4814,13 +4653,7 @@ fn materializes_sequence_values_in_authored_evaluation_order() {
             .expect("authored sequence instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let local = |name: &str| {
         function
             .locals
@@ -4842,7 +4675,6 @@ fn materializes_sequence_values_in_authored_evaluation_order() {
             })
             .unwrap_or_else(|| panic!("{name} initializer"))
     };
-
     let result_value = initializer("result");
     let result = instruction_for_result(result_value);
     let HirInstructionKind::Sequence { values } = &result.kind else {
@@ -4875,7 +4707,6 @@ fn materializes_sequence_values_in_authored_evaluation_order() {
                 .position(|instruction| instruction.result == Some(result_value))
                 .expect("sequence result position")
     );
-
     let assigned = local("assigned");
     let assigned_value = instructions
         .iter()
@@ -4898,7 +4729,6 @@ fn materializes_sequence_values_in_authored_evaluation_order() {
         "make('assigned')"
     );
     assert_eq!(authored(instruction_for_result(values[1])), "value");
-
     let deferred_value = initializer("deferred");
     let deferred_call = instruction_for_result(deferred_value);
     let HirInstructionKind::Call(call) = &deferred_call.kind else {
@@ -4922,7 +4752,6 @@ fn materializes_sequence_values_in_authored_evaluation_order() {
         EvaluationMode::Deferred
     );
 }
-
 #[test]
 fn materializes_template_quasis_coercions_and_lazy_ownership() {
     let source = r#"
@@ -4962,13 +4791,7 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
             .expect("authored template instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -4987,7 +4810,6 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
             })
             .unwrap_or_else(|| panic!("{name} initializer"))
     };
-
     for (name, expected) in [("empty", ""), ("escaped", "line\n")] {
         let instruction = instruction_for_result(initializer(name));
         assert_eq!(
@@ -4999,7 +4821,6 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
             fict_hir::InstructionSemantics::PURE_EAGER
         );
     }
-
     let dynamic = instruction_for_result(initializer("dynamic"));
     let HirInstructionKind::TemplateLiteral {
         quasis,
@@ -5026,7 +4847,6 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
         dynamic.semantics,
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
-
     let lazy_call = instruction_for_result(initializer("lazy"));
     let HirInstructionKind::Call(call) = &lazy_call.kind else {
         panic!("typed optional template call")
@@ -5052,7 +4872,6 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
         EvaluationMode::Deferred
     );
 }
-
 #[test]
 fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() {
     let source = r#"
@@ -5095,13 +4914,7 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
             .expect("authored tagged-template instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let local = |name: &str| {
         function
             .locals
@@ -5145,7 +4958,6 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
             *host,
         )
     };
-
     let (escaped, _, reference, quasis, substitutions, host) = tagged("escaped");
     assert!(reference.is_none());
     assert!(substitutions.is_empty());
@@ -5160,12 +4972,10 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         escaped.semantics,
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
-
     let (_, _, _, quasis, substitutions, _) = tagged("invalid");
     assert!(substitutions.is_empty());
     assert_eq!(quasis[0].raw, r"\u{}");
     assert_eq!(quasis[0].cooked, None);
-
     let (_, _, _, quasis, substitutions, _) = tagged("surrogate");
     assert_eq!(substitutions.len(), 1);
     assert_eq!(quasis.len(), 2);
@@ -5175,7 +4985,6 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         Some(JavaScriptString::from_code_units(vec![0xd800]))
     );
     assert_eq!(quasis[1].cooked, Some(JavaScriptString::default()));
-
     let (dynamic, tag, reference, quasis, substitutions, _) = tagged("dynamic");
     assert!(reference.is_none());
     assert_eq!(
@@ -5211,7 +5020,6 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         matches!(instruction.kind, HirInstructionKind::SyntaxFragment { .. })
             && instruction.origin.primary_span == dynamic.origin.primary_span
     }));
-
     let (_, member_tag, member_reference, _, substitutions, host) = tagged("member");
     assert_eq!(substitutions.len(), 1);
     assert_eq!(host, fict_hir::CallHost::Unknown);
@@ -5231,7 +5039,6 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
                 HirInstructionKind::Read { place } if place == &member_reference
             )
     }));
-
     let (_, computed_tag, computed_reference, _, _, host) = tagged("computed");
     assert_eq!(host, fict_hir::CallHost::Unknown);
     let computed_reference = computed_reference.expect("computed tag reference");
@@ -5260,7 +5067,6 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         1,
         "a computed tag key must be evaluated exactly once"
     );
-
     let (_, temporary_tag, temporary_reference, _, _, host) = tagged("temporary");
     assert_eq!(host, fict_hir::CallHost::Unknown);
     let temporary_reference = temporary_reference.expect("temporary tag reference");
@@ -5287,7 +5093,6 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         "a temporary tag receiver must be evaluated exactly once"
     );
 }
-
 #[test]
 fn materializes_dynamic_import_phases_options_and_coercion_order() {
     let source = r#"
@@ -5328,13 +5133,7 @@ fn materializes_dynamic_import_phases_options_and_coercion_order() {
             .expect("authored dynamic-import instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -5366,7 +5165,6 @@ fn materializes_dynamic_import_phases_options_and_coercion_order() {
         };
         (instruction, *specifier, *options, *phase)
     };
-
     let (simple, specifier, options, phase) = dynamic_import("simple");
     assert_eq!(phase, ImportPhase::Evaluation);
     assert!(options.is_none());
@@ -5375,7 +5173,6 @@ fn materializes_dynamic_import_phases_options_and_coercion_order() {
         simple.semantics,
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
-
     let (configured, specifier, options, phase) = dynamic_import("configured");
     let options = options.expect("configured import options");
     assert_eq!(phase, ImportPhase::Evaluation);
@@ -5404,10 +5201,8 @@ fn materializes_dynamic_import_phases_options_and_coercion_order() {
         matches!(instruction.kind, HirInstructionKind::SyntaxFragment { .. })
             && instruction.origin.primary_span == configured.origin.primary_span
     }));
-
     assert_eq!(dynamic_import("sourcePhase").3, ImportPhase::Source);
     assert_eq!(dynamic_import("deferPhase").3, ImportPhase::Defer);
-
     let lazy_call = instruction_for_result(initializer("lazy"));
     let HirInstructionKind::Call(call) = &lazy_call.kind else {
         panic!("typed optional call around import")
@@ -5428,7 +5223,6 @@ fn materializes_dynamic_import_phases_options_and_coercion_order() {
         EvaluationMode::Deferred
     );
 }
-
 #[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
@@ -5466,7 +5260,6 @@ fn materializes_static_computed_index_and_value_base_projections() {
         .iter()
         .find(|local| local.debug_name.as_deref() == Some("obj"))
         .expect("object parameter");
-
     let instructions: Vec<_> = project
         .blocks
         .iter()
@@ -5493,7 +5286,6 @@ fn materializes_static_computed_index_and_value_base_projections() {
     ));
     assert_eq!(deletion.semantics.mutation, MutationEffect::Observable);
     assert!(deletion.semantics.may_throw);
-
     let authored_projected_reads: Vec<_> = instructions
         .iter()
         .filter_map(|instruction| match &instruction.kind {
@@ -5582,7 +5374,6 @@ fn materializes_static_computed_index_and_value_base_projections() {
                 .is_some_and(|span| &source[span.start() as usize..span.end() as usize] == "make()")
             && matches!(instruction.kind, HirInstructionKind::Call(_))
     }));
-
     let projected_mutations: Vec<_> = instructions
         .iter()
         .filter(|instruction| {
@@ -5649,7 +5440,6 @@ fn materializes_static_computed_index_and_value_base_projections() {
         })
     }));
 }
-
 #[test]
 fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
     let source = r#"
@@ -5732,7 +5522,6 @@ fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
         instruction.semantics.mutation == MutationEffect::Observable
             && instruction.semantics.may_throw
     }));
-
     for mutation in &mutations[..3] {
         let place = match &mutation.kind {
             HirInstructionKind::Write { place, .. }
@@ -5759,7 +5548,6 @@ fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
             ..
         }
     ));
-
     let static_write = match &mutations[3].kind {
         HirInstructionKind::Write { place, .. } => place,
         _ => panic!("static host write"),
@@ -5785,7 +5573,6 @@ fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
             [fict_hir::Projection::ComputedProperty { optional: false, .. }]
         ) if *id == host_object
     ));
-
     let temporary_write = match &mutations[5].kind {
         HirInstructionKind::ReadWrite { place, .. } => place,
         _ => panic!("temporary update"),
@@ -5813,7 +5600,6 @@ fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
         .position(|instruction| std::ptr::eq(*instruction, mutations[5]))
         .expect("temporary update position");
     assert!(call_position < update_position);
-
     let host_reads: Vec<_> = instructions
         .iter()
         .copied()
@@ -5843,7 +5629,6 @@ fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
             )
     ));
 }
-
 #[test]
 fn materializes_bare_host_reads_without_breaking_special_or_dynamic_references() {
     let source = r#"
@@ -5967,7 +5752,6 @@ fn materializes_bare_host_reads_without_breaking_special_or_dynamic_references()
                     && place.projections.is_empty()
         )
     }));
-
     let result_for_authored = |text: &str| {
         instructions
             .iter()
@@ -6009,7 +5793,6 @@ fn materializes_bare_host_reads_without_breaking_special_or_dynamic_references()
             .iter()
             .any(|global| global.name == "missingTypeof" || global.name == "missingDelete")
     );
-
     let shadow = function("shadow");
     assert!(
         shadow
@@ -6022,7 +5805,6 @@ fn materializes_bare_host_reads_without_breaking_special_or_dynamic_references()
             })
             .all(|place| matches!(place.base, fict_hir::PlaceBase::Local(_)))
     );
-
     let dynamic = function("dynamic");
     assert!(
         dynamic
@@ -6062,7 +5844,6 @@ fn materializes_bare_host_reads_without_breaking_special_or_dynamic_references()
         assert!(!hir.globals.iter().any(|global| global.name == name));
     }
 }
-
 #[test]
 fn materializes_reference_aware_delete_targets_without_property_reads() {
     let source = r#"
@@ -6113,13 +5894,7 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
         .iter()
         .flat_map(|block| &block.instructions)
         .collect();
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -6144,7 +5919,6 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
         .iter()
         .find(|local| local.debug_name.as_deref() == Some("obj"))
         .expect("obj parameter");
-
     for (name, property, optional) in [
         ("staticResult", "fixed", false),
         ("parenthesizedResult", "nested", false),
@@ -6167,7 +5941,6 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
         assert_eq!(deletion.semantics.mutation, MutationEffect::Observable);
         assert!(deletion.semantics.may_throw);
     }
-
     let computed = root("computedResult");
     let HirInstructionKind::Delete {
         target: DeleteTarget::Place(computed_place),
@@ -6199,7 +5972,6 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
             .expect("instruction position")
     };
     assert!(position(key_call) < position(computed));
-
     for (name, operand) in [("valueResult", "effect()"), ("literalResult", "1")] {
         let deletion = root(name);
         let HirInstructionKind::Delete {
@@ -6218,7 +5990,6 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
         );
         assert!(position(operand_instruction) < position(deletion));
     }
-
     let local_parameter = function
         .locals
         .iter()
@@ -6244,7 +6015,6 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
                     && place.projections.is_empty()
         )
     }));
-
     let global_delete = root("globalResult");
     assert!(matches!(
         &global_delete.kind,
@@ -6256,7 +6026,6 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
         global_delete.semantics,
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
-
     for member in ["obj.fixed", "obj[key()]", "obj.nested", "obj?.optional"] {
         assert!(
             !instructions.iter().any(|instruction| {
@@ -6292,7 +6061,6 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
         );
     }
 }
-
 #[test]
 fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
     let source = r#"
@@ -6322,7 +6090,6 @@ fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
         finding.guarantee_class,
         fict_diagnostics::GuaranteeClass::Fallback
     );
-
     let fallback = build_hir(
         source,
         options(OxcSourceLanguage::JavaScript),
@@ -6342,7 +6109,6 @@ fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
         fict_diagnostics::DiagnosticSeverity::Warning
     );
 }
-
 #[test]
 fn classifies_nested_state_deletion_by_strict_guarantee_policy() {
     let source = r#"
@@ -6372,7 +6138,6 @@ fn classifies_nested_state_deletion_by_strict_guarantee_policy() {
         finding.guarantee_class,
         fict_diagnostics::GuaranteeClass::Fallback
     );
-
     let fallback = build_hir(
         source,
         options(OxcSourceLanguage::JavaScript),
@@ -6406,7 +6171,6 @@ fn classifies_nested_state_deletion_by_strict_guarantee_policy() {
             })
     }));
 }
-
 #[test]
 fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
     let source = r#"
@@ -6444,7 +6208,6 @@ fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
         .expect("render call");
     assert!(matches!(render_call.host, CallHost::ReactiveScope(_)));
 }
-
 #[test]
 fn retains_patterns_and_function_bodies_as_owned_controlled_fragments() {
     let source = "const View = ({ value = 1, ...rest }) => value + rest.offset;";
@@ -6473,7 +6236,6 @@ fn retains_patterns_and_function_bodies_as_owned_controlled_fragments() {
         .expect("adapter fragment");
     assert!(adapter.source.contains("value = 1"));
 }
-
 #[test]
 fn unsupported_macro_shapes_fail_closed_with_structured_codes() {
     let cases = [
@@ -6500,7 +6262,6 @@ fn unsupported_macro_shapes_fail_closed_with_structured_codes() {
         assert_eq!(output.diagnostics[0].code.as_str(), code);
     }
 }
-
 #[test]
 fn applies_function_directives_and_erases_type_only_binding_ids() {
     let source = r#"
@@ -6534,7 +6295,6 @@ fn applies_function_directives_and_erases_type_only_binding_ids() {
         assert_eq!(binding.id.as_usize(), index);
     }
 }
-
 #[test]
 fn builds_structural_jsx_tags_attributes_children_and_spreads() {
     let source = r#"
@@ -6592,7 +6352,6 @@ fn builds_structural_jsx_tags_attributes_children_and_spreads() {
             .any(|child| matches!(child, fict_hir::JsxChild::Spread { .. }))
     );
 }
-
 #[test]
 fn models_binding_aware_direct_keyed_map_callbacks() {
     let source = r#"
@@ -6636,7 +6395,6 @@ fn models_binding_aware_direct_keyed_map_callbacks() {
         .and_then(|key| key.primary_span)
         .expect("source key span");
     assert_eq!(&source[key.start() as usize..key.end() as usize], "row.id");
-
     let mutated = build_hir(
         "export function App(rows) { return <ul>{rows.map(row => <li key={row.id}>{row++}</li>)}</ul>; }",
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -6652,7 +6410,6 @@ fn models_binding_aware_direct_keyed_map_callbacks() {
         fict_hir::JsxChild::Expression { list: None, .. }
     ));
 }
-
 #[test]
 fn models_direct_unkeyed_map_callbacks_with_index_identity() {
     let source = r#"
@@ -6684,7 +6441,6 @@ fn models_direct_unkeyed_map_callbacks_with_index_identity() {
     assert_eq!(list.item_references.len(), 1);
     assert_eq!(list.index_references.len(), 1);
     assert!(list.needs_index);
-
     let spread = build_hir(
         "import { $state } from 'fict'; export function App() { let rows = $state([{ name: 'A' }]); return <ul>{rows.map(row => <li {...row}>{row.name}</li>)}</ul>; }",
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -6710,7 +6466,6 @@ fn models_direct_unkeyed_map_callbacks_with_index_identity() {
         fict_hir::JsxChild::Expression { list: None, .. }
     ));
 }
-
 #[test]
 fn traces_trusted_array_method_chains_to_their_base_receiver() {
     let source = r#"
@@ -6751,7 +6506,6 @@ fn traces_trusted_array_method_chains_to_their_base_receiver() {
         "rows.filter(row => row.visible)"
     );
 }
-
 #[test]
 fn distinguishes_optional_map_members_from_optional_calls() {
     let source = r#"
@@ -6778,7 +6532,6 @@ fn distinguishes_optional_map_members_from_optional_calls() {
         panic!("optional map metadata")
     };
     assert!(list.optional);
-
     let optional_call = build_hir(
         "import { $state } from 'fict'; export function App() { let rows = $state([{ id: 1 }]); return <ul>{rows.map?.(row => <li key={row.id}>{row.id}</li>)}</ul>; }",
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -6798,7 +6551,6 @@ fn distinguishes_optional_map_members_from_optional_calls() {
         fict_hir::JsxChild::Expression { list: None, .. }
     ));
 }
-
 #[test]
 fn models_context_free_anonymous_function_map_callbacks() {
     let source = r#"
@@ -6827,7 +6579,6 @@ fn models_context_free_anonymous_function_map_callbacks() {
     assert!(!hir.functions[list.callback.as_usize()].flags.is_arrow);
     assert_eq!(list.item_references.len(), 1);
     assert_eq!(list.index_references.len(), 1);
-
     for callback in [
         "function (row) { return <li key={row.id}>{this.label}</li>; }",
         "function (row) { return <li key={row.id}>{arguments.length}</li>; }",
@@ -6856,7 +6607,6 @@ fn models_context_free_anonymous_function_map_callbacks() {
         ));
     }
 }
-
 #[test]
 fn models_simple_component_object_props_with_exact_read_origins() {
     let source = r#"
@@ -7039,7 +6789,6 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         fict_hir::HirObjectParameterMode::Mutable
     );
     assert!(mutated_properties[4].references.is_empty());
-
     let callable = build_hir(
         "function Button({ onClick }) { const invoke = onClick; return <button onClick={() => invoke.call(null)}>go</button>; } function Mixed({ label }) { label(); return <span>{String(label)}</span>; } export function App(fn) { return <><Button onClick={fn} /><Mixed label={fn} /></>; }",
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -7089,7 +6838,6 @@ fn models_simple_component_object_props_with_exact_read_origins() {
     );
     assert_eq!(mixed_property.references.len(), 2);
 }
-
 #[test]
 fn diagnoses_unsupported_component_props_patterns_with_strict_fallback_policy() {
     let source = r#"
@@ -7153,7 +6901,6 @@ fn diagnoses_unsupported_component_props_patterns_with_strict_fallback_policy() 
             "...userRest"
         ]
     );
-
     let fallback = build_hir(
         source,
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -7190,7 +6937,6 @@ fn diagnoses_unsupported_component_props_patterns_with_strict_fallback_policy() 
         assert!(function.parameters[0].object_properties.is_none());
     }
 }
-
 #[test]
 fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
     let source = r#"
@@ -7219,7 +6965,6 @@ fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity
         .collect();
     assert_eq!(value_bindings.len(), 2);
     assert_ne!(value_bindings[0], value_bindings[1]);
-
     let app = hir
         .functions
         .iter()
@@ -7252,7 +6997,6 @@ fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity
             .all(|local| local.kind != fict_hir::LocalKind::Capture)
     );
 }
-
 #[test]
 fn enforces_state_owner_target_and_top_level_placement() {
     let cases = [
@@ -7301,7 +7045,6 @@ fn enforces_state_owner_target_and_top_level_placement() {
             output.diagnostics
         );
     }
-
     for source in [
         "import { $state } from 'fict'; function App() { const value = $state(0); return value; }",
         "import { $state } from 'fict'; function useValue() { const value = $state(0); return value; }",
@@ -7315,7 +7058,6 @@ fn enforces_state_owner_target_and_top_level_placement() {
         assert!(output.hir.is_some());
     }
 }
-
 #[test]
 fn enforces_effect_and_memo_control_flow_placement() {
     let cases = [
@@ -7352,7 +7094,6 @@ fn enforces_effect_and_memo_control_flow_placement() {
             output.diagnostics
         );
     }
-
     for source in [
         "import { $effect } from 'fict'; $effect(() => {});",
         "import { $memo } from 'fict'; { $memo(() => value); }",
@@ -7366,7 +7107,6 @@ fn enforces_effect_and_memo_control_flow_placement() {
         assert!(output.hir.is_some());
     }
 }
-
 #[test]
 fn configured_reactive_scope_is_a_binding_resolved_state_owner() {
     let source = r#"
@@ -7388,7 +7128,6 @@ fn configured_reactive_scope_is_a_binding_resolved_state_owner() {
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(output.hir.is_some());
 }
-
 #[test]
 fn enforces_direct_hook_owner_and_control_flow_placement_by_binding() {
     let cases = [
@@ -7423,7 +7162,6 @@ fn enforces_direct_hook_owner_and_control_flow_placement_by_binding() {
                 .any(|diagnostic| diagnostic.code.as_str() == expected)
         );
     }
-
     for source in [
         "import { useCounter } from './hooks'; function App() { useCounter(); return null; }",
         "function helper(useCounter) { return useCounter(); }",
@@ -7441,13 +7179,11 @@ fn enforces_direct_hook_owner_and_control_flow_placement_by_binding() {
         );
     }
 }
-
 #[test]
 fn enforces_binding_aware_selector_control_flow_placement() {
     let source = r#"
         import { createSelector as select } from 'fict';
         import * as Advanced from 'fict/advanced';
-
         function Demo({ ready, items, value }) {
             if (ready) select(() => value);
             for (const item of items) Advanced.createSelector(() => item);
@@ -7456,7 +7192,6 @@ fn enforces_binding_aware_selector_control_flow_placement() {
             select(() => value) && ready;
             return <div>{ready && select(() => value)(value)}</div>;
         }
-
         function Nested({ ready, value }) {
             if (ready) {
                 const setup = () => select(() => value);
@@ -7464,12 +7199,10 @@ fn enforces_binding_aware_selector_control_flow_placement() {
             }
             return <div />;
         }
-
         function Immediate({ ready, value }) {
             if (ready) (() => select(() => value))();
             return <div />;
         }
-
         function Shadow({ ready, value }, select) {
             if (ready) select(() => value);
             return <div />;
@@ -7508,7 +7241,6 @@ fn enforces_binding_aware_selector_control_flow_placement() {
             "select(() => value)"
         ]
     );
-
     let fallback = build_hir(
         source,
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -7531,7 +7263,6 @@ fn enforces_binding_aware_selector_control_flow_placement() {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
     }));
 }
-
 #[test]
 fn enforces_namespace_and_member_hook_placement() {
     let cases = [
@@ -7562,7 +7293,6 @@ fn enforces_namespace_and_member_hook_placement() {
                 .any(|diagnostic| diagnostic.code.as_str() == expected)
         );
     }
-
     for source in [
         "import * as hooks from './hooks'; function App() { hooks.useCounter?.(); return null; }",
         "const api = { useCounter() {} }; api.useCounter();",
@@ -7579,12 +7309,10 @@ fn enforces_namespace_and_member_hook_placement() {
         );
     }
 }
-
 #[test]
 fn diagnoses_binding_aware_reactive_writes_in_jsx_children() {
     let source = r#"
         import { $state, $store } from 'fict';
-
         function App(values) {
             let count = $state(0);
             let alias = count;
@@ -7643,7 +7371,6 @@ fn diagnoses_binding_aware_reactive_writes_in_jsx_children() {
             "{count++}"
         ]
     );
-
     let fallback = build_hir(
         source,
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -7671,7 +7398,6 @@ fn diagnoses_binding_aware_reactive_writes_in_jsx_children() {
             })
     );
 }
-
 #[test]
 fn diagnoses_only_intrinsic_jsx_spreads_once_per_element() {
     let source = r#"
@@ -7711,7 +7437,6 @@ fn diagnoses_only_intrinsic_jsx_spreads_once_per_element() {
         })
         .collect::<Vec<_>>();
     assert_eq!(finding_sources, ["{...domProps}", "{...svgProps}"]);
-
     let fallback = build_hir(
         source,
         options(OxcSourceLanguage::JavaScriptJsx),
@@ -7730,7 +7455,6 @@ fn diagnoses_only_intrinsic_jsx_spreads_once_per_element() {
         2
     );
 }
-
 #[test]
 fn diagnoses_shallow_inline_non_event_jsx_function_props() {
     let source = r#"
@@ -7785,7 +7509,6 @@ fn diagnoses_shallow_inline_non_event_jsx_function_props() {
         ]
     );
 }
-
 #[test]
 fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing() {
     let source = r#"
@@ -7837,7 +7560,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
     };
     let fragment_kind =
         |fragment: fict_hir::SyntaxFragmentId| hir.syntax_fragments[fragment.as_usize()].kind;
-
     let class_instructions: Vec<_> = instructions
         .iter()
         .copied()
@@ -7860,7 +7582,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
         .copied()
         .find(|instruction| !authored(instruction).contains("class Example"))
         .expect("class expression fragment");
-
     let decorator_instructions: Vec<_> = instructions
         .iter()
         .copied()
@@ -7883,7 +7604,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
             .iter()
             .any(|instruction| authored(instruction).contains("decorate('field')"))
     );
-
     let HirInstructionKind::SyntaxFragment {
         fragment: declaration_fragment,
         inputs: declaration_inputs,
@@ -7919,7 +7639,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
     for decorator in &decorator_instructions {
         assert!(declaration_inputs.contains(&decorator.result.expect("decorator value")));
     }
-
     let summary_names = |fragment: fict_hir::SyntaxFragmentId| {
         hir.syntax_fragments[fragment.as_usize()]
             .summary
@@ -7939,7 +7658,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
     assert!(expression_references.contains(&"base"));
     assert!(expression_references.contains(&"staticValue"));
     assert!(!expression_references.contains(&"instanceValue"));
-
     let local = |name: &str| {
         function
             .locals
@@ -7969,7 +7687,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
                 && initializer == expression_class.result.expect("class expression value")
         )
     }));
-
     let calls = |source_text: &str| {
         instructions
             .iter()
@@ -8003,7 +7720,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
         assert!(!declaration_inputs.contains(&value));
         assert!(!expression_inputs.contains(&value));
     }
-
     for class in &class_instructions {
         assert!(!instructions.iter().any(|instruction| {
             instruction.origin.primary_span == class.origin.primary_span
@@ -8015,7 +7731,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
         }));
     }
 }
-
 fn memo_side_effect_diagnostics(source: &str) -> Vec<fict_diagnostics::Diagnostic> {
     build_hir(
         source,
@@ -8030,7 +7745,6 @@ fn memo_side_effect_diagnostics(source: &str) -> Vec<fict_diagnostics::Diagnosti
     .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M003")
     .collect()
 }
-
 #[test]
 fn diagnoses_eager_memo_side_effect_evaluation_shapes() {
     let callbacks = [
@@ -8084,7 +7798,6 @@ fn diagnoses_eager_memo_side_effect_evaluation_shapes() {
         "((() => fetch('/api')) as unknown)",
         "(() => fetch('/api')) satisfies (() => unknown)",
     ];
-
     for callback in callbacks {
         let source =
             format!("import {{ $memo }} from 'fict'; const value = $memo({callback}); void value;");
@@ -8108,7 +7821,6 @@ fn diagnoses_eager_memo_side_effect_evaluation_shapes() {
         );
     }
 }
-
 #[test]
 fn accepts_pure_and_lazy_memo_evaluation_shapes() {
     let callbacks = [
@@ -8134,18 +7846,15 @@ fn accepts_pure_and_lazy_memo_evaluation_shapes() {
         "() => (() => 1)()",
         "() => wrap(1)",
     ];
-
     for callback in callbacks {
         let source =
             format!("import {{ $memo }} from 'fict'; const value = $memo({callback}); void value;");
         let diagnostics = memo_side_effect_diagnostics(&source);
         assert!(diagnostics.is_empty(), "{callback}: {diagnostics:?}");
     }
-
     let non_tail = "import { $memo } from 'fict'; const stable = () => 1; const value = $memo((() => fetch('/api'), stable));";
     assert!(memo_side_effect_diagnostics(non_tail).is_empty());
 }
-
 #[test]
 fn resolves_memo_and_safe_global_bindings_before_side_effect_diagnostics() {
     let source = r#"

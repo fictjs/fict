@@ -1,16 +1,3 @@
-use std::mem;
-
-use fict_compiler_oxc::{
-    HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions,
-    build_hir, emit_program,
-};
-use fict_diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
-};
-use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
-use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
-use fict_metadata::MetadataResolutionStatus;
-
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::metadata_analysis::generate_module_metadata;
@@ -21,7 +8,17 @@ use crate::{
     HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap, SourceLanguage,
     run_core_passes,
 };
-
+use fict_compiler_oxc::{
+    HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions,
+    build_hir, emit_program,
+};
+use fict_diagnostics::{
+    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
+};
+use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
+use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
+use fict_metadata::MetadataResolutionStatus;
+use std::mem;
 /// Execute the currently connected native pipeline and return a complete result.
 #[must_use]
 pub fn compile(request: CompileRequest) -> CompileResult {
@@ -30,7 +27,6 @@ pub fn compile(request: CompileRequest) -> CompileResult {
         Err(error) => invalid_request_result(error.to_string()),
     }
 }
-
 /// Construct a structured result for malformed public input.
 #[must_use]
 pub fn invalid_request_result(message: impl Into<String>) -> CompileResult {
@@ -41,7 +37,6 @@ pub fn invalid_request_result(message: impl Into<String>) -> CompileResult {
         Some("fix the request shape before invoking the native compiler"),
     )
 }
-
 /// Construct the generic result returned when the N-API panic boundary fires.
 #[must_use]
 pub fn internal_error_result() -> CompileResult {
@@ -52,11 +47,9 @@ pub fn internal_error_result() -> CompileResult {
         Some("retry with the legacy backend for the entire build and report the failing fixture"),
     )
 }
-
 fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     let mut result = CompileResult::empty();
     result.diagnostics = request.integration_diagnostics.clone();
-
     #[cfg(not(feature = "preview"))]
     if request
         .options
@@ -228,6 +221,11 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         .iter()
         .map(|analysis| analysis.cycles.clone())
         .collect();
+    let scopes: Vec<_> = core
+        .functions
+        .iter()
+        .map(|analysis| analysis.scopes.clone())
+        .collect();
     let runtime_family = if frontend
         .macro_imports
         .iter()
@@ -241,6 +239,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         &core.hir,
         &regions,
         &cycles,
+        Some(&scopes),
         NoJsxLoweringOptions {
             runtime_family,
             strict_guarantee: request.options.strict_guarantee,
@@ -698,6 +697,26 @@ mod tests {
         );
         assert!(!result.code.contains("import {"), "{}", result.code);
         assert!(!result.code.contains("export default"), "{}", result.code);
+    }
+
+    #[test]
+    fn lowers_derived_values_and_preserves_fragment_roots() {
+        #[rustfmt::skip]
+        let cases = [
+            ("import { $effect, $state } from 'fict'; export function Counter() { let count = $state(2); const doubled = count * 2; $effect(() => doubled); return <div>{doubled}</div>; }", "__fictUseMemo(__fictCtx, () => count() * 2)|() => doubled()|__fictUseEffect(__fictCtx, () => doubled())", ""),
+            ("import { $effect, $state } from 'fict'; export function Counter() { 'use no memo'; let count = $state(2); const doubled = count * 2; $effect(() => doubled); return <div>{doubled}</div>; }", "() => count() * 2|() => doubled()|__fictUseEffect(__fictCtx, () => doubled())", ""),
+            ("export function Label(props) { const text = props.value + '!'; return <span>{text}</span>; }", "__fictUseMemo(__fictCtx, () => props.value + \"!\")|() => text()", ""),
+            ("import { createEffect } from '@fictjs/runtime'; export function Routes(props) { const routes = props.routes ?? []; const compiled = routes.map(value => value); const branches = compiled.slice(); const match = branches.slice(0, 1)[0]; const route = match.route; const hasPreload = typeof route.preload === 'function'; createEffect(() => { for (const branch of branches) void branch; void hasPreload; }); return route; }", "() => match().route|const branch of branches()", "__fictUseMemo()("),
+            ("import { reactive } from '@fictjs/runtime'; export function App() { const render = () => null; return <>{[reactive(render)]}</>; }", "template(\"<!---->\", void 0, void 0, void 0, true)|insert(__fict_jsx", ""),
+        ];
+        for (source, expected, rejected) in cases {
+            let result = compile(request(source, "lowering.tsx"));
+            assert!(!result.has_errors(), "{:?}", result.diagnostics);
+            #[rustfmt::skip]
+            assert!(expected.split('|').all(|s| result.code.contains(s)), "{}", result.code);
+            #[rustfmt::skip]
+            assert!(rejected.is_empty() || rejected.split('|').all(|s| !result.code.contains(s)), "{}", result.code);
+        }
     }
 
     #[test]
@@ -1985,7 +2004,7 @@ mod tests {
                 .code
                 .contains("const __fictCtx_1 = __fictUseContext()")
         );
-        assert!(state.code.contains("__fictUseSignal(__fictCtx_1, 0)"));
+        assert!(state.code.contains("name: \"count\""), "{}", state.code);
         assert!(state.code.contains("count(__fict_value)"));
         assert!(state.code.contains("count(__fict_previous + 1)"));
         assert!(state.code.contains("count(),"), "{}", state.code);
@@ -2078,11 +2097,8 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(
-            result.code.contains("template(\"<i>a</i><i>b</i>\")"),
-            "{}",
-            result.code
-        );
+        let fragment = "template(\"<i>a</i><i>b</i>\", void 0, void 0, void 0, true)";
+        assert!(result.code.contains(fragment), "{}", result.code);
         assert!(!result.code.contains("return <"), "{}", result.code);
     }
 
@@ -2392,22 +2408,23 @@ mod tests {
 
     #[test]
     fn emits_reactive_component_prop_getters() {
-        let result = compile(request(
-            "import { $state } from 'fict'; const Card = (_props) => null; export function App() { let count = $state(0); return <Card value={count} />; }",
+        let mut input = request(
+            "import { $state } from 'fict'; const Card = (_props) => null; const handler = makeHandler(); export function App() { let count = $state(0); return <Card value={count} onSelect={handler} />; } export function Router(props) { const owns = !props.history; const history = props.history || makeHistory(); if (owns) history.destroy?.(); return <Card history={history} />; }",
             "reactive-component.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
-        assert!(
-            result.code.contains("import { __fictProp"),
-            "{}",
-            result.code
-        );
-        assert!(
-            result.code.contains("value: __fictProp(() => count())"),
-            "{}",
-            result.code
-        );
+        for snippet in [
+            "import { __fictProp",
+            "value: __fictProp(() => count())",
+            "onSelect: handler",
+            "history: __fictProp(() => history())",
+        ] {
+            assert!(result.code.contains(snippet), "{}", result.code);
+        }
+        assert!(!result.code.contains("() => handler"), "{}", result.code);
     }
 
     #[test]
@@ -2579,11 +2596,7 @@ mod tests {
         assert!(result.code.contains("type: Row"), "{}", result.code);
         assert!(result.code.contains("() => row()"), "{}", result.code);
         assert!(result.code.contains("key: __fict_key_"), "{}", result.code);
-        assert!(
-            result.code.contains("label: __fictProp(() => __fict_key)"),
-            "{}",
-            result.code
-        );
+        assert!(result.code.contains("label: __fict_key"), "{}", result.code);
     }
 
     #[test]
@@ -3484,7 +3497,23 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
         );
-        assert!(result.code.contains("if (count() > 10)"), "{}", result.code);
+        assert!(
+            result.code.contains("createConditional(() => count() > 10"),
+            "{}",
+            result.code
+        );
+        let prop_ternary = compile(request(
+            "export function App(props) { return props.broken ? <Broken /> : <Ready />; }",
+            "prop-ternary-return.tsx",
+        ));
+        assert!(!prop_ternary.has_errors(), "{:?}", prop_ternary.diagnostics);
+        assert!(
+            prop_ternary
+                .code
+                .contains("createConditional(() => props.broken"),
+            "{}",
+            prop_ternary.code
+        );
 
         let non_jsx = compile(request(
             "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10 && maybe()) return count; return 0; }",
@@ -3639,7 +3668,7 @@ mod tests {
 
     #[test]
     fn emits_authored_try_catch_finally_from_structured_hir() {
-        let source = "import { $state } from 'fict'; export function App(shouldThrow) { let result = $state('init'); try { result = 'try'; if (shouldThrow) throw new Error('boom'); } catch (error) { result = error.message; } finally { result += '!'; } return <span>{result}</span>; }";
+        let source = "import { $state } from 'fict'; export function App() { let result = $state('init'); try { result = 'try'; if (globalThis.shouldThrow) throw new Error('boom'); } catch (error) { result = error.message; } finally { result += '!'; } return <span>{result}</span>; }";
         let compiled = compile(request(source, "try-catch-finally.tsx"));
 
         assert!(!compiled.has_errors(), "{:?}", compiled.diagnostics);
@@ -3994,7 +4023,7 @@ mod tests {
     #[test]
     fn emits_fine_grained_ternary_and_logical_conditions() {
         let result = compile(request(
-            "import { $state } from 'fict'; const Yes = () => null; const No = () => null; export function App() { let show = $state(true); return <main>{show ? <><Yes /></> : <No />}{show && <span>{show}</span>}</main>; }",
+            "import { $state } from 'fict'; const Yes = () => null; const No = () => null; export function App() { let show = $state(true); let count = $state(0); return <main>{show ? <><Yes /></> : <No />}{show && <span>{count}</span>}</main>; }",
             "conditional.tsx",
         ));
 
@@ -4017,6 +4046,11 @@ mod tests {
         assert!(result.code.contains("type: Yes"), "{}", result.code);
         assert!(result.code.contains("type: No"), "{}", result.code);
         assert!(result.code.contains("void 0"), "{}", result.code);
+        assert!(
+            result.code.contains("trackBranchReads: true"),
+            "{}",
+            result.code
+        );
         assert!(
             result.code.matches("onDestroy(").count() >= 2,
             "{}",
@@ -4885,6 +4919,30 @@ mod tests {
             &source[handler.source_span.start() as usize..handler.source_span.end() as usize],
             "(event) => { event.preventDefault(); count++; }"
         );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn transforms_preview_handlers_with_source_spans_beyond_the_artifact_wrapper() {
+        let source = format!(
+            "/* {} */\nexport function App() {{ return <button onClick$={{(event: MouseEvent) => event.preventDefault()}}>Deploy</button>; }}",
+            "padding".repeat(512)
+        );
+        let mut input = request(&source, "preview-long-handler-offset.tsx");
+        input.options.sourcemap = true;
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let artifact = result.artifacts.first().expect("one handler artifact");
+        assert!(artifact.code.contains("event.preventDefault()"));
+        assert!(!artifact.code.contains("MouseEvent"));
+        assert!(artifact.map.is_some());
     }
 
     #[cfg(feature = "preview")]

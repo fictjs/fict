@@ -6,9 +6,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build, type Rollup } from 'vite'
 import { describe, expect, it } from 'vitest'
 
-import fict, { __fictVitePluginInternals, registerExtractedHandler } from '..'
+import createFictVitePlugin, { __fictVitePluginInternals, registerExtractedHandler } from '..'
 import type { FictNode } from '../../../runtime/src/types'
 import { renderToString } from '../../../ssr/src/index'
+
+function fict(
+  options?: Parameters<typeof createFictVitePlugin>[0],
+): ReturnType<typeof createFictVitePlugin> {
+  return createFictVitePlugin({ backend: 'legacy', ...options })
+}
 
 interface BuildArtifact {
   fileName: string

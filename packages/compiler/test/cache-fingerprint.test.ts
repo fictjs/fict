@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { getCompilerCacheFingerprint } from '@fictjs/compiler'
+import { getCompilerCacheFingerprint } from '@fictjs/compiler/legacy'
 import { describe, expect, it } from 'vitest'
 
 import { readLoadedCompilerArtifact } from '../src/cache-fingerprint'

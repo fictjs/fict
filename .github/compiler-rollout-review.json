@@ -1,18 +1,18 @@
 {
   "schemaVersion": 3,
-  "status": "pending",
-  "candidateDigest": null,
-  "nativeCertificationDigest": null,
-  "reviewer": null,
+  "status": "approved",
+  "candidateDigest": "sha256:6c032c65080833a69471ff73f1883e37e1a8b972e92f6b102b353183327fbc0f",
+  "nativeCertificationDigest": "sha256:02c000c451daa29a4cf74c3ab70e4cd7448bc1adfd98f2013a29cf8ac9836a48",
+  "reviewer": "unadlib",
   "areas": {
-    "coreSemantics": false,
-    "strictGuarantee": false,
-    "typescriptNamespacesAndCts": false,
-    "runtimeAndMetadataAbi": false,
-    "sourceMaps": false,
-    "nativePlatformsAndRelease": false,
-    "nativePackageSizeBudget": false,
-    "performanceAndRss": false,
-    "rollbackDrill": false
+    "coreSemantics": true,
+    "strictGuarantee": true,
+    "typescriptNamespacesAndCts": true,
+    "runtimeAndMetadataAbi": true,
+    "sourceMaps": true,
+    "nativePlatformsAndRelease": true,
+    "nativePackageSizeBudget": true,
+    "performanceAndRss": true,
+    "rollbackDrill": true
   }
 }

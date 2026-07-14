@@ -2,7 +2,7 @@ import { transformSync, type PluginItem } from '@babel/core'
 import pluginTransformCjs from '@babel/plugin-transform-modules-commonjs'
 import pluginTransformTypescript from '@babel/plugin-transform-typescript'
 
-import createFictPlugin, { type FictCompilerOptions } from '../src/index'
+import createFictPlugin, { type FictCompilerOptions } from '../src/legacy'
 
 export function runLegacyTransform(
   source: string,

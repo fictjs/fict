@@ -1,6 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
-
+use super::compile::{convert_diagnostics, failed_output, sorted, source_type};
+use super::preview_codegen::{HandlerArtifactContext, PreparedHandler, generate_handler_artifact};
+use super::typescript::{
+    configure_transform, passthrough_blockers, plan_typescript_program,
+    rewrite_import_equals_extensions,
+};
+use crate::commonjs::lower_standard_esm_to_commonjs;
+use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
@@ -45,17 +50,9 @@ use oxc::{
     },
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
-
-use crate::commonjs::lower_standard_esm_to_commonjs;
-use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
-
-use super::compile::{convert_diagnostics, failed_output, sorted, source_type};
-use super::preview_codegen::{HandlerArtifactContext, PreparedHandler, generate_handler_artifact};
-use super::typescript::{
-    configure_transform, passthrough_blockers, plan_typescript_program,
-    rewrite_import_equals_extensions,
-};
-
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+mod conditional_return;
 /// Lower the currently supported EmitIR subset into the original OXC program, run TypeScript
 /// lowering and OXC code generation, and parse the generated JavaScript again as a hard backend
 /// invariant.
@@ -84,7 +81,6 @@ pub fn emit_program(
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
-
     let import_source = render_runtime_imports(emit);
     let (context_sources, context_diagnostics) = render_context_sources(emit);
     diagnostics.extend(context_diagnostics);
@@ -107,10 +103,8 @@ pub fn emit_program(
         Ok(declarations) => declarations,
         Err(findings) => return failed_output(findings),
     };
-
     strip_compiler_macro_imports(&mut program);
-
-    let (rewrites, rewrite_diagnostics) = call_rewrites(emit);
+    let (creations, rewrite_diagnostics) = creation_rewrites(emit);
     let props_rewrites = props_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
@@ -149,25 +143,27 @@ pub fn emit_program(
     };
     let mut rewriter = AstRewriter {
         allocator: &allocator,
-        call_rewrites: &rewrites,
+        creations: &creations,
         props: &props_rewrites.parameters,
         prop_reads: &props_rewrites.reads,
         reads: &reads,
         mutations: &mutations,
         vnodes: &vnodes,
         components: &components,
+        conditional_returns: &templates.conditional_returns,
         clones: &templates.clones,
         preview_handlers: &preview_handlers,
         preview_qrl_local,
         prepared_preview_handlers: BTreeMap::new(),
         context_declarations,
-        matched_calls: BTreeSet::new(),
+        matched_creations: BTreeSet::new(),
         matched_props: BTreeSet::new(),
         matched_prop_reads: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
         matched_mutations: BTreeSet::new(),
         matched_vnodes: BTreeSet::new(),
         matched_components: BTreeSet::new(),
+        matched_conditional_returns: BTreeSet::new(),
         matched_clones: BTreeSet::new(),
         vnode_shadowed_clones: BTreeSet::new(),
         active_list_reads: BTreeSet::new(),
@@ -183,17 +179,17 @@ pub fn emit_program(
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
-    for location in rewrites.keys() {
-        if !rewriter.matched_calls.contains(location) {
+    for location in creations.keys() {
+        if !rewriter.matched_creations.contains(location) {
             diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
-                    "EmitIR call origin does not identify an OXC call expression",
+                    "EmitIR creation origin does not identify its source expression",
                     GuaranteeClass::Internal,
                 )
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1)
-                        .expect("ordered EmitIR rewrite location"),
+                        .expect("ordered EmitIR creation location"),
                 ),
             );
         }
@@ -282,6 +278,21 @@ pub fn emit_program(
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1)
                         .expect("ordered EmitIR component location"),
+                ),
+            );
+        }
+    }
+    for location in templates.conditional_returns.keys() {
+        if !rewriter.matched_conditional_returns.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-CONDITIONAL-RETURN",
+                    "conditional-return plan does not identify a supported if/return pair",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered conditional-return location"),
                 ),
             );
         }
@@ -408,7 +419,6 @@ pub fn emit_program(
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
-
     let used_template_factories: BTreeSet<_> = rewriter
         .matched_clones
         .iter()
@@ -427,7 +437,6 @@ pub fn emit_program(
     for statement in template_declarations.into_iter().rev() {
         program.body.insert(0, statement);
     }
-
     if !import_source.is_empty() {
         let parsed_imports = Parser::new(&allocator, &import_source, SourceType::mjs()).parse();
         if !parsed_imports.diagnostics.is_empty() {
@@ -442,7 +451,6 @@ pub fn emit_program(
             program.body.insert(0, statement);
         }
     }
-
     if let Some(preview) = &emit.preview_plan {
         let preview_source = match render_preview_module_statements(emit, preview) {
             Ok(source) => source,
@@ -455,7 +463,6 @@ pub fn emit_program(
         };
         program.body.extend(statements);
     }
-
     let semantic = SemanticBuilder::new()
         .with_check_syntax_error(true)
         .with_enum_eval(true)
@@ -468,7 +475,6 @@ pub fn emit_program(
     if semantic_has_errors {
         return failed_output(diagnostics);
     }
-
     let typescript_plan = input_source_type
         .is_typescript()
         .then(|| plan_typescript_program(&program, options.module_kind, &options.typescript));
@@ -537,7 +543,6 @@ pub fn emit_program(
         diagnostics.push(*diagnostic);
         return failed_output(diagnostics);
     }
-
     let rebuilt = SemanticBuilder::new()
         .with_check_syntax_error(true)
         .with_enum_eval(true)
@@ -550,7 +555,6 @@ pub fn emit_program(
     if rebuilt_has_errors {
         return failed_output(diagnostics);
     }
-
     let generated = Codegen::new()
         .with_options(CodegenOptions {
             source_map_path: options.sourcemap.then(|| PathBuf::from(filename)),
@@ -560,7 +564,6 @@ pub fn emit_program(
         .with_source_type(input_source_type)
         .with_scoping(Some(rebuilt.semantic.into_scoping()))
         .build(&program);
-
     let validation_type = output_source_type(options.module_kind);
     let validation = Parser::new(&allocator, &generated.code, validation_type)
         .with_options(ParseOptions {
@@ -586,7 +589,6 @@ pub fn emit_program(
     if validation_has_errors {
         return failed_output(diagnostics);
     }
-
     OxcCompileOutput {
         code: generated.code,
         source_map_json: generated.map.map(|map| map.to_json_string()),
@@ -594,7 +596,6 @@ pub fn emit_program(
         diagnostics: sorted(diagnostics),
     }
 }
-
 fn strip_compiler_macro_imports(program: &mut oxc::ast::ast::Program<'_>) {
     program.body.retain_mut(|statement| {
         let Statement::ImportDeclaration(declaration) = statement else {
@@ -619,7 +620,6 @@ fn strip_compiler_macro_imports(program: &mut oxc::ast::ast::Program<'_>) {
         original_len == specifiers.len() || !specifiers.is_empty()
     });
 }
-
 fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
     let unsupported_scoped_helper = emit.functions.iter().find(|function| {
         function.context.is_none()
@@ -665,20 +665,19 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
         vec![diagnostic]
     })
 }
-
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(
         helper,
         RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
     )
 }
-
 #[derive(Debug, Clone)]
-struct CallRewrite {
-    local: String,
+struct CreationRewrite {
+    local: Option<String>,
     context: Option<String>,
+    signal_name: Option<String>,
+    derived: bool,
 }
-
 #[derive(Debug, Clone)]
 struct PropBindingRewrite {
     path: Vec<String>,
@@ -689,20 +688,17 @@ struct PropBindingRewrite {
     default_local: Option<String>,
     origin: SourceSpan,
 }
-
 #[derive(Debug, Clone)]
 struct PropCheckRewrite {
     path: Vec<String>,
     local: String,
     origin: SourceSpan,
 }
-
 #[derive(Debug, Clone)]
 struct PropsParameterDefaultRewrite {
     input: String,
     value: SourceSpan,
 }
-
 #[derive(Debug, Clone)]
 struct PropsRestRewrite {
     local: String,
@@ -710,7 +706,6 @@ struct PropsRestRewrite {
     helper: String,
     origin: SourceSpan,
 }
-
 #[derive(Debug, Clone)]
 struct PropsRewrite {
     source: String,
@@ -719,13 +714,11 @@ struct PropsRewrite {
     helper: Option<String>,
     bindings: Vec<PropBindingRewrite>,
 }
-
 struct PropsRewrites {
     parameters: BTreeMap<(u32, u32), PropsRewrite>,
     reads: BTreeSet<(u32, u32)>,
     diagnostics: Vec<Diagnostic>,
 }
-
 fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
     let helper_names: BTreeMap<_, _> = emit
         .imports
@@ -956,8 +949,9 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
         diagnostics,
     }
 }
-
-fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<Diagnostic>) {
+fn creation_rewrites(
+    emit: &EmitProgram,
+) -> (BTreeMap<(u32, u32), CreationRewrite>, Vec<Diagnostic>) {
     let helper_names: BTreeMap<_, _> = emit
         .imports
         .iter()
@@ -967,64 +961,75 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<
     let mut diagnostics = Vec::new();
     for function in &emit.functions {
         for operation in &function.operations {
-            let helper = match operation {
+            let (helper, is_derived) = match operation {
+                EmitOperation::CreateDerived { helper, .. } => (*helper, true),
                 EmitOperation::CreateReactive { helper, .. }
                 | EmitOperation::RegisterEffect { helper, .. }
-                | EmitOperation::KeyedList { helper, .. } => Some(*helper),
-                _ => None,
-            };
-            let Some(helper) = helper else {
-                continue;
+                | EmitOperation::KeyedList { helper, .. } => (Some(*helper), false),
+                _ => continue,
             };
             let Some(span) = operation_origin(operation).primary_span else {
                 diagnostics.push(emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
-                    "call-lowering EmitIR operation requires a source origin",
+                    "creation-lowering EmitIR operation requires a source origin",
                     GuaranteeClass::Internal,
                 ));
                 continue;
             };
-            let Some(local) = helper_names.get(&helper) else {
-                diagnostics.push(emit_error(
-                    "FICT-OXC-EMIT-IMPORT",
-                    "call-lowering helper has no runtime import intent",
-                    GuaranteeClass::Internal,
-                ));
-                continue;
-            };
-            let context = is_scoped_helper(helper)
-                .then(|| {
-                    function
-                        .context
-                        .as_ref()
-                        .map(|context| context.local.clone())
-                })
-                .flatten();
-            if is_scoped_helper(helper) && context.is_none() {
+            let local = helper.and_then(|helper| helper_names.get(&helper).copied());
+            if helper.is_some() && local.is_none() {
                 diagnostics.push(
                     emit_error(
-                        "FICT-OXC-EMIT-CONTEXT",
-                        "scoped call-lowering helper has no function context plan",
+                        "FICT-OXC-EMIT-IMPORT",
+                        "creation-lowering helper has no runtime import intent",
                         GuaranteeClass::Internal,
                     )
                     .with_primary_span(span),
                 );
                 continue;
             }
+            let context = helper
+                .filter(|helper| is_scoped_helper(*helper))
+                .and_then(|_| {
+                    function
+                        .context
+                        .as_ref()
+                        .map(|context| context.local.clone())
+                });
+            if helper.is_some_and(is_scoped_helper) && context.is_none() {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-CONTEXT",
+                        "scoped creation-lowering helper has no function context plan",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+                continue;
+            }
+            let signal_name = match operation {
+                EmitOperation::CreateReactive {
+                    name,
+                    helper: RuntimeHelper::Signal | RuntimeHelper::UseSignal,
+                    ..
+                } => name,
+                _ => &None,
+            }
+            .clone();
+            let rewrite = CreationRewrite {
+                local: local.map(str::to_owned),
+                context,
+                signal_name,
+                derived: is_derived,
+            };
             if rewrites
-                .insert(
-                    (span.start(), span.end()),
-                    CallRewrite {
-                        local: (*local).to_owned(),
-                        context,
-                    },
-                )
+                .insert((span.start(), span.end()), rewrite)
                 .is_some()
             {
                 diagnostics.push(
                     emit_error(
                         "FICT-OXC-EMIT-ORIGIN",
-                        "multiple call-lowering operations share the same source origin",
+                        "multiple creation operations share the same source origin",
                         GuaranteeClass::Internal,
                     )
                     .with_primary_span(span),
@@ -1034,7 +1039,6 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<
     }
     (rewrites, diagnostics)
 }
-
 #[derive(Debug, Clone, Copy)]
 struct ReadRewrite {
     projected: bool,
@@ -1042,7 +1046,6 @@ struct ReadRewrite {
     projection_count: usize,
     optional_accessor: bool,
 }
-
 fn projection_is_optional(projection: &fict_hir::Projection) -> bool {
     match projection {
         fict_hir::Projection::StaticProperty { optional, .. }
@@ -1050,7 +1053,6 @@ fn projection_is_optional(projection: &fict_hir::Projection) -> bool {
         | fict_hir::Projection::Index { optional, .. } => *optional,
     }
 }
-
 fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<Diagnostic>) {
     let mut reads = BTreeMap::new();
     let mut diagnostics = Vec::new();
@@ -1114,7 +1116,6 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
     }
     (reads, diagnostics)
 }
-
 #[derive(Debug, Clone)]
 enum MutationRewrite {
     Write,
@@ -1127,7 +1128,6 @@ enum MutationRewrite {
         targets: BTreeSet<(u32, u32)>,
     },
 }
-
 fn mutation_rewrites(
     emit: &EmitProgram,
 ) -> (BTreeMap<(u32, u32), MutationRewrite>, Vec<Diagnostic>) {
@@ -1211,12 +1211,10 @@ fn mutation_rewrites(
     }
     (mutations, diagnostics)
 }
-
 #[derive(Debug, Clone)]
 struct VNodeRewrite {
     fragment_local: Option<String>,
 }
-
 fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Vec<Diagnostic>) {
     let helper_names: BTreeMap<_, _> = emit
         .imports
@@ -1279,7 +1277,6 @@ fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Ve
     }
     (rewrites, diagnostics)
 }
-
 #[derive(Debug, Clone)]
 struct ComponentRewrite {
     props: Vec<ComponentProp>,
@@ -1291,7 +1288,6 @@ struct ComponentRewrite {
     reactive_function_helper: Option<String>,
     fragment_local: Option<String>,
 }
-
 fn component_rewrites(
     emit: &EmitProgram,
 ) -> (BTreeMap<(u32, u32), ComponentRewrite>, Vec<Diagnostic>) {
@@ -1460,20 +1456,17 @@ fn component_rewrites(
     }
     (rewrites, diagnostics)
 }
-
 #[derive(Debug)]
 struct TemplateSource {
     local: String,
     source: String,
 }
-
 #[derive(Debug, Clone)]
 struct CloneRewrite {
     factory: String,
     root: String,
     steps: Vec<FineJsxStep>,
 }
-
 #[derive(Debug, Clone)]
 enum FineJsxStep {
     Resolve {
@@ -1556,19 +1549,17 @@ enum FineJsxStep {
         needs_index: bool,
     },
 }
-
 #[derive(Debug, Clone)]
 enum FineJsxValue {
     Source(SourceSpan),
     Literal(LiteralValue),
 }
-
 struct TemplateRewrites {
     sources: Vec<TemplateSource>,
     clones: BTreeMap<(u32, u32), CloneRewrite>,
+    conditional_returns: BTreeMap<(u32, u32), conditional_return::ConditionalReturnRewrite>,
     diagnostics: Vec<Diagnostic>,
 }
-
 fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
     let helper_names: BTreeMap<_, _> = emit
         .imports
@@ -1589,6 +1580,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             local,
             html,
             namespace,
+            force_fragment,
             helper,
             origin,
         } = operation
@@ -1616,7 +1608,8 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             diagnostics.push(diagnostic);
             continue;
         }
-        let Some(call) = render_template_call(helper_local, html, *namespace) else {
+        let Some(call) = render_template_call(helper_local, html, *namespace, *force_fragment)
+        else {
             let mut diagnostic = emit_error(
                 "FICT-OXC-EMIT-TEMPLATE",
                 "template declaration uses a non-concrete DOM namespace",
@@ -1631,8 +1624,8 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             source: format!("const {local} = {call};"),
         });
     }
-
     let mut clones: BTreeMap<(u32, u32), CloneRewrite> = BTreeMap::new();
+    let mut conditional_returns = BTreeMap::new();
     for function in &emit.functions {
         let temporary_names: BTreeMap<_, _> = function
             .temporaries
@@ -1714,6 +1707,47 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         current = None;
                     } else {
                         current = Some(location);
+                    }
+                }
+                EmitOperation::ConditionalReturn {
+                    target,
+                    helper,
+                    create_helper,
+                    cleanup_helper,
+                    origin,
+                } => {
+                    let Some(span) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "conditional return requires a source origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let plan = temporary_names
+                        .get(target)
+                        .copied()
+                        .zip(helper_names.get(helper).copied())
+                        .zip(helper_names.get(create_helper).copied())
+                        .zip(helper_names.get(cleanup_helper).copied())
+                        .map(|(((target, helper), create), cleanup)| {
+                            conditional_return::ConditionalReturnRewrite::new(
+                                target, helper, create, cleanup,
+                            )
+                        });
+                    if plan.is_none()
+                        || conditional_returns
+                            .insert((span.start(), span.end()), plan.expect("checked plan"))
+                            .is_some()
+                    {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-CONDITIONAL-RETURN",
+                                "conditional return has missing or duplicate plan identity",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(span),
+                        );
                     }
                 }
                 EmitOperation::ResolveElement {
@@ -2605,27 +2639,36 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
     TemplateRewrites {
         sources,
         clones,
+        conditional_returns,
         diagnostics,
     }
 }
-
-fn render_template_call(helper: &str, html: &str, namespace: DomNamespace) -> Option<String> {
-    let html = quote_javascript_string(html);
-    Some(match namespace {
-        DomNamespace::Html => format!("{helper}({html})"),
-        DomNamespace::Svg => format!("{helper}({html}, void 0, true)"),
+fn render_template_call(
+    helper: &str,
+    html: &str,
+    namespace: DomNamespace,
+    force_fragment: bool,
+) -> Option<String> {
+    let suffixes = match namespace {
+        DomNamespace::Html => ("", ", void 0, void 0, void 0, true"),
+        DomNamespace::Svg => (", void 0, true", ", void 0, true, void 0, true"),
         DomNamespace::MathMl
         | DomNamespace::MathMlTextIntegration
         | DomNamespace::MathMlAnnotationXml => {
-            format!("{helper}({html}, void 0, void 0, true)")
+            (", void 0, void 0, true", ", void 0, void 0, true, true")
         }
         DomNamespace::Parent => return None,
-    })
+    };
+    let suffix = if force_fragment {
+        suffixes.1
+    } else {
+        suffixes.0
+    };
+    let html = quote_javascript_string(html);
+    Some(format!("{helper}({html}{suffix})"))
 }
-
 fn quote_javascript_string(value: &str) -> String {
     use std::fmt::Write;
-
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('"');
     for character in value.chars() {
@@ -2649,7 +2692,6 @@ fn quote_javascript_string(value: &str) -> String {
     quoted.push('"');
     quoted
 }
-
 fn render_runtime_imports(emit: &EmitProgram) -> String {
     let mut output = String::new();
     for intent in &emit.imports {
@@ -2665,13 +2707,11 @@ fn render_runtime_imports(emit: &EmitProgram) -> String {
     }
     output
 }
-
 #[derive(Debug)]
 struct ContextSource {
     location: (u32, u32),
     source: String,
 }
-
 fn render_context_sources(emit: &EmitProgram) -> (Vec<ContextSource>, Vec<Diagnostic>) {
     let helper_names: BTreeMap<_, _> = emit
         .imports
@@ -2724,7 +2764,6 @@ fn render_context_sources(emit: &EmitProgram) -> (Vec<ContextSource>, Vec<Diagno
     }
     (sources, diagnostics)
 }
-
 fn parse_context_declarations<'a>(
     allocator: &'a Allocator,
     sources: &'a [ContextSource],
@@ -2752,7 +2791,6 @@ fn parse_context_declarations<'a>(
     }
     Ok(declarations)
 }
-
 fn parse_template_declarations<'a>(
     allocator: &'a Allocator,
     sources: &'a [TemplateSource],
@@ -2779,7 +2817,6 @@ fn parse_template_declarations<'a>(
     }
     Ok(declarations)
 }
-
 fn parse_generated_module_statements<'a>(
     allocator: &'a Allocator,
     source: &'a str,
@@ -2798,7 +2835,6 @@ fn parse_generated_module_statements<'a>(
     ZeroSpans.visit_program(&mut program);
     Ok(program.body.into_iter().collect())
 }
-
 fn preview_helper_local(
     emit: &EmitProgram,
     helper: RuntimeHelper,
@@ -2815,13 +2851,11 @@ fn preview_helper_local(
             ))
         })
 }
-
 fn render_preview_module_statements(
     emit: &EmitProgram,
     preview: &EmitPreviewPlan,
 ) -> Result<String, Box<Diagnostic>> {
     use std::fmt::Write;
-
     let mut source = String::new();
     let mut dependencies = BTreeSet::new();
     for handler in &preview.handlers {
@@ -2833,7 +2867,6 @@ fn render_preview_module_statements(
         writeln!(source, "export {{ {local} as {exported} }};")
             .expect("writing generated Preview source cannot fail");
     }
-
     if preview.components.is_empty() {
         return Ok(source);
     }
@@ -2865,28 +2898,29 @@ fn render_preview_module_statements(
     }
     Ok(source)
 }
-
 struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
-    call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
+    creations: &'emit BTreeMap<(u32, u32), CreationRewrite>,
     props: &'emit BTreeMap<(u32, u32), PropsRewrite>,
     prop_reads: &'emit BTreeSet<(u32, u32)>,
     reads: &'emit BTreeMap<(u32, u32), ReadRewrite>,
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
     components: &'emit BTreeMap<(u32, u32), ComponentRewrite>,
+    conditional_returns: &'emit BTreeMap<(u32, u32), conditional_return::ConditionalReturnRewrite>,
     clones: &'emit BTreeMap<(u32, u32), CloneRewrite>,
     preview_handlers: &'emit BTreeMap<(u32, u32), EmitPreviewHandler>,
     preview_qrl_local: Option<&'emit str>,
     prepared_preview_handlers: BTreeMap<(u32, u32), PreparedHandler<'a>>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
-    matched_calls: BTreeSet<(u32, u32)>,
+    matched_creations: BTreeSet<(u32, u32)>,
     matched_props: BTreeSet<(u32, u32)>,
     matched_prop_reads: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
     matched_mutations: BTreeSet<(u32, u32)>,
     matched_vnodes: BTreeSet<(u32, u32)>,
     matched_components: BTreeSet<(u32, u32)>,
+    matched_conditional_returns: BTreeSet<(u32, u32)>,
     matched_clones: BTreeSet<(u32, u32)>,
     vnode_shadowed_clones: BTreeSet<(u32, u32)>,
     active_list_reads: BTreeSet<(u32, u32)>,
@@ -2901,12 +2935,10 @@ struct AstRewriter<'a, 'emit> {
     await_allowed: bool,
     diagnostics: Vec<Diagnostic>,
 }
-
 enum VNodeChild<'a> {
     Value(Expression<'a>),
     Spread(Span, Expression<'a>),
 }
-
 fn jsx_attribute_name(name: JSXAttributeName<'_>) -> (String, Span) {
     match name {
         JSXAttributeName::Identifier(identifier) => (identifier.name.to_string(), identifier.span),
@@ -2916,7 +2948,6 @@ fn jsx_attribute_name(name: JSXAttributeName<'_>) -> (String, Span) {
         ),
     }
 }
-
 fn jsx_attribute_node_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Span> {
     match value {
         Some(JSXAttributeValue::Element(element)) => Some(element.span),
@@ -2932,7 +2963,6 @@ fn jsx_attribute_node_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Span
         Some(JSXAttributeValue::StringLiteral(_)) | None => None,
     }
 }
-
 fn jsx_attribute_source_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Span> {
     match value {
         Some(JSXAttributeValue::StringLiteral(literal)) => Some(literal.span),
@@ -2944,7 +2974,6 @@ fn jsx_attribute_source_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Sp
         None => None,
     }
 }
-
 fn clone_direct_jsx_key_expression<'a>(
     allocator: &'a Allocator,
     body: &Expression<'a>,
@@ -2988,13 +3017,11 @@ fn clone_direct_jsx_key_expression<'a>(
     }
     None
 }
-
 struct SourceExpressionCloner<'a> {
     allocator: &'a Allocator,
     target: (u32, u32),
     found: Option<Expression<'a>>,
 }
-
 impl<'a> Visit<'a> for SourceExpressionCloner<'a> {
     fn visit_expression(&mut self, expression: &Expression<'a>) {
         if self.found.is_some() {
@@ -3007,7 +3034,6 @@ impl<'a> Visit<'a> for SourceExpressionCloner<'a> {
         }
         walk::walk_expression(self, expression);
     }
-
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         if self.found.is_some() {
             return;
@@ -3026,7 +3052,6 @@ impl<'a> Visit<'a> for SourceExpressionCloner<'a> {
         walk::walk_function(self, function, flags);
     }
 }
-
 fn clone_source_function_expression<'a>(
     allocator: &'a Allocator,
     program: &Program<'a>,
@@ -3039,7 +3064,6 @@ fn clone_source_function_expression<'a>(
         )
     })
 }
-
 fn clone_source_expression<'a>(
     allocator: &'a Allocator,
     program: &Program<'a>,
@@ -3053,7 +3077,6 @@ fn clone_source_expression<'a>(
     cloner.visit_program(program);
     cloner.found
 }
-
 fn clone_callback_expression<'a>(
     allocator: &'a Allocator,
     callback: &ArrowFunctionExpression<'a>,
@@ -3067,7 +3090,6 @@ fn clone_callback_expression<'a>(
     cloner.visit_arrow_function_expression(callback);
     cloner.found
 }
-
 fn keyed_list_namespace(namespace: DomNamespace) -> Option<&'static str> {
     match namespace {
         DomNamespace::Html => Some("html"),
@@ -3078,13 +3100,11 @@ fn keyed_list_namespace(namespace: DomNamespace) -> Option<&'static str> {
         DomNamespace::Parent => Some("parent"),
     }
 }
-
 fn component_node_origin_matches(origin: fict_hir::Origin, span: Span) -> bool {
     origin
         .primary_span
         .is_some_and(|source| source.start() == span.start && source.end() == span.end)
 }
-
 fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild]) -> bool {
     let mut planned = planned.iter();
     for child in children {
@@ -3143,7 +3163,6 @@ fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild
     }
     planned.next().is_none()
 }
-
 fn collect_object_pattern_defaults<'a>(
     pattern: &oxc::ast::ast::ObjectPattern<'a>,
     allocator: &'a Allocator,
@@ -3162,7 +3181,6 @@ fn collect_object_pattern_defaults<'a>(
         }
     }
 }
-
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     fn visit_function(&mut self, function: &mut Function<'a>, flags: ScopeFlags) {
         let location = (function.span.start, function.span.end);
@@ -3171,13 +3189,19 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             if let Some(declaration) = self.context_declarations.remove(&location) {
                 body.statements.insert(0, declaration);
             }
+            conditional_return::lower_statements(
+                self.allocator,
+                &mut body.statements,
+                self.conditional_returns,
+                &mut self.matched_conditional_returns,
+                function.r#async,
+            );
         }
         let previous_await_allowed = self.await_allowed;
         self.await_allowed = function.r#async;
         walk_mut::walk_function(self, function, flags);
         self.await_allowed = previous_await_allowed;
     }
-
     fn visit_arrow_function_expression(&mut self, function: &mut ArrowFunctionExpression<'a>) {
         let location = (function.span.start, function.span.end);
         if self.has_props_plan(&function.params) && function.expression {
@@ -3208,14 +3232,39 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         if let Some(declaration) = self.context_declarations.remove(&location) {
             function.body.statements.insert(0, declaration);
         }
+        conditional_return::lower_statements(
+            self.allocator,
+            &mut function.body.statements,
+            self.conditional_returns,
+            &mut self.matched_conditional_returns,
+            function.r#async,
+        );
         let previous_await_allowed = self.await_allowed;
         self.await_allowed = function.r#async;
         walk_mut::walk_arrow_function_expression(self, function);
         self.await_allowed = previous_await_allowed;
     }
-
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
+        if let Some(rewrite) = self
+            .creations
+            .get(&location)
+            .cloned()
+            .filter(|rewrite| rewrite.derived && !self.matched_creations.contains(&location))
+        {
+            self.matched_creations.insert(location);
+            let span = expression.span();
+            let mut initializer = expression.take_in(&self.allocator);
+            self.visit_expression(&mut initializer);
+            *expression = derived_accessor_expression(
+                self.allocator,
+                initializer,
+                rewrite.local,
+                rewrite.context,
+                span,
+            );
+            return;
+        }
         if self.active_list_key_initializer == Some(location)
             && let Some(local) = &self.active_list_key_local
         {
@@ -3337,13 +3386,22 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             self.matched_reads.insert(location);
         }
     }
-
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {
         let location = (call.span.start, call.span.end);
-        if let Some(rewrite) = self.call_rewrites.get(&location)
-            && rename_callee(&mut call.callee, self.allocator.alloc_str(&rewrite.local))
+        if let Some((local, context, signal_name)) =
+            self.creations.get(&location).and_then(|rewrite| {
+                (!rewrite.derived).then_some((
+                    rewrite.local.as_deref()?,
+                    &rewrite.context,
+                    rewrite.signal_name.as_deref(),
+                ))
+            })
+            && rename_callee(&mut call.callee, self.allocator.alloc_str(local))
         {
-            if let Some(context) = &rewrite.context {
+            if let Some(name) = signal_name {
+                self.append_signal_name(call, name);
+            }
+            if let Some(context) = context {
                 let builder = AstBuilder::new(self.allocator);
                 let context = Expression::new_identifier(
                     call.span,
@@ -3352,7 +3410,7 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
                 );
                 call.arguments.insert(0, Argument::from(context));
             }
-            self.matched_calls.insert(location);
+            self.matched_creations.insert(location);
         }
         let callee_span = call.callee.span();
         let callee_location = (callee_span.start, callee_span.end);
@@ -3366,7 +3424,6 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         walk_mut::walk_call_expression(self, call);
     }
 }
-
 impl<'a> AstRewriter<'a, '_> {
     fn has_props_plan(&self, parameters: &FormalParameters<'_>) -> bool {
         parameters.items.first().is_some_and(|parameter| {
@@ -3374,7 +3431,6 @@ impl<'a> AstRewriter<'a, '_> {
                 .contains_key(&(parameter.span.start, parameter.span.end))
         })
     }
-
     fn apply_props_plan(
         &mut self,
         parameters: &mut oxc::allocator::Box<'a, FormalParameters<'a>>,
@@ -3637,7 +3693,6 @@ impl<'a> AstRewriter<'a, '_> {
         }
         self.matched_props.insert(location);
     }
-
     fn prop_member(&self, source: &str, path: &[String], span: Span) -> Expression<'a> {
         let builder = AstBuilder::new(self.allocator);
         let mut value =
@@ -3663,7 +3718,6 @@ impl<'a> AstRewriter<'a, '_> {
         }
         value
     }
-
     fn prop_is_undefined(&self, source: &str, path: &[String], span: Span) -> Expression<'a> {
         Expression::new_binary_expression(
             span,
@@ -3673,7 +3727,6 @@ impl<'a> AstRewriter<'a, '_> {
             &AstBuilder::new(self.allocator),
         )
     }
-
     fn nested_prop_check_statement(&self, check: &PropCheckRewrite, span: Span) -> Statement<'a> {
         let builder = AstBuilder::new(self.allocator);
         let local =
@@ -3709,7 +3762,6 @@ impl<'a> AstRewriter<'a, '_> {
             &builder,
         )
     }
-
     fn props_rest_statement(
         &self,
         source: &str,
@@ -3742,7 +3794,6 @@ impl<'a> AstRewriter<'a, '_> {
         );
         const_statement(self.allocator, &rest.local, initializer, span)
     }
-
     fn identifier_is_undefined(&self, name: &str, span: Span) -> Expression<'a> {
         Expression::new_binary_expression(
             span,
@@ -3756,7 +3807,6 @@ impl<'a> AstRewriter<'a, '_> {
             &AstBuilder::new(self.allocator),
         )
     }
-
     fn void_zero(&self, span: Span) -> Expression<'a> {
         let builder = AstBuilder::new(self.allocator);
         Expression::new_unary_expression(
@@ -3766,7 +3816,6 @@ impl<'a> AstRewriter<'a, '_> {
             &builder,
         )
     }
-
     fn prepare_preview_qrl(
         &mut self,
         location: (u32, u32),
@@ -3825,7 +3874,6 @@ impl<'a> AstRewriter<'a, '_> {
             &builder,
         ))
     }
-
     fn lower_template_clone(
         &mut self,
         clone: CloneRewrite,
@@ -3846,7 +3894,6 @@ impl<'a> AstRewriter<'a, '_> {
         if clone.steps.is_empty() {
             return clone_call;
         }
-
         let mut values = jsx_dynamic_values(jsx, self.components);
         let mut statements = ArenaVec::new_in(&self.allocator);
         statements.push(const_statement(
@@ -4360,6 +4407,15 @@ impl<'a> AstRewriter<'a, '_> {
                                 continue;
                             }
                         };
+                    let branch_has_reads = |branch: &Expression<'a>| {
+                        let branch = branch.span();
+                        self.reads
+                            .keys()
+                            .chain(self.prop_reads.iter())
+                            .any(|&(start, end)| branch.start <= start && end <= branch.end)
+                    };
+                    let track_branch_reads = branch_has_reads(&consequent)
+                        || alternate.as_ref().is_some_and(branch_has_reads);
                     self.visit_expression(&mut test);
                     let consequent =
                         self.lower_conditional_branch(consequent, fragment_local.as_deref());
@@ -4417,11 +4473,21 @@ impl<'a> AstRewriter<'a, '_> {
                             &builder,
                         )),
                     ]);
+                    if track_branch_reads {
+                        let mut properties = ArenaVec::new_in(&self.allocator);
+                        properties.push(self.object_property(
+                            span,
+                            "trackBranchReads",
+                            Expression::new_boolean_literal(span, true, &builder),
+                        ));
+                        arguments.push(Argument::from(Expression::new_object_expression(
+                            span, properties, &builder,
+                        )));
+                    }
                     let call = Expression::new_call_expression(
                         span, callee, NONE, arguments, false, &builder,
                     );
                     statements.push(const_statement(self.allocator, &target, call, span));
-
                     let target_expression = Expression::new_identifier(
                         span,
                         self.allocator.alloc_str(&target),
@@ -4515,7 +4581,6 @@ impl<'a> AstRewriter<'a, '_> {
         statements.push(Statement::new_return_statement(span, Some(root), &builder));
         block_iife(self.allocator, statements, span, self.await_allowed)
     }
-
     fn lower_conditional_branch(
         &mut self,
         mut branch: Expression<'a>,
@@ -4531,7 +4596,6 @@ impl<'a> AstRewriter<'a, '_> {
         self.active_fragment_local = previous_fragment;
         branch
     }
-
     #[allow(clippy::too_many_arguments)]
     fn lower_keyed_list_step(
         &mut self,
@@ -4733,7 +4797,6 @@ impl<'a> AstRewriter<'a, '_> {
                 &builder,
             );
         }
-
         let mut key_callback = render_callback.clone_in(self.allocator);
         if let Some((_, key_source_origin)) = explicit_key {
             let Some(mut key_expression) =
@@ -4786,7 +4849,6 @@ impl<'a> AstRewriter<'a, '_> {
         if explicit_key.is_some() {
             append_arrow_parameter(self.allocator, &mut render_callback, render_key, span);
         }
-
         let expected_reads: BTreeSet<_> = item_references
             .iter()
             .chain(index_references)
@@ -4840,7 +4902,6 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         }
-
         let builder = AstBuilder::new(self.allocator);
         let get_items = zero_parameter_expression_arrow(self.allocator, items, span);
         let callee = Expression::new_identifier(span, self.allocator.alloc_str(helper), &builder);
@@ -4869,7 +4930,6 @@ impl<'a> AstRewriter<'a, '_> {
         }
         let call = Expression::new_call_expression(span, callee, NONE, arguments, false, &builder);
         statements.push(const_statement(self.allocator, target, call, span));
-
         let target_expression =
             Expression::new_identifier(span, self.allocator.alloc_str(target), &builder);
         let flush = Expression::new_static_member_expression(
@@ -4900,7 +4960,6 @@ impl<'a> AstRewriter<'a, '_> {
             flush_chain,
             &builder,
         ));
-
         let target_expression =
             Expression::new_identifier(span, self.allocator.alloc_str(target), &builder);
         let dispose = Expression::new_static_member_expression(
@@ -4928,7 +4987,6 @@ impl<'a> AstRewriter<'a, '_> {
             &builder,
         ));
     }
-
     fn lower_planned_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {
         let location = (element.span.start, element.span.end);
         let Some(component) = self.components.get(&location).cloned() else {
@@ -4941,7 +4999,6 @@ impl<'a> AstRewriter<'a, '_> {
         self.matched_components.insert(location);
         lowered
     }
-
     fn lower_component_element(
         &mut self,
         element: JSXElement<'a>,
@@ -5185,7 +5242,6 @@ impl<'a> AstRewriter<'a, '_> {
             }
             properties.push(self.object_property(span, "children", children));
         }
-
         let builder = AstBuilder::new(self.allocator);
         if !properties.is_empty() {
             prop_segments.push(Expression::new_object_expression(
@@ -5221,7 +5277,6 @@ impl<'a> AstRewriter<'a, '_> {
         }
         Expression::new_object_expression(span, vnode, &builder)
     }
-
     fn lower_jsx_expression(&mut self, expression: Expression<'a>) -> Expression<'a> {
         match expression {
             Expression::JSXElement(element) => self.lower_planned_jsx_element(element.unbox()),
@@ -5229,14 +5284,12 @@ impl<'a> AstRewriter<'a, '_> {
             _ => unreachable!("VNode lowering only accepts JSX expressions"),
         }
     }
-
     fn lower_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {
         let span = element.span;
         let opening = element.opening_element.unbox();
         let element_type = self.lower_jsx_element_name(opening.name);
         let mut properties = ArenaVec::new_in(&self.allocator);
         let mut key = None;
-
         for attribute in opening.attributes {
             match attribute {
                 JSXAttributeItem::SpreadAttribute(spread) => {
@@ -5284,11 +5337,9 @@ impl<'a> AstRewriter<'a, '_> {
                 }
             }
         }
-
         if let Some(children) = self.lower_jsx_children(element.children, span, None) {
             properties.push(self.object_property(span, "children", children));
         }
-
         let builder = AstBuilder::new(self.allocator);
         let props = if properties.is_empty() {
             Expression::new_null_literal(span, &builder)
@@ -5303,7 +5354,6 @@ impl<'a> AstRewriter<'a, '_> {
         }
         Expression::new_object_expression(span, vnode, &builder)
     }
-
     fn lower_jsx_fragment(&mut self, fragment: JSXFragment<'a>) -> Expression<'a> {
         let span = fragment.span;
         let builder = AstBuilder::new(self.allocator);
@@ -5333,7 +5383,6 @@ impl<'a> AstRewriter<'a, '_> {
         vnode.push(self.object_property(span, "props", props));
         Expression::new_object_expression(span, vnode, &builder)
     }
-
     fn lower_jsx_element_name(&mut self, name: JSXElementName<'a>) -> Expression<'a> {
         let builder = AstBuilder::new(self.allocator);
         match name {
@@ -5360,7 +5409,6 @@ impl<'a> AstRewriter<'a, '_> {
             JSXElementName::ThisExpression(expression) => Expression::ThisExpression(expression),
         }
     }
-
     fn lower_jsx_member_expression(&mut self, member: JSXMemberExpression<'a>) -> Expression<'a> {
         let object = match member.object {
             JSXMemberExpressionObject::IdentifierReference(identifier) => {
@@ -5388,7 +5436,6 @@ impl<'a> AstRewriter<'a, '_> {
             &AstBuilder::new(self.allocator),
         )
     }
-
     fn lower_jsx_attribute_value(
         &mut self,
         value: Option<JSXAttributeValue<'a>>,
@@ -5424,7 +5471,6 @@ impl<'a> AstRewriter<'a, '_> {
             }
         }
     }
-
     fn lower_jsx_children(
         &mut self,
         children: ArenaVec<'a, JSXChild<'a>>,
@@ -5518,7 +5564,6 @@ impl<'a> AstRewriter<'a, '_> {
             }
         }
     }
-
     fn wrap_non_reactive_component_child(
         &mut self,
         value: Expression<'a>,
@@ -5549,7 +5594,6 @@ impl<'a> AstRewriter<'a, '_> {
         arguments.push(Argument::from(value));
         Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
     }
-
     fn lower_jsx_container_expression(&mut self, mut expression: Expression<'a>) -> Expression<'a> {
         if matches!(
             expression.get_inner_expression(),
@@ -5563,7 +5607,6 @@ impl<'a> AstRewriter<'a, '_> {
             expression
         }
     }
-
     fn object_property(
         &self,
         span: Span,
@@ -5588,7 +5631,44 @@ impl<'a> AstRewriter<'a, '_> {
             &builder,
         )
     }
-
+    fn append_signal_name(&self, call: &mut CallExpression<'a>, name: &str) {
+        let span = call.span;
+        let builder = AstBuilder::new(self.allocator);
+        let name_property = || {
+            self.object_property(
+                span,
+                "name",
+                Expression::new_string_literal(
+                    span,
+                    self.allocator.alloc_str(name),
+                    None,
+                    &builder,
+                ),
+            )
+        };
+        if let Some(Argument::ObjectExpression(options)) = call.arguments.get_mut(1) {
+            if !options.properties.iter().any(|property| {
+                matches!(property, ObjectPropertyKind::ObjectProperty(property) if property.key.static_name().is_some_and(|key| key == "name"))
+            }) {
+                options.properties.push(name_property());
+            }
+            return;
+        }
+        let mut properties = ArenaVec::new_in(&self.allocator);
+        if call.arguments.len() > 1 {
+            let source = match call.arguments.remove(1) {
+                Argument::SpreadElement(spread) => spread.unbox().argument,
+                argument => argument.into_expression(),
+            };
+            properties.push(ObjectPropertyKind::new_spread_property(
+                span, source, &builder,
+            ));
+        }
+        properties.push(name_property());
+        let options = Expression::new_object_expression(span, properties, &builder);
+        let index = call.arguments.len().min(1);
+        call.arguments.insert(index, Argument::from(options));
+    }
     fn rewrite_mutation(
         &mut self,
         expression: &mut Expression<'a>,
@@ -5717,7 +5797,6 @@ impl<'a> AstRewriter<'a, '_> {
         }
     }
 }
-
 fn rewrite_pattern_assignment_target<'a>(
     target: &mut AssignmentTarget<'a>,
     expected: &BTreeSet<(u32, u32)>,
@@ -5759,7 +5838,6 @@ fn rewrite_pattern_assignment_target<'a>(
         | AssignmentTarget::PrivateFieldExpression(_) => {}
     }
 }
-
 fn rewrite_pattern_maybe_default<'a>(
     target: &mut AssignmentTargetMaybeDefault<'a>,
     expected: &BTreeSet<(u32, u32)>,
@@ -5777,7 +5855,6 @@ fn rewrite_pattern_maybe_default<'a>(
     rewrite_pattern_assignment_target(&mut assignment_target, expected, matched, allocator);
     *target = assignment_target.into();
 }
-
 fn rewrite_pattern_property<'a>(
     property: &mut AssignmentTargetProperty<'a>,
     expected: &BTreeSet<(u32, u32)>,
@@ -5825,7 +5902,6 @@ fn rewrite_pattern_property<'a>(
         }
     }
 }
-
 fn direct_pattern_target_identifier(target: &AssignmentTarget<'_>) -> Option<(String, Span)> {
     let identifier = match target {
         AssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(identifier.as_ref()),
@@ -5849,7 +5925,6 @@ fn direct_pattern_target_identifier(target: &AssignmentTarget<'_>) -> Option<(St
     }?;
     Some((identifier.name.to_string(), identifier.span))
 }
-
 fn direct_pattern_expression_identifier<'a, 'expression>(
     expression: &'expression Expression<'a>,
 ) -> Option<&'expression IdentifierReference<'a>> {
@@ -5858,7 +5933,6 @@ fn direct_pattern_expression_identifier<'a, 'expression>(
         _ => None,
     }
 }
-
 fn reactive_setter_assignment_target<'a>(
     allocator: &'a Allocator,
     signal: &str,
@@ -5868,7 +5942,6 @@ fn reactive_setter_assignment_target<'a>(
     let setter_property = "__fictSetter";
     let value_property = "__fictValue";
     let parameter_name = "__fictNext";
-
     let mut properties = ArenaVec::new_in(&allocator);
     properties.push(ObjectPropertyKind::new_object_property(
         span,
@@ -5880,7 +5953,6 @@ fn reactive_setter_assignment_target<'a>(
         false,
         &builder,
     ));
-
     let parameter_pattern = BindingPattern::new_binding_identifier(span, parameter_name, &builder);
     let parameter = FormalParameter::new(
         span,
@@ -5964,7 +6036,6 @@ fn reactive_setter_assignment_target<'a>(
         &builder,
     )
 }
-
 fn jsx_dynamic_values<'a>(
     jsx: Expression<'a>,
     components: &BTreeMap<(u32, u32), ComponentRewrite>,
@@ -5981,7 +6052,6 @@ fn jsx_dynamic_values<'a>(
     }
     values
 }
-
 fn collect_jsx_element_values<'a>(
     element: JSXElement<'a>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
@@ -6030,7 +6100,6 @@ fn collect_jsx_element_values<'a>(
     }
     collect_jsx_children_values(element.children, values, components);
 }
-
 fn collect_jsx_children_values<'a>(
     children: ArenaVec<'a, JSXChild<'a>>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
@@ -6064,7 +6133,6 @@ fn collect_jsx_children_values<'a>(
         }
     }
 }
-
 fn collect_jsx_expression_value<'a>(
     expression: Expression<'a>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
@@ -6093,7 +6161,6 @@ fn collect_jsx_expression_value<'a>(
         values.insert((span.start, span.end), expression);
     }
 }
-
 fn const_statement<'a>(
     allocator: &'a Allocator,
     name: &str,
@@ -6108,7 +6175,6 @@ fn const_statement<'a>(
         VariableDeclarationKind::Const,
     )
 }
-
 fn variable_statement<'a>(
     allocator: &'a Allocator,
     name: &str,
@@ -6131,7 +6197,6 @@ fn variable_statement<'a>(
     declarations.push(declarator);
     Statement::new_variable_declaration(span, kind, declarations, false, &builder)
 }
-
 fn dom_literal_expression<'a>(
     allocator: &'a Allocator,
     value: &LiteralValue,
@@ -6159,12 +6224,10 @@ fn dom_literal_expression<'a>(
         | LiteralValue::RegExp { .. } => None,
     }
 }
-
 fn encode_javascript_string_for_oxc(value: &JavaScriptString) -> (String, bool) {
     if let Some(value) = value.to_utf8() {
         return (value, false);
     }
-
     let mut encoded = String::new();
     for character in char::decode_utf16(value.as_code_units().iter().copied()) {
         match character {
@@ -6175,7 +6238,6 @@ fn encode_javascript_string_for_oxc(value: &JavaScriptString) -> (String, bool) 
     }
     (encoded, true)
 }
-
 fn push_oxc_utf16_marker(output: &mut String, code_unit: u16) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     output.push('\u{fffd}');
@@ -6183,7 +6245,6 @@ fn push_oxc_utf16_marker(output: &mut String, code_unit: u16) {
         output.push(char::from(HEX[usize::from((code_unit >> shift) & 0x0f)]));
     }
 }
-
 fn zero_parameter_expression_arrow<'a>(
     allocator: &'a Allocator,
     expression: Expression<'a>,
@@ -6206,7 +6267,27 @@ fn zero_parameter_expression_arrow<'a>(
         span, true, false, NONE, parameters, NONE, body, &builder,
     )
 }
-
+fn derived_accessor_expression<'a>(
+    allocator: &'a Allocator,
+    initializer: Expression<'a>,
+    helper: Option<String>,
+    context: Option<String>,
+    span: Span,
+) -> Expression<'a> {
+    let getter = zero_parameter_expression_arrow(allocator, initializer, span);
+    let Some(helper) = helper else {
+        return getter;
+    };
+    let builder = AstBuilder::new(allocator);
+    let callee = Expression::new_identifier(span, allocator.alloc_str(&helper), &builder);
+    let context = context
+        .map(|context| Expression::new_identifier(span, allocator.alloc_str(&context), &builder));
+    let arguments = ArenaVec::from_iter_in(
+        context.into_iter().chain([getter]).map(Argument::from),
+        &allocator,
+    );
+    Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
+}
 fn ignore_inline_event_handler_return<'a>(
     allocator: &'a Allocator,
     handler: Expression<'a>,
@@ -6216,7 +6297,6 @@ fn ignore_inline_event_handler_return<'a>(
     if !arrow && !matches!(handler, Expression::FunctionExpression(_)) {
         return handler;
     }
-
     let mut collector = IdentifierCollector::default();
     collector.visit_expression(&handler);
     let mut parameter = "__fictArgs".to_owned();
@@ -6286,7 +6366,6 @@ fn ignore_inline_event_handler_return<'a>(
         )
     }
 }
-
 fn handler_may_prevent_default(handler: &Expression<'_>) -> bool {
     let handler = handler.get_inner_expression();
     let (parameters, body) = match handler {
@@ -6312,13 +6391,11 @@ fn handler_may_prevent_default(handler: &Expression<'_>) -> bool {
     }
     finder.found
 }
-
 struct PreventDefaultFinder<'name> {
     event_parameter: &'name str,
     shadow_depth: usize,
     found: bool,
 }
-
 impl<'a> Visit<'a> for PreventDefaultFinder<'_> {
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         if self.found {
@@ -6329,7 +6406,6 @@ impl<'a> Visit<'a> for PreventDefaultFinder<'_> {
         walk::walk_function(self, function, flags);
         self.shadow_depth -= usize::from(shadows_event);
     }
-
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
         if self.found {
             return;
@@ -6339,7 +6415,6 @@ impl<'a> Visit<'a> for PreventDefaultFinder<'_> {
         walk::walk_arrow_function_expression(self, function);
         self.shadow_depth -= usize::from(shadows_event);
     }
-
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         if self.found {
             return;
@@ -6363,7 +6438,6 @@ impl<'a> Visit<'a> for PreventDefaultFinder<'_> {
         walk::walk_call_expression(self, call);
     }
 }
-
 fn formal_parameters_bind_name(parameters: &FormalParameters<'_>, name: &str) -> bool {
     parameters
         .items
@@ -6374,7 +6448,6 @@ fn formal_parameters_bind_name(parameters: &FormalParameters<'_>, name: &str) ->
             .as_ref()
             .is_some_and(|rest| binding_pattern_binds_name(&rest.rest.argument, name))
 }
-
 fn binding_pattern_binds_name(pattern: &BindingPattern<'_>, name: &str) -> bool {
     match pattern {
         BindingPattern::BindingIdentifier(identifier) => identifier.name == name,
@@ -6404,18 +6477,15 @@ fn binding_pattern_binds_name(pattern: &BindingPattern<'_>, name: &str) -> bool 
         }
     }
 }
-
 #[derive(Default)]
 struct IdentifierCollector {
     names: BTreeSet<String>,
 }
-
 impl<'a> Visit<'a> for IdentifierCollector {
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
         self.names.insert(identifier.name.to_string());
     }
 }
-
 fn insertion_create_callback<'a>(
     allocator: &'a Allocator,
     helper: &str,
@@ -6427,7 +6497,6 @@ fn insertion_create_callback<'a>(
     if namespace == DomNamespace::Html {
         return Expression::new_identifier(span, allocator.alloc_str(helper), &builder);
     }
-
     let parameter = allocator.alloc_str("__fict_child");
     let callee = Expression::new_identifier(span, allocator.alloc_str(helper), &builder);
     let child = Expression::new_identifier(span, parameter, &builder);
@@ -6454,7 +6523,6 @@ fn insertion_create_callback<'a>(
     let body = Expression::new_call_expression(span, callee, NONE, arguments, false, &builder);
     expression_arrow(allocator, parameter, body, span)
 }
-
 fn block_iife<'a>(
     allocator: &'a Allocator,
     statements: ArenaVec<'a, Statement<'a>>,
@@ -6495,7 +6563,6 @@ fn block_iife<'a>(
         call
     }
 }
-
 fn statements_contain_direct_await(statements: &[Statement<'_>]) -> bool {
     let mut finder = DirectAwaitFinder { found: false };
     for statement in statements {
@@ -6506,35 +6573,28 @@ fn statements_contain_direct_await(statements: &[Statement<'_>]) -> bool {
     }
     false
 }
-
 struct DirectAwaitFinder {
     found: bool,
 }
-
 impl<'a> Visit<'a> for DirectAwaitFinder {
     fn visit_await_expression(&mut self, _expression: &AwaitExpression<'a>) {
         self.found = true;
     }
-
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
-
     fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
 }
-
 fn assignment_target_name(target: &AssignmentTarget<'_>) -> Option<String> {
     let AssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
         return None;
     };
     Some(identifier.name.to_string())
 }
-
 fn simple_assignment_target_name(target: &SimpleAssignmentTarget<'_>) -> Option<String> {
     let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
         return None;
     };
     Some(identifier.name.to_string())
 }
-
 fn compound_binary_operator(operator: CompoundAssignmentOperator) -> Option<OxcBinaryOperator> {
     Some(match operator {
         CompoundAssignmentOperator::Add => OxcBinaryOperator::Addition,
@@ -6554,7 +6614,6 @@ fn compound_binary_operator(operator: CompoundAssignmentOperator) -> Option<OxcB
         | CompoundAssignmentOperator::NullishCoalescing => return None,
     })
 }
-
 fn compound_logical_operator(operator: CompoundAssignmentOperator) -> Option<OxcLogicalOperator> {
     match operator {
         CompoundAssignmentOperator::LogicalAnd => Some(OxcLogicalOperator::And),
@@ -6563,14 +6622,12 @@ fn compound_logical_operator(operator: CompoundAssignmentOperator) -> Option<Oxc
         _ => None,
     }
 }
-
 fn update_binary_operator(operator: UpdateOperator) -> OxcBinaryOperator {
     match operator {
         UpdateOperator::Increment => OxcBinaryOperator::Addition,
         UpdateOperator::Decrement => OxcBinaryOperator::Subtraction,
     }
 }
-
 fn getter_call<'a>(allocator: &'a Allocator, signal: &str, span: Span) -> Expression<'a> {
     let builder = AstBuilder::new(allocator);
     let callee = Expression::new_identifier(span, allocator.alloc_str(signal), &builder);
@@ -6583,7 +6640,6 @@ fn getter_call<'a>(allocator: &'a Allocator, signal: &str, span: Span) -> Expres
         &builder,
     )
 }
-
 fn rewrite_reactive_accessor<'a>(
     expression: &mut Expression<'a>,
     accessor_depth: usize,
@@ -6607,7 +6663,6 @@ fn rewrite_reactive_accessor<'a>(
         allocator,
     )
 }
-
 fn rewrite_reactive_accessor_with_depth<'a>(
     expression: &mut Expression<'a>,
     accessor_depth: usize,
@@ -6735,7 +6790,6 @@ fn rewrite_reactive_accessor_with_depth<'a>(
         _ => false,
     }
 }
-
 fn expression_projection_depth(expression: &Expression<'_>) -> Option<usize> {
     match expression {
         Expression::Identifier(_) | Expression::CallExpression(_) => Some(0),
@@ -6784,7 +6838,6 @@ fn expression_projection_depth(expression: &Expression<'_>) -> Option<usize> {
         _ => None,
     }
 }
-
 fn projected_read_root_location(expression: &Expression<'_>) -> Option<(u32, u32)> {
     match expression {
         Expression::Identifier(identifier) => Some((identifier.span.start, identifier.span.end)),
@@ -6829,7 +6882,6 @@ fn projected_read_root_location(expression: &Expression<'_>) -> Option<(u32, u32
         _ => None,
     }
 }
-
 fn projected_chain_read_root_location(
     expression: &Expression<'_>,
     reads: &BTreeMap<(u32, u32), ReadRewrite>,
@@ -6887,7 +6939,6 @@ fn projected_chain_read_root_location(
         _ => None,
     }
 }
-
 fn rewrite_reactive_root<'a>(expression: &mut Expression<'a>, allocator: &'a Allocator) -> bool {
     match expression {
         Expression::Identifier(_) | Expression::CallExpression(_) => {
@@ -6948,7 +6999,6 @@ fn rewrite_reactive_root<'a>(expression: &mut Expression<'a>, allocator: &'a All
         _ => false,
     }
 }
-
 fn setter_call<'a>(
     allocator: &'a Allocator,
     signal: &str,
@@ -6961,7 +7011,6 @@ fn setter_call<'a>(
     arguments.push(Argument::from(value));
     Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
 }
-
 fn value_preserving_setter<'a>(
     allocator: &'a Allocator,
     signal: &str,
@@ -6983,7 +7032,6 @@ fn value_preserving_setter<'a>(
     arguments.push(Argument::from(value));
     Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
 }
-
 fn logical_compound_update<'a>(
     allocator: &'a Allocator,
     signal: &str,
@@ -7002,7 +7050,6 @@ fn logical_compound_update<'a>(
     arguments.push(Argument::from(current));
     Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
 }
-
 fn postfix_update<'a>(
     allocator: &'a Allocator,
     signal: &str,
@@ -7033,7 +7080,6 @@ fn postfix_update<'a>(
     arguments.push(Argument::from(current));
     Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
 }
-
 fn expression_arrow<'a>(
     allocator: &'a Allocator,
     parameter: &'a str,
@@ -7072,7 +7118,6 @@ fn expression_arrow<'a>(
         span, true, false, NONE, parameters, NONE, body, &builder,
     )
 }
-
 fn direct_arrow_return_expression<'a, 'callback>(
     callback: &'callback ArrowFunctionExpression<'a>,
 ) -> Option<&'callback Expression<'a>> {
@@ -7087,7 +7132,6 @@ fn direct_arrow_return_expression<'a, 'callback>(
     };
     statement.argument.as_ref()
 }
-
 fn into_list_render_arrow<'a>(
     allocator: &'a Allocator,
     callback: Expression<'a>,
@@ -7122,7 +7166,6 @@ fn into_list_render_arrow<'a>(
         _ => None,
     }
 }
-
 fn replace_arrow_body_with_expression<'a>(
     allocator: &'a Allocator,
     arrow: &mut oxc::allocator::Box<'a, ArrowFunctionExpression<'a>>,
@@ -7137,7 +7180,6 @@ fn replace_arrow_body_with_expression<'a>(
     arrow.expression = true;
     arrow.body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
 }
-
 fn append_arrow_parameter<'a>(
     allocator: &'a Allocator,
     arrow: &mut oxc::allocator::Box<'a, ArrowFunctionExpression<'a>>,
@@ -7159,7 +7201,6 @@ fn append_arrow_parameter<'a>(
         &builder,
     ));
 }
-
 fn simple_arrow_parameter_name<'a>(
     arrow: &'a ArrowFunctionExpression<'_>,
     index: usize,
@@ -7173,7 +7214,6 @@ fn simple_arrow_parameter_name<'a>(
     };
     Some(identifier.name.as_str())
 }
-
 fn generated_parameter_name<'a>(
     allocator: &'a Allocator,
     signal: &str,
@@ -7188,7 +7228,6 @@ fn generated_parameter_name<'a>(
     }
     allocator.alloc_str(&candidate)
 }
-
 fn rename_callee<'a>(expression: &mut Expression<'a>, local: &'a str) -> bool {
     match expression {
         Expression::Identifier(identifier) => {
@@ -7217,15 +7256,12 @@ fn rename_callee<'a>(expression: &mut Expression<'a>, local: &'a str) -> bool {
         _ => false,
     }
 }
-
 pub(crate) struct ZeroSpans;
-
 impl<'a> VisitMut<'a> for ZeroSpans {
     fn visit_span(&mut self, span: &mut Span) {
         *span = Span::default();
     }
 }
-
 fn output_source_type(module_kind: OxcModuleKind) -> SourceType {
     match module_kind {
         OxcModuleKind::Module => SourceType::mjs(),
@@ -7234,11 +7270,11 @@ fn output_source_type(module_kind: OxcModuleKind) -> SourceType {
         OxcModuleKind::Unambiguous => SourceType::unambiguous(),
     }
 }
-
 fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
     match operation {
         EmitOperation::PreserveHir { origin, .. }
         | EmitOperation::CreateReactive { origin, .. }
+        | EmitOperation::CreateDerived { origin, .. }
         | EmitOperation::TrackRuntimeReactive { origin, .. }
         | EmitOperation::ReadReactive { origin, .. }
         | EmitOperation::RegisterEffect { origin, .. }
@@ -7258,17 +7294,16 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::Evaluate { origin, .. }
         | EmitOperation::Insert { origin, .. }
         | EmitOperation::Conditional { origin, .. }
+        | EmitOperation::ConditionalReturn { origin, .. }
         | EmitOperation::KeyedChild { origin, .. }
         | EmitOperation::KeyedList { origin, .. }
         | EmitOperation::Return { origin, .. } => *origin,
     }
 }
-
 fn with_operation_span(mut diagnostic: Diagnostic, origin: fict_hir::Origin) -> Diagnostic {
     diagnostic.primary_span = origin.primary_span;
     diagnostic
 }
-
 fn emit_error(
     code: &'static str,
     message: impl Into<String>,
@@ -7281,9 +7316,10 @@ fn emit_error(
     )
     .with_guarantee_class(guarantee)
 }
-
 #[cfg(test)]
 mod tests {
+    use super::{emit_program, encode_javascript_string_for_oxc};
+    use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions};
     use fict_emit::{
         CleanupOwner, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
         EmitSlotId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
@@ -7294,10 +7330,6 @@ mod tests {
         SourceSpan, UpdateOperator, ValueId,
     };
     use fict_reactivity::{StructurizeAnalysis, StructurizeStats};
-
-    use super::{emit_program, encode_javascript_string_for_oxc};
-    use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions};
-
     fn options(language: OxcSourceLanguage, sourcemap: bool) -> OxcCompileOptions {
         OxcCompileOptions {
             language,
@@ -7306,7 +7338,6 @@ mod tests {
             sourcemap,
         }
     }
-
     #[test]
     fn encodes_exact_utf16_strings_for_oxc_without_replacement_loss() {
         let well_formed = JavaScriptString::from("value � 😀");
@@ -7314,7 +7345,6 @@ mod tests {
             encode_javascript_string_for_oxc(&well_formed),
             ("value � 😀".to_owned(), false)
         );
-
         let exact = JavaScriptString::from_code_units(vec![
             u16::from(b'a'),
             0xd800,
@@ -7328,7 +7358,6 @@ mod tests {
             ("a\u{fffd}d800\u{fffd}fffd😀\u{fffd}dc00".to_owned(), true,)
         );
     }
-
     fn effect_program(source: &str) -> EmitProgram {
         let call = "$effect(() => 1)";
         let start = u32::try_from(source.find(call).expect("effect call")).expect("span");
@@ -7381,7 +7410,6 @@ mod tests {
             }],
         }
     }
-
     #[test]
     fn rewrites_calls_in_oxc_ast_injects_imports_and_emits_maps() {
         let source = "import { $effect } from 'fict';\nconst value: number = 1;\n$effect(() => 1);\nexport { value };";
@@ -7402,25 +7430,21 @@ mod tests {
         assert!(map.contains("effect.ts"));
         assert!(map.contains("mappings"));
     }
-
     #[test]
     fn erases_only_exact_compiler_macro_import_specifiers() {
         let source = "import { $effect, batch } from 'fict';\n$effect(() => 1);\nexport { batch };";
         let emit = effect_program(source);
-
         let output = emit_program(
             source,
             "mixed-import.js",
             options(OxcSourceLanguage::JavaScript, false),
             &emit,
         );
-
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert!(!output.code.contains("$effect"));
         assert!(output.code.contains("import { batch } from \"fict\""));
         assert!(output.code.contains("export { batch }"));
     }
-
     #[test]
     fn fails_closed_for_unmaterialized_operations_and_bad_origins() {
         let source = "import { $effect } from 'fict'; $effect(() => 1);";
@@ -7451,7 +7475,6 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-UNSUPPORTED")
         );
-
         let mut bad_origin = effect_program(source);
         let EmitOperation::RegisterEffect { origin, .. } =
             &mut bad_origin.functions[0].operations[0]
@@ -7473,7 +7496,6 @@ mod tests {
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-ORIGIN")
         );
     }
-
     #[test]
     fn materializes_unprojected_reactive_reads_as_accessor_calls() {
         let source = "const memo = () => 1; export const value = memo + memo;";
@@ -7499,18 +7521,15 @@ mod tests {
                     ),
                 });
         }
-
         let output = emit_program(
             source,
             "read.js",
             options(OxcSourceLanguage::JavaScript, false),
             &emit,
         );
-
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert!(output.code.contains("value = memo() + memo()"));
     }
-
     #[test]
     fn materializes_projected_reactive_reads_at_the_root_only() {
         let source = "const state = () => ({}); export const values = [state.user.name, state?.items?.[key()]];";

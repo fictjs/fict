@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { minimizeSourceByLines } from '../src'
+import { minimizeSourceByLines } from '../src/legacy'
 
 describe('source regression minimizer', () => {
   it.each(['rust', 'legacy'] as const)(

@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { analyzeFictFile } from '../src/index'
+import { analyzeFictFile } from '../src/legacy'
 import { inferCompilerDiagnosticFromSource } from '../src/tooling/analyze'
 
 const SAMPLE_COMPONENT = `

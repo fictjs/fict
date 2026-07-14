@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url'
 const require = createRequire(import.meta.url)
 const root = path.resolve(import.meta.dirname, '..')
 const { transformSync } = require('../packages/compiler/node_modules/@babel/core')
-const createFictPlugin = require('../packages/compiler/dist/index.cjs').default
+const createFictPlugin = require('../packages/compiler/dist/legacy.cjs').default
 const { JSDOM } = require('../packages/runtime/node_modules/jsdom')
 const binding = require(path.join(root, 'target', 'release', 'fict_compiler_napi.node'))
 

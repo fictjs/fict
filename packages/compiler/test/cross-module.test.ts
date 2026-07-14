@@ -2,11 +2,8 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import {
-  clearModuleMetadata,
-  MODULE_REACTIVE_METADATA_VERSION,
-  type FictCompilerOptions,
-} from '../src/index'
+import { clearModuleMetadata } from '../src/graph-host'
+import { MODULE_REACTIVE_METADATA_VERSION, type FictCompilerOptions } from '../src/index'
 import { transform } from './test-utils'
 
 describe('Cross-Module Reactivity', () => {

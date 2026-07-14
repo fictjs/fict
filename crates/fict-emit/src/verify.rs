@@ -1,17 +1,14 @@
-use std::collections::BTreeSet;
-
+use crate::{
+    CleanupOwner, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, RuntimeHelper,
+    RuntimeHelperStability, verify_runtime_abi,
+};
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::HirFile;
 use fict_reactivity::RegionAnalysis;
 use fict_reactivity::{analyze_cfg, verify_structurized_cfg};
-
-use crate::{
-    CleanupOwner, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, RuntimeHelper,
-    RuntimeHelperStability, verify_runtime_abi,
-};
-
+use std::collections::BTreeSet;
 /// Verify EmitIR helper, slot/temp, region/template, cleanup, and rejection invariants.
 pub fn verify_emit_program(
     hir: &HirFile,
@@ -466,7 +463,6 @@ pub fn verify_emit_program(
         Err(diagnostics)
     }
 }
-
 fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
     let used: BTreeSet<_> = program
         .functions
@@ -537,7 +533,6 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
         ));
     }
 }
-
 fn verify_preview_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
     let Some(preview) = &program.preview_plan else {
         return;
@@ -637,7 +632,6 @@ fn verify_preview_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut D
         }
     }
 }
-
 fn preview_binding_has_runtime_write(hir: &HirFile, binding: fict_hir::BindingId) -> bool {
     hir.functions.iter().any(|function| {
         function
@@ -671,7 +665,6 @@ fn preview_binding_has_runtime_write(hir: &HirFile, binding: fict_hir::BindingId
             })
     })
 }
-
 fn preview_place_binding(
     function: &fict_hir::HirFunction,
     place: &fict_hir::Place,
@@ -683,7 +676,6 @@ fn preview_place_binding(
     };
     function.locals.get(local.as_usize())?.binding
 }
-
 fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
     if program
         .module
@@ -787,14 +779,12 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
         ));
     }
 }
-
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(
         helper,
         RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
     )
 }
-
 fn verify_operations(
     hir: &HirFile,
     hir_function: &fict_hir::HirFunction,
@@ -859,6 +849,11 @@ fn verify_operations(
                 }
             }
             EmitOperation::CreateReactive {
+                slot,
+                source_result,
+                ..
+            }
+            | EmitOperation::CreateDerived {
                 slot,
                 source_result,
                 ..
@@ -1154,7 +1149,6 @@ fn verify_operations(
         }
     }
 }
-
 fn verify_source_result(
     function: &fict_hir::HirFunction,
     value: fict_hir::ValueId,
@@ -1167,7 +1161,6 @@ fn verify_source_result(
         ));
     }
 }
-
 fn hook_call_instruction(
     function: &fict_hir::HirFunction,
     value: fict_hir::ValueId,
@@ -1182,7 +1175,6 @@ fn hook_call_instruction(
             _ => None,
         })
 }
-
 fn imported_hook_return_shape<'a>(
     hir: &'a HirFile,
     call: &fict_hir::CallInstruction,
@@ -1441,6 +1433,15 @@ fn verify_helper_semantics(
                     }
             })
         }
+        EmitOperation::CreateDerived { slot, helper, .. } => {
+            function.slots.get(slot.as_usize()).is_some_and(|slot| {
+                slot.storage == crate::ReactiveSlotStorage::Owned
+                    && slot.kind == crate::ReactiveSlotKind::Memo
+                    && helper.is_none_or(|helper| {
+                        matches!(helper, RuntimeHelper::Memo | RuntimeHelper::UseMemo)
+                    })
+            })
+        }
         EmitOperation::RegisterEffect { helper, .. } => {
             matches!(helper, RuntimeHelper::Effect | RuntimeHelper::UseEffect)
         }
@@ -1553,6 +1554,16 @@ fn verify_helper_semantics(
                         *create_helper == RuntimeHelper::CreateElementInParentNamespace
                     }
                 }
+        }
+        EmitOperation::ConditionalReturn {
+            helper,
+            create_helper,
+            cleanup_helper,
+            ..
+        } => {
+            *helper == RuntimeHelper::Conditional
+                && *create_helper == RuntimeHelper::CreateElement
+                && *cleanup_helper == RuntimeHelper::OnDestroy
         }
         EmitOperation::KeyedChild {
             helper,
