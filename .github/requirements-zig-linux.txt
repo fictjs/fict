@@ -1,0 +1,3 @@
+ziglang==0.14.1 \
+  --hash=sha256:6eb9d4d759b292c83810dbee2e9e8e3fbfbf01d864e6e9811bae711fd74e1c2f \
+  --hash=sha256:7994b27f3cbfcedea43f9b7552e38b45857bdf0e9a45065474092dd74e7048cf

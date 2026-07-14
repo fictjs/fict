@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -24,7 +25,8 @@ import {
   verifyNativeBundle,
 } from './native-compiler-packages.mjs'
 
-const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const packageManager = 'pnpm'
+const windowsPackageManagerCommand = /^(?:npm|pnpm)(?:\.cmd)?$/i
 
 function parseArguments(args) {
   const options = {}
@@ -58,8 +60,30 @@ function detectHostTarget() {
   return definition
 }
 
+export function packageCommandInvocation(
+  command,
+  args,
+  { platform = process.platform, commandInterpreter = process.env.ComSpec } = {},
+) {
+  if (typeof command !== 'string' || command.length === 0) {
+    throw new TypeError('Package command must be a non-empty string')
+  }
+  if (!Array.isArray(args) || args.some(argument => typeof argument !== 'string')) {
+    throw new TypeError('Package command arguments must be strings')
+  }
+  if (platform === 'win32' && windowsPackageManagerCommand.test(command)) {
+    const commandFile = command.toLowerCase().endsWith('.cmd') ? command : `${command}.cmd`
+    return {
+      command: commandInterpreter || 'cmd.exe',
+      args: ['/d', '/s', '/c', commandFile, ...args],
+    }
+  }
+  return { command, args: [...args] }
+}
+
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const invocation = packageCommandInvocation(command, args)
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: options.cwd ?? repositoryRoot,
     encoding: 'utf8',
     env: { ...process.env, ...options.env },
@@ -90,8 +114,13 @@ function packCompilerFacade(packsDirectory) {
   return path.join(packsDirectory, created[0])
 }
 
-function relativeFileDependency(fromDirectory, filePath) {
-  return `file:${path.relative(fromDirectory, filePath).split(path.sep).join('/')}`
+export function relativeFileDependency(fromDirectory, filePath) {
+  const canonicalFromDirectory = realpathSync(fromDirectory)
+  const canonicalFilePath = realpathSync(filePath)
+  return `file:${path
+    .relative(canonicalFromDirectory, canonicalFilePath)
+    .split(path.sep)
+    .join('/')}`
 }
 
 function packResolutionOnlyNativePackages(tempRoot, packsDirectory, host, hostTarball) {

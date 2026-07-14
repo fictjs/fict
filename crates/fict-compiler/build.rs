@@ -8,6 +8,9 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
+#[path = "src/build_id_input.rs"]
+mod build_id_input;
+
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-env-changed=FICT_COMPILER_BUILD_REVISION");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_PREVIEW");
@@ -61,7 +64,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("cargo:rerun-if-changed={}", input.display());
         hasher.update(normalize_relative_path(relative).as_bytes());
         hasher.update(b"\0");
-        hasher.update(fs::read(&input)?);
+        let source = fs::read(&input)?;
+        hasher.update(build_id_input::normalize_source_bytes(&source).as_ref());
         hasher.update(b"\0");
     }
 

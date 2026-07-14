@@ -1,12 +1,24 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import {
+  packageCommandInvocation,
+  relativeFileDependency,
+} from './native-compiler-package-smoke.mjs'
 import {
   NATIVE_COMPILER_NODE_LANES,
   NATIVE_COMPILER_TARGETS,
@@ -19,6 +31,7 @@ import {
   nativeHostTarget,
   nativeNodeVersionMatchesLane,
   nativeRuntimeMatrix,
+  npmInvocation,
   validateNativePackageConfiguration,
   validateNativeRuntimeEvidenceMatrix,
   validateOxcVersionAlignment,
@@ -299,6 +312,81 @@ test('maps supported development hosts to their release package target', () => {
   assert.throws(
     () => nativeHostTarget({ platform: 'freebsd', arch: 'x64' }),
     /Unsupported Fict native compiler host/,
+  )
+})
+
+test('invokes npm through the Windows command interpreter for native package assembly', () => {
+  const args = ['pack', 'D:\\a\\fict package', '--json']
+  assert.deepEqual(
+    npmInvocation(args, {
+      platform: 'win32',
+      commandInterpreter: 'C:\\Windows\\System32\\cmd.exe',
+    }),
+    {
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', 'npm.cmd', ...args],
+    },
+  )
+  assert.deepEqual(npmInvocation(args, { platform: 'linux' }), {
+    command: 'npm',
+    args,
+  })
+  assert.throws(() => npmInvocation(['pack', 1], { platform: 'win32' }), /must be strings/)
+})
+
+test('canonicalizes symlinked temp roots before creating local package dependencies', () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-file-dependency-test-'))
+  try {
+    const physicalTempRoot = path.join(tempRoot, 'private', 'var')
+    const aliasedTempRoot = path.join(tempRoot, 'var')
+    const physicalConsumer = path.join(physicalTempRoot, 'folders', 'consumer')
+    const aliasedConsumer = path.join(aliasedTempRoot, 'folders', 'consumer')
+    const tarball = path.join(tempRoot, 'Users', 'runner', 'native-package.tgz')
+    mkdirSync(physicalConsumer, { recursive: true })
+    mkdirSync(path.dirname(tarball), { recursive: true })
+    writeFileSync(tarball, 'native package')
+    symlinkSync(physicalTempRoot, aliasedTempRoot, 'dir')
+
+    const dependency = relativeFileDependency(aliasedConsumer, tarball)
+    const resolvedByPackageManager = path.resolve(
+      realpathSync(aliasedConsumer),
+      dependency.slice('file:'.length),
+    )
+
+    assert.equal(realpathSync(resolvedByPackageManager), realpathSync(tarball))
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('invokes smoke package managers through the Windows command interpreter', () => {
+  const args = ['--dir', 'D:\\a\\fict package', 'pack']
+  const commandInterpreter = 'C:\\Windows\\System32\\cmd.exe'
+  assert.deepEqual(
+    packageCommandInvocation('pnpm', args, { platform: 'win32', commandInterpreter }),
+    {
+      command: commandInterpreter,
+      args: ['/d', '/s', '/c', 'pnpm.cmd', ...args],
+    },
+  )
+  assert.deepEqual(
+    packageCommandInvocation('npm.cmd', args, { platform: 'win32', commandInterpreter }),
+    {
+      command: commandInterpreter,
+      args: ['/d', '/s', '/c', 'npm.cmd', ...args],
+    },
+  )
+  assert.deepEqual(packageCommandInvocation('node.exe', args, { platform: 'win32' }), {
+    command: 'node.exe',
+    args,
+  })
+  assert.deepEqual(packageCommandInvocation('pnpm', args, { platform: 'linux' }), {
+    command: 'pnpm',
+    args,
+  })
+  assert.throws(
+    () => packageCommandInvocation('pnpm', ['install', 1], { platform: 'win32' }),
+    /must be strings/,
   )
 })
 
