@@ -13,9 +13,9 @@ use fict_emit::{
     ReactiveSlotStorage, RuntimeHelper, RuntimeImportIntent,
 };
 use fict_hir::{
-    BindingId, BindingKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, JsxAttribute,
-    JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LocalKind, Origin, PlaceBase, ValueId,
-    ValueKind,
+    BindingId, BindingKind, ContextValueKind, FunctionId, FunctionKind, HirFile,
+    HirInstructionKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode,
+    LocalKind, Origin, PlaceBase, ValueId, ValueKind,
 };
 
 /// Host-independent Preview controls consumed after stable Core lowering.
@@ -55,6 +55,36 @@ pub fn attach_preview_plan(
                     handler_node_count(hir, function) >= options.auto_extract_threshold
                 });
             if !candidate.explicit && !automatically_selected {
+                continue;
+            }
+
+            let context_captures = handler_context_captures(
+                hir,
+                owner,
+                &candidate.handler,
+                candidate.origin,
+                handler_function,
+            );
+            if !context_captures.is_empty() {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-CONTEXT",
+                            format!(
+                                "resumable handler captures lexical execution context: {}",
+                                context_captures
+                                    .iter()
+                                    .map(|kind| context_value_label(*kind))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "use an ordinary function with its own dynamic context, or remove the `$` suffix",
+                        ),
+                    );
+                }
                 continue;
             }
 
@@ -433,6 +463,24 @@ fn resolve_value_function(
         .iter()
         .flat_map(|block| &block.instructions)
         .find(|instruction| instruction.result == Some(value))?;
+    if matches!(instruction.kind, HirInstructionKind::SyntaxFragment { .. }) {
+        let origin = function.values.get(value.as_usize())?.origin.primary_span?;
+        for candidate in function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .rev()
+            .filter_map(|candidate| candidate.result.map(|result| (candidate, result)))
+            .filter(|(candidate, result)| {
+                *result != value && candidate.origin.primary_span == Some(origin)
+            })
+        {
+            if let Some(resolved) = resolve_value_function(hir, function, candidate.1, visited) {
+                return Some(resolved);
+            }
+        }
+        return None;
+    }
     let HirInstructionKind::Read { place } = &instruction.kind else {
         return None;
     };
@@ -476,6 +524,106 @@ fn handler_node_count(hir: &HirFile, function: FunctionId) -> u32 {
         })
         .and_then(|count| u32::try_from(count).ok())
         .unwrap_or(u32::MAX)
+}
+
+fn handler_context_captures(
+    hir: &HirFile,
+    owner: &fict_hir::HirFunction,
+    handler: &EmitValueRef,
+    origin: Origin,
+    handler_function: Option<FunctionId>,
+) -> BTreeSet<ContextValueKind> {
+    if let Some(handler_function) = handler_function {
+        let Some(function) = hir.functions.get(handler_function.as_usize()) else {
+            return BTreeSet::new();
+        };
+        if !function.flags.is_arrow {
+            return BTreeSet::new();
+        }
+        return arrow_context_captures(hir, handler_function);
+    }
+
+    let EmitValueRef::Hir(_) = handler else {
+        return BTreeSet::new();
+    };
+    let Some(handler_span) = origin.primary_span else {
+        return BTreeSet::new();
+    };
+    let mut captures = contexts_in_span(owner, handler_span);
+    for child in hir.functions.iter().filter(|function| {
+        function.parent == owner.id
+            && function.flags.is_arrow
+            && function.origin.primary_span.is_some_and(|span| {
+                handler_span.start() <= span.start() && span.end() <= handler_span.end()
+            })
+    }) {
+        captures.extend(arrow_context_captures(hir, child.id));
+    }
+    captures
+}
+
+fn arrow_context_captures(hir: &HirFile, root: FunctionId) -> BTreeSet<ContextValueKind> {
+    let mut captures = BTreeSet::new();
+    let mut stack = vec![root];
+    while let Some(function_id) = stack.pop() {
+        let Some(function) = hir.functions.get(function_id.as_usize()) else {
+            continue;
+        };
+        captures.extend(contexts_in_function(function));
+        stack.extend(
+            hir.functions
+                .iter()
+                .filter(|child| child.parent == function_id && child.flags.is_arrow)
+                .map(|child| child.id),
+        );
+    }
+    captures
+}
+
+fn contexts_in_span(
+    function: &fict_hir::HirFunction,
+    span: fict_hir::SourceSpan,
+) -> BTreeSet<ContextValueKind> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| {
+            instruction.origin.primary_span.is_some_and(|candidate| {
+                span.start() <= candidate.start() && candidate.end() <= span.end()
+            })
+        })
+        .filter_map(context_instruction_kind)
+        .collect()
+}
+
+fn contexts_in_function(function: &fict_hir::HirFunction) -> BTreeSet<ContextValueKind> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(context_instruction_kind)
+        .collect()
+}
+
+fn context_instruction_kind(instruction: &fict_hir::HirInstruction) -> Option<ContextValueKind> {
+    let HirInstructionKind::Context { kind } = instruction.kind else {
+        return None;
+    };
+    matches!(
+        kind,
+        ContextValueKind::This | ContextValueKind::Arguments | ContextValueKind::NewTarget
+    )
+    .then_some(kind)
+}
+
+const fn context_value_label(kind: ContextValueKind) -> &'static str {
+    match kind {
+        ContextValueKind::This => "this",
+        ContextValueKind::Arguments => "arguments",
+        ContextValueKind::NewTarget => "new.target",
+        ContextValueKind::ImportMeta => "import.meta",
+    }
 }
 
 fn captured_bindings(function: &fict_hir::HirFunction) -> BTreeSet<BindingId> {

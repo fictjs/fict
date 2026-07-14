@@ -4909,6 +4909,102 @@ mod tests {
         assert!(artifact.code.contains("label = () =>"));
     }
 
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_explicit_preview_handlers_that_capture_lexical_execution_context() {
+        for (name, source, expected) in [
+            (
+                "this",
+                "export function App() { return <button onClick$={() => this}>Click</button>; }",
+                "this",
+            ),
+            (
+                "arguments-ref",
+                "export function App() { const handler = () => arguments.length; return <button onClick$={handler}>Click</button>; }",
+                "arguments",
+            ),
+            (
+                "new-target-ref",
+                "export function App() { const handler = () => new.target; return <button onClick$={handler}>Click</button>; }",
+                "new.target",
+            ),
+            (
+                "factory-this",
+                "const make = value => () => value; export function App() { return <button onClick$={make(this)}>Click</button>; }",
+                "this",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-context-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.artifacts.is_empty(),
+                "{name}: {:?}",
+                result.artifacts
+            );
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-PREVIEW-CONTEXT"
+                        && diagnostic.message.contains(expected)
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn falls_back_for_auto_preview_handlers_with_lexical_context() {
+        let source = "export function App() { return <button onClick={() => { console.log(this); console.log('eager'); }}>Click</button>; }";
+        let mut input = request(source, "preview-context-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(
+            !result.code.contains("fict:compiler-artifact:"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn preserves_context_owned_by_ordinary_preview_handler_functions() {
+        let source = "export function App() { return <button onClick$={function () { return [this, arguments.length, new.target]; }}>Click</button>; }";
+        let mut input = request(source, "preview-context-owned.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let artifact = result.artifacts.first().expect("ordinary handler artifact");
+        assert!(artifact.code.contains("this"), "{}", artifact.code);
+        assert!(
+            artifact.code.contains("arguments.length"),
+            "{}",
+            artifact.code
+        );
+        assert!(artifact.code.contains("new.target"), "{}", artifact.code);
+    }
+
     #[test]
     fn returns_parser_errors_and_never_emits_partial_code() {
         let result = compile(request("export const =", "broken.ts"));
