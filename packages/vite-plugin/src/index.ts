@@ -25,6 +25,7 @@ import {
   type ModuleReactiveMetadata,
   type NativeCompilerExplainArtifact,
   type NativeCompilerOptions,
+  type RawSourceMap,
   type ResolvedMetadataInput,
   type ScanResult,
 } from '@fictjs/compiler'
@@ -42,6 +43,20 @@ import {
 } from 'vite'
 
 import { createVitePluginCacheFingerprint } from './cache-fingerprint'
+import {
+  CompilerShadowRecorder,
+  type CompilerShadowBackendSnapshot,
+  type CompilerShadowDiagnostic,
+  type CompilerShadowModuleResult,
+  type CompilerShadowSemanticEvent,
+} from './shadow-rollout'
+
+export type {
+  CompilerShadowArtifact,
+  CompilerShadowDifference,
+  CompilerShadowDifferenceCategory,
+  CompilerShadowModuleResult,
+} from './shadow-rollout'
 
 // Handle ESM/CJS interop for Babel packages
 const traverse = (
@@ -66,6 +81,19 @@ const PACKAGE_METADATA_WATCH_GLOBS = [
 
 type BabelGeneratorOptions = NonNullable<Parameters<typeof generate>[1]>
 
+export type FictCompilerBackend = 'legacy' | 'rust' | 'shadow'
+
+export interface FictShadowOptions {
+  /** Privacy-safe JSON artifact path, relative to the Vite root. */
+  reportPath?: string
+  /** Versioned allowlist path, relative to the Vite root. */
+  allowlistPath?: string
+  /** Fail buildEnd when a difference is not covered by the exact allowlist. */
+  failOnDifference?: boolean
+  /** Receives hashes and categories only; source, paths, and generated code are omitted. */
+  onResult?: (result: CompilerShadowModuleResult) => void
+}
+
 interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions {
   retainLines?: boolean
   compact?: boolean
@@ -79,7 +107,9 @@ export interface FictPluginOptions extends FictCompilerOptions {
    * Compiler implementation used by the Vite compile stage.
    * @default 'legacy'
    */
-  backend?: 'legacy' | 'rust'
+  backend?: FictCompilerBackend
+  /** Shadow comparison controls. Used only with `backend: 'shadow'`. */
+  shadow?: FictShadowOptions
   /**
    * Explicit native addon path for local development and release verification.
    * Production installations normally resolve the platform optional package.
@@ -475,7 +505,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const {
     include,
     exclude = ['**/node_modules/**'],
-    backend = 'legacy',
+    backend: backendOption,
+    shadow: shadowOption,
     nativeCompilerPath,
     cache: cacheOption,
     tsconfigPath,
@@ -486,17 +517,27 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     publicModuleId: _integrationOwnedPublicModuleId,
     ...compilerOptions
   } = options
-  if (backend !== 'legacy' && backend !== 'rust') {
+  const backendFromEnvironment = process.env.FICT_COMPILER_BACKEND
+  const backend = (backendOption ?? backendFromEnvironment ?? 'legacy') as FictCompilerBackend
+  if (backend !== 'legacy' && backend !== 'rust' && backend !== 'shadow') {
     throw new Error(`[fict] Unknown compiler backend ${JSON.stringify(backend)}.`)
   }
-  if (backend === 'rust' && compilerOptions.resumable === true) {
+  if (backend !== 'legacy' && compilerOptions.resumable === true) {
     throw new Error(
-      '[fict] The Rust compiler backend does not yet support Preview resumability. ' +
+      `[fict] The ${backend} compiler backend does not yet support Preview resumability. ` +
         'Disable resumable output or use backend: "legacy".',
     )
   }
+  if (shadowOption && backend !== 'shadow') {
+    throw new Error('[fict] The `shadow` options require backend: "shadow".')
+  }
+  const shadowFailOnDifference =
+    shadowOption?.failOnDifference ??
+    readBooleanEnv('FICT_COMPILER_SHADOW_FAIL_ON_DIFFERENCE') ??
+    false
   let nativeCompilerBinding: NativeCompilerBinding | undefined
   let nativeCompilerInfo: NativeCompilerInfo | undefined
+  let shadowRecorder: CompilerShadowRecorder | undefined
   const getNativeCompiler = (): NativeCompilerBinding => {
     if (!nativeCompilerBinding) {
       const nativePath = nativeCompilerPath ?? process.env.FICT_COMPILER_NATIVE_PATH
@@ -505,10 +546,35 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
     return nativeCompilerBinding
   }
+  const getShadowRecorder = (): CompilerShadowRecorder => {
+    if (backend !== 'shadow') {
+      throw new Error('[fict] Internal error: shadow recorder requested outside shadow mode.')
+    }
+    if (!shadowRecorder) {
+      getNativeCompiler()
+      const root = config?.root ?? process.cwd()
+      const allowlistPath =
+        shadowOption?.allowlistPath ?? process.env.FICT_COMPILER_SHADOW_ALLOWLIST
+      shadowRecorder = new CompilerShadowRecorder({
+        root,
+        compilerBuildId: nativeCompilerInfo!.compilerBuildId,
+        reportPath:
+          shadowOption?.reportPath ??
+          process.env.FICT_COMPILER_SHADOW_REPORT ??
+          '.fict-cache/compiler-shadow.json',
+        ...(allowlistPath ? { allowlistPath } : {}),
+        ...(shadowOption?.onResult ? { onResult: shadowOption.onResult } : {}),
+      })
+    }
+    return shadowRecorder
+  }
   const getCompilerStageFingerprint = (): string => {
     if (backend === 'legacy') return `legacy:${getTransformCacheFingerprint()}`
     getNativeCompiler()
-    return `rust:${nativeCompilerInfo!.compilerBuildId}:oxc${nativeCompilerInfo!.oxcVersion}`
+    const native = `${nativeCompilerInfo!.compilerBuildId}:oxc${nativeCompilerInfo!.oxcVersion}`
+    return backend === 'shadow'
+      ? `shadow:${getTransformCacheFingerprint()}:${native}`
+      : `rust:${native}`
   }
   const collectCompilerStaticModuleSources = async (
     code: string,
@@ -526,6 +592,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   ): string[] => {
     if (backend === 'legacy') return collectStaticModuleSources(code)
     const result = getNativeCompiler().scanSync({ code, filename, moduleId })
+    return consumeNativeScanResult(result, code, filename)
+  }
+  const collectNativeCompilerStaticModuleSources = async (
+    code: string,
+    filename: string,
+    moduleId = filename,
+  ): Promise<string[]> => {
+    const result = await getNativeCompiler().scan({ code, filename, moduleId })
     return consumeNativeScanResult(result, code, filename)
   }
   const publicIdentityNamespace = publicIdentityNamespaceOption?.trim()
@@ -1348,19 +1422,30 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         configPath: project.configPath,
       }
     }
+    let nativeModuleSources: string[] = []
+    if (backend !== 'legacy') {
+      try {
+        nativeModuleSources = await collectNativeCompilerStaticModuleSources(
+          code,
+          normalizedFilename,
+          transformOptions?.publicIdentityId ?? normalizedFilename,
+        )
+      } catch (error) {
+        if (backend !== 'shadow') throw error
+        // Shadow mode must preserve the legacy build. The native transform below records
+        // parser/diagnostic divergence without letting a native scan change graph discovery.
+        nativeModuleSources = collectStaticModuleSources(code)
+      }
+    }
     const nativeMetadata =
-      backend === 'rust'
-        ? createNativeMetadataSnapshot(
+      backend === 'legacy'
+        ? []
+        : createNativeMetadataSnapshot(
             state,
-            await collectCompilerStaticModuleSources(
-              code,
-              normalizedFilename,
-              transformOptions?.publicIdentityId ?? normalizedFilename,
-            ),
+            nativeModuleSources,
             normalizedFilename,
             transformOptions?.metadataKey ?? normalizedFilename,
           )
-        : []
     return { fictOptions, project, tsImportElision, nativeMetadata }
   }
 
@@ -1539,7 +1624,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         backend,
         moduleId: node.id,
         metadata: nativeMetadata,
-        ...(backend === 'rust' ? { nativeCompiler: getNativeCompiler() } : {}),
+        ...(backend !== 'legacy' ? { nativeCompiler: getNativeCompiler() } : {}),
+        ...(backend === 'shadow' ? { shadowRecorder: getShadowRecorder() } : {}),
       },
     )
     assertTransformStateActive(state)
@@ -1821,6 +1907,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         }
       }
       config = resolvedConfig
+      shadowRecorder = undefined
       transformFilter = createTransformFilter(config.root)
       if (resolvedConfig.build.watch) {
         const chokidar = (resolvedConfig.build.watch.chokidar ??= {})
@@ -1859,6 +1946,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     buildStart() {
+      if (backend === 'shadow') getShadowRecorder().reset()
       const context = this as { addWatchFile?: (file: string) => void } | undefined
       const addWatchFile = context?.addWatchFile
       addTypeScriptConfigWatchFiles =
@@ -1882,6 +1970,18 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           )?.root ?? normalizeFileName(config.root)
       }
       replaceBuildTransformState()
+    },
+
+    async buildEnd(error) {
+      if (backend !== 'shadow') return
+      const recorder = getShadowRecorder()
+      const artifact = await recorder.write()
+      if (!error && shadowFailOnDifference && artifact.summary.unexplainedDifferences > 0) {
+        this.error(
+          `[fict] Rust shadow comparison found ${artifact.summary.unexplainedDifferences} ` +
+            'unexplained difference(s). Inspect the configured privacy-safe shadow report.',
+        )
+      }
     },
 
     configureServer: {
@@ -2131,10 +2231,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           options.functionSplitting ??
           (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
         // Function callbacks are observable compiler output. Replaying only code/maps from
-        // either cache would silently drop warnings and explain artifacts, so compile the
-        // requested root again while still allowing dependency metadata preparation to dedupe.
+        // either cache would silently drop warnings and explain artifacts. Shadow comparison is
+        // observable too: a cached legacy code/map has no Rust outcome and would create a false
+        // green report. Compile the requested root again while still allowing dependency
+        // metadata preparation to dedupe within the current build.
         const hasObservableCompilerCallbacks =
-          typeof fictOptions.onWarn === 'function' || typeof fictOptions.explain === 'function'
+          backend === 'shadow' ||
+          typeof fictOptions.onWarn === 'function' ||
+          typeof fictOptions.explain === 'function'
         const cacheKey =
           cacheStore.enabled && !hasObservableCompilerCallbacks
             ? buildCacheKey(
@@ -2224,7 +2328,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                 backend,
                 moduleId: id,
                 metadata: nativeMetadata,
-                ...(backend === 'rust' ? { nativeCompiler: getNativeCompiler() } : {}),
+                ...(backend !== 'legacy' ? { nativeCompiler: getNativeCompiler() } : {}),
+                ...(backend === 'shadow' ? { shadowRecorder: getShadowRecorder() } : {}),
               },
             )
             assertTransformStateActive(state)
@@ -4104,10 +4209,11 @@ function parseModuleWithDecoratorFallback(code: string): ReturnType<typeof parse
 }
 
 interface CompilerStageOptions {
-  backend: 'legacy' | 'rust'
+  backend: FictCompilerBackend
   moduleId: string
   metadata: ResolvedMetadataInput[]
   nativeCompiler?: NativeCompilerBinding
+  shadowRecorder?: CompilerShadowRecorder
 }
 
 function sourcePositionForByteOffset(
@@ -4304,6 +4410,87 @@ function consumeNativeCompileResult(
   }
 }
 
+function warningToShadowDiagnostic(warning: CompilerWarning): CompilerShadowDiagnostic {
+  return {
+    code: warning.code,
+    severity: 'warning',
+    ...(warning.line > 0 ? { line: warning.line } : {}),
+    ...(warning.column > 0 ? { column: warning.column } : {}),
+  }
+}
+
+function errorToShadowDiagnostic(
+  error: unknown,
+  backend: 'legacy' | 'rust',
+): CompilerShadowDiagnostic {
+  if (!error || typeof error !== 'object') {
+    return {
+      code: backend === 'legacy' ? 'FICT-LEGACY-THROW' : 'FICT-NATIVE-THROW',
+      severity: 'error',
+    }
+  }
+  const candidate = error as {
+    code?: unknown
+    message?: unknown
+    loc?: { line?: unknown; column?: unknown }
+  }
+  const messageCodes =
+    typeof candidate.message === 'string' ? (candidate.message.match(/FICT-[A-Z0-9-]+/g) ?? []) : []
+  const code =
+    typeof candidate.code === 'string' && candidate.code.startsWith('FICT-')
+      ? candidate.code
+      : (messageCodes[0] ?? (backend === 'legacy' ? 'FICT-LEGACY-THROW' : 'FICT-NATIVE-THROW'))
+  return {
+    code,
+    severity: 'error',
+    ...(typeof candidate.loc?.line === 'number' ? { line: candidate.loc.line } : {}),
+    ...(typeof candidate.loc?.column === 'number' ? { column: candidate.loc.column + 1 } : {}),
+  }
+}
+
+function explainEventsToShadow(
+  events:
+    | readonly {
+        kind: string
+        name?: string | null
+        code?: string | null
+      }[]
+    | undefined,
+): CompilerShadowSemanticEvent[] {
+  return (events ?? []).map(event => ({
+    kind: event.kind,
+    ...(event.name ? { name: event.name } : {}),
+    ...(event.code ? { code: event.code } : {}),
+  }))
+}
+
+function nativeResultToShadowSnapshot(
+  result: CompileResult,
+  source: string,
+): CompilerShadowBackendSnapshot {
+  return {
+    status: result.diagnostics.some(diagnostic => diagnostic.severity === 'error')
+      ? 'failure'
+      : 'success',
+    code: result.code,
+    diagnostics: result.diagnostics.map(diagnostic => {
+      const position = diagnostic.primarySpan
+        ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
+        : undefined
+      return {
+        code: diagnostic.code,
+        severity: diagnostic.severity,
+        ...(position ? { line: position.line, column: position.column } : {}),
+      }
+    }),
+    metadata: result.moduleMetadata,
+    semanticEvents: explainEventsToShadow(result.explain?.events),
+    helpers: result.explain?.helpers ?? [],
+    sourceMap: result.map,
+    artifacts: result.artifacts,
+  }
+}
+
 async function compileFictCompilerStage(
   code: string,
   filename: string,
@@ -4311,6 +4498,82 @@ async function compileFictCompilerStage(
   tsImportElision: TypeScriptImportElision,
   stage: CompilerStageOptions,
 ): Promise<{ code: string; map: TransformResult['map'] }> {
+  if (stage.backend === 'shadow') {
+    if (!stage.nativeCompiler || !stage.shadowRecorder) {
+      throw new Error('[fict] Shadow compiler backend selected without its native binding/report.')
+    }
+    const warnings: CompilerWarning[] = []
+    let explanation: CompilerExplainArtifact | undefined
+    const originalWarning = fictOptions.onWarn
+    const originalExplain = fictOptions.explain
+    const shadowOptions: FictCompilerOptions = {
+      ...fictOptions,
+      onWarn(warning) {
+        warnings.push(warning)
+        originalWarning?.(warning)
+      },
+      explain(artifact) {
+        explanation = artifact
+        if (typeof originalExplain === 'function') originalExplain(artifact)
+      },
+    }
+
+    let legacyResult: { code: string; map: TransformResult['map'] } | undefined
+    let legacyError: unknown
+    try {
+      legacyResult = await compileFictCompilerStage(
+        code,
+        filename,
+        shadowOptions,
+        tsImportElision,
+        { backend: 'legacy', moduleId: stage.moduleId, metadata: [] },
+      )
+    } catch (error) {
+      legacyError = error
+    }
+
+    let rustSnapshot: CompilerShadowBackendSnapshot
+    try {
+      const nativeResult = await stage.nativeCompiler.transform({
+        code,
+        filename,
+        moduleId: stage.moduleId,
+        options: nativeCompilerOptions({ ...fictOptions, explain: true }, tsImportElision),
+        metadata: stage.metadata,
+        integrationDiagnostics: nativeIntegrationDiagnostics(
+          code,
+          fictOptions.integrationDiagnostics,
+        ),
+      })
+      rustSnapshot = nativeResultToShadowSnapshot(nativeResult, code)
+    } catch (error) {
+      rustSnapshot = {
+        status: 'failure',
+        code: '',
+        diagnostics: [errorToShadowDiagnostic(error, 'rust')],
+      }
+    }
+
+    const legacyMetadata = shadowOptions.moduleMetadata?.get(filename)
+    const legacySourceMap = legacyResult?.map as RawSourceMap | null | undefined
+    const legacySnapshot: CompilerShadowBackendSnapshot = {
+      status: legacyError === undefined ? 'success' : 'failure',
+      code: legacyResult?.code ?? '',
+      diagnostics: [
+        ...warnings.map(warningToShadowDiagnostic),
+        ...(legacyError === undefined ? [] : [errorToShadowDiagnostic(legacyError, 'legacy')]),
+      ],
+      ...(legacyMetadata ? { metadata: legacyMetadata } : {}),
+      semanticEvents: explainEventsToShadow(explanation?.events),
+      helpers: explanation?.helpers ?? [],
+      ...(legacySourceMap === undefined ? {} : { sourceMap: legacySourceMap }),
+      artifacts: [],
+    }
+    stage.shadowRecorder.record(filename, code, legacySnapshot, rustSnapshot)
+    if (legacyError !== undefined) throw legacyError
+    return legacyResult!
+  }
+
   if (stage.backend === 'rust') {
     if (!stage.nativeCompiler) {
       throw new Error('[fict] Rust compiler backend selected without a native compiler binding.')
