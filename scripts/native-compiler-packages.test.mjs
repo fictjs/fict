@@ -39,8 +39,10 @@ import {
   verifyNativePackageArtifact,
 } from './native-compiler-packages.mjs'
 import {
+  NATIVE_PUBLISH_VISIBILITY_DELAYS_MS,
   collectNativePublishActions,
   validateNativePublishPlan,
+  waitForPublishedVersion,
 } from './publish-native-compiler-packages.mjs'
 import { prepareReleaseArtifacts, validateReleasePublishPlan } from './publish-release-packages.mjs'
 
@@ -549,6 +551,36 @@ test('refuses a partial or facade-first native publication', () => {
   const partial = structuredClone(valid)
   partial.packages[0].status = 'already-published'
   assert.equal(validateNativePublishPlan(partial).length, 8)
+})
+
+test('waits through npm new-package propagation with cache bypass', async () => {
+  assert.deepEqual(
+    NATIVE_PUBLISH_VISIBILITY_DELAYS_MS,
+    [2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000],
+  )
+  const urls = []
+  const delays = []
+  await waitForPublishedVersion(
+    'https://registry.npmjs.org',
+    '@fictjs/compiler-darwin-arm64',
+    '1.2.3',
+    {
+      delaysMs: [10, 20],
+      now: () => 123,
+      sleep: async delay => delays.push(delay),
+      fetchImpl: async url => {
+        urls.push(url)
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ versions: urls.length === 3 ? { '1.2.3': {} } : {} }),
+        }
+      },
+    },
+  )
+  assert.deepEqual(delays, [10, 20])
+  assert.equal(urls.length, 3)
+  assert.ok(urls.every((url, attempt) => url.endsWith(`?fict-native-publish=123-${attempt}`)))
 })
 
 test('requires dependency-topological publication after the native packages', () => {

@@ -325,7 +325,8 @@ OTP challenge; registry reads remain non-interactive and fail closed.
 
 The bootstrap publishes with `--provenance=false` only for names that do not
 exist, verifies any safely resumed version against the certified npm integrity,
-and configures `release.yml` trusted publishing for all eight packages. It
+waits up to three minutes for npm's new-package metadata to become visible, and
+configures `release.yml` trusted publishing for all eight packages. It
 rejects a certification version whose compiler facade is not already on npm,
 which prevents bootstrap from consuming the version reserved for a future tag.
 Run `pnpm release:plan --require-existing-packages` only after all eight names

@@ -88,20 +88,33 @@ export function publishTarball(tarballPath) {
   process.stdout.write(result.stdout)
 }
 
-export async function waitForPublishedVersion(registry, packageName, version) {
-  const delays = [2_000, 4_000, 8_000, 15_000, 30_000]
-  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+export const NATIVE_PUBLISH_VISIBILITY_DELAYS_MS = Object.freeze([
+  2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000,
+])
+
+export async function waitForPublishedVersion(
+  registry,
+  packageName,
+  version,
+  {
+    delaysMs = NATIVE_PUBLISH_VISIBILITY_DELAYS_MS,
+    fetchImpl = fetch,
+    now = Date.now,
+    sleep = delay => new Promise(resolve => setTimeout(resolve, delay)),
+  } = {},
+) {
+  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
     const document = await fetchRegistryDocument(registry, packageName, {
       fetchImpl: (url, options) =>
-        fetch(`${url}?fict-native-publish=${Date.now()}-${attempt}`, {
+        fetchImpl(`${url}?fict-native-publish=${now()}-${attempt}`, {
           ...options,
           headers: { ...options.headers, 'cache-control': 'no-cache' },
         }),
       retryDelaysMs: [],
     })
     if (getPublishedVersions(document).includes(version)) return
-    if (attempt < delays.length) {
-      await new Promise(resolve => setTimeout(resolve, delays[attempt]))
+    if (attempt < delaysMs.length) {
+      await sleep(delaysMs[attempt])
     }
   }
   throw new Error(`${packageName}@${version} was not visible from ${registry} after publication`)
