@@ -110,6 +110,6 @@
     "@jridgewell/trace-mapping": "^0.3.31",
     "@types/babel__helper-plugin-utils": "^7.10.3",
     "@types/babel__traverse": "^7.28.0",
-    "tsdown": "^0.22.3"
+    "tsdown": "^0.22.8"
   }
 }

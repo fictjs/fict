@@ -79,8 +79,8 @@
     "clean": "rm -rf dist coverage"
   },
   "devDependencies": {
-    "jsdom": "^28.1.0",
-    "tsdown": "^0.22.3"
+    "jsdom": "^29.1.1",
+    "tsdown": "^0.22.8"
   },
   "author": "unadlib",
   "license": "MIT"

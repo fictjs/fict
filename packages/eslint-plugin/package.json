@@ -39,9 +39,9 @@
   },
   "devDependencies": {
     "@types/eslint": "^9.0.0",
-    "@types/estree": "^1.0.8",
-    "eslint": "^10.0.2",
-    "tsdown": "^0.22.3"
+    "@types/estree": "^1.0.9",
+    "eslint": "^10.7.0",
+    "tsdown": "^0.22.8"
   },
   "keywords": [
     "fict",

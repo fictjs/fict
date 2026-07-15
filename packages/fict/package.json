@@ -87,7 +87,7 @@
   },
   "devDependencies": {
     "@fictjs/vite-plugin": "workspace:*",
-    "tsdown": "^0.22.3",
+    "tsdown": "^0.22.8",
     "vite": "^7.3.6"
   },
   "author": "unadlib",
