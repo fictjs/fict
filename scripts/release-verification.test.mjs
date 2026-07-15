@@ -47,6 +47,10 @@ const zigRequirements = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const productionAudit = readFileSync(
+  new URL('./audit-production-dependencies.mjs', import.meta.url),
+  'utf8',
+)
 const turboConfig = JSON.parse(readFileSync(new URL('../turbo.json', import.meta.url), 'utf8'))
 const ssrPackage = JSON.parse(
   readFileSync(new URL('../packages/ssr/package.json', import.meta.url), 'utf8'),
@@ -102,6 +106,20 @@ test('CI and release fail closed on advisories in both Rust lockfiles', () => {
   assert.match(ciWorkflow, /name: Audit locked Rust dependencies[\s\S]*?pnpm security:audit:rust/)
   assert.match(releaseWorkflow, /^\s+cargo audit --deny warnings$/m)
   assert.match(releaseWorkflow, /^\s+cargo audit --deny warnings --file fuzz\/Cargo\.lock$/m)
+})
+
+test('production audit uses the supported npm bulk advisory endpoint', () => {
+  assert.equal(
+    rootPackage.scripts['security:audit:prod'],
+    'node --test scripts/audit-production-dependencies.test.mjs && node scripts/audit-production-dependencies.mjs',
+  )
+  assert.match(productionAudit, /\/security\/advisories\/bulk/)
+  assert.doesNotMatch(rootPackage.scripts['security:audit:prod'], /pnpm audit/)
+  assert.match(ciWorkflow, /run: pnpm security:audit:prod/)
+  assert.match(
+    rootPackage.scripts['release:verify'],
+    /^pnpm security:audit:prod && pnpm security:audit:rust &&/,
+  )
 })
 
 test('CI and release use Node 24-compatible action majors', () => {
