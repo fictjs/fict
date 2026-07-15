@@ -258,7 +258,7 @@ jobs:
     needs: native-certification
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
 
     steps:
@@ -323,6 +323,12 @@ jobs:
           pattern: fict-native-package-*
           path: ${{ runner.temp }}/native-packages
 
+      - name: Download native release certification
+        uses: actions/download-artifact@v7
+        with:
+          name: fict-native-certification-${{ github.sha }}
+          path: ${{ runner.temp }}/native-certification
+
       - name: Preflight the complete atomic native publish set
         run: >-
           node scripts/publish-native-compiler-packages.mjs
@@ -382,3 +388,34 @@ jobs:
           path: ${{ runner.temp }}/release-tarballs
           if-no-files-found: warn
           retention-days: 90
+
+      - name: Publish or verify GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_revision="$(git rev-list -n 1 "${GITHUB_REF_NAME}")"
+          test "${tag_revision}" = "${GITHUB_SHA}"
+
+          release_assets=(
+            "${RUNNER_TEMP}/native-certification/native-certification.json"
+            "${RUNNER_TEMP}/npm-publish-plan.json"
+            "${RUNNER_TEMP}/release-tarballs/release-artifacts.json"
+          )
+          for release_asset in "${release_assets[@]}"; do
+            test -f "${release_asset}"
+          done
+
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            test "$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)" = "false"
+            test "$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" = "false"
+            gh release upload "${GITHUB_REF_NAME}" "${release_assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${release_assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

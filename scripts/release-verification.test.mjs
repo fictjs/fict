@@ -68,6 +68,29 @@ test('release publishing uses one dependency-ordered publisher after native cert
   assert.equal(rootPackage.scripts.release, 'pnpm release:plan --require-existing-packages')
 })
 
+test('tag publishing creates an evidence-bound idempotent GitHub Release after npm', () => {
+  const releaseJob = releaseWorkflow.indexOf('\n  release:')
+  const packagePublisher = releaseWorkflow.indexOf(
+    'name: Preflight and publish the dependency-ordered release set',
+  )
+  const githubRelease = releaseWorkflow.indexOf('name: Publish or verify GitHub Release')
+  assert.ok(releaseJob >= 0 && releaseJob < packagePublisher)
+  assert.ok(packagePublisher < githubRelease)
+
+  const releaseSource = releaseWorkflow.slice(releaseJob)
+  assert.match(releaseSource, /permissions:\n\s+contents: write\n\s+id-token: write/)
+  assert.match(releaseSource, /name: Download native release certification/)
+  assert.match(releaseSource, /name: fict-native-certification-\$\{\{ github\.sha \}\}/)
+  assert.match(releaseSource, /git rev-list -n 1 "\$\{GITHUB_REF_NAME\}"/)
+  assert.match(releaseSource, /test "\$\{tag_revision\}" = "\$\{GITHUB_SHA\}"/)
+  assert.match(releaseSource, /native-certification\.json/)
+  assert.match(releaseSource, /npm-publish-plan\.json/)
+  assert.match(releaseSource, /release-artifacts\.json/)
+  assert.match(releaseSource, /gh release view/)
+  assert.match(releaseSource, /gh release upload[\s\S]*?--clobber/)
+  assert.match(releaseSource, /gh release create[\s\S]*?--verify-tag[\s\S]*?--generate-notes/)
+})
+
 test('precommit and release verification retain the Preview maturity boundary gate', () => {
   assert.match(rootPackage.scripts.precommit, /pnpm test:preview-boundaries/)
   assert.match(rootPackage.scripts['release:verify'], /pnpm test:preview-boundaries/)

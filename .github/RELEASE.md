@@ -147,7 +147,9 @@ git push origin v0.1.0
 - Pushing the tag triggers the Release workflow
 - Eight native compiler packages are built and certified on Node 22.18/24
 - Native packages are published first; the facade and remaining packages follow
-- GitHub Release is created
+- After every pending npm package is visible, an idempotent GitHub Release is
+  created for the exact tag revision. The native certification, final npm
+  publish plan, and checksummed release-artifact manifest are attached.
 
 ## Important Notes
 
