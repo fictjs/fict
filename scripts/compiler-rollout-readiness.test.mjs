@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
 import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
+import { REQUIRED_REAL_CONSUMER_PACKAGES } from './compiler-consumer-evidence.mjs'
 import { NATIVE_COMPILER_NODE_LANES, NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
 const readinessScript = fileURLToPath(new URL('./compiler-rollout-readiness.mjs', import.meta.url))
@@ -103,6 +104,70 @@ function publishedReleaseEvidence(version, index) {
   }
 }
 
+function recordedConsumerEvidence(release, overrides = {}) {
+  const repository = 'https://github.com/fictjs/real-consumer'
+  const commitSha = 'c'.repeat(40)
+  const workflowPath = '.github/workflows/ci.yml'
+  const projectPath = 'apps/site'
+  const payload = {
+    schemaVersion: 1,
+    status: 'pass',
+    release,
+    repository,
+    defaultBranch: 'main',
+    commitSha,
+    workflow: {
+      runId: '401',
+      runAttempt: '1',
+      path: workflowPath,
+      url: `${repository}/actions/runs/401`,
+      completedAt: '2026-07-31T10:00:00Z',
+    },
+    project: {
+      path: projectPath,
+      name: '@fictjs/real-consumer-site',
+      scripts: {
+        build: 'vite build',
+        typecheck: 'tsc --noEmit',
+        verifyCompiler: 'node scripts/verify-compiler.mjs',
+      },
+    },
+    files: {
+      manifest: {
+        path: `${projectPath}/package.json`,
+        digest: `sha256:${'1'.repeat(64)}`,
+      },
+      lockfile: {
+        path: `${projectPath}/pnpm-lock.yaml`,
+        digest: `sha256:${'2'.repeat(64)}`,
+      },
+      viteConfig: {
+        path: `${projectPath}/vite.config.mjs`,
+        digest: `sha256:${'3'.repeat(64)}`,
+      },
+      verification: {
+        path: `${projectPath}/scripts/verify-compiler.mjs`,
+        digest: `sha256:${'4'.repeat(64)}`,
+      },
+      workflow: {
+        path: workflowPath,
+        digest: `sha256:${'5'.repeat(64)}`,
+      },
+    },
+    packages: REQUIRED_REAL_CONSUMER_PACKAGES.map((name, index) => ({
+      name,
+      version: release,
+      integrity: 'sha512-QUJDRA==',
+      publishedAt: `2026-07-${String(20 + index).padStart(2, '0')}T10:00:00.000Z`,
+    })),
+    ...overrides,
+  }
+  return {
+    ...payload,
+    evidenceDigest: `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+  }
+}
+
 function legacyRemovalEvidence(state, overrides = {}) {
   const artifact = release => ({
     release,
@@ -114,6 +179,7 @@ function legacyRemovalEvidence(state, overrides = {}) {
     compatibility: publishedReleaseEvidence(state.compatibilityRelease, 2),
     finalLegacy: publishedReleaseEvidence(state.finalLegacyRelease, 3),
   }
+  const consumerEvidence = recordedConsumerEvidence(state.compatibilityRelease)
   const payload = {
     schemaVersion: 1,
     status: 'pass',
@@ -133,10 +199,10 @@ function legacyRemovalEvidence(state, overrides = {}) {
     },
     consumerValidation: {
       release: state.compatibilityRelease,
-      repository: 'https://github.com/fictjs/real-consumer',
-      commitSha: 'c'.repeat(40),
+      repository: consumerEvidence.repository,
+      commitSha: consumerEvidence.commitSha,
       status: 'pass',
-      evidenceDigest: `sha256:${'d'.repeat(64)}`,
+      evidenceDigest: consumerEvidence.evidenceDigest,
     },
     rollbackDrill: artifact(state.finalLegacyRelease),
     sourceMaps: artifact(state.finalLegacyRelease),
@@ -396,6 +462,12 @@ async function fixture(
         JSON.stringify(releaseEvidence),
       )
     }
+    const consumerEvidenceDirectory = path.join(root, '.github', 'compiler-consumer-evidence')
+    await mkdir(consumerEvidenceDirectory, { recursive: true })
+    await writeFile(
+      path.join(consumerEvidenceDirectory, `v${removalEvidence.compatibilityRelease}.json`),
+      JSON.stringify(recordedConsumerEvidence(removalEvidence.compatibilityRelease)),
+    )
   }
   await writeFile(
     path.join(root, 'docs', 'compiler-rust-only-migration.md'),
@@ -757,6 +829,29 @@ test('legacy removal requires a bound review and a completed stable minor window
     recordedFinalLegacyPath,
     JSON.stringify(removalEvidence.publishedReleases.finalLegacy),
   )
+
+  const recordedConsumerPath = path.join(
+    root,
+    '.github',
+    'compiler-consumer-evidence',
+    `v${state.compatibilityRelease}.json`,
+  )
+  await rm(recordedConsumerPath)
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /real-consumer recorded evidence does not exist/,
+  )
+  await writeFile(recordedConsumerPath, JSON.stringify(recordedConsumerEvidence('0.30.0')))
+
+  await writeFile(
+    recordedConsumerPath,
+    JSON.stringify(recordedConsumerEvidence('0.30.0', { commitSha: 'f'.repeat(40) })),
+  )
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /does not match the recorded real-consumer validation/,
+  )
+  await writeFile(recordedConsumerPath, JSON.stringify(recordedConsumerEvidence('0.30.0')))
 
   const removalEvidencePath = path.join(root, '.github', 'compiler-legacy-removal-evidence.json')
   await writeFile(

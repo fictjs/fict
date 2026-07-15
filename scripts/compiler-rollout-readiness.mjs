@@ -10,6 +10,7 @@ import {
   NATIVE_COMPILER_TARGETS,
   nativeNodeVersionMatchesLane,
 } from './native-compiler-packages.mjs'
+import { REQUIRED_REAL_CONSUMER_PACKAGES } from './compiler-consumer-evidence.mjs'
 import { assertCliArguments } from './strict-cli-arguments.mjs'
 import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
 
@@ -150,6 +151,122 @@ function assertPublishedReleaseEvidence(entry, version, label, workspaceRoot) {
   }
 }
 
+function isRepositoryRelativePath(value, allowRoot = false) {
+  if (typeof value !== 'string' || !value || path.posix.isAbsolute(value)) return false
+  const normalized = path.posix.normalize(value)
+  if (normalized !== value || normalized === '..' || normalized.startsWith('../')) return false
+  return allowRoot || normalized !== '.'
+}
+
+function consumerProjectFile(projectPath, relativePath) {
+  return projectPath === '.' ? relativePath : path.posix.join(projectPath, relativePath)
+}
+
+function assertRecordedConsumerEvidence(summary, version, workspaceRoot) {
+  const recordedPath = path.join(
+    workspaceRoot,
+    '.github',
+    'compiler-consumer-evidence',
+    `v${version}.json`,
+  )
+  const entry = readJson(recordedPath, 'real-consumer recorded evidence')
+  const expectedKeys = [
+    'commitSha',
+    'defaultBranch',
+    'evidenceDigest',
+    'files',
+    'packages',
+    'project',
+    'release',
+    'repository',
+    'schemaVersion',
+    'status',
+    'workflow',
+  ].sort()
+  const { evidenceDigest, ...payload } = entry ?? {}
+  const computedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')}`
+  const expectedFileKeys = ['lockfile', 'manifest', 'verification', 'viteConfig', 'workflow'].sort()
+  const expectedPackageNames = [...REQUIRED_REAL_CONSUMER_PACKAGES].sort()
+  const projectPath = entry?.project?.path
+  const workflowPath = entry?.workflow?.path
+  const files = entry?.files
+  const packages = entry?.packages
+  const projectScripts = entry?.project?.scripts
+  const repositoryUrl = entry?.repository
+  if (
+    entry?.schemaVersion !== 1 ||
+    entry.status !== 'pass' ||
+    JSON.stringify(Object.keys(entry).sort()) !== JSON.stringify(expectedKeys) ||
+    evidenceDigest !== computedDigest ||
+    entry.release !== version ||
+    !/^https:\/\/github\.com\/[^/]+\/[^/]+$/.test(repositoryUrl ?? '') ||
+    repositoryUrl.toLowerCase() === 'https://github.com/fictjs/fict' ||
+    typeof entry.defaultBranch !== 'string' ||
+    !entry.defaultBranch ||
+    !/^[0-9a-f]{40}$/.test(entry.commitSha ?? '') ||
+    !entry.workflow ||
+    JSON.stringify(Object.keys(entry.workflow).sort()) !==
+      JSON.stringify(['completedAt', 'path', 'runAttempt', 'runId', 'url'].sort()) ||
+    typeof entry.workflow.runId !== 'string' ||
+    !/^\d+$/.test(entry.workflow.runId) ||
+    typeof entry.workflow.runAttempt !== 'string' ||
+    !/^\d+$/.test(entry.workflow.runAttempt) ||
+    !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(workflowPath ?? '') ||
+    entry.workflow.url !== `${repositoryUrl}/actions/runs/${entry.workflow.runId}` ||
+    !Number.isFinite(Date.parse(entry.workflow.completedAt ?? '')) ||
+    !entry.project ||
+    JSON.stringify(Object.keys(entry.project).sort()) !==
+      JSON.stringify(['name', 'path', 'scripts'].sort()) ||
+    !isRepositoryRelativePath(projectPath, true) ||
+    typeof entry.project.name !== 'string' ||
+    !entry.project.name ||
+    JSON.stringify(Object.keys(projectScripts ?? {}).sort()) !==
+      JSON.stringify(['build', 'typecheck', 'verifyCompiler'].sort()) ||
+    Object.values(projectScripts ?? {}).some(value => typeof value !== 'string' || !value) ||
+    !files ||
+    JSON.stringify(Object.keys(files).sort()) !== JSON.stringify(expectedFileKeys) ||
+    Object.values(files).some(
+      file =>
+        !file ||
+        JSON.stringify(Object.keys(file).sort()) !== JSON.stringify(['digest', 'path']) ||
+        !isRepositoryRelativePath(file.path) ||
+        !isSha256(file.digest),
+    ) ||
+    files.manifest.path !== consumerProjectFile(projectPath, 'package.json') ||
+    files.lockfile.path !== consumerProjectFile(projectPath, 'pnpm-lock.yaml') ||
+    files.viteConfig.path !== consumerProjectFile(projectPath, 'vite.config.mjs') ||
+    files.verification.path !== consumerProjectFile(projectPath, 'scripts/verify-compiler.mjs') ||
+    files.workflow.path !== workflowPath ||
+    !Array.isArray(packages) ||
+    JSON.stringify(packages.map(packageEntry => packageEntry?.name).sort()) !==
+      JSON.stringify(expectedPackageNames) ||
+    packages.some(
+      packageEntry =>
+        !packageEntry ||
+        JSON.stringify(Object.keys(packageEntry).sort()) !==
+          JSON.stringify(['integrity', 'name', 'publishedAt', 'version'].sort()) ||
+        packageEntry.version !== version ||
+        !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(packageEntry.integrity ?? '') ||
+        !Number.isFinite(Date.parse(packageEntry.publishedAt ?? '')) ||
+        Date.parse(packageEntry.publishedAt) > Date.parse(entry.workflow.completedAt),
+    )
+  ) {
+    throw new Error('Legacy-removal evidence has invalid recorded real-consumer validation')
+  }
+  const expectedSummary = {
+    release: version,
+    repository: entry.repository,
+    commitSha: entry.commitSha,
+    status: 'pass',
+    evidenceDigest: entry.evidenceDigest,
+  }
+  if (JSON.stringify(summary) !== JSON.stringify(expectedSummary)) {
+    throw new Error('Legacy-removal evidence does not match the recorded real-consumer validation')
+  }
+}
+
 function assertPassArtifact(artifact, label, release) {
   if (
     !artifact ||
@@ -251,18 +368,7 @@ function assertLegacyRemovalEvidenceDocumentShape(evidence, workspaceRoot) {
     throw new Error('Legacy-removal evidence has invalid native certification proof')
   }
 
-  const consumer = payload.consumerValidation
-  if (
-    !consumer ||
-    consumer.release !== compatibility.value ||
-    consumer.status !== 'pass' ||
-    typeof consumer.repository !== 'string' ||
-    !/^https:\/\/github\.com\/[^/]+\/[^/]+$/.test(consumer.repository) ||
-    !/^[0-9a-f]{40}$/.test(consumer.commitSha ?? '') ||
-    !isSha256(consumer.evidenceDigest)
-  ) {
-    throw new Error('Legacy-removal evidence has invalid real-consumer validation')
-  }
+  assertRecordedConsumerEvidence(payload.consumerValidation, compatibility.value, workspaceRoot)
   assertPassArtifact(payload.rollbackDrill, 'rollback drill proof', finalLegacy.value)
   assertPassArtifact(payload.sourceMaps, 'source-map proof', finalLegacy.value)
   assertPassArtifact(payload.performanceAndRss, 'performance/RSS proof', finalLegacy.value)

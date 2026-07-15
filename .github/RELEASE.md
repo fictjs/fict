@@ -126,6 +126,28 @@ successful Release workflow commit, the stable GitHub Release contains the
 three exact uploaded assets with sha256 digests, and the npm compiler version
 has integrity plus SLSA provenance metadata.
 
+After the subsequent compatibility minor is public, validate it in a separate,
+public real project without workspace links or an explicit compiler backend.
+The project workflow must install its own frozen lockfile and run its compiler
+smoke, typecheck, and production build on the default branch. Record the exact
+successful commit and workflow run:
+
+```bash
+pnpm release:evidence:consumer \
+  --version 0.30.0 \
+  --repository fictjs/shadcn \
+  --commit <40-character-commit> \
+  --workflow .github/workflows/ci.yml \
+  --project apps/v4
+```
+
+Commit `.github/compiler-consumer-evidence/v0.30.0.json` separately. The
+collector requires exact published versions of `fict`, the runtime, SSR, Vite
+plugin, and compiler; binds each lockfile resolution to npm integrity; rejects
+legacy, shadow, backend overrides, and local links; and records file digests
+plus the successful GitHub Actions run. M9 must embed the matching release,
+repository, commit, status, and evidence digest rather than a manual claim.
+
 Before entering `legacy-removal`, update the four exact stable release fields
 in `.github/compiler-rollout-state.json`, replace the exact pending document in
 `.github/compiler-legacy-removal-evidence.json` with one digest-bound passing
