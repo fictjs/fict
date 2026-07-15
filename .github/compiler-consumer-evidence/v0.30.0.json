@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "status": "pass",
+  "release": "0.30.0",
+  "repository": "https://github.com/fictjs/shadcn",
+  "defaultBranch": "main",
+  "commitSha": "adc6fcb33844d7f1f4439f9183ac3e295da7ec4a",
+  "workflow": {
+    "runId": "29449665346",
+    "runAttempt": "1",
+    "path": ".github/workflows/ci.yml",
+    "url": "https://github.com/fictjs/shadcn/actions/runs/29449665346",
+    "completedAt": "2026-07-15T20:53:15Z"
+  },
+  "project": {
+    "path": "apps/v4",
+    "name": "@fictjs/shadcn-v4-site",
+    "scripts": {
+      "build": "pnpm build:client && pnpm build:server",
+      "typecheck": "tsc --noEmit",
+      "verifyCompiler": "node scripts/verify-compiler.mjs"
+    }
+  },
+  "files": {
+    "manifest": {
+      "path": "apps/v4/package.json",
+      "digest": "sha256:825e24a573f77e7d4a63eeae23ac5670a7dec2f54404274d648ed6b7bc60500d"
+    },
+    "lockfile": {
+      "path": "apps/v4/pnpm-lock.yaml",
+      "digest": "sha256:d540e2260d798bcce46d6448eae49458c02ed86008faa9981cc8f393711545cf"
+    },
+    "viteConfig": {
+      "path": "apps/v4/vite.config.mjs",
+      "digest": "sha256:492ca42df647ab3e65ea0e33f62a9b465768f020707c0c116ffd1fad9c150318"
+    },
+    "verification": {
+      "path": "apps/v4/scripts/verify-compiler.mjs",
+      "digest": "sha256:d5dc19ec2c95e4547415beab02b2a16269c741a39c76e4cd6e522b8d11fbd094"
+    },
+    "workflow": {
+      "path": ".github/workflows/ci.yml",
+      "digest": "sha256:4ad228f3482d49848008a9cebf9343ddc585aeee9aabcd3603a4c87a05311116"
+    }
+  },
+  "packages": [
+    {
+      "name": "@fictjs/compiler",
+      "version": "0.30.0",
+      "integrity": "sha512-Qo11l1UUgiW6T2F/WloNYJ/eDpm0vVFu145f9YvrV2SbmYYciMAK7+ROtmoeDJuaNHGL5n0fECkd+XFqMJ7Eqg==",
+      "publishedAt": "2026-07-15T20:27:21.821Z"
+    },
+    {
+      "name": "@fictjs/runtime",
+      "version": "0.30.0",
+      "integrity": "sha512-REEaNgkeCo2gfzGxkhyfcCY2QJ+9wUAD1Gb/LcT93JqNhkQZs4Ulrhy6rcYQUFVj3AiGC/MC3k2s1FpBZbjb5Q==",
+      "publishedAt": "2026-07-15T20:27:30.484Z"
+    },
+    {
+      "name": "@fictjs/ssr",
+      "version": "0.28.2",
+      "integrity": "sha512-1fk18VPC32RzvF9xaRuIruEOLAbxEh4ahgfCSJBj0fOMMmpbXzvp8/o/+T/X9FtxUhOW3RmcJc/XtvQJRJvFfQ==",
+      "publishedAt": "2026-07-15T20:27:42.845Z"
+    },
+    {
+      "name": "@fictjs/vite-plugin",
+      "version": "0.30.0",
+      "integrity": "sha512-QWWjvq/jTTyR552vZozq0M//Wa9fo6TiP3a2Oa6MFrD51ScYoAXZexSX0E4FmpQwKXTzRWUkFmqR1b/+FtQZVw==",
+      "publishedAt": "2026-07-15T20:27:46.932Z"
+    },
+    {
+      "name": "fict",
+      "version": "0.30.0",
+      "integrity": "sha512-eFqkpW84bbNfFszgDiLkpwW7PH5q+gCukOLxOMHWtdg9hehKwhG7l70belxNX4sqFIzv02kucfV/rRytzoJusA==",
+      "publishedAt": "2026-07-15T20:27:56.239Z"
+    }
+  ],
+  "evidenceDigest": "sha256:1ec74c800d12a875368236303fb1685cdc5de5ebdc4d721ea39f2a6e8db98c83"
+}
