@@ -327,6 +327,14 @@ test('legacy-removal approval starts pending and must bind one release-evidence 
   assert.equal(legacyRemovalReview.schemaVersion, 2)
   assert.equal(legacyRemovalReview.status, 'pending')
   assert.equal(legacyRemovalReview.evidenceDigest, null)
+  assert.equal(
+    rootPackage.scripts['release:evidence:compiler'],
+    'node scripts/compiler-release-evidence.mjs',
+  )
+  assert.match(
+    rootPackage.scripts['test:release-verification'],
+    /compiler-release-evidence\.test\.mjs/,
+  )
   assert.match(rolloutReadiness, /assertLegacyRemovalEvidenceDocumentShape/)
   assert.match(rolloutReadiness, /review\.evidenceDigest !== evidence\.evidenceDigest/)
 })

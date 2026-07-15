@@ -66,7 +66,9 @@ function pendingRemovalEvidence() {
 }
 
 function publishedReleaseEvidence(version, index) {
-  return {
+  const payload = {
+    schemaVersion: 1,
+    status: 'pass',
     version,
     tag: `v${version}`,
     commitSha: index.toString(16).repeat(40),
@@ -74,10 +76,12 @@ function publishedReleaseEvidence(version, index) {
     githubRelease: {
       id: 1_000 + index,
       url: `https://github.com/fictjs/fict/releases/tag/v${version}`,
+      publishedAt: `2026-07-${String(10 + index).padStart(2, '0')}T10:00:00Z`,
       assets: ['native-certification.json', 'npm-publish-plan.json', 'release-artifacts.json'].map(
         (name, assetIndex) => ({
           name,
           id: index * 10 + assetIndex + 1,
+          size: 1_000 + assetIndex,
           digest: `sha256:${String(index + assetIndex)
             .repeat(64)
             .slice(0, 64)}`,
@@ -89,7 +93,13 @@ function publishedReleaseEvidence(version, index) {
       version,
       integrity: 'sha512-QUJDRA==',
       provenance: true,
+      attestationUrl: `https://registry.npmjs.org/-/npm/v1/attestations/@fictjs%2fcompiler@${version}`,
+      publishedAt: `2026-07-${String(10 + index).padStart(2, '0')}T10:05:00.000Z`,
     },
+  }
+  return {
+    ...payload,
+    evidenceDigest: `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
   }
 }
 
@@ -372,10 +382,21 @@ async function fixture(
     path.join(root, '.github', 'compiler-legacy-removal-review.json'),
     JSON.stringify(removalReview ?? pendingRemovalReview()),
   )
+  const removalEvidence = removalEvidenceOverride ?? pendingRemovalEvidence()
   await writeFile(
     path.join(root, '.github', 'compiler-legacy-removal-evidence.json'),
-    JSON.stringify(removalEvidenceOverride ?? pendingRemovalEvidence()),
+    JSON.stringify(removalEvidence),
   )
+  if (removalEvidence.status === 'pass') {
+    const releaseEvidenceDirectory = path.join(root, '.github', 'compiler-release-evidence')
+    await mkdir(releaseEvidenceDirectory, { recursive: true })
+    for (const releaseEvidence of Object.values(removalEvidence.publishedReleases)) {
+      await writeFile(
+        path.join(releaseEvidenceDirectory, `${releaseEvidence.tag}.json`),
+        JSON.stringify(releaseEvidence),
+      )
+    }
+  }
   await writeFile(
     path.join(root, 'docs', 'compiler-rust-only-migration.md'),
     migrationGuidanceContent,
@@ -720,6 +741,22 @@ test('legacy removal requires a bound review and a completed stable minor window
   )
   t.after(() => rm(root, { recursive: true }))
   assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
+
+  const recordedFinalLegacyPath = path.join(
+    root,
+    '.github',
+    'compiler-release-evidence',
+    `v${state.finalLegacyRelease}.json`,
+  )
+  await rm(recordedFinalLegacyPath)
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /final legacy release recorded publication evidence does not exist/,
+  )
+  await writeFile(
+    recordedFinalLegacyPath,
+    JSON.stringify(removalEvidence.publishedReleases.finalLegacy),
+  )
 
   const removalEvidencePath = path.join(root, '.github', 'compiler-legacy-removal-evidence.json')
   await writeFile(

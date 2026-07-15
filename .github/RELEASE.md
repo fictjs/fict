@@ -112,6 +112,20 @@ certification cannot replace the retained 8×2 Release workflow artifact. Raw
 benchmark values remain in CI artifacts and are not copied into release prose.
 
 Legacy removal is a later release operation, not part of candidate approval.
+Immediately after each Rust-default, compatibility, and final-legacy release is
+public and its tag workflow has succeeded, record its external evidence from
+the public GitHub and npm APIs:
+
+```bash
+pnpm release:evidence:compiler --version 0.29.0
+```
+
+Commit each generated `.github/compiler-release-evidence/vX.Y.Z.json` in its
+own release-evidence commit. The collector fails unless the tag resolves to the
+successful Release workflow commit, the stable GitHub Release contains the
+three exact uploaded assets with sha256 digests, and the npm compiler version
+has integrity plus SLSA provenance metadata.
+
 Before entering `legacy-removal`, update the four exact stable release fields
 in `.github/compiler-rollout-state.json`, replace the exact pending document in
 `.github/compiler-legacy-removal-evidence.json` with one digest-bound passing
@@ -124,7 +138,9 @@ artifacts, migration-guide digest, and final preset publication. The schema-v2
 removal review must approve that exact evidence digest and the same four release
 versions. The readiness check requires a completed subsequent `x.y.0`
 compatibility release, a final legacy release, and a later breaking `x.0.0`
-removal release. It also rejects retained preset/legacy-IR paths, `./legacy`
+removal release. Each embedded publication record must exactly match its
+previously committed per-release evidence file. It also rejects retained
+preset/legacy-IR paths, `./legacy`
 exports, production Babel or legacy-subpath imports, Vite shadow and dual-backend
 selectors or harnesses, old Webpack cache readers, and a compiler root missing
 the Rust request API, plus stale scope, maturity, Changesets, publish allowlist,

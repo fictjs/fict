@@ -88,17 +88,22 @@ state keeps `rollbackBackend: legacy`; it may record a completed
 Version strings alone cannot authorize removal. Each of the first three
 published releases is identified by its tag, commit, Release workflow run,
 GitHub Release and evidence-asset digests, and npm integrity/provenance; the
-maintainer signs the digest of that whole record. The planned breaking version
-remains a state/evidence boundary rather than a circular claim that the removal
-release is already published. Any missing version, prerelease, patch-only
-window, same-major removal, tampered evidence, mismatched review, retained
-Babel-preset/legacy-IR path, production Babel dependency, or stale Core
-scope/maturity/Changesets/publish/CI boundary reference blocks the phase, as
-does any incomplete review area. The gate also rejects the public `./legacy`
-export, Babel or legacy-subpath imports in production source, Vite shadow
-sources and backend selectors, legacy differential/rollback harnesses, Webpack
-v1–v5 cache compatibility, and a compiler root that does not expose the Rust
-`transform`/`scan`/`analyze` request API.
+release collector writes each digest-bound record to
+`.github/compiler-release-evidence/vX.Y.Z.json` immediately after publication,
+and the aggregate M9 record must exactly reuse those committed documents. Run
+`pnpm release:evidence:compiler --version X.Y.Z` only after the public tag
+workflow succeeds. The maintainer signs the digest of that whole record. The
+planned breaking version remains a state/evidence boundary rather than a
+circular claim that the removal release is already published. Any missing
+version, prerelease, patch-only window, same-major removal, tampered evidence,
+mismatched review, retained Babel-preset/legacy-IR path, production Babel
+dependency, or stale Core scope/maturity/Changesets/publish/CI boundary
+reference blocks the phase, as does any incomplete review area. The gate also
+rejects the public `./legacy` export, Babel or legacy-subpath imports in
+production source, Vite shadow sources and backend selectors, legacy
+differential/rollback harnesses, Webpack v1–v5 cache compatibility, and a
+compiler root that does not expose the Rust `transform`/`scan`/`analyze` request
+API.
 
 ## Backend modes
 

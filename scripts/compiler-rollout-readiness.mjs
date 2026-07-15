@@ -84,11 +84,31 @@ function isSha256(value) {
   return /^sha256:[0-9a-f]{64}$/.test(value ?? '')
 }
 
-function assertPublishedReleaseEvidence(entry, version, label) {
+function assertPublishedReleaseEvidence(entry, version, label, workspaceRoot) {
   const expectedUrl = `https://github.com/fictjs/fict/releases/tag/v${version}`
+  const expectedAttestationUrl = `https://registry.npmjs.org/-/npm/v1/attestations/@fictjs%2fcompiler@${version}`
   const releaseAssets = entry?.githubRelease?.assets
+  const expectedKeys = [
+    'commitSha',
+    'evidenceDigest',
+    'githubRelease',
+    'npm',
+    'schemaVersion',
+    'status',
+    'tag',
+    'version',
+    'workflowRunId',
+  ].sort()
+  const { evidenceDigest, ...payload } = entry ?? {}
+  const computedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')}`
   if (
     !entry ||
+    entry.schemaVersion !== 1 ||
+    entry.status !== 'pass' ||
+    JSON.stringify(Object.keys(entry).sort()) !== JSON.stringify(expectedKeys) ||
+    evidenceDigest !== computedDigest ||
     entry.version !== version ||
     entry.tag !== `v${version}` ||
     !/^[0-9a-f]{40}$/.test(entry.commitSha ?? '') ||
@@ -97,18 +117,36 @@ function assertPublishedReleaseEvidence(entry, version, label) {
     !Number.isSafeInteger(entry.githubRelease?.id) ||
     entry.githubRelease.id <= 0 ||
     entry.githubRelease.url !== expectedUrl ||
+    !Number.isFinite(Date.parse(entry.githubRelease.publishedAt ?? '')) ||
     !Array.isArray(releaseAssets) ||
     JSON.stringify(releaseAssets.map(asset => asset?.name).sort()) !==
       JSON.stringify(REQUIRED_RELEASE_EVIDENCE_ASSETS) ||
     releaseAssets.some(
-      asset => !Number.isSafeInteger(asset?.id) || asset.id <= 0 || !isSha256(asset?.digest),
+      asset =>
+        !Number.isSafeInteger(asset?.id) ||
+        asset.id <= 0 ||
+        !Number.isSafeInteger(asset?.size) ||
+        asset.size <= 0 ||
+        !isSha256(asset?.digest),
     ) ||
     entry.npm?.packageName !== '@fictjs/compiler' ||
     entry.npm.version !== version ||
     !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(entry.npm.integrity ?? '') ||
-    entry.npm.provenance !== true
+    entry.npm.provenance !== true ||
+    entry.npm.attestationUrl !== expectedAttestationUrl ||
+    !Number.isFinite(Date.parse(entry.npm.publishedAt ?? ''))
   ) {
     throw new Error(`Legacy-removal evidence has invalid ${label} publication proof`)
+  }
+  const recordedPath = path.join(
+    workspaceRoot,
+    '.github',
+    'compiler-release-evidence',
+    `v${version}.json`,
+  )
+  const recorded = readJson(recordedPath, `${label} recorded publication evidence`)
+  if (JSON.stringify(recorded) !== JSON.stringify(entry)) {
+    throw new Error(`Legacy-removal evidence does not match the recorded ${label} publication`)
   }
 }
 
@@ -180,16 +218,19 @@ function assertLegacyRemovalEvidenceDocumentShape(evidence, workspaceRoot) {
     payload.publishedReleases?.rustDefault,
     rustDefault.value,
     'Rust-default release',
+    workspaceRoot,
   )
   assertPublishedReleaseEvidence(
     payload.publishedReleases?.compatibility,
     compatibility.value,
     'compatibility release',
+    workspaceRoot,
   )
   assertPublishedReleaseEvidence(
     payload.publishedReleases?.finalLegacy,
     finalLegacy.value,
     'final legacy release',
+    workspaceRoot,
   )
 
   const native = payload.nativeCertification
