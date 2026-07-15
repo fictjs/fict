@@ -89,7 +89,7 @@ export function publishTarball(tarballPath) {
 }
 
 export const NATIVE_PUBLISH_VISIBILITY_DELAYS_MS = Object.freeze([
-  2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000,
+  2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000, 120_000, 120_000, 180_000,
 ])
 
 export async function waitForPublishedVersion(

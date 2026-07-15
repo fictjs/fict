@@ -556,7 +556,7 @@ test('refuses a partial or facade-first native publication', () => {
 test('waits through npm new-package propagation with cache bypass', async () => {
   assert.deepEqual(
     NATIVE_PUBLISH_VISIBILITY_DELAYS_MS,
-    [2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000],
+    [2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000, 120_000, 120_000, 180_000],
   )
   const urls = []
   const delays = []
