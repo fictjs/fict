@@ -4,6 +4,10 @@ Webpack 5 integration for the Fict compiler. The plugin and loader cooperate so 
 metadata is available before importers receive their final transform, including cold builds and
 circular module graphs.
 
+This is the supported Rust replacement for `@fictjs/babel-preset`. Version
+`0.30.1` is the final release of the preset and in-tree legacy compiler; Fict
+`1.0.0` removes them. Do not configure the preset alongside this loader.
+
 ```js
 const { FictWebpackPlugin } = require('@fictjs/webpack-plugin')
 

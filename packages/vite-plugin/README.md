@@ -68,6 +68,12 @@ Custom Babel plugins must run as a separate stage; `@fictjs/babel-preset` is a
 deprecated legacy-only adapter and cannot mix Rust and Babel output in one
 build.
 
+`0.30.1` is the final release that accepts `legacy` or `shadow` and the final
+release containing `@fictjs/babel-preset`. Fict `1.0.0` removes those selectors
+and is Rust-only. After upgrading to `1.0.0`, the rollback boundary is the whole
+application dependency set pinned to `0.30.1`; there is no per-file or
+environment-variable legacy fallback.
+
 ## Native compiler default and shadow mode
 
 `backend` accepts `legacy`, `rust`, or `shadow`. Rust is the default;

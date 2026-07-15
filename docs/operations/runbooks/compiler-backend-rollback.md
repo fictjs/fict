@@ -18,6 +18,13 @@ systematic source-map error, native panic, unsupported platform installation,
 or a release-budget regression. Stop the affected build or deployment before
 purging anything.
 
+This code-level procedure applies through the final legacy release, `0.30.1`.
+Fict `1.0.0` is Rust-only: it has no `legacy` selector, Babel preset, or in-tree
+rollback implementation. After adopting `1.0.0`, restore a legacy build only by
+pinning the compiler, runtime, integration, SSR packages, generated metadata,
+and lockfile together to their `0.30.1` compatibility unit, then follow the
+cache-purge and verification rules below from that pinned checkout.
+
 ## Safety rules
 
 - Rollback MUST select `legacy` for the entire build.

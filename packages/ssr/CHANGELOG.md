@@ -1,5 +1,11 @@
 # @fictjs/ssr
 
+## 0.28.3
+
+### Patch Changes
+
+- @fictjs/runtime@0.30.1
+
 ## 0.28.2
 
 ### Patch Changes

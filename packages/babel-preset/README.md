@@ -6,12 +6,14 @@
 
 Babel preset for Fict - includes TypeScript, JSX, and Fict compiler
 
-> **Deprecated:** this package remains the legacy compiler only for the bounded
-> compatibility and whole-build rollback window. Migrate Vite applications to
-> `@fictjs/vite-plugin` with `backend: 'rust'`, Webpack applications to
-> `@fictjs/webpack-plugin`, or direct transforms to
-> `@fictjs/compiler/native`. It never bridges Rust output through a Babel
-> visitor and must not be mixed with native output in one build.
+> **Deprecated:** `0.30.1` is the final supported release of this preset and the
+> in-tree legacy compiler. Fict `1.0.0` removes both. Migrate Vite applications
+> to `@fictjs/vite-plugin` (Rust is the default), Webpack applications to
+> `@fictjs/webpack-plugin`, or direct transforms to `@fictjs/compiler`. This
+> preset remains functional in `0.30.1` for whole-build rollback, but it never
+> bridges Rust output through a Babel visitor and must not be mixed with native
+> output in one build. After `1.0.0`, pin the complete application dependency
+> set to `0.30.1` if legacy rollback is required.
 
 ## Usage
 

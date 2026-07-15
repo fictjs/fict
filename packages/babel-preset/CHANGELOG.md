@@ -1,5 +1,13 @@
 # @fictjs/babel-preset
 
+## 0.30.1
+
+### Patch Changes
+
+- 2c53ad9: Publish `0.30.1` as the final supported Babel preset and whole-build legacy
+  rollback release before the breaking Rust-only `1.0.0` transition.
+  - @fictjs/compiler@0.30.1
+
 ## 0.30.0
 
 ### Patch Changes

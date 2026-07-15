@@ -142,9 +142,10 @@ function warnLegacyPresetDeprecation(): void {
   if (processGlobal[DEPRECATION_WARNING_KEY]) return
   processGlobal[DEPRECATION_WARNING_KEY] = true
   process.emitWarning(
-    '@fictjs/babel-preset is the legacy Fict compiler and is deprecated. ' +
-      'Migrate Vite builds to @fictjs/vite-plugin with backend: "rust", Webpack builds to ' +
-      '@fictjs/webpack-plugin, or direct transforms to @fictjs/compiler/native.',
+    '@fictjs/babel-preset@0.30.1 and @fictjs/compiler/legacy@0.30.1 are the final ' +
+      'supported legacy releases. Fict 1.0.0 removes the preset and in-tree legacy compiler. ' +
+      'Migrate Vite builds to @fictjs/vite-plugin (Rust is the default), Webpack builds to ' +
+      '@fictjs/webpack-plugin, or direct transforms to @fictjs/compiler.',
     { code: 'FICT_BABEL_PRESET_DEPRECATED', type: 'DeprecationWarning' },
   )
 }

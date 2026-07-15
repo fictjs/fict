@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/vite-plugin",
-  "version": "0.30.0",
+  "version": "0.30.1",
   "description": "Vite plugin for Fict",
   "publishConfig": {
     "access": "public",

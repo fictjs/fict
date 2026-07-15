@@ -4,7 +4,7 @@
 ![npm](https://img.shields.io/npm/v/fict.svg)
 ![license](https://img.shields.io/npm/l/fict)
 
-Babel plugin for Fict Compiler
+OXC/Rust compiler for Fict, with an explicit legacy compatibility entrypoint
 
 ## Usage
 
@@ -25,31 +25,31 @@ longer relies on zero-argument function arity to infer reactivity, so user
 callbacks such as `() => start()` stay callbacks unless code explicitly wraps
 them with `reactive(fn)`.
 
-## Native compiler beta
+## Native compiler
 
 Official Vite and Webpack integrations own module graphs and are preferred for
-applications. A direct integration can call the lazy OXC/Rust facade exported
-by `@fictjs/compiler/native`:
+applications. Since `0.29.0`, a direct integration can call the lazy OXC/Rust
+request facade from the package root:
 
 ```ts
-import { transformSync } from '@fictjs/compiler/native'
+import { COMPILER_PROTOCOL_VERSION, transformSync } from '@fictjs/compiler'
 
 const result = transformSync({
+  protocolVersion: COMPILER_PROTOCOL_VERSION,
   code: source,
   filename: 'src/App.tsx',
-  moduleId: 'src/App.tsx',
   options: { strictGuarantee: true, sourcemap: true },
-  metadata: [],
 })
 ```
 
-The subpath also exports `transform`, `scan`/`scanSync`,
+The package root also exports `transform`, `scan`/`scanSync`,
 `analyze`/`analyzeSync`, and `nativeCompilerInfo`. The native package is loaded
 on the first request and the facade reuses one validated compiler binding for
 the process. Set `FICT_COMPILER_NATIVE_PATH` only for local development or
 release verification; normal installations select the platform optional
-package automatically. Low-level hosts that need an isolated binding may use
-`createNativeCompilerFacade(options)` or `loadNativeCompilerBinding(options)`.
+package automatically. The `@fictjs/compiler/native` subpath exposes the
+lower-level loader for hosts that need `createNativeCompilerFacade(options)`
+or `loadNativeCompilerBinding(options)`.
 
 Bundlers that own package resolution and metadata persistence should import
 those Node-side services from `@fictjs/compiler/graph-host`:
@@ -65,13 +65,12 @@ The graph-host entry may access the filesystem, but it does not load Babel or
 the legacy compiler. Keep graph callbacks and bundler objects in this host
 layer; pass only serializable metadata snapshots to the native request facade.
 
-The package root remains the Babel plugin during the beta compatibility window.
-Code that intentionally owns legacy rollback should import
-`@fictjs/compiler/legacy`; this explicit subpath will remain the compatibility
-entry when the package root becomes the Rust request facade in a breaking
-release. The beta root and explicit subpath currently expose the same function
-identity, but the legacy entrypoint imports its implementation directly rather
-than depending on the package-root facade.
+The package root is the Rust request facade. Code that intentionally owns
+whole-build legacy rollback must import `@fictjs/compiler/legacy` explicitly.
+Version `0.30.1` is the final release of that subpath and its in-tree TypeScript
+compiler; Fict `1.0.0` removes both. After `1.0.0`, recovery means pinning the
+whole application dependency set to `0.30.1`, not mixing a legacy file or cache
+with Rust output.
 
 The request boundary is serializable. Host callbacks, filesystem resolution,
 and bundler graph objects must stay outside Rust. A build must use one compiler
@@ -87,9 +86,14 @@ Platform support and installation behavior are defined by
 performance/RSS evidence, and rollback are defined by the
 [Rust compiler rollout](../../docs/features/rust-compiler-rollout/rollout.md).
 
-## Options
+## Legacy compatibility options (`0.30.1` only)
+
+The options below belong to the final legacy entrypoint, not the Rust package
+root:
 
 ```ts
+import { createFictPlugin } from '@fictjs/compiler/legacy'
+
 createFictPlugin({
   dev: true,
   onWarn(warning) {
