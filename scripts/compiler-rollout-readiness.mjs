@@ -393,6 +393,39 @@ function assertCompilerRootMatchesPhase(workspaceRoot, phase) {
   }
 }
 
+function assertViteCompilerMatchesPhase(source, state) {
+  if (state.phase === 'legacy-removal') {
+    const retainedSelector = [
+      ['backend option', /\bbackendOption\b/],
+      ['backend environment fallback', /\bbackendFromEnvironment\b/],
+      ['FICT_COMPILER_BACKEND', /\bFICT_COMPILER_BACKEND\b/],
+      ['compiler backend type', /\bFictCompilerBackend\b/],
+      ['compiler backend option', /\bbackend\s*\?:/],
+      ['compiler backend selection', /\b(?:options|compilerOptions)\.backend\b/],
+      ['legacy or shadow backend branch', /['"](?:legacy|shadow)['"]/],
+    ].find(([, pattern]) => pattern.test(source))
+    if (retainedSelector) {
+      throw new Error(
+        `Legacy-removal Vite compiler must be native-only without ${retainedSelector[0]}`,
+      )
+    }
+    if (!/\bloadNativeCompilerBinding\s*\(/.test(source)) {
+      throw new Error('Legacy-removal Vite compiler must load the native compiler directly')
+    }
+    return
+  }
+
+  const defaultMatch = source.match(
+    /backendOption\s*\?\?\s*backendFromEnvironment\s*\?\?\s*'(legacy|rust)'/,
+  )
+  if (!defaultMatch) throw new Error('Unable to identify the Vite compiler default backend')
+  if (defaultMatch[1] !== state.viteDefaultBackend) {
+    throw new Error(
+      `Rollout state says ${state.viteDefaultBackend}, but Vite defaults to ${defaultMatch[1]}`,
+    )
+  }
+}
+
 function assertLegacyRemovalReview(review, state) {
   if (
     review.schemaVersion !== 1 ||
@@ -674,15 +707,7 @@ export function validateCompilerRolloutReadiness(options = {}) {
   assertLegacyRemovalReviewDocumentShape(legacyRemovalReview)
   assertCompilerRootMatchesPhase(workspaceRoot, state.phase)
   const source = readFileSync(sourcePath, 'utf8')
-  const defaultMatch = source.match(
-    /backendOption\s*\?\?\s*backendFromEnvironment\s*\?\?\s*'(legacy|rust)'/,
-  )
-  if (!defaultMatch) throw new Error('Unable to identify the Vite compiler default backend')
-  if (defaultMatch[1] !== state.viteDefaultBackend) {
-    throw new Error(
-      `Rollout state says ${state.viteDefaultBackend}, but Vite defaults to ${defaultMatch[1]}`,
-    )
-  }
+  assertViteCompilerMatchesPhase(source, state)
   if (state.phase === 'legacy-removal') {
     assertLegacySourcesRemoved(workspaceRoot)
   }

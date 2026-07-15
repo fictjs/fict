@@ -234,7 +234,9 @@ async function fixture(state, review, evidence, removalReview, certificationOver
   )
   await writeFile(
     path.join(root, 'packages', 'vite-plugin', 'src', 'index.ts'),
-    `const backend = backendOption ?? backendFromEnvironment ?? '${state.viteDefaultBackend}'`,
+    state.phase === 'legacy-removal'
+      ? 'const nativeCompiler = loadNativeCompilerBinding()'
+      : `const backend = backendOption ?? backendFromEnvironment ?? '${state.viteDefaultBackend}'`,
   )
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-review.json'),
@@ -571,6 +573,35 @@ test('legacy removal requires a bound review and a completed stable minor window
   const root = await fixture(state, candidateReview, evidence, removalReview)
   t.after(() => rm(root, { recursive: true }))
   assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
+
+  const viteSourcePath = path.join(root, 'packages', 'vite-plugin', 'src', 'index.ts')
+  await writeFile(
+    viteSourcePath,
+    "const backend = backendOption ?? backendFromEnvironment ?? 'rust'\nloadNativeCompilerBinding()",
+  )
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /native-only without backend option/,
+  )
+
+  await writeFile(viteSourcePath, 'const backend = process.env.FICT_COMPILER_BACKEND')
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /without FICT_COMPILER_BACKEND/)
+
+  await writeFile(
+    viteSourcePath,
+    "const selected = options.backend ?? 'rust'\nloadNativeCompilerBinding()",
+  )
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /without compiler backend selection/,
+  )
+
+  await writeFile(viteSourcePath, "const backend = 'rust'")
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /must load the native compiler directly/,
+  )
+  await writeFile(viteSourcePath, 'const nativeCompiler = loadNativeCompilerBinding()')
 
   await writeFile(
     path.join(root, '.github', 'compiler-legacy-removal-review.json'),
