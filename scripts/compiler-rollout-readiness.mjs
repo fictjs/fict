@@ -44,6 +44,11 @@ const REQUIRED_NATIVE_ROOT_APIS = [
   'analyzeSync',
   'analyze',
 ]
+const REQUIRED_RELEASE_EVIDENCE_ASSETS = [
+  'native-certification.json',
+  'npm-publish-plan.json',
+  'release-artifacts.json',
+].sort()
 
 function readJson(filename, label) {
   if (!existsSync(filename)) throw new Error(`${label} does not exist: ${filename}`)
@@ -72,6 +77,180 @@ function assertAreaShape(areas, requiredAreas, label) {
   }
   if (Object.values(areas).some(value => typeof value !== 'boolean')) {
     throw new Error(`${label} review areas must be boolean`)
+  }
+}
+
+function isSha256(value) {
+  return /^sha256:[0-9a-f]{64}$/.test(value ?? '')
+}
+
+function assertPublishedReleaseEvidence(entry, version, label) {
+  const expectedUrl = `https://github.com/fictjs/fict/releases/tag/v${version}`
+  const releaseAssets = entry?.githubRelease?.assets
+  if (
+    !entry ||
+    entry.version !== version ||
+    entry.tag !== `v${version}` ||
+    !/^[0-9a-f]{40}$/.test(entry.commitSha ?? '') ||
+    typeof entry.workflowRunId !== 'string' ||
+    !/^\d+$/.test(entry.workflowRunId) ||
+    !Number.isSafeInteger(entry.githubRelease?.id) ||
+    entry.githubRelease.id <= 0 ||
+    entry.githubRelease.url !== expectedUrl ||
+    !Array.isArray(releaseAssets) ||
+    JSON.stringify(releaseAssets.map(asset => asset?.name).sort()) !==
+      JSON.stringify(REQUIRED_RELEASE_EVIDENCE_ASSETS) ||
+    releaseAssets.some(
+      asset => !Number.isSafeInteger(asset?.id) || asset.id <= 0 || !isSha256(asset?.digest),
+    ) ||
+    entry.npm?.packageName !== '@fictjs/compiler' ||
+    entry.npm.version !== version ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(entry.npm.integrity ?? '') ||
+    entry.npm.provenance !== true
+  ) {
+    throw new Error(`Legacy-removal evidence has invalid ${label} publication proof`)
+  }
+}
+
+function assertPassArtifact(artifact, label, release) {
+  if (
+    !artifact ||
+    artifact.release !== release ||
+    artifact.status !== 'pass' ||
+    !isSha256(artifact.evidenceDigest)
+  ) {
+    throw new Error(`Legacy-removal evidence has invalid ${label}`)
+  }
+}
+
+function assertLegacyRemovalEvidenceDocumentShape(evidence, workspaceRoot) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+    throw new Error('Compiler legacy-removal evidence has an unsupported schema or status')
+  }
+  if (evidence.status === 'pending') {
+    const pendingKeys = Object.keys(evidence).sort()
+    if (
+      evidence.schemaVersion !== 1 ||
+      evidence.evidenceDigest !== null ||
+      JSON.stringify(pendingKeys) !== JSON.stringify(['evidenceDigest', 'schemaVersion', 'status'])
+    ) {
+      throw new Error('Pending legacy-removal evidence cannot contain partial claims')
+    }
+    return
+  }
+
+  const expectedKeys = [
+    'compatibilityRelease',
+    'consumerValidation',
+    'evidenceDigest',
+    'finalLegacyRelease',
+    'finalPreset',
+    'legacyRemovalRelease',
+    'migrationGuidance',
+    'nativeCertification',
+    'performanceAndRss',
+    'publishedReleases',
+    'rollbackDrill',
+    'rustDefaultRelease',
+    'schemaVersion',
+    'sourceMaps',
+    'status',
+  ].sort()
+  const { evidenceDigest, ...payload } = evidence
+  const computedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')}`
+  if (
+    payload.schemaVersion !== 1 ||
+    payload.status !== 'pass' ||
+    JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify(expectedKeys) ||
+    evidenceDigest !== computedDigest
+  ) {
+    throw new Error('Legacy-removal evidence must be one intact digest-bound record')
+  }
+
+  const rustDefault = parseStableRelease(payload.rustDefaultRelease, 'evidence rustDefaultRelease')
+  const compatibility = parseStableRelease(
+    payload.compatibilityRelease,
+    'evidence compatibilityRelease',
+  )
+  const finalLegacy = parseStableRelease(payload.finalLegacyRelease, 'evidence finalLegacyRelease')
+  parseStableRelease(payload.legacyRemovalRelease, 'evidence legacyRemovalRelease')
+  assertPublishedReleaseEvidence(
+    payload.publishedReleases?.rustDefault,
+    rustDefault.value,
+    'Rust-default release',
+  )
+  assertPublishedReleaseEvidence(
+    payload.publishedReleases?.compatibility,
+    compatibility.value,
+    'compatibility release',
+  )
+  assertPublishedReleaseEvidence(
+    payload.publishedReleases?.finalLegacy,
+    finalLegacy.value,
+    'final legacy release',
+  )
+
+  const native = payload.nativeCertification
+  const finalLegacyPublication = payload.publishedReleases.finalLegacy
+  if (
+    !native ||
+    native.release !== finalLegacy.value ||
+    typeof native.workflowRunId !== 'string' ||
+    !/^\d+$/.test(native.workflowRunId) ||
+    !/^[0-9a-f]{40}$/.test(native.sourceRevision ?? '') ||
+    native.workflowRunId !== finalLegacyPublication.workflowRunId ||
+    native.sourceRevision !== finalLegacyPublication.commitSha ||
+    !isSha256(native.certificationDigest) ||
+    native.targets !== NATIVE_COMPILER_TARGETS.length ||
+    JSON.stringify(native.nodeLanes) !== JSON.stringify(NATIVE_COMPILER_NODE_LANES) ||
+    native.certifications !== NATIVE_COMPILER_TARGETS.length * NATIVE_COMPILER_NODE_LANES.length
+  ) {
+    throw new Error('Legacy-removal evidence has invalid native certification proof')
+  }
+
+  const consumer = payload.consumerValidation
+  if (
+    !consumer ||
+    consumer.release !== compatibility.value ||
+    consumer.status !== 'pass' ||
+    typeof consumer.repository !== 'string' ||
+    !/^https:\/\/github\.com\/[^/]+\/[^/]+$/.test(consumer.repository) ||
+    !/^[0-9a-f]{40}$/.test(consumer.commitSha ?? '') ||
+    !isSha256(consumer.evidenceDigest)
+  ) {
+    throw new Error('Legacy-removal evidence has invalid real-consumer validation')
+  }
+  assertPassArtifact(payload.rollbackDrill, 'rollback drill proof', finalLegacy.value)
+  assertPassArtifact(payload.sourceMaps, 'source-map proof', finalLegacy.value)
+  assertPassArtifact(payload.performanceAndRss, 'performance/RSS proof', finalLegacy.value)
+
+  const guidance = payload.migrationGuidance
+  const guidancePath = resolveWorkspaceStatePath(
+    workspaceRoot,
+    guidance?.path,
+    'migrationGuidance.path',
+  )
+  if (!existsSync(guidancePath)) {
+    throw new Error('Legacy-removal migration guidance does not exist')
+  }
+  const guidanceDigest = `sha256:${createHash('sha256')
+    .update(readFileSync(guidancePath))
+    .digest('hex')}`
+  if (guidance.digest !== guidanceDigest) {
+    throw new Error('Legacy-removal migration guidance digest does not match')
+  }
+
+  const preset = payload.finalPreset
+  if (
+    !preset ||
+    preset.packageName !== '@fictjs/babel-preset' ||
+    preset.version !== finalLegacy.value ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(preset.integrity ?? '') ||
+    preset.provenance !== true
+  ) {
+    throw new Error('Legacy-removal evidence has invalid final preset publication proof')
   }
 }
 
@@ -109,13 +288,14 @@ function assertReviewDocumentShape(review) {
 }
 
 function assertLegacyRemovalReviewDocumentShape(review) {
-  if (review.schemaVersion !== 1 || !['pending', 'approved'].includes(review.status)) {
+  if (review.schemaVersion !== 2 || !['pending', 'approved'].includes(review.status)) {
     throw new Error('Compiler legacy-removal review has an unsupported schema or status')
   }
   assertAreaShape(review.areas, REQUIRED_LEGACY_REMOVAL_AREAS, 'Legacy-removal checklist')
   if (
     review.status === 'pending' &&
     (review.reviewer !== null ||
+      review.evidenceDigest !== null ||
       [
         review.rustDefaultRelease,
         review.compatibilityRelease,
@@ -127,7 +307,11 @@ function assertLegacyRemovalReviewDocumentShape(review) {
     throw new Error('Pending legacy-removal review cannot contain partial approval')
   }
   if (review.status === 'approved') {
-    if (typeof review.reviewer !== 'string' || !review.reviewer.trim()) {
+    if (
+      typeof review.reviewer !== 'string' ||
+      !review.reviewer.trim() ||
+      !isSha256(review.evidenceDigest)
+    ) {
       throw new Error('Approved legacy-removal review must have a complete human checklist')
     }
     const missingAreas = Object.entries(review.areas)
@@ -426,14 +610,30 @@ function assertViteCompilerMatchesPhase(source, state) {
   }
 }
 
-function assertLegacyRemovalReview(review, state) {
+function assertLegacyRemovalEvidence(evidence, state) {
+  for (const field of [
+    'rustDefaultRelease',
+    'compatibilityRelease',
+    'finalLegacyRelease',
+    'legacyRemovalRelease',
+  ]) {
+    if (evidence[field] !== state[field]) {
+      throw new Error(`Legacy-removal evidence does not bind ${field}`)
+    }
+  }
+}
+
+function assertLegacyRemovalReview(review, state, evidence) {
   if (
-    review.schemaVersion !== 1 ||
+    review.schemaVersion !== 2 ||
     review.status !== 'approved' ||
     typeof review.reviewer !== 'string' ||
     !review.reviewer.trim()
   ) {
     throw new Error('Legacy removal requires an explicit human reviewer approval')
+  }
+  if (review.evidenceDigest !== evidence.evidenceDigest) {
+    throw new Error('Legacy-removal review does not bind the current release evidence')
   }
   for (const field of [
     'rustDefaultRelease',
@@ -670,7 +870,7 @@ export function validateCompilerRolloutReadiness(options = {}) {
   )
   const state = readJson(statePath, 'Compiler rollout state')
   if (
-    state.schemaVersion !== 3 ||
+    state.schemaVersion !== 4 ||
     !['beta', 'rust-default', 'legacy-removal'].includes(state.phase)
   ) {
     throw new Error('Compiler rollout state has an unsupported phase')
@@ -701,10 +901,20 @@ export function validateCompilerRolloutReadiness(options = {}) {
     state.legacyRemovalReviewPath,
     'legacyRemovalReviewPath',
   )
+  const legacyRemovalEvidencePath = resolveWorkspaceStatePath(
+    workspaceRoot,
+    state.legacyRemovalEvidencePath,
+    'legacyRemovalEvidencePath',
+  )
   const review = readJson(reviewPath, 'Compiler rollout review')
   const legacyRemovalReview = readJson(legacyRemovalReviewPath, 'Compiler legacy-removal review')
+  const legacyRemovalEvidence = readJson(
+    legacyRemovalEvidencePath,
+    'Compiler legacy-removal evidence',
+  )
   assertReviewDocumentShape(review)
   assertLegacyRemovalReviewDocumentShape(legacyRemovalReview)
+  assertLegacyRemovalEvidenceDocumentShape(legacyRemovalEvidence, workspaceRoot)
   assertCompilerRootMatchesPhase(workspaceRoot, state.phase)
   const source = readFileSync(sourcePath, 'utf8')
   assertViteCompilerMatchesPhase(source, state)
@@ -721,7 +931,8 @@ export function validateCompilerRolloutReadiness(options = {}) {
     assertReview(review, evidence, nativeCertification)
   }
   if (state.phase === 'legacy-removal') {
-    assertLegacyRemovalReview(legacyRemovalReview, state)
+    assertLegacyRemovalEvidence(legacyRemovalEvidence, state)
+    assertLegacyRemovalReview(legacyRemovalReview, state, legacyRemovalEvidence)
   }
   if (state.phase !== 'beta' && state.viteDefaultBackend !== 'rust') {
     throw new Error(`${state.phase} phase must select Rust in Vite`)

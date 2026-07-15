@@ -12,6 +12,7 @@ import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
 import { NATIVE_COMPILER_NODE_LANES, NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
 const readinessScript = fileURLToPath(new URL('./compiler-rollout-readiness.mjs', import.meta.url))
+const migrationGuidanceContent = '# Rust-only compiler migration\n'
 
 const approvedAreas = {
   coreSemantics: true,
@@ -48,14 +49,118 @@ function pendingReview() {
 
 function pendingRemovalReview() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: 'pending',
     reviewer: null,
+    evidenceDigest: null,
     rustDefaultRelease: null,
     compatibilityRelease: null,
     finalLegacyRelease: null,
     legacyRemovalRelease: null,
     areas: Object.fromEntries(Object.keys(approvedRemovalAreas).map(area => [area, false])),
+  }
+}
+
+function pendingRemovalEvidence() {
+  return { schemaVersion: 1, status: 'pending', evidenceDigest: null }
+}
+
+function publishedReleaseEvidence(version, index) {
+  return {
+    version,
+    tag: `v${version}`,
+    commitSha: index.toString(16).repeat(40),
+    workflowRunId: String(100 + index),
+    githubRelease: {
+      id: 1_000 + index,
+      url: `https://github.com/fictjs/fict/releases/tag/v${version}`,
+      assets: ['native-certification.json', 'npm-publish-plan.json', 'release-artifacts.json'].map(
+        (name, assetIndex) => ({
+          name,
+          id: index * 10 + assetIndex + 1,
+          digest: `sha256:${String(index + assetIndex)
+            .repeat(64)
+            .slice(0, 64)}`,
+        }),
+      ),
+    },
+    npm: {
+      packageName: '@fictjs/compiler',
+      version,
+      integrity: 'sha512-QUJDRA==',
+      provenance: true,
+    },
+  }
+}
+
+function legacyRemovalEvidence(state, overrides = {}) {
+  const artifact = release => ({
+    release,
+    status: 'pass',
+    evidenceDigest: `sha256:${'e'.repeat(64)}`,
+  })
+  const publishedReleases = {
+    rustDefault: publishedReleaseEvidence(state.rustDefaultRelease, 1),
+    compatibility: publishedReleaseEvidence(state.compatibilityRelease, 2),
+    finalLegacy: publishedReleaseEvidence(state.finalLegacyRelease, 3),
+  }
+  const payload = {
+    schemaVersion: 1,
+    status: 'pass',
+    rustDefaultRelease: state.rustDefaultRelease,
+    compatibilityRelease: state.compatibilityRelease,
+    finalLegacyRelease: state.finalLegacyRelease,
+    legacyRemovalRelease: state.legacyRemovalRelease,
+    publishedReleases,
+    nativeCertification: {
+      release: state.finalLegacyRelease,
+      workflowRunId: publishedReleases.finalLegacy.workflowRunId,
+      sourceRevision: publishedReleases.finalLegacy.commitSha,
+      certificationDigest: `sha256:${'b'.repeat(64)}`,
+      targets: NATIVE_COMPILER_TARGETS.length,
+      nodeLanes: [...NATIVE_COMPILER_NODE_LANES],
+      certifications: NATIVE_COMPILER_TARGETS.length * NATIVE_COMPILER_NODE_LANES.length,
+    },
+    consumerValidation: {
+      release: state.compatibilityRelease,
+      repository: 'https://github.com/fictjs/real-consumer',
+      commitSha: 'c'.repeat(40),
+      status: 'pass',
+      evidenceDigest: `sha256:${'d'.repeat(64)}`,
+    },
+    rollbackDrill: artifact(state.finalLegacyRelease),
+    sourceMaps: artifact(state.finalLegacyRelease),
+    performanceAndRss: artifact(state.finalLegacyRelease),
+    migrationGuidance: {
+      path: 'docs/compiler-rust-only-migration.md',
+      digest: `sha256:${createHash('sha256').update(migrationGuidanceContent).digest('hex')}`,
+    },
+    finalPreset: {
+      packageName: '@fictjs/babel-preset',
+      version: state.finalLegacyRelease,
+      integrity: 'sha512-QUJDRA==',
+      provenance: true,
+    },
+    ...overrides,
+  }
+  return {
+    ...payload,
+    evidenceDigest: `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+  }
+}
+
+function approvedRemovalReview(state, evidence, overrides = {}) {
+  return {
+    schemaVersion: 2,
+    status: 'approved',
+    reviewer: 'release-maintainer',
+    evidenceDigest: evidence.evidenceDigest,
+    rustDefaultRelease: state.rustDefaultRelease,
+    compatibilityRelease: state.compatibilityRelease,
+    finalLegacyRelease: state.finalLegacyRelease,
+    legacyRemovalRelease: state.legacyRemovalRelease,
+    areas: approvedRemovalAreas,
+    ...overrides,
   }
 }
 
@@ -195,7 +300,14 @@ function approvedReview(evidence, overrides = {}) {
   }
 }
 
-async function fixture(state, review, evidence, removalReview, certificationOverride) {
+async function fixture(
+  state,
+  review,
+  evidence,
+  removalReview,
+  certificationOverride,
+  removalEvidenceOverride,
+) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fict-rollout-'))
   const certification =
     certificationOverride === undefined
@@ -204,12 +316,13 @@ async function fixture(state, review, evidence, removalReview, certificationOver
         : null
       : certificationOverride
   await mkdir(path.join(root, '.github'), { recursive: true })
+  await mkdir(path.join(root, 'docs'), { recursive: true })
   await mkdir(path.join(root, 'packages', 'compiler', 'src'), { recursive: true })
   await mkdir(path.join(root, 'packages', 'vite-plugin', 'src'), { recursive: true })
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-state.json'),
     JSON.stringify({
-      schemaVersion: 3,
+      schemaVersion: 4,
       rollbackBackend: 'legacy',
       rustDefaultRelease: null,
       compatibilityRelease: null,
@@ -219,6 +332,7 @@ async function fixture(state, review, evidence, removalReview, certificationOver
       nativeCertificationPath: '.github/compiler-native-certification.json',
       reviewPath: '.github/compiler-rollout-review.json',
       legacyRemovalReviewPath: '.github/compiler-legacy-removal-review.json',
+      legacyRemovalEvidencePath: '.github/compiler-legacy-removal-evidence.json',
       ...state,
     }),
   )
@@ -257,6 +371,14 @@ async function fixture(state, review, evidence, removalReview, certificationOver
   await writeFile(
     path.join(root, '.github', 'compiler-legacy-removal-review.json'),
     JSON.stringify(removalReview ?? pendingRemovalReview()),
+  )
+  await writeFile(
+    path.join(root, '.github', 'compiler-legacy-removal-evidence.json'),
+    JSON.stringify(removalEvidenceOverride ?? pendingRemovalEvidence()),
+  )
+  await writeFile(
+    path.join(root, 'docs', 'compiler-rust-only-migration.md'),
+    migrationGuidanceContent,
   )
   return root
 }
@@ -525,6 +647,21 @@ test('beta validates pending review shape before promotion', async t => {
     JSON.stringify(digestReview),
   )
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /cannot contain partial approval/)
+
+  await writeFile(
+    path.join(root, '.github', 'compiler-rollout-review.json'),
+    JSON.stringify(pendingReview()),
+  )
+  await writeFile(
+    path.join(root, '.github', 'compiler-legacy-removal-evidence.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      status: 'pending',
+      rustDefaultRelease: '0.29.0',
+      evidenceDigest: null,
+    }),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /cannot contain partial claims/)
 })
 
 test('rollout state evidence paths cannot escape the workspace', async t => {
@@ -546,6 +683,17 @@ test('rollout state evidence paths cannot escape the workspace', async t => {
     () => validateCompilerRolloutReadiness({ root: nativeRoot }),
     /nativeCertificationPath must remain inside/,
   )
+
+  const removalEvidenceRoot = await fixture({
+    phase: 'beta',
+    viteDefaultBackend: 'legacy',
+    legacyRemovalEvidencePath: '../compiler-legacy-removal-evidence.json',
+  })
+  t.after(() => rm(removalEvidenceRoot, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root: removalEvidenceRoot }),
+    /legacyRemovalEvidencePath must remain inside/,
+  )
 })
 
 test('legacy removal requires a bound review and a completed stable minor window', async t => {
@@ -560,19 +708,84 @@ test('legacy removal requires a bound review and a completed stable minor window
     finalLegacyRelease: '0.30.1',
     legacyRemovalRelease: '1.0.0',
   }
-  const removalReview = {
-    schemaVersion: 1,
-    status: 'approved',
-    reviewer: 'release-maintainer',
-    rustDefaultRelease: state.rustDefaultRelease,
-    compatibilityRelease: state.compatibilityRelease,
-    finalLegacyRelease: state.finalLegacyRelease,
-    legacyRemovalRelease: state.legacyRemovalRelease,
-    areas: approvedRemovalAreas,
-  }
-  const root = await fixture(state, candidateReview, evidence, removalReview)
+  const removalEvidence = legacyRemovalEvidence(state)
+  const removalReview = approvedRemovalReview(state, removalEvidence)
+  const root = await fixture(
+    state,
+    candidateReview,
+    evidence,
+    removalReview,
+    undefined,
+    removalEvidence,
+  )
   t.after(() => rm(root, { recursive: true }))
   assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
+
+  const removalEvidencePath = path.join(root, '.github', 'compiler-legacy-removal-evidence.json')
+  await writeFile(
+    removalEvidencePath,
+    JSON.stringify({
+      ...removalEvidence,
+      consumerValidation: {
+        ...removalEvidence.consumerValidation,
+        commitSha: 'f'.repeat(40),
+      },
+    }),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /one intact digest-bound record/)
+  await writeFile(removalEvidencePath, JSON.stringify(removalEvidence))
+
+  const missingReleaseAssetEvidence = legacyRemovalEvidence(state, {
+    publishedReleases: {
+      ...removalEvidence.publishedReleases,
+      finalLegacy: {
+        ...removalEvidence.publishedReleases.finalLegacy,
+        githubRelease: {
+          ...removalEvidence.publishedReleases.finalLegacy.githubRelease,
+          assets: removalEvidence.publishedReleases.finalLegacy.githubRelease.assets.slice(1),
+        },
+      },
+    },
+  })
+  await writeFile(removalEvidencePath, JSON.stringify(missingReleaseAssetEvidence))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /invalid final legacy release publication proof/,
+  )
+
+  const crossRunCertificationEvidence = legacyRemovalEvidence(state, {
+    nativeCertification: {
+      ...removalEvidence.nativeCertification,
+      workflowRunId: '999',
+    },
+  })
+  await writeFile(removalEvidencePath, JSON.stringify(crossRunCertificationEvidence))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /invalid native certification proof/,
+  )
+  await writeFile(removalEvidencePath, JSON.stringify(removalEvidence))
+
+  const migrationGuidancePath = path.join(root, 'docs', 'compiler-rust-only-migration.md')
+  await writeFile(migrationGuidancePath, '# Unreviewed migration rewrite\n')
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /migration guidance digest does not match/,
+  )
+  await writeFile(migrationGuidancePath, migrationGuidanceContent)
+
+  await writeFile(
+    path.join(root, '.github', 'compiler-legacy-removal-review.json'),
+    JSON.stringify({ ...removalReview, evidenceDigest: `sha256:${'f'.repeat(64)}` }),
+  )
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /does not bind the current release evidence/,
+  )
+  await writeFile(
+    path.join(root, '.github', 'compiler-legacy-removal-review.json'),
+    JSON.stringify(removalReview),
+  )
 
   const viteSourcePath = path.join(root, 'packages', 'vite-plugin', 'src', 'index.ts')
   await writeFile(

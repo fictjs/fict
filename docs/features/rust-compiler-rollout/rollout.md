@@ -27,13 +27,14 @@ The machine-readable phase and default backend live in
 [`compiler-rollout-state.json`](../../../.github/compiler-rollout-state.json).
 Do not copy or infer the current phase from release prose. The readiness check
 rejects a mismatch between that file and the Vite implementation. State schema
-v3 records the candidate, full native-certification, rollout-review, and
-legacy-removal-review paths plus the Rust-default, completed
-compatibility-minor, final legacy, and planned legacy-removal releases; beta
-keeps all four version values `null`. Evidence and review paths must remain
-workspace-relative. Readiness validates both review document shapes in every
-phase, so an unknown area, non-boolean value, or partial approval fails before
-promotion work starts.
+v4 records the candidate, full native-certification, rollout-review,
+legacy-removal-evidence, and legacy-removal-review paths plus the Rust-default,
+completed compatibility-minor, final legacy, and planned legacy-removal
+releases; beta keeps all four version values `null`. Evidence and review paths
+must remain workspace-relative. Readiness validates both review document shapes
+in every phase and requires the legacy-removal evidence to be exactly pending
+until it is complete, so an unknown area, non-boolean value, or partial claim
+fails before promotion work starts.
 The same check binds the compiler package root to the phase: beta MUST retain
 the legacy facade, while `rust-default` and `legacy-removal` MUST expose the
 complete native request API without importing the legacy implementation.
@@ -72,21 +73,31 @@ state keeps `rollbackBackend: legacy`; it may record a completed
 - a stable `finalLegacyRelease` at or after that compatibility minor and before
   removal;
 - a `legacyRemovalRelease` at a later semver major's `x.0.0` boundary;
+- one intact, digest-bound
+  [`compiler-legacy-removal-evidence.json`](../../../.github/compiler-legacy-removal-evidence.json)
+  record for the published Rust-default, compatibility, and final legacy
+  releases, plus the final native matrix, real-consumer validation, rollback,
+  source-map, performance/RSS, migration-guide, and final-preset evidence;
 - an approved
   [`compiler-legacy-removal-review.json`](../../../.github/compiler-legacy-removal-review.json)
-  whose versions exactly match state and whose checklist covers replacement
-  availability, migration guidance, published releases, final preset
-  publication, Core scope changes, and dependency removal.
+  whose versions exactly match state, whose `evidenceDigest` matches that
+  evidence record, and whose checklist covers replacement availability,
+  migration guidance, published releases, final preset publication, Core scope
+  changes, and dependency removal.
 
-These fields do not assert that a release happened merely because a version was
-typed into JSON: the bound human checklist is the publication attestation. Any
-missing version, prerelease, patch-only window, same-major removal, mismatched
-review, retained Babel-preset/legacy-IR path, production Babel dependency, or
-stale Core scope/maturity/Changesets/publish/CI boundary reference blocks the
-phase, as does any incomplete review area. The gate also rejects the public
-`./legacy` export, Babel or legacy-subpath imports in production source, Vite
-shadow sources, legacy differential/rollback harnesses, Webpack v1–v5 cache
-compatibility, and a compiler root that does not expose the Rust
+Version strings alone cannot authorize removal. Each of the first three
+published releases is identified by its tag, commit, Release workflow run,
+GitHub Release and evidence-asset digests, and npm integrity/provenance; the
+maintainer signs the digest of that whole record. The planned breaking version
+remains a state/evidence boundary rather than a circular claim that the removal
+release is already published. Any missing version, prerelease, patch-only
+window, same-major removal, tampered evidence, mismatched review, retained
+Babel-preset/legacy-IR path, production Babel dependency, or stale Core
+scope/maturity/Changesets/publish/CI boundary reference blocks the phase, as
+does any incomplete review area. The gate also rejects the public `./legacy`
+export, Babel or legacy-subpath imports in production source, Vite shadow
+sources and backend selectors, legacy differential/rollback harnesses, Webpack
+v1–v5 cache compatibility, and a compiler root that does not expose the Rust
 `transform`/`scan`/`analyze` request API.
 
 ## Backend modes

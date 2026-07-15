@@ -101,7 +101,7 @@ eight release bundles.
 Rollout evidence/review paths are restricted to the repository, and CI validates
 the exact pending/approved checklist shape even during beta. Do not stage a
 partial approval: update both digests, reviewer, status, and all areas
-atomically. The state schema is v3; older state or review documents fail closed.
+atomically. The state schema is v4; older state or review documents fail closed.
 
 Do not manufacture a second candidate by running the sealer twice locally.
 Controlled CI and release builds embed `github.sha`; a local binary without an
@@ -113,13 +113,20 @@ benchmark values remain in CI artifacts and are not copied into release prose.
 
 Legacy removal is a later release operation, not part of candidate approval.
 Before entering `legacy-removal`, update the four exact stable release fields
-in `.github/compiler-rollout-state.json` and complete
-`.github/compiler-legacy-removal-review.json`. The readiness check requires a
-completed subsequent `x.y.0` compatibility release, a final legacy release,
-and a later breaking `x.0.0` removal release, with the removal review bound to
-those exact versions. It also rejects retained preset/legacy-IR paths,
-`./legacy` exports, production Babel or legacy-subpath imports, Vite shadow and
-dual-backend harnesses, old Webpack cache readers, and a compiler root missing
+in `.github/compiler-rollout-state.json`, replace the exact pending document in
+`.github/compiler-legacy-removal-evidence.json` with one digest-bound passing
+record, and complete `.github/compiler-legacy-removal-review.json`. The evidence
+record must identify the published Rust-default, compatibility, and final
+legacy tags, commits, Release workflow runs, GitHub Releases and their evidence
+asset digests, npm integrity and provenance; it also binds the final 8x2 native
+certification, real-consumer validation, rollback/source-map/performance
+artifacts, migration-guide digest, and final preset publication. The schema-v2
+removal review must approve that exact evidence digest and the same four release
+versions. The readiness check requires a completed subsequent `x.y.0`
+compatibility release, a final legacy release, and a later breaking `x.0.0`
+removal release. It also rejects retained preset/legacy-IR paths, `./legacy`
+exports, production Babel or legacy-subpath imports, Vite shadow and dual-backend
+selectors or harnesses, old Webpack cache readers, and a compiler root missing
 the Rust request API, plus stale scope, maturity, Changesets, publish allowlist,
 CI, and API-boundary references.
 
