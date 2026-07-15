@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/webpack-plugin",
-  "version": "0.28.0",
+  "version": "0.28.1",
   "description": "Webpack integration for the Fict compiler",
   "publishConfig": {
     "access": "public",

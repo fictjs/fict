@@ -1,5 +1,29 @@
 # @fictjs/webpack-plugin
 
+## 0.28.1
+
+### Patch Changes
+
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [c8ab75e]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+  - @fictjs/compiler@0.29.0
+
 ## 0.28.0
 
 ### Minor Changes
