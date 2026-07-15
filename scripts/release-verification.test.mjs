@@ -28,8 +28,17 @@ const rolloutState = JSON.parse(
 const rolloutReview = JSON.parse(
   readFileSync(new URL('../.github/compiler-rollout-review.json', import.meta.url), 'utf8'),
 )
+const legacyRemovalReview = JSON.parse(
+  readFileSync(new URL('../.github/compiler-legacy-removal-review.json', import.meta.url), 'utf8'),
+)
 const rolloutEvidence = JSON.parse(
   readFileSync(new URL('../.github/compiler-rollout-evidence.json', import.meta.url), 'utf8'),
+)
+const legacyRemovalEvidence = JSON.parse(
+  readFileSync(
+    new URL('../.github/compiler-legacy-removal-evidence.json', import.meta.url),
+    'utf8',
+  ),
 )
 const nativeCertification = JSON.parse(
   readFileSync(new URL('../.github/compiler-native-certification.json', import.meta.url), 'utf8'),
@@ -290,8 +299,12 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
 })
 
 test('Rust-default approval binds the complete native certification to its candidate', () => {
-  assert.equal(rolloutState.schemaVersion, 3)
+  assert.equal(rolloutState.schemaVersion, 4)
   assert.equal(rolloutState.nativeCertificationPath, '.github/compiler-native-certification.json')
+  assert.equal(
+    rolloutState.legacyRemovalEvidencePath,
+    '.github/compiler-legacy-removal-evidence.json',
+  )
   assert.equal(rolloutReview.schemaVersion, 3)
   assert.equal(rolloutReview.status, 'approved')
   assert.equal(rolloutReview.candidateDigest, rolloutEvidence.candidateDigest)
@@ -303,6 +316,27 @@ test('Rust-default approval binds the complete native certification to its candi
     rolloutReadiness,
     /review\.nativeCertificationDigest !== nativeCertification\.certificationDigest/,
   )
+})
+
+test('legacy-removal approval starts pending and must bind one release-evidence digest', () => {
+  assert.deepEqual(legacyRemovalEvidence, {
+    schemaVersion: 1,
+    status: 'pending',
+    evidenceDigest: null,
+  })
+  assert.equal(legacyRemovalReview.schemaVersion, 2)
+  assert.equal(legacyRemovalReview.status, 'pending')
+  assert.equal(legacyRemovalReview.evidenceDigest, null)
+  assert.equal(
+    rootPackage.scripts['release:evidence:compiler'],
+    'node scripts/compiler-release-evidence.mjs',
+  )
+  assert.match(
+    rootPackage.scripts['test:release-verification'],
+    /compiler-release-evidence\.test\.mjs/,
+  )
+  assert.match(rolloutReadiness, /assertLegacyRemovalEvidenceDocumentShape/)
+  assert.match(rolloutReadiness, /review\.evidenceDigest !== evidence\.evidenceDigest/)
 })
 
 test('rollout candidates are finalized only after every required CI gate succeeds', () => {

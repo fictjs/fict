@@ -1,7 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "pending",
   "reviewer": null,
+  "evidenceDigest": null,
   "rustDefaultRelease": null,
   "compatibilityRelease": null,
   "finalLegacyRelease": null,

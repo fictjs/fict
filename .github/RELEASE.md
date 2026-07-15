@@ -101,7 +101,7 @@ eight release bundles.
 Rollout evidence/review paths are restricted to the repository, and CI validates
 the exact pending/approved checklist shape even during beta. Do not stage a
 partial approval: update both digests, reviewer, status, and all areas
-atomically. The state schema is v3; older state or review documents fail closed.
+atomically. The state schema is v4; older state or review documents fail closed.
 
 Do not manufacture a second candidate by running the sealer twice locally.
 Controlled CI and release builds embed `github.sha`; a local binary without an
@@ -112,14 +112,61 @@ certification cannot replace the retained 8×2 Release workflow artifact. Raw
 benchmark values remain in CI artifacts and are not copied into release prose.
 
 Legacy removal is a later release operation, not part of candidate approval.
+Immediately after each Rust-default, compatibility, and final-legacy release is
+public and its tag workflow has succeeded, record its external evidence from
+the public GitHub and npm APIs:
+
+```bash
+pnpm release:evidence:compiler --version 0.29.0
+```
+
+Commit each generated `.github/compiler-release-evidence/vX.Y.Z.json` in its
+own release-evidence commit. The collector fails unless the tag resolves to the
+successful Release workflow commit, the stable GitHub Release contains the
+three exact uploaded assets with sha256 digests, and the npm compiler version
+has integrity plus SLSA provenance metadata.
+
+After the subsequent compatibility minor is public, validate it in a separate,
+public real project without workspace links or an explicit compiler backend.
+The project workflow must install its own frozen lockfile and run its compiler
+smoke, typecheck, and production build on the default branch. Record the exact
+successful commit and workflow run:
+
+```bash
+pnpm release:evidence:consumer \
+  --version 0.30.0 \
+  --repository fictjs/shadcn \
+  --commit <40-character-commit> \
+  --workflow .github/workflows/ci.yml \
+  --project apps/v4
+```
+
+Commit `.github/compiler-consumer-evidence/v0.30.0.json` separately. The
+collector requires the Core `fict`, runtime, Vite plugin, and compiler packages
+at the exact compatibility release. It also requires SSR at one exact published
+Satellite version without forcing it into Core lockstep. Every declared version
+is bound to its npm integrity and lockfile resolution; legacy, shadow, backend
+overrides, and local links are rejected. The record also binds file digests and
+the successful GitHub Actions run. M9 must embed the matching release,
+repository, commit, status, and evidence digest rather than a manual claim.
+
 Before entering `legacy-removal`, update the four exact stable release fields
-in `.github/compiler-rollout-state.json` and complete
-`.github/compiler-legacy-removal-review.json`. The readiness check requires a
-completed subsequent `x.y.0` compatibility release, a final legacy release,
-and a later breaking `x.0.0` removal release, with the removal review bound to
-those exact versions. It also rejects retained preset/legacy-IR paths,
-`./legacy` exports, production Babel or legacy-subpath imports, Vite shadow and
-dual-backend harnesses, old Webpack cache readers, and a compiler root missing
+in `.github/compiler-rollout-state.json`, replace the exact pending document in
+`.github/compiler-legacy-removal-evidence.json` with one digest-bound passing
+record, and complete `.github/compiler-legacy-removal-review.json`. The evidence
+record must identify the published Rust-default, compatibility, and final
+legacy tags, commits, Release workflow runs, GitHub Releases and their evidence
+asset digests, npm integrity and provenance; it also binds the final 8x2 native
+certification, real-consumer validation, rollback/source-map/performance
+artifacts, migration-guide digest, and final preset publication. The schema-v2
+removal review must approve that exact evidence digest and the same four release
+versions. The readiness check requires a completed subsequent `x.y.0`
+compatibility release, a final legacy release, and a later breaking `x.0.0`
+removal release. Each embedded publication record must exactly match its
+previously committed per-release evidence file. It also rejects retained
+preset/legacy-IR paths, `./legacy`
+exports, production Babel or legacy-subpath imports, Vite shadow and dual-backend
+selectors or harnesses, old Webpack cache readers, and a compiler root missing
 the Rust request API, plus stale scope, maturity, Changesets, publish allowlist,
 CI, and API-boundary references.
 
