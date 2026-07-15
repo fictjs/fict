@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "status": "pass",
+  "version": "0.29.0",
+  "tag": "v0.29.0",
+  "commitSha": "129a9cc395ab5c0e09465fa6ff3206e7209fe4ad",
+  "workflowRunId": "29441490475",
+  "githubRelease": {
+    "id": 354658033,
+    "url": "https://github.com/fictjs/fict/releases/tag/v0.29.0",
+    "publishedAt": "2026-07-15T19:17:15Z",
+    "assets": [
+      {
+        "name": "native-certification.json",
+        "id": 478289498,
+        "size": 10007,
+        "digest": "sha256:762471e68ac95cb6599b2de8fa0af6b5452607d214e36f498906f9ea3b54e15d"
+      },
+      {
+        "name": "npm-publish-plan.json",
+        "id": 478289499,
+        "size": 3405,
+        "digest": "sha256:78cdc388dfe14c2f6c27df8667d6c9868d464b64509bc5f96cb0bd43405e8906"
+      },
+      {
+        "name": "release-artifacts.json",
+        "id": 478289503,
+        "size": 5679,
+        "digest": "sha256:6e3883bfa6f03ca5c6cdc7472b948f6c850e66c9b72c8c0f8e70d3690fe1befe"
+      }
+    ]
+  },
+  "npm": {
+    "packageName": "@fictjs/compiler",
+    "version": "0.29.0",
+    "integrity": "sha512-3SMeN2PPR73/ljkYhMYMVRqlzqv36iPQhFhp7N7hD6aibHXDidL92NA3IhLEFXWEGgj3zN6JMW6e41b+vxE9mg==",
+    "provenance": true,
+    "attestationUrl": "https://registry.npmjs.org/-/npm/v1/attestations/@fictjs%2fcompiler@0.29.0",
+    "publishedAt": "2026-07-15T19:16:09.438Z"
+  },
+  "evidenceDigest": "sha256:6e88ca181b0563c9b1c9af5b43a4ec043f09f7f35f731d0fccf0c665f39d3a14"
+}

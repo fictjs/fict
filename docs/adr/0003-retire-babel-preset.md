@@ -74,6 +74,12 @@ the current pre-1.0 line, `1.0.0` is the earliest removal release. If the Rust
 default changes after Fict 1.0, removal is earliest in the next semver major,
 consistent with the public deprecation policy.
 
+The approved pre-1.0 sequence is `0.29.0` (published Rust default), `0.30.0`
+(complete subsequent stable compatibility minor), `0.30.1` (final legacy and
+preset release), then `1.0.0` (breaking removal). These are release roles, not
+permission to pre-record publication: each version enters rollout evidence only
+after its tag workflow, npm publication, and GitHub Release have succeeded.
+
 Before ending the window, M7 evidence MUST include at least two consecutive
 candidate builds with no unexplained Core semantic difference, a successful
 rollback drill, and a release containing the Rust default. The window does not

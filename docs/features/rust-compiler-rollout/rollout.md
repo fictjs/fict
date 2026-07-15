@@ -40,6 +40,17 @@ the legacy facade, while `rust-default` and `legacy-removal` MUST expose the
 complete native request API without importing the legacy implementation.
 Changing only the state file or only one public default therefore fails closed.
 
+The first Rust-default release, `0.29.0`, is now public. Release workflow
+`29441490475` bound tag commit
+`129a9cc395ab5c0e09465fa6ff3206e7209fe4ad` to the complete 8-target by 2-Node
+certification, npm provenance, and the stable GitHub Release. Its immutable
+publication record is
+[`compiler-release-evidence/v0.29.0.json`](../../../.github/compiler-release-evidence/v0.29.0.json)
+with evidence digest
+`sha256:6e88ca181b0563c9b1c9af5b43a4ec043f09f7f35f731d0fccf0c665f39d3a14`.
+The compatibility field remains unset until `0.30.0` is itself public; a target
+version or passing pre-release CI is not a completed compatibility window.
+
 ## Rollout states
 
 ```mermaid

@@ -1,5 +1,13 @@
 # @fictjs/compiler
 
+## 0.30.0
+
+### Minor Changes
+
+- 901347c: Complete the first stable Rust-default compatibility window with immutable
+  publication and real-consumer evidence while retaining whole-build legacy
+  rollback.
+
 ## 0.29.0
 
 ### Minor Changes

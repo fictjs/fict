@@ -19,7 +19,7 @@ profile. Production builds force strict guarantee back on.
 
 ## Compiler Backend Migration
 
-The OXC-native compiler is the Vite/Core default starting with the planned
+The OXC-native compiler is the Vite/Core default starting with the published
 0.29.0 release. A build still selects exactly one backend:
 
 ```ts
@@ -30,11 +30,52 @@ export default {
 }
 ```
 
+The bounded compatibility line is explicit:
+
+| Release  | Compiler role                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------------------------- |
+| `0.29.0` | First published Rust-default release; whole-build legacy rollback remains available.                       |
+| `0.30.0` | Subsequent stable compatibility minor; Rust remains the default and legacy remains release-blocking.       |
+| `0.30.1` | Final planned release of the Babel preset, `@fictjs/compiler/legacy`, and in-tree rollback implementation. |
+| `1.0.0`  | Planned breaking Rust-only release; rollback means pinning the whole application to `0.30.1`.              |
+
+After installing the release, run this package-root smoke from the application
+directory. It proves that the selected platform binding is Rust and executes a
+real native transform instead of merely finding package files:
+
+```bash
+node --input-type=module <<'EOF'
+import assert from 'node:assert/strict'
+import {
+  COMPILER_PROTOCOL_VERSION,
+  nativeCompilerInfo,
+  transformSync,
+} from '@fictjs/compiler'
+
+const info = nativeCompilerInfo()
+assert.equal(info.backend, 'rust')
+const result = transformSync({
+  protocolVersion: COMPILER_PROTOCOL_VERSION,
+  filename: '/migration-smoke.ts',
+  code: 'export const answer: number = 42',
+  options: {},
+})
+assert.equal(result.diagnostics.length, 0)
+assert.match(result.code, /answer\s*=\s*42/)
+console.log(info)
+EOF
+```
+
 Use `FICT_COMPILER_BACKEND=legacy` for operational rollback. An explicit plugin
 option takes precedence over the environment, so `backend: 'legacy'` can pin a
 committed recovery build while `backend: 'rust'` can pin the normal default.
 Do not choose the backend from a per-file callback or retry a failed Rust file
 through Babel.
+
+Rollback is a whole-build operation: pin the compiler, runtime, integration,
+SSR, generated metadata, and caches to one compatible release unit. After
+`1.0.0`, no code-level legacy selector remains; the supported recovery boundary
+is the complete `0.30.1` application dependency set.
 
 With `backend: 'rust'`, the Vite runtime graph uses the native compiler and the
 Babel-free compiler graph host. Babel packages can remain installed during the
