@@ -319,6 +319,10 @@ pnpm release:bootstrap-native \
   --publish
 ```
 
+Run the publishing command from an interactive terminal. The bootstrap keeps npm's stdin and
+stdout attached for each publish/trust mutation so npm can complete WebAuth or an authenticator
+OTP challenge; registry reads remain non-interactive and fail closed.
+
 The bootstrap publishes with `--provenance=false` only for names that do not
 exist, verifies any safely resumed version against the certified npm integrity,
 and configures `release.yml` trusted publishing for all eight packages. It

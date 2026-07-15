@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import {
   classifyNativeBootstrapRegistry,
+  nativeBootstrapNpmStdio,
   nativeBootstrapPublishArgs,
   nativeTrustedPublisherArgs,
   validateNativeBootstrapCertification,
@@ -182,6 +183,8 @@ test('accepts resumable package creation only when published integrity matches',
 })
 
 test('uses explicit no-provenance bootstrap and repository-scoped trust commands', () => {
+  assert.equal(nativeBootstrapNpmStdio(true), 'inherit')
+  assert.deepEqual(nativeBootstrapNpmStdio(false), ['ignore', 'pipe', 'pipe'])
   assert.deepEqual(nativeBootstrapPublishArgs('/tmp/native.tgz'), [
     'publish',
     '/tmp/native.tgz',

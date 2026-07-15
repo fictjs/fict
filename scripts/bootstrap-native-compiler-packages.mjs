@@ -210,7 +210,11 @@ export function nativeTrustedPublisherArgs(packageName) {
   ]
 }
 
-function runNpm(args, { provenance } = {}) {
+export function nativeBootstrapNpmStdio(interactive = false) {
+  return interactive ? 'inherit' : ['ignore', 'pipe', 'pipe']
+}
+
+function runNpm(args, { provenance, interactive = false } = {}) {
   const result = spawnSync('npm', args, {
     cwd: repositoryRoot,
     encoding: 'utf8',
@@ -218,13 +222,14 @@ function runNpm(args, { provenance } = {}) {
       ...process.env,
       ...(provenance === false ? { NPM_CONFIG_PROVENANCE: 'false' } : {}),
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: nativeBootstrapNpmStdio(interactive),
   })
   if (result.error) throw result.error
   if (result.status !== 0) {
-    throw new Error(`npm ${args.join(' ')} failed:\n${result.stdout}${result.stderr}`)
+    const output = interactive ? '' : `:\n${result.stdout}${result.stderr}`
+    throw new Error(`npm ${args.join(' ')} failed${output}`)
   }
-  return result.stdout.trim()
+  return interactive ? '' : result.stdout.trim()
 }
 
 function assertBootstrapToolchain() {
@@ -309,10 +314,10 @@ async function main() {
   const toolchain = assertBootstrapToolchain()
   for (const action of actions.filter(action => action.status === 'new-package')) {
     const bundle = bundles.get(action.target)
-    process.stdout.write(
-      runNpm(nativeBootstrapPublishArgs(bundle.tarballPath), { provenance: false }),
-    )
-    process.stdout.write('\n')
+    runNpm(nativeBootstrapPublishArgs(bundle.tarballPath), {
+      provenance: false,
+      interactive: true,
+    })
     await waitForPublishedVersion(
       releaseConfig.registry,
       action.packageName,
@@ -333,8 +338,7 @@ async function main() {
     throw new Error('native package bootstrap did not create all eight package names')
   }
   for (const target of NATIVE_COMPILER_TARGETS) {
-    process.stdout.write(runNpm(nativeTrustedPublisherArgs(target.packageName)))
-    process.stdout.write('\n')
+    runNpm(nativeTrustedPublisherArgs(target.packageName), { interactive: true })
   }
   process.stdout.write(
     `${JSON.stringify({ ...certified, publish: true, toolchain, actions }, null, 2)}\n`,
