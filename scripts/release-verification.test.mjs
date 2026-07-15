@@ -543,11 +543,29 @@ test('clean checkout reuses the content-addressed store without sharing installe
 })
 
 test('clean checkout isolates Turbo artifacts and uses CI browser behavior', () => {
-  assert.deepEqual(releaseIsolationEnv('/tmp/fict-clean', '/cache/pnpm'), {
+  assert.deepEqual(releaseIsolationEnv('/tmp/fict-clean', '/cache/pnpm', {}), {
     CI: 'true',
     FICT_PNPM_STORE_DIR: '/cache/pnpm',
     HUSKY: '0',
+    NO_PROXY: 'localhost,127.0.0.1,::1',
     TURBO_CACHE_DIR: '/tmp/fict-clean/.turbo/release-cache',
+    no_proxy: 'localhost,127.0.0.1,::1',
+  })
+})
+
+test('clean checkout preserves proxy exclusions while bypassing local browser servers', () => {
+  const environment = {
+    NO_PROXY: 'registry.npmjs.org,localhost',
+    no_proxy: 'internal.example,127.0.0.1',
+  }
+
+  assert.deepEqual(releaseIsolationEnv('/tmp/fict-clean', '/cache/pnpm', environment), {
+    CI: 'true',
+    FICT_PNPM_STORE_DIR: '/cache/pnpm',
+    HUSKY: '0',
+    NO_PROXY: 'registry.npmjs.org,localhost,internal.example,127.0.0.1,::1',
+    TURBO_CACHE_DIR: '/tmp/fict-clean/.turbo/release-cache',
+    no_proxy: 'registry.npmjs.org,localhost,internal.example,127.0.0.1,::1',
   })
 })
 
