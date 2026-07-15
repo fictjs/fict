@@ -43,12 +43,22 @@ export function pnpmStoreRoot(activeStorePath) {
   return /^v\d+$/.test(path.basename(normalized)) ? path.dirname(normalized) : normalized
 }
 
-export function releaseIsolationEnv(checkoutDir, sharedStoreDir) {
+const localNoProxyHosts = ['localhost', '127.0.0.1', '::1']
+
+export function releaseIsolationEnv(checkoutDir, sharedStoreDir, environment = process.env) {
+  const noProxy = [environment.NO_PROXY, environment.no_proxy, ...localNoProxyHosts]
+    .flatMap(value => value?.split(',') ?? [])
+    .map(value => value.trim())
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(',')
+
   return {
     CI: 'true',
     FICT_PNPM_STORE_DIR: sharedStoreDir,
     HUSKY: '0',
+    NO_PROXY: noProxy,
     TURBO_CACHE_DIR: path.join(checkoutDir, '.turbo', 'release-cache'),
+    no_proxy: noProxy,
   }
 }
 
