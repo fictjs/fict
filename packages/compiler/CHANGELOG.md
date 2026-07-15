@@ -1,5 +1,53 @@
 # @fictjs/compiler
 
+## 0.29.0
+
+### Minor Changes
+
+- 192cf64: Add synchronous and worker-pool native transform methods with structured
+  malformed-input, parser, and contained-panic results.
+- 192cf64: Expose the structured diagnostic types used by the native compiler protocol,
+  including source spans, secondary labels, remediation, and guarantee classes.
+- 192cf64: Add the serializable module metadata snapshot types for native compilation,
+  including explicit resolved, opaque, missing, and incomplete-cycle states.
+- 192cf64: Add the experimental `@fictjs/compiler/native` loader for fail-closed selection
+  and validation of the Rust compiler platform package.
+- 192cf64: Add serializable native TypeScript compatibility options for namespaces, type
+  imports, enum optimization, class fields, and module-extension rewriting.
+- 192cf64: Expose the native compiler build ID through the platform binding so caches,
+  shadow comparisons, and whole-build rollback can reject mixed artifacts.
+- c8ab75e: Make the OXC/Rust compiler the package-root and Vite default for the 0.29.0
+  compatibility release while retaining explicit whole-build legacy rollback.
+- 192cf64: Add the Babel-free `@fictjs/compiler/graph-host` entrypoint for bundler-owned
+  module metadata resolution and persistence.
+- 192cf64: Expose lazy `transform`, `scan`, and `analyze` request functions from
+  `@fictjs/compiler/native`, backed by one validated OXC/Rust compiler binding
+  with no per-file legacy fallback.
+- 192cf64: Add the explicit `@fictjs/compiler/legacy` compatibility entrypoint and migrate
+  the Babel preset and Vite rollback path to it ahead of the Rust-default package
+  root transition.
+- 192cf64: Add the serializable native `CompileRequest` and `CompileResult` protocol types,
+  including source maps, compiler options, artifacts, explanations, and stats.
+
+### Patch Changes
+
+- 192cf64: Expose the Git revision embedded in controlled native compiler builds and bind
+  Rust rollout evidence to that exact revision before a candidate can be sealed.
+- 192cf64: Run complete native release certification for manual and tag workflows, retain
+  its machine-readable artifact, and require it before npm publication.
+- 192cf64: Return an explicit `null` native compiler revision for uncontrolled local builds
+  so the JavaScript loader accepts the documented local N-API metadata contract.
+- 192cf64: Require Rust-default approval to bind an intact 8-target by 2-Node native
+  certification to the exact consecutive rollout candidate source and build.
+- 192cf64: Bind the complete native runtime evidence matrix to the exact eight platform
+  bundles that the release job will publish.
+- 192cf64: Align the OXC runtime helper package with the exact OXC release compiled into
+  the native compiler, and fail release validation if the Rust and npm versions
+  drift again.
+- 192cf64: Block native compiler publication unless the complete 8-target by 2-Node
+  runtime matrix certifies one source revision, compiler build, package version,
+  and per-target bundle.
+
 ## 0.28.0
 
 ### Breaking Changes

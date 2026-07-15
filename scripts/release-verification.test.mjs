@@ -47,6 +47,10 @@ const zigRequirements = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const productionAudit = readFileSync(
+  new URL('./audit-production-dependencies.mjs', import.meta.url),
+  'utf8',
+)
 const turboConfig = JSON.parse(readFileSync(new URL('../turbo.json', import.meta.url), 'utf8'))
 const ssrPackage = JSON.parse(
   readFileSync(new URL('../packages/ssr/package.json', import.meta.url), 'utf8'),
@@ -62,6 +66,29 @@ test('release publishing uses one dependency-ordered publisher after native cert
   assert.match(releaseWorkflow, /node scripts\/publish-release-packages\.mjs/)
   assert.doesNotMatch(releaseWorkflow, /changeset publish/)
   assert.equal(rootPackage.scripts.release, 'pnpm release:plan --require-existing-packages')
+})
+
+test('tag publishing creates an evidence-bound idempotent GitHub Release after npm', () => {
+  const releaseJob = releaseWorkflow.indexOf('\n  release:')
+  const packagePublisher = releaseWorkflow.indexOf(
+    'name: Preflight and publish the dependency-ordered release set',
+  )
+  const githubRelease = releaseWorkflow.indexOf('name: Publish or verify GitHub Release')
+  assert.ok(releaseJob >= 0 && releaseJob < packagePublisher)
+  assert.ok(packagePublisher < githubRelease)
+
+  const releaseSource = releaseWorkflow.slice(releaseJob)
+  assert.match(releaseSource, /permissions:\n\s+contents: write\n\s+id-token: write/)
+  assert.match(releaseSource, /name: Download native release certification/)
+  assert.match(releaseSource, /name: fict-native-certification-\$\{\{ github\.sha \}\}/)
+  assert.match(releaseSource, /git rev-list -n 1 "\$\{GITHUB_REF_NAME\}"/)
+  assert.match(releaseSource, /test "\$\{tag_revision\}" = "\$\{GITHUB_SHA\}"/)
+  assert.match(releaseSource, /native-certification\.json/)
+  assert.match(releaseSource, /npm-publish-plan\.json/)
+  assert.match(releaseSource, /release-artifacts\.json/)
+  assert.match(releaseSource, /gh release view/)
+  assert.match(releaseSource, /gh release upload[\s\S]*?--clobber/)
+  assert.match(releaseSource, /gh release create[\s\S]*?--verify-tag[\s\S]*?--generate-notes/)
 })
 
 test('precommit and release verification retain the Preview maturity boundary gate', () => {
@@ -102,6 +129,20 @@ test('CI and release fail closed on advisories in both Rust lockfiles', () => {
   assert.match(ciWorkflow, /name: Audit locked Rust dependencies[\s\S]*?pnpm security:audit:rust/)
   assert.match(releaseWorkflow, /^\s+cargo audit --deny warnings$/m)
   assert.match(releaseWorkflow, /^\s+cargo audit --deny warnings --file fuzz\/Cargo\.lock$/m)
+})
+
+test('production audit uses the supported npm bulk advisory endpoint', () => {
+  assert.equal(
+    rootPackage.scripts['security:audit:prod'],
+    'node --test scripts/audit-production-dependencies.test.mjs && node scripts/audit-production-dependencies.mjs',
+  )
+  assert.match(productionAudit, /\/security\/advisories\/bulk/)
+  assert.doesNotMatch(rootPackage.scripts['security:audit:prod'], /pnpm audit/)
+  assert.match(ciWorkflow, /run: pnpm security:audit:prod/)
+  assert.match(
+    rootPackage.scripts['release:verify'],
+    /^pnpm security:audit:prod && pnpm security:audit:rust &&/,
+  )
 })
 
 test('CI and release use Node 24-compatible action majors', () => {

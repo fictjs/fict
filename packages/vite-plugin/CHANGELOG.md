@@ -1,5 +1,45 @@
 # @fictjs/vite-plugin
 
+## 0.29.0
+
+### Minor Changes
+
+- 192cf64: Add the native compiler beta and privacy-safe `shadow` Vite backend with
+  versioned difference allowlisting, CI candidate evidence, performance/RSS
+  budgets, and whole-build rollback verification. Announce the bounded
+  deprecation of the legacy-only Babel preset with one development warning per
+  process.
+- c8ab75e: Make the OXC/Rust compiler the package-root and Vite default for the 0.29.0
+  compatibility release while retaining explicit whole-build legacy rollback.
+
+### Patch Changes
+
+- 192cf64: Expose the Git revision embedded in controlled native compiler builds and bind
+  Rust rollout evidence to that exact revision before a candidate can be sealed.
+- 192cf64: Require Rust-default approval to bind an intact 8-target by 2-Node native
+  certification to the exact consecutive rollout candidate source and build.
+- 192cf64: Avoid evaluating Babel and the legacy compiler when Vite runs the Rust backend,
+  including cached TSX and structured Preview handler paths.
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [c8ab75e]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+  - @fictjs/compiler@0.29.0
+
 ## 0.28.0
 
 ### Breaking Changes

@@ -1,5 +1,37 @@
 # @fictjs/babel-preset
 
+## 0.29.0
+
+### Minor Changes
+
+- 192cf64: Add the native compiler beta and privacy-safe `shadow` Vite backend with
+  versioned difference allowlisting, CI candidate evidence, performance/RSS
+  budgets, and whole-build rollback verification. Announce the bounded
+  deprecation of the legacy-only Babel preset with one development warning per
+  process.
+
+### Patch Changes
+
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [c8ab75e]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+- Updated dependencies [192cf64]
+  - @fictjs/compiler@0.29.0
+
 ## 0.28.0
 
 ### Breaking Changes

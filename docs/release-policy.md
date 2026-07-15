@@ -55,7 +55,9 @@ API behavior changed.
 
 Before publishing:
 
-1. Run `pnpm version` to materialize package changelogs.
+1. Run `pnpm run version` to materialize package changelogs. The explicit
+   `run` is required because `pnpm version` invokes pnpm's built-in version
+   command instead of the repository's Changesets script.
 2. Review every changed `packages/*/CHANGELOG.md`.
 3. Reject placeholder entries such as `fix`, `update`, `fix fict`, or package
    names without behavior.
