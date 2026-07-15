@@ -292,12 +292,35 @@ then rerun the failed workflow.
 Do not push or move the release tag until the new package is no longer reported
 as `new-package` and its trusted publisher is configured.
 
-For the eight native compiler packages, manually dispatch `release.yml`. Manual
-dispatch builds and certifies the full matrix but deliberately skips the npm
-release job. Confirm that `fict-native-certification-<sha>` exists and reports
-all 16 certifications and eight matching bundles, then download every
-`fict-native-package-*` artifact, publish its `.tgz` once with an authenticated
-maintainer account and `--provenance=false`, and configure the same
-`release.yml` trusted publisher for each package. Run
-`pnpm release:plan --require-existing-packages` only after all eight names are
-visible. A partial bootstrap is not sufficient to tag a release.
+For the eight native compiler packages, use a successful manual `release.yml`
+run whose facade version is **already published**. Do not bootstrap artifacts at
+the version of a pending release: those binaries would not be built from the
+future tag revision. Download its `fict-native-certification-<sha>` and all eight
+`fict-native-package-*` artifacts into one directory, preserving each artifact
+subdirectory. The repository command validates the certification digest, exact
+revision, 16 runtime records, eight bundle hashes, size gates, package versions,
+and registry state before publishing anything:
+
+```bash
+# Dry run first. Use the SHA embedded by that successful manual workflow.
+pnpm release:bootstrap-native \
+  --artifacts /path/to/native-artifacts \
+  --certification /path/to/native-certification.json \
+  --expected-revision <40-character-workflow-sha>
+
+# npm trust requires npm >=11.15.0. Log in with a maintainer account and 2FA,
+# then explicitly publish missing names and configure release.yml trust.
+pnpm release:bootstrap-native \
+  --artifacts /path/to/native-artifacts \
+  --certification /path/to/native-certification.json \
+  --expected-revision <40-character-workflow-sha> \
+  --publish
+```
+
+The bootstrap publishes with `--provenance=false` only for names that do not
+exist, verifies any safely resumed version against the certified npm integrity,
+and configures `release.yml` trusted publishing for all eight packages. It
+rejects a certification version whose compiler facade is not already on npm,
+which prevents bootstrap from consuming the version reserved for a future tag.
+Run `pnpm release:plan --require-existing-packages` only after all eight names
+are visible. A partial bootstrap is not sufficient to tag a release.
