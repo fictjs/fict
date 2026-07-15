@@ -14,6 +14,7 @@ import {
 } from './compiler-consumer-evidence.mjs'
 
 const version = '0.30.0'
+const satelliteVersion = '0.28.2'
 const repositoryName = 'fictjs/real-consumer'
 const repositoryUrl = `https://github.com/${repositoryName}`
 const commitSha = 'a'.repeat(40)
@@ -24,6 +25,12 @@ const integrities = Object.fromEntries(
   REQUIRED_REAL_CONSUMER_PACKAGES.map((packageName, index) => [
     packageName,
     `sha512-${Buffer.from(`package-${index}`).toString('base64')}`,
+  ]),
+)
+const packageVersions = Object.fromEntries(
+  REQUIRED_REAL_CONSUMER_PACKAGES.map(packageName => [
+    packageName,
+    packageName === '@fictjs/ssr' ? satelliteVersion : version,
   ]),
 )
 
@@ -47,7 +54,7 @@ function fixture() {
     },
     dependencies: {
       '@fictjs/runtime': version,
-      '@fictjs/ssr': version,
+      '@fictjs/ssr': satelliteVersion,
       fict: version,
     },
     devDependencies: {
@@ -60,7 +67,7 @@ function fixture() {
 packages:
 ${REQUIRED_REAL_CONSUMER_PACKAGES.map(
   packageName =>
-    `  '${packageName}@${version}':\n    resolution: {integrity: ${integrities[packageName]}}`,
+    `  '${packageName}@${packageVersions[packageName]}':\n    resolution: {integrity: ${integrities[packageName]}}`,
 ).join('\n')}
 `
   const viteConfig = `import { defineConfig } from 'vite'
@@ -125,13 +132,13 @@ jobs:
         packageName,
         {
           versions: {
-            [version]: {
+            [packageVersions[packageName]]: {
               name: packageName,
-              version,
+              version: packageVersions[packageName],
               dist: { integrity: integrities[packageName] },
             },
           },
-          time: { [version]: '2026-07-31T10:00:00.000Z' },
+          time: { [packageVersions[packageName]]: '2026-07-31T10:00:00.000Z' },
         },
       ]),
     ),
@@ -159,6 +166,10 @@ test('builds one digest-bound record from a published Rust-default consumer', ()
   assert.equal(evidence.workflow.runAttempt, '2')
   assert.equal(evidence.project.path, projectPath)
   assert.equal(evidence.packages.length, REQUIRED_REAL_CONSUMER_PACKAGES.length)
+  assert.equal(
+    evidence.packages.find(packageEntry => packageEntry.name === '@fictjs/ssr').version,
+    satelliteVersion,
+  )
   assert.match(evidence.evidenceDigest, /^sha256:[0-9a-f]{64}$/)
 })
 
@@ -192,6 +203,17 @@ test('rejects links, overrides, ranges, cross-revision runs, and pre-publication
   assert.throws(
     () => buildCompilerConsumerEvidence(ranged),
     /must pin fict to exact release 0\.30\.0/,
+  )
+
+  const rangedSatellite = fixture()
+  const rangedSatelliteManifest = JSON.parse(
+    Buffer.from(rangedSatellite.files.manifest.content, 'base64').toString('utf8'),
+  )
+  rangedSatelliteManifest.dependencies['@fictjs/ssr'] = `^${satelliteVersion}`
+  rangedSatellite.files.manifest = fileDocument(JSON.stringify(rangedSatelliteManifest), 8)
+  assert.throws(
+    () => buildCompilerConsumerEvidence(rangedSatellite),
+    /must pin @fictjs\/ssr to one exact stable version/,
   )
 
   const crossRevision = fixture()

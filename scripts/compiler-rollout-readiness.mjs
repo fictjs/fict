@@ -10,11 +10,15 @@ import {
   NATIVE_COMPILER_TARGETS,
   nativeNodeVersionMatchesLane,
 } from './native-compiler-packages.mjs'
-import { REQUIRED_REAL_CONSUMER_PACKAGES } from './compiler-consumer-evidence.mjs'
+import {
+  REQUIRED_REAL_CONSUMER_CORE_PACKAGES,
+  REQUIRED_REAL_CONSUMER_PACKAGES,
+} from './compiler-consumer-evidence.mjs'
 import { assertCliArguments } from './strict-cli-arguments.mjs'
 import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const requiredRealConsumerCorePackages = new Set(REQUIRED_REAL_CONSUMER_CORE_PACKAGES)
 const REQUIRED_REVIEW_AREAS = [
   'coreSemantics',
   'strictGuarantee',
@@ -247,7 +251,9 @@ function assertRecordedConsumerEvidence(summary, version, workspaceRoot) {
         !packageEntry ||
         JSON.stringify(Object.keys(packageEntry).sort()) !==
           JSON.stringify(['integrity', 'name', 'publishedAt', 'version'].sort()) ||
-        packageEntry.version !== version ||
+        (requiredRealConsumerCorePackages.has(packageEntry.name)
+          ? packageEntry.version !== version
+          : !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(packageEntry.version ?? '')) ||
         !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(packageEntry.integrity ?? '') ||
         !Number.isFinite(Date.parse(packageEntry.publishedAt ?? '')) ||
         Date.parse(packageEntry.publishedAt) > Date.parse(entry.workflow.completedAt),

@@ -9,7 +9,10 @@ import { fileURLToPath } from 'node:url'
 
 import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
 import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
-import { REQUIRED_REAL_CONSUMER_PACKAGES } from './compiler-consumer-evidence.mjs'
+import {
+  REQUIRED_REAL_CONSUMER_CORE_PACKAGES,
+  REQUIRED_REAL_CONSUMER_PACKAGES,
+} from './compiler-consumer-evidence.mjs'
 import { NATIVE_COMPILER_NODE_LANES, NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
 const readinessScript = fileURLToPath(new URL('./compiler-rollout-readiness.mjs', import.meta.url))
@@ -156,7 +159,7 @@ function recordedConsumerEvidence(release, overrides = {}) {
     },
     packages: REQUIRED_REAL_CONSUMER_PACKAGES.map((name, index) => ({
       name,
-      version: release,
+      version: REQUIRED_REAL_CONSUMER_CORE_PACKAGES.includes(name) ? release : '0.28.2',
       integrity: 'sha512-QUJDRA==',
       publishedAt: `2026-07-${String(20 + index).padStart(2, '0')}T10:00:00.000Z`,
     })),

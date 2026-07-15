@@ -9,13 +9,18 @@ import { assertCliArguments } from './strict-cli-arguments.mjs'
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const registry = 'https://registry.npmjs.org'
-export const REQUIRED_REAL_CONSUMER_PACKAGES = [
+export const REQUIRED_REAL_CONSUMER_CORE_PACKAGES = [
   '@fictjs/compiler',
   '@fictjs/runtime',
-  '@fictjs/ssr',
   '@fictjs/vite-plugin',
   'fict',
 ].sort()
+export const REQUIRED_REAL_CONSUMER_SATELLITE_PACKAGES = ['@fictjs/ssr'].sort()
+export const REQUIRED_REAL_CONSUMER_PACKAGES = [
+  ...REQUIRED_REAL_CONSUMER_CORE_PACKAGES,
+  ...REQUIRED_REAL_CONSUMER_SATELLITE_PACKAGES,
+].sort()
+const requiredCorePackages = new Set(REQUIRED_REAL_CONSUMER_CORE_PACKAGES)
 const REQUIRED_PROJECT_SCRIPTS = ['build', 'typecheck', 'verify:compiler']
 
 function assertStableVersion(version) {
@@ -249,27 +254,40 @@ export function buildCompilerConsumerEvidence({
   )
 
   const packages = REQUIRED_REAL_CONSUMER_PACKAGES.map(packageName => {
-    if (requiredDependencyVersion(manifest, packageName) !== version) {
+    const declaredVersion = requiredDependencyVersion(manifest, packageName)
+    if (requiredCorePackages.has(packageName) && declaredVersion !== version) {
       throw new Error(`Real consumer must pin ${packageName} to exact release ${version}`)
     }
+    if (
+      !requiredCorePackages.has(packageName) &&
+      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(declaredVersion)
+    ) {
+      throw new Error(`Real consumer must pin ${packageName} to one exact stable version`)
+    }
+    const packageVersion = requiredCorePackages.has(packageName) ? version : declaredVersion
     const packument = packuments?.[packageName]
-    const published = packument?.versions?.[version]
+    const published = packument?.versions?.[packageVersion]
     if (
       published?.name !== packageName ||
-      published.version !== version ||
+      published.version !== packageVersion ||
       !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(published.dist?.integrity ?? '') ||
-      !Number.isFinite(Date.parse(packument?.time?.[version] ?? ''))
+      !Number.isFinite(Date.parse(packument?.time?.[packageVersion] ?? ''))
     ) {
       throw new Error(
-        `npm does not prove published real-consumer package ${packageName}@${version}`,
+        `npm does not prove published real-consumer package ${packageName}@${packageVersion}`,
       )
     }
-    assertLockfilePackage(decodedFiles.lockfile, packageName, version, published.dist.integrity)
+    assertLockfilePackage(
+      decodedFiles.lockfile,
+      packageName,
+      packageVersion,
+      published.dist.integrity,
+    )
     return {
       name: packageName,
-      version,
+      version: packageVersion,
       integrity: published.dist.integrity,
-      publishedAt: packument.time[version],
+      publishedAt: packument.time[packageVersion],
     }
   })
   if (

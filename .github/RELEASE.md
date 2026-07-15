@@ -142,10 +142,12 @@ pnpm release:evidence:consumer \
 ```
 
 Commit `.github/compiler-consumer-evidence/v0.30.0.json` separately. The
-collector requires exact published versions of `fict`, the runtime, SSR, Vite
-plugin, and compiler; binds each lockfile resolution to npm integrity; rejects
-legacy, shadow, backend overrides, and local links; and records file digests
-plus the successful GitHub Actions run. M9 must embed the matching release,
+collector requires the Core `fict`, runtime, Vite plugin, and compiler packages
+at the exact compatibility release. It also requires SSR at one exact published
+Satellite version without forcing it into Core lockstep. Every declared version
+is bound to its npm integrity and lockfile resolution; legacy, shadow, backend
+overrides, and local links are rejected. The record also binds file digests and
+the successful GitHub Actions run. M9 must embed the matching release,
 repository, commit, status, and evidence digest rather than a manual claim.
 
 Before entering `legacy-removal`, update the four exact stable release fields
