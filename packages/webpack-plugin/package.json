@@ -57,7 +57,7 @@
     "@fictjs/compiler": "workspace:*"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
+    "@babel/core": "^8.0.1",
     "@fictjs/babel-preset": "workspace:*",
     "@jridgewell/trace-mapping": "^0.3.31",
     "fict": "workspace:*",

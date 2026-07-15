@@ -149,7 +149,7 @@
   },
   "dependencies": {
     "@fictjs/compiler": "workspace:*",
-    "ws": "^8.21.0"
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

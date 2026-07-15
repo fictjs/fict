@@ -36,15 +36,15 @@
     "@babel/core": "^7.0.0-0"
   },
   "dependencies": {
-    "@babel/plugin-syntax-jsx": "^7.28.6",
-    "@babel/plugin-syntax-typescript": "^7.27.1",
-    "@babel/plugin-transform-modules-commonjs": "^7.28.6",
-    "@babel/plugin-transform-typescript": "^7.28.5",
+    "@babel/plugin-syntax-jsx": "^8.0.1",
+    "@babel/plugin-syntax-typescript": "^8.0.3",
+    "@babel/plugin-transform-modules-commonjs": "^8.0.1",
+    "@babel/plugin-transform-typescript": "^8.0.1",
     "@fictjs/compiler": "workspace:*",
     "@types/babel__core": "^7.20.5"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
+    "@babel/core": "^8.0.1",
     "tsdown": "^0.22.3"
   },
   "keywords": [
