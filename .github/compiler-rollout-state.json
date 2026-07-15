@@ -4,7 +4,7 @@
   "viteDefaultBackend": "rust",
   "rollbackBackend": "legacy",
   "rustDefaultRelease": "0.29.0",
-  "compatibilityRelease": null,
+  "compatibilityRelease": "0.30.0",
   "finalLegacyRelease": null,
   "legacyRemovalRelease": null,
   "candidateEvidencePath": ".github/compiler-rollout-evidence.json",
