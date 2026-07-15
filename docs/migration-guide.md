@@ -32,12 +32,12 @@ export default {
 
 The bounded compatibility line is explicit:
 
-| Release  | Compiler role                                                                                              |
-| -------- | ---------------------------------------------------------------------------------------------------------- |
-| `0.29.0` | First published Rust-default release; whole-build legacy rollback remains available.                       |
-| `0.30.0` | Subsequent stable compatibility minor; Rust remains the default and legacy remains release-blocking.       |
-| `0.30.1` | Final planned release of the Babel preset, `@fictjs/compiler/legacy`, and in-tree rollback implementation. |
-| `1.0.0`  | Planned breaking Rust-only release; rollback means pinning the whole application to `0.30.1`.              |
+| Release  | Compiler role                                                                                        |
+| -------- | ---------------------------------------------------------------------------------------------------- |
+| `0.29.0` | First published Rust-default release; whole-build legacy rollback remains available.                 |
+| `0.30.0` | Subsequent stable compatibility minor; Rust remains the default and legacy remains release-blocking. |
+| `0.30.1` | Final release of the Babel preset, `@fictjs/compiler/legacy`, and in-tree rollback implementation.   |
+| `1.0.0`  | Planned breaking Rust-only release; rollback means pinning the whole application to `0.30.1`.        |
 
 After installing the release, run this package-root smoke from the application
 directory. It proves that the selected platform binding is Rust and executes a
@@ -112,10 +112,10 @@ platform binding. Custom Babel pipelines that still
 need sibling plugins should run native Fict compilation as a separate first
 stage and compose source maps explicitly.
 
-`@fictjs/babel-preset` remains a tested whole-build legacy rollback during the
-compatibility window, but emits one development-time deprecation warning per
-process. Do not suppress that warning in committed configuration; migrate to an
-official Vite, Webpack, or direct native integration.
+`@fictjs/babel-preset@0.30.1` is the final tested whole-build legacy rollback,
+but emits one development-time deprecation warning per process. Do not suppress
+that warning in committed configuration; migrate to an official Vite, Webpack,
+or direct native integration before adopting `1.0.0`.
 
 Preview `resumable: true` is available with the Rust compiler through compiler-owned
 structured handler artifacts. It remains explicit and Preview; native support
