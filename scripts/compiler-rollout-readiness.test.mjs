@@ -878,7 +878,7 @@ test('rollout state evidence paths cannot escape the workspace', async t => {
   )
 })
 
-test('legacy removal requires a bound review and a completed stable minor window', async t => {
+test('pre-1.0 legacy removal allows the next stable minor with bound evidence', async t => {
   const evidence = candidateEvidence()
   const candidateReview = approvedReview(evidence)
   const state = {
@@ -888,7 +888,7 @@ test('legacy removal requires a bound review and a completed stable minor window
     rustDefaultRelease: '0.29.0',
     compatibilityRelease: '0.30.0',
     finalLegacyRelease: '0.30.1',
-    legacyRemovalRelease: '1.0.0',
+    legacyRemovalRelease: '0.31.0',
   }
   const removalEvidence = legacyRemovalEvidence(state)
   const removalReview = approvedRemovalReview(state, removalEvidence)
@@ -1172,6 +1172,22 @@ test('legacy removal rejects a same-major release after 1.0', async t => {
     () => validateCompilerRolloutReadiness({ root }),
     /later stable semver major release/,
   )
+})
+
+test('pre-1.0 legacy removal rejects patch and skipped-minor releases', async t => {
+  for (const legacyRemovalRelease of ['0.30.2', '0.31.1', '0.32.0']) {
+    const root = await fixture({
+      phase: 'legacy-removal',
+      viteDefaultBackend: 'rust',
+      rollbackBackend: 'rust',
+      rustDefaultRelease: '0.29.0',
+      compatibilityRelease: '0.30.0',
+      finalLegacyRelease: '0.30.1',
+      legacyRemovalRelease,
+    })
+    t.after(() => rm(root, { recursive: true }))
+    assert.throws(() => validateCompilerRolloutReadiness({ root }), /next stable pre-1\.0 minor/)
+  }
 })
 
 test('legacy removal rejects a patch release as the compatibility window', async t => {
