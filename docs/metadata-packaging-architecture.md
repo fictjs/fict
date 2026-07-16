@@ -40,10 +40,14 @@ The compiler owns the metadata format and source analysis.
 Responsibilities:
 
 - infer module metadata while compiling source;
-- emit per-module metadata when requested;
-- expose APIs such as `emitModuleMetadata`, `moduleMetadata`, and `resolveModuleMetadata`;
+- return versioned module metadata with each native transform result;
+- accept a serializable, bundler-owned metadata snapshot with each request;
 - keep metadata generation independent of Vite, Rollup, Webpack, tsdown, or esbuild;
-- fail closed for malformed metadata read from disk or packages.
+- expose a Node graph host that fails closed for malformed package metadata.
+
+The compiler does not read or write source-adjacent metadata sidecars. Graph
+state, package resolution, persistence, and cache invalidation belong to the
+integration host.
 
 The compiler should answer: **"What reactive API does this module expose?"**
 
@@ -51,7 +55,8 @@ It should not answer: **"How should this npm package publish every entrypoint?"*
 
 ### 2. Library build helper layer
 
-Fict should eventually provide an official library build integration, for example `@fictjs/library`, `@fictjs/build`, or a mode inside `@fictjs/vite-plugin`.
+Fict provides the official library build integration through
+`@fictjs/vite-plugin` library mode.
 
 Responsibilities:
 
@@ -79,7 +84,6 @@ export default {
   plugins: [
     fict({
       library: true,
-      metadata: true,
     }),
   ],
 }

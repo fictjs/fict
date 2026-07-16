@@ -1,124 +1,79 @@
 # @fictjs/vite-plugin
 
-![Node CI](https://github.com/fictjs/fict/workflows/CI/badge.svg)
-![npm](https://img.shields.io/npm/v/fict.svg)
-![license](https://img.shields.io/npm/l/fict)
-
-Vite plugin for Fict
-
-## Usage
+Official Vite integration for Fict's OXC/Rust compiler.
 
 ```bash
 npm install fict
-npm install -D @fictjs/vite-plugin
-# or
-yarn add fict
-yarn add -D @fictjs/vite-plugin
+npm install --save-dev @fictjs/vite-plugin
 ```
 
-You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
-
-Use `fict` as the runtime dependency for standard Fict apps. If you intentionally build directly on `@fictjs/runtime`, keep your source imports on that package family consistently.
-
-## Options
-
 ```ts
+import { defineConfig } from 'vite'
 import fict from '@fictjs/vite-plugin'
 
 export default defineConfig({
   plugins: [
     fict({
-      // Optional transform cache (memory + persistent disk cache)
       cache: { persistent: true },
-      // Optional TypeScript project integration
       useTypeScriptProject: true,
       tsconfigPath: './tsconfig.json',
-      // Optional plugin debug logs (or set FICT_VITE_PLUGIN_DEBUG=1)
-      debug: false,
-      // Optional override. Rust is the compatibility-window default.
-      backend: 'rust',
-      // Required for resumable builds only when no named package.json owns the Vite root
-      // publicIdentityNamespace: 'com.example.my-app',
-      // Allow $state/$effect inside reactive-scope callbacks (e.g., renderHook(() => ...))
+      strictGuarantee: true,
       reactiveScopes: ['renderHook'],
     }),
   ],
 })
 ```
 
-Core defaults:
+Fict 1.0 is Rust-only. The plugin has no `backend` or `shadow` option and does
+not read `FICT_COMPILER_BACKEND`, project Babel configuration, or the retired
+`@fictjs/babel-preset`. Native compiler load and transform failures fail the
+build. The only legacy recovery boundary is the complete application dependency
+set pinned to `0.30.1`.
 
-- `include`: `['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs', '**/*.mts', '**/*.cts']`
-- TypeScript declaration files (`.d.ts`, `.d.mts`, `.d.cts`) are never transformed.
-- `exclude`: `['**/node_modules/**']`
-- `useTypeScriptProject`: `true`
-- `cache`:
-  - enabled by default
-  - memory cache always on
-  - persistent cache defaults to `true` during `vite build`, otherwise in-memory only
-- `publicIdentityNamespace`: optional stable application namespace. Production
-  resumable output otherwise derives it from the owning package name, version,
-  and Vite-root subpath; a root with neither source fails closed before emitting
-  an ambiguous manifest.
+## Options
 
-The Rust backend owns an OXC-native whole-file compiler stage and does not load
-project `.babelrc` or `babel.config.*` files. The compatibility-window
-`legacy` backend and the delivered side of `shadow` use an isolated Babel pass.
-Custom Babel plugins must run as a separate stage; `@fictjs/babel-preset` is a
-deprecated legacy-only adapter and cannot mix Rust and Babel output in one
-build.
+Integration defaults:
 
-`0.30.1` is the final release that accepts `legacy` or `shadow` and the final
-release containing `@fictjs/babel-preset`. Fict `1.0.0` removes those selectors
-and is Rust-only. After upgrading to `1.0.0`, the rollback boundary is the whole
-application dependency set pinned to `0.30.1`; there is no per-file or
-environment-variable legacy fallback.
+- `include`: all `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts`, and
+  `.cts` modules;
+- declaration files are never transformed;
+- `exclude`: `['**/node_modules/**']`;
+- `useTypeScriptProject`: `true`;
+- `cache`: enabled in memory; persistent during `vite build` unless disabled;
+- `strictGuarantee`: fail closed by default and forced in production;
+- `functionSplitting`: enabled for production builds, used only with Preview
+  resumability;
+- `debug`: disabled; set `debug: true` or `FICT_VITE_PLUGIN_DEBUG=1` for plugin
+  diagnostics.
 
-## Native compiler default and shadow mode
+Native lowering options such as `strictReactivity`, `warningLevels`,
+`warningsAsErrors`, `lazyConditional`, `getterCache`, `fineGrainedDom`,
+`optimize`, `optimizeLevel`, `inlineDerivedMemos`, and `reactiveScopes` are
+accepted directly. `onWarn` and `explain` adapt structured native diagnostics
+for the Vite host.
 
-`backend` accepts `legacy`, `rust`, or `shadow`. Rust is the default;
-`FICT_COMPILER_BACKEND` selects the same mode for a whole build when no
-explicit option is present. Use `FICT_COMPILER_BACKEND=legacy` for rollback.
+`publicIdentityNamespace` provides a stable namespace for Preview resumable
+output when no named package boundary owns the Vite root. Normal Core builds do
+not need it.
 
-```ts
-fict({
-  backend: 'shadow',
-  shadow: {
-    reportPath: '.fict-cache/compiler-shadow.json',
-    allowlistPath: '.github/compiler-shadow-allowlist.json',
-    failOnDifference: true,
-  },
-})
-```
+Custom Babel or TypeScript transforms may run as separate downstream stages.
+They must not compile Fict reactivity, and source maps must be composed by the
+host. Decorator syntax is parsed and preserved by Fict; a downstream transform
+owns decorator runtime lowering.
 
-Shadow mode always returns the legacy result. It records only hashes and
-structured difference categories, never source, generated code, absolute
-paths, or project names. Unknown differences fail at `buildEnd` when
-`failOnDifference` is enabled; no individual module falls back.
+## Preview resumability
 
-The Rust backend supports Preview `resumable: true` through compiler-owned
-structured handler artifacts that Vite consumes without reparsing generated
-code. This support remains opt-in and Preview: it does not graduate resumability
-to Core or change the failure and degradation policy in
-[PREVIEW](../../docs/PREVIEW.md). See the repository
-[rollout](../../docs/features/rust-compiler-rollout/rollout.md),
-[degradation audit](../../docs/preview-degradation-audit.md), and
-[rollback runbook](../../docs/operations/runbooks/compiler-backend-rollback.md).
+`resumable: true` enables compiler-owned structured handler artifacts that Vite
+turns into virtual modules without reparsing generated code. This remains
+default-off Preview behavior and is excluded from the Core 1.0 compatibility
+promise. See [PREVIEW](../../docs/PREVIEW.md) and the
+[degradation audit](../../docs/preview-degradation-audit.md).
 
-Decorator syntax is parsed and preserved, not lowered: the plugin accepts the current standard
-2023-11 grammar (including auto-accessors and decorators on either side of `export`) and falls back
-to the legacy grammar for parameter decorators. Vite's TypeScript stage or another downstream
-transform must own decorator runtime lowering; JavaScript decorators therefore need an explicit
-downstream decorator transform when the surrounding Vite pipeline does not provide one.
+## Library publishing
 
-## Library Publishing
-
-Use `library: true` when building a third-party Fict hook library with Vite library mode:
+Use `library: true` when publishing a third-party Fict hook library:
 
 ```ts
-import { defineConfig } from 'vite'
-import fict from '@fictjs/vite-plugin'
-
 export default defineConfig({
   build: {
     lib: {
@@ -135,27 +90,12 @@ export default defineConfig({
 
 Library mode:
 
-- compiles `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts`, and `.cts` source by default;
-- collects compiler-generated module metadata from transformed entry chunks;
-- emits `*.fict.meta.json` files into the build output;
-- updates the package `package.json` with `fict.metadata` for one public entry or `fict.exports` for multiple public entries.
-- warns when a public entry emits no Fict metadata and fails package declaration writing when generated metadata cannot be mapped to `exports`, `module`, or `main`.
-
-The package mapping is inferred from existing `package.json#exports`, `module`, and `main` fields. For example:
-
-```json
-{
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    },
-    "./hooks": "./dist/hooks.js"
-  }
-}
-```
-
-after `vite build` becomes:
+- compiles public entry modules with the native compiler;
+- emits versioned `*.fict.meta.json` assets into the build output;
+- writes `package.json#fict.metadata` for one public entry or
+  `package.json#fict.exports` for multiple entries;
+- warns when an entry produces no metadata and fails when a generated asset
+  cannot be mapped to a public package entry.
 
 ```json
 {
@@ -168,63 +108,29 @@ after `vite build` becomes:
 }
 ```
 
-Options:
+Configure output placement or package mutation when another release tool owns
+the manifest:
 
 ```ts
 fict({
   library: {
-    // Emit metadata files under dist/fict-meta instead of next to each entry chunk.
     metadataDir: 'fict-meta',
-    // Set false when another release script owns package.json mutation.
     packageJson: false,
   },
 })
 ```
 
-Compiler option passthrough:
+The retired root `fictMetadata` field and unversioned metadata are not consumed
+by 1.0. See [Third-party Fict libraries](../../docs/third-party-libraries.md).
 
-- This plugin forwards compiler options directly (for example: `strictGuarantee`, `strictReactivity`, `lazyConditional`, `emitModuleMetadata`, `warningLevels`, `reactiveScopes`).
-- Current compiler default is `strictGuarantee: true` (fail-closed).
-- Production builds force-enable `strictGuarantee` when `NODE_ENV=production`; use opt-out profiles only outside production.
+## Runtime behavior
 
-Runtime dev/prod define:
+- `__DEV__` is defined automatically from the Vite command/mode.
+- Fict-transformed modules trigger a full reload during development so the
+  generated reactive graph starts from a clean module instance.
+- tsconfig changes reset the TypeScript project and transform cache.
+- extracted Preview handlers keep compiler-provided source maps and explicit
+  imports for captured module bindings.
 
-- The plugin defines `__DEV__` automatically:
-  - `true` in dev server
-  - `false` in production build
-
-HMR behavior:
-
-- Fict-transformed source modules intentionally trigger a full reload in dev so the compiler-generated reactive graph is rebuilt from a clean module instance.
-- `tsconfig` changes reset the TypeScript project and transform cache before the next transform.
-- See `docs/tooling-runtime-matrix.md` for the v1.0 tooling release gate.
-
-Function splitting:
-
-- Production builds extract compiler-generated event handlers into virtual handler modules when `functionSplitting` is enabled.
-- Runtime helper imports in those virtual modules are self-contained and use the same package family as the source module (`fict` or `@fictjs/runtime`).
-- If an extracted handler closes over a module-local helper, component, constant, or import, the source module keeps that binding and re-exports it under a generated private `__fict_dep_` name. The virtual handler imports that private dependency from the source module.
-- Because of that local dependency contract, handler chunks are not always fully independent from their source module. A handler with no module-local dependencies can split at handler granularity; a handler with local dependencies may load the source module when the handler chunk runs.
-
-Recommended profiles:
-
-```ts
-// Strict app/CI baseline
-fict({
-  strictGuarantee: true,
-})
-
-// Non-production migration / benchmark compatibility
-fict({
-  strictGuarantee: false,
-  emitModuleMetadata: false,
-  dev: false,
-})
-```
-
-Notes:
-
-- `reactiveScopes` only applies to **direct calls** and only treats the **first argument** as the reactive callback.
-- Aliased/indirect calls are not recognized (e.g., `const rh = renderHook; rh(() => ...)`).
-- Cross-module metadata lookup is filesystem-based (relative/absolute/alias/ts resolution). Bare package imports can opt in by publishing `fict.metadata` or `fict.exports` in `package.json`; see `docs/third-party-libraries.md`.
-- `debug` logs are disabled by default; enable with `debug: true` or `FICT_VITE_PLUGIN_DEBUG=1`.
+For operational rollback, restore a complete 0.30.1 lockfile; see the
+[compiler rollback runbook](../../docs/operations/runbooks/compiler-backend-rollback.md).

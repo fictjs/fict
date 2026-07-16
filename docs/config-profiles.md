@@ -15,11 +15,14 @@ Current `@fictjs/compiler` defaults:
 - `optimize: true`
 - `optimizeLevel: 'safe'`
 - `inlineDerivedMemos: true`
-- `emitModuleMetadata: 'auto'`
 - `strictGuarantee: true`
 - `NODE_ENV=production` force-enables `strictGuarantee` even when options request opt-out
 - `strictReactivity: false`
 - `dev: NODE_ENV !== 'production' && NODE_ENV !== 'test'`
+
+Official bundler integrations keep module metadata in their graph and consume
+versioned metadata published by third-party packages. The 1.0 compiler does not
+write source-adjacent or `.fict-cache/metadata` sidecars.
 
 ## Recommended Profiles
 

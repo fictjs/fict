@@ -14,7 +14,6 @@
       "@fictjs/compiler-linux-x64-musl",
       "@fictjs/compiler-win32-arm64-msvc",
       "@fictjs/compiler-win32-x64-msvc",
-      "@fictjs/babel-preset",
       "@fictjs/vite-plugin",
       "@fictjs/eslint-plugin"
     ],
@@ -37,10 +36,7 @@
           "subpath": "./experimental/loader"
         }
       ],
-      "optIns": [
-        "FictCompilerOptions.resumable=true",
-        "RenderToStringOptions.includeSnapshot=true"
-      ],
+      "optIns": ["FictPluginOptions.resumable=true", "RenderToStringOptions.includeSnapshot=true"],
       "stableAlternative": "Use client rendering or hydration, and use @fictjs/ssr without includeSnapshot for supported SSR output.",
       "graduation": {
         "apiShapeFrozen": false,

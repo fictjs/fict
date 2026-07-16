@@ -4,9 +4,9 @@ Webpack 5 integration for the Fict compiler. The plugin and loader cooperate so 
 metadata is available before importers receive their final transform, including cold builds and
 circular module graphs.
 
-This is the supported Rust replacement for `@fictjs/babel-preset`. Version
-`0.30.1` is the final release of the preset and in-tree legacy compiler; Fict
-`1.0.0` removes them. Do not configure the preset alongside this loader.
+Fict 1.0 requires this native integration for Webpack. Version `0.30.1` is the
+final release of the retired preset and in-tree TypeScript compiler; neither is
+part of the 1.0 package graph.
 
 ```js
 const { FictWebpackPlugin } = require('@fictjs/webpack-plugin')
@@ -34,7 +34,7 @@ resumability manifest. The loader therefore rejects `resumable: true` and user-p
 a Webpack deployment. Use `@fictjs/vite-plugin` for resumable builds.
 
 If another Babel transform is needed, place its loader to the left of the Fict loader so it runs
-after Fict compilation. Do not also configure `@fictjs/babel-preset` in that Babel loader.
+after Fict compilation. That stage must not compile Fict reactivity.
 This is also the required handoff for decorators: Fict accepts and preserves current standard
 decorators and legacy parameter decorators, while the downstream Babel or TypeScript loader owns
 their runtime lowering.

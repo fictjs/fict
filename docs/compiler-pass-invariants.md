@@ -1,145 +1,103 @@
 # Compiler Pass Invariants
 
-This document records the maintenance contract between the compiler passes. It
-is not a user-facing language spec. Use it when changing HIR, SSA, region
-lowering, optimization, codegen, diagnostics, or cache behavior.
+This is the maintenance contract between the Rust compiler passes. User-facing
+language behavior remains in the compiler spec and guarantee matrix.
 
-## Pipeline Contract
+## Pipeline contract
 
-The compiler pipeline has one directional ownership rule: an earlier pass may
-attach metadata for later passes, but a later pass must not depend on hidden
-state from an earlier implementation detail. If a later pass needs a fact, that
-fact must be represented in HIR metadata, pass options, or an explicit analysis
-result.
+The pipeline is directional: OXC syntax/semantic data is adapted into Fict-owned
+IR, verified between analysis stages, and converted back to an OXC output AST
+only after all fail-closed checks pass. Later passes must not depend on hidden
+state from an earlier implementation detail.
 
-The default production posture is fail closed. A pass that cannot preserve
-reactive semantics must emit a diagnostic or throw a typed `HIRError`; it must
-not silently freeze a derived value, reorder observable effects, drop DOM data,
-or fall back to a stale cache artifact.
+No OXC arena reference may escape a request. Filesystem resolution, package
+metadata, caches, and bundler objects remain in the JavaScript host.
 
-## Pass Responsibilities
+## Pass responsibilities
 
-### Parse And HIR Build
+### Parse and OXC adapter
 
-- Input: Babel AST.
-- Output: `HIRProgram` with statement order, lexical declarations, JSX shape,
-  source locations, and macro markers preserved.
-- Invariants:
-  - Source statement order is authoritative for observable effects.
-  - Temporary names are deterministic per build and reset between independent
-    `buildHIR` calls.
-  - Destructuring, loops, catch bindings, and function/class scopes must produce
-    explicit HIR declarations or metadata for downstream shadowing checks.
-- Failure mode: throw `HIRError` with `BUILD_ERROR`.
-- Required tests: HIR builder tests for new syntax lowering and any resettable
-  build-scoped counters.
+- Input: source, filename/language/module kind, and serializable options.
+- Output: OXC syntax/semantic facts plus Fict-owned HIR with stable source
+  origins.
+- Preserve directives, comments, statement order, lexical ownership, JSX
+  shape, TypeScript/CTS semantics, and macro identity.
+- Rebuild semantic information after syntax-changing TypeScript passes.
+- Parse or adaptation failure returns structured diagnostics and no partial
+  output.
 
-### SSA And CFG
+### CFG and SSA
 
-- Input: structured HIR blocks.
-- Output: SSA-versioned HIR with CFG predecessor/successor relationships.
-- Invariants:
-  - Every Phi source must correspond to a real predecessor block.
-  - SSA names keep their original base names via `$$ssa` suffixes only.
-  - Debug-only warnings are not enough for malformed CFG or Phi state.
-- Failure mode: throw `HIRError` with `SSA_ERROR`.
-- Required tests: malformed CFG/Phi tests plus behavior tests for any branch,
-  loop, or exception-flow change.
+- Every Phi source corresponds to a real predecessor.
+- Declaration identity respects lexical shadowing across branches, loops,
+  closures, classes, and namespace segments.
+- Block/node limits and fixed-point iteration budgets fail closed.
+- Visible iteration and generated identities are deterministic across process,
+  thread count, and platform.
 
-### Scope And Region Analysis
+### Reactivity, scope, and region analysis
 
-- Input: HIR, normally after SSA for control-flow-aware dependency analysis.
-- Output: explicit reactive scopes, dependencies, declarations, effects, and
-  control-flow metadata.
-- Invariants:
-  - Branch-local declarations remain branch-local unless a later merge point
-    explicitly writes an outer binding.
-  - Reads used for reactivity are base-name normalized, but declaration
-    identity still respects lexical shadowing.
-  - Region grouping must preserve source-relative order around ordinary
-    statements with observable effects.
-- Failure mode: emit a strict diagnostic for unsupported reactive guarantees or
-  throw a typed `HIRError` for internal inconsistency.
-- Required tests: jsdom integration tests for observable UI/runtime behavior,
-  not only HIR snapshots.
+- Reads, writes, escapes, hook shapes, effects, control flow, and runtime-helper
+  intent are explicit IR facts.
+- Branch-local declarations remain local unless a verified merge writes an
+  outer binding.
+- Unsupported guarantee shapes emit stable `FICT-*` diagnostics; they are not
+  silently frozen or downgraded in production.
+- Cross-module facts come only from the request metadata snapshot.
 
 ### Optimizer
 
-- Input: HIR plus pass options.
-- Output: semantically equivalent HIR.
-- Invariants:
-  - Optimizations are allowed only when purity, shadowing, and writes are known.
-  - Constant propagation, CSE, inlining, DCE, and Phi elimination must preserve
-    observable evaluation count and order.
-  - Fixed-point passes must fail closed when they do not converge within their
-    guard budget.
-  - `strictMacroBindings` and reactive macro metadata are part of optimizer
-    purity decisions.
-- Failure mode: throw `HIRError` with `OPTIMIZE_ERROR` for internal optimizer
-  guard failures.
-- Required tests: focused optimizer tests plus integration coverage when a pass
-  can affect generated DOM or effect ordering.
+- Constant propagation, CSE, inlining, DCE, and Phi elimination require proven
+  purity/ownership and preserve evaluation count and order.
+- `safe` mode avoids algebraic rewrites that can alter JavaScript semantics.
+- A pass that does not converge within its budget is an internal compiler error,
+  not best-effort output.
 
-### Region Lowering And Codegen
+### EmitIR and code generation
 
-- Input: analyzed HIR, region metadata, diagnostics, and compiler options.
-- Output: JavaScript/TypeScript AST and runtime helper imports.
-- Invariants:
-  - Runtime hooks are emitted only in render-safe locations.
-  - Conditional paths must not lazily create a hook slot after render execution.
-  - Plain branch-local derived values may be lowered as plain expressions when
-    they do not need cross-render identity.
-  - If strict diagnostics reject a shape, codegen must not also rely on an
-    unsupported best-effort runtime fallback for production builds.
-  - Duplicate user data such as keyed list entries must not be silently dropped.
-- Failure mode: emit the relevant `FICT-*` diagnostic or throw `HIRError` with
-  `CODEGEN_ERROR`.
-- Required tests: compiler integration tests that compile and execute generated
-  code in jsdom for branch, list, event, async, and store behavior.
+- Only verified IR reaches output construction.
+- Runtime hooks appear only in render-safe locations and helper imports match
+  the runtime ABI.
+- Metadata, diagnostics, artifacts, and source maps refer to authored source
+  origins.
+- Preview handler modules are structured artifacts; integrations do not reparse
+  main output to discover them.
+- Duplicate list data and unsupported mutations must not be silently dropped.
 
-### Cache Fingerprint
+### Host cache and metadata
 
-- Input: compiler artifact paths, source-root discovery, and package version.
-- Output: persistent cache key components.
-- Invariants:
-  - Source-mode compiler fingerprints include every `src/**/*.ts` and
-    `src/**/*.tsx` artifact that can change compiler output.
-  - Distribution-mode fingerprints include the published artifact content.
-  - A cache key must prefer false misses over false hits.
-- Failure mode: disable or miss the cache rather than reusing a stale compiler
-  artifact.
-- Required tests: source-mode path remapping tests that mutate nested compiler
-  files such as `ir/regions.ts`, `ir/codegen.ts`, and `ir/optimize.ts`.
+- Cache keys include compiler build ID, protocol/cache schema, source/options,
+  graph metadata fingerprint, TypeScript configuration, and integration
+  artifact fingerprint.
+- Unknown or malformed cache records fail closed; old records are ignored, not
+  upgraded in place.
+- Versioned package metadata is read only through declared
+  `package.json#fict.metadata` / `fict.exports` boundaries.
+- The compiler does not read or write source-adjacent Babel sidecars.
+- False misses are preferable to false hits.
 
-## Large-File Refactor Policy
+## Complexity policy
 
-The largest compiler files are allowed only as a tracked baseline. New compiler
-work should not make them larger unless the change is a narrow bug fix that
-would be riskier to split. When practical, extract cohesive helpers into files
-named after their ownership boundary, for example `codegen-*`, `optimizer-*`,
-or `region-*`.
+TypeScript is a thin request/graph host. Its budget should shrink when old
+compatibility code is removed and must not grow to reimplement compiler passes.
+Rust crate and largest-file budgets are independently enforced and may not be
+relaxed to absorb unrelated work. Extract helpers along crate/pass ownership
+boundaries and document any intentional budget change.
 
-Before extracting a helper, identify which pass owns each input fact and output
-fact. If a helper needs both region analysis and codegen context, prefer an
-explicit parameter object over importing unrelated pass internals.
+## Verification
 
-Duplicate AST/HIR walkers are tolerated only when their semantics differ. If a
-new walker is added, document whether it is collecting reads, writes, purity,
-dependencies, generated names, or shadowing; do not reuse a read walker for a
-write-sensitive pass without tests.
-
-## Verification Checklist
-
-For compiler behavior changes, run the smallest focused test first, then the
-release gate relevant to the affected pass:
+Run the smallest focused test first, then the applicable release gates:
 
 ```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
 pnpm -C packages/compiler typecheck
 pnpm -C packages/compiler test
 pnpm guardrails:compiler-complexity
-pnpm guardrails:hir
-pnpm bench:optimizer:guard
+pnpm guardrails:rust-crates
+pnpm release:compiler:verify
 ```
 
-Use `pnpm release:compiler:verify` before release-oriented compiler changes or
-when a change crosses HIR, optimizer, region lowering, and codegen boundaries.
+Protocol, ABI, package, bundler, fuzz, source-map, or platform changes require
+the complete clean-checkout release verification and native certification.

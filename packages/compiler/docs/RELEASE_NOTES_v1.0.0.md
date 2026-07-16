@@ -1,65 +1,52 @@
 # @fictjs/compiler v1.0.0 Release Notes (Draft)
 
-Date: February 6, 2026
-Status: Release Candidate
+Status: release candidate
 
-## Scope
+## Rust-only compiler
 
-This release finalizes the compiler's HIR/CFG pipeline for v1.0 with a focus on correctness, diagnostics, and release quality gates.
+Fict 1.0 completes the compiler ownership transition. The package root is the
+OXC/Rust request facade and exposes synchronous/asynchronous transform, scan,
+analysis, diagnostics, source maps, artifacts, metadata, stats, and native build
+information.
 
-## Highlights
+## Breaking removals
 
-- Fixed validation aggregation gaps for nested functions and callback contexts.
-  - `validateFunction` now preserves ancestor chains for nested callbacks.
-  - Hook conditional/loop checks are scoped to the current function boundary.
-  - Nested function traversal is isolated to avoid cross-function false positives.
-- Strengthened validation coverage for:
-  - conditional hook checks (`FICT-C001/C002`)
-  - list key diagnostics in mapped JSX (`FICT-J002`)
-  - composite diagnostics aggregation (`FICT-X003`)
-- Removed all `@typescript-eslint/no-explicit-any` usage in compiler source.
-  - This tightened type safety across build/lower/SSA/region/optimizer paths.
+- removed the in-tree TypeScript/Babel compiler and old IR;
+- removed `@fictjs/compiler/legacy` and `createFictPlugin`;
+- retired `@fictjs/babel-preset` after its final 0.30.1 release;
+- removed Vite `legacy` / `rust` / `shadow` selection and
+  `FICT_COMPILER_BACKEND`;
+- made the Webpack native loader mandatory;
+- removed source-adjacent Babel metadata and old cache-schema readers;
+- removed differential, shadow, candidate, and code-level rollback harnesses.
 
-## Engineering Quality Outcome
+Metadata returned by the compiler and published by libraries must carry the
+versioned Rust schema. Package declarations use `package.json#fict.metadata` or
+`package.json#fict.exports`.
 
-Compiler package quality gates now pass cleanly:
+## Migration
 
-- `pnpm --dir packages/compiler lint`: pass (0 warnings, 0 errors)
-- `pnpm --dir packages/compiler typecheck`: pass
-- `pnpm --dir packages/compiler test`: pass (55 test files, 891 tests)
+Upgrade a complete Fict dependency set from 0.30.1, remove preset/legacy/backend
+configuration, clear generated output and application-owned compiler/bundler
+caches, then run the native binding smoke in
+[`docs/migration-guide.md`](../../../docs/migration-guide.md).
 
-## Key Internal Areas Hardened
+There is no code-level rollback after 1.0. Recovery means restoring a complete,
+previously verified application release pinned to the 0.30.1 compatibility
+unit.
 
-- Validation pipeline
-  - `packages/compiler/src/validation.ts`
-  - `packages/compiler/test/validation.test.ts`
-- HIR/IR implementation and lowering
-  - `packages/compiler/src/ir/build-hir.ts`
-  - `packages/compiler/src/ir/regions.ts`
-  - `packages/compiler/src/ir/ssa.ts`
-  - `packages/compiler/src/ir/codegen.ts`
-  - `packages/compiler/src/ir/optimize.ts`
-- Supporting analysis/transforms
-  - `packages/compiler/src/ir/scopes.ts`
-  - `packages/compiler/src/ir/shapes.ts`
-  - `packages/compiler/src/ir/structurize.ts`
-  - `packages/compiler/src/region-grouping.ts`
-  - `packages/compiler/src/transform-expression.ts`
-  - `packages/compiler/src/index.ts`
+## Release gates
 
-## Release Gate Requirements
+```bash
+pnpm test:compiler:rollout-state
+pnpm test:api-boundaries
+pnpm guardrails:compiler-complexity
+pnpm guardrails:rust-crates
+pnpm release:compiler:verify
+pnpm release:verify:clean
+```
 
-Before publishing this package:
+Publication also requires the digest-bound M9 evidence/review, complete native
+certification, npm provenance, and the GitHub Release workflow.
 
-1. `BENCH_OUTPUT=/tmp/fict-optimizer-bench.json pnpm release:compiler:verify`
-2. Confirm no new failing diagnostics in `packages/compiler/test/validation.test.ts`
-3. Confirm benchmark guardrails pass:
-   - `pnpm guardrails:hir`
-   - `BENCH_OUTPUT=/tmp/fict-optimizer-bench.json pnpm bench:optimizer:guard`
-4. Attach or retain the raw optimizer benchmark JSON from `BENCH_OUTPUT` with the
-   release evidence.
-
-## Notes
-
-- This document is intentionally separate from Changesets-managed `CHANGELOG.md`.
-- Final version number and changelog entries should continue to be produced through the Changesets release flow.
+This document is separate from the Changesets-managed `CHANGELOG.md`.

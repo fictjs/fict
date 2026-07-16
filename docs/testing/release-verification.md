@@ -16,7 +16,6 @@ A release candidate MUST pass from committed source in a detached checkout. Loca
 The authoritative command is:
 
 ```bash
-export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
 pnpm release:verify:clean
 ```
 
@@ -48,4 +47,8 @@ The JavaScript tarball gate also MUST reject unresolved `workspace:` dependency 
 
 ## Human review focus
 
-Before tagging, a release owner MUST review the final command exit status, the optimizer benchmark artifact, and any warnings emitted while packing or installing the consumer project. Changes to package `exports`, the publish allowlist, SSR matrix membership, or Playwright coverage deserve focused review even when automation passes.
+Before tagging, a release owner MUST review the final command exit status, the
+Rust complexity/performance/RSS evidence, native certification, and any warnings
+emitted while packing or installing the consumer project. Changes to compiler
+protocols, package `exports`, the publish allowlist, SSR matrix membership, or
+Playwright coverage deserve focused review even when automation passes.

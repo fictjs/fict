@@ -91,7 +91,8 @@ This is visible in the current codebase:
 2. Compile-time placement constraints:
    - Macro placement is validated; loops/conditionals/nested contexts are restricted according to compiler rules (`packages/compiler/src/index.ts`, `docs/compiler-spec.md`).
 3. IR and lowering pipeline:
-   - HIR build, optimization, and lowering stages exist in `packages/compiler/src/ir/*`.
+   - HIR, reactivity, optimization, and emission stages live in the Rust crates
+     under `crates/fict-hir`, `crates/fict-reactivity`, and `crates/fict-emit`.
 4. Runtime graph model:
    - Signal/computed/effect propagation is implemented in `packages/runtime/src/signal.ts`.
 5. Local list reconciliation still exists:
@@ -291,10 +292,11 @@ pnpm stress:runtime
 pnpm stress:runtime:long
 ```
 
-6. Compiler optimization regression guard:
+6. Compiler architecture and release guard:
 
 ```bash
-pnpm bench:optimizer:guard
+pnpm guardrails:rust-crates
+pnpm release:compiler:verify
 ```
 
 7. Reporting minimums:

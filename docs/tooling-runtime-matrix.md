@@ -31,7 +31,7 @@ The command set covers:
 | Vite library mode   | Metadata emission, package declaration, and fingerprinting | Required       |
 | Vite SSR app        | Basic and streaming SSR example builds                     | Required       |
 | Webpack app example | `examples/counter-webpack` production build                | Required       |
-| Other bundlers      | Use Babel preset/compiler directly; no release gate yet    | Not guaranteed |
+| Other bundlers      | Build a host around the serializable native request API    | Not guaranteed |
 
 ## HMR Contract
 

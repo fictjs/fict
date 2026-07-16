@@ -1,7 +1,7 @@
 ---
 type: architecture
 title: Fict Rust Compiler Architecture
-description: Stable ownership, dependency, compatibility, and rollout boundaries for replacing the Babel compiler with an OXC-native Rust compiler.
+description: Stable ownership, dependency, compatibility, and release boundaries for Fict's OXC-native Rust compiler.
 owner: unadlib
 status: accepted
 risk_level: critical
@@ -12,12 +12,11 @@ tags: [compiler, rust, oxc, napi, migration]
 
 ## Purpose
 
-Fict will replace its Babel/TypeScript compiler implementation with an
-OXC-native Rust compiler while preserving the language, runtime, diagnostics,
-metadata, and strict-guarantee contracts already owned by the repository. The
-migration exists to make compiler state explicit, remove Babel AST coupling,
-improve deterministic performance, and give every compiler pass a verifiable
-typed boundary.
+Fict 1.0 uses an OXC-native Rust compiler for the language, runtime diagnostic,
+metadata, and strict-guarantee contracts owned by the repository. The completed
+migration made compiler state explicit, removed Babel AST coupling, improved
+deterministic performance, and gave every compiler pass a verifiable typed
+boundary.
 
 The language contract remains in [Compiler Spec](../compiler-spec.md), the
 reactivity classifications remain in the
@@ -38,8 +37,8 @@ it does not redefine those semantics.
 - Existing compiler/runtime ABI, metadata v1, diagnostic policy, and
   `strictGuarantee` behavior MUST remain compatible until changed through their
   existing contract processes.
-- A build MUST use one compiler backend, build identifier, runtime ABI, and
-  metadata schema. Per-file fallback is forbidden.
+- A build MUST use one compiler build identifier, runtime ABI, and metadata
+  schema. Per-file fallback is forbidden.
 - Promotion and release binaries MUST embed the exact Git source revision; all
   rollout evidence MUST report that same revision before a candidate can be
   sealed. Local builds MAY omit it but cannot become promotion evidence.
@@ -66,7 +65,7 @@ flowchart TB
   subgraph Host[JavaScript integration host]
     API[@fictjs/compiler facade]
     Graph[Bundler resolver and module graph]
-    Cache[Disk cache and sidecars]
+    Cache[Bundler cache and package metadata assets]
     Tools[Vite Webpack Playground VSCode]
   end
 
@@ -118,8 +117,8 @@ boundary checks and integration tests MUST enforce the host/native split.
 - Vite/Webpack filters, virtual modules, query/fragment identity, alias and
   package resolution;
 - module graph SCC convergence and resolved metadata snapshots;
-- watch dependencies, HMR policy, cache files, sidecars, package metadata
-  assets, and release integration;
+- watch dependencies, HMR policy, bundler cache files, package metadata assets,
+  and release integration;
 - compatibility callbacks such as `onWarn` and application of compiler results
   to bundler APIs;
 - loading the correct prebuilt native package for the current platform.
@@ -187,35 +186,24 @@ segments, exported/internal binding ownership, mutable export synchronization,
 metadata paths, source order, and origins. A verifier MUST reject an unresolved
 namespace reference or write rather than silently emit a best-effort result.
 
-Verification: the existing TypeScript/CTS/namespace fixtures run through both
-backends during migration and become Rust conformance tests before legacy
-removal.
+Verification: TypeScript/CTS/namespace fixtures are Rust conformance tests and
+the native fuzz target exercises the same request pipeline.
 
-## Compatibility and rollout
+## Compatibility and release
 
-The JavaScript facade exposes build-level `legacy`, `rust`, and CI-only
-`shadow` modes during migration. Shadow mode returns the legacy result while
-recording structured differences in diagnostics, metadata, normalized IR,
-helper sets, runtime behavior, and source-map probes. It MUST NOT transmit
-source or absolute paths.
+The compatibility sequence is complete: `0.29.0` introduced the published Rust
+default, `0.30.0` completed the subsequent stable minor, `0.30.1` was the final
+legacy/preset release, and `1.0.0` removes the second implementation. The 1.0
+facade has no backend selector, shadow path, Babel dependency, or `./legacy`
+export.
 
-Rollout proceeds in this order:
+The coordinated scope change is defined by
+[ADR-0003](../adr/0003-retire-babel-preset.md). Preview graduation remains a
+separate decision.
 
-1. ship an opt-in native backend with legacy as default;
-2. enable shadow comparison in CI and representative applications;
-3. switch Vite/Core builds to Rust after all semantic and release gates pass;
-4. migrate Webpack and direct compiler consumers;
-5. remove the legacy compiler and Babel production dependencies after the
-   compatibility window;
-6. graduate Preview separately.
-
-The compatibility window and coordinated Core scope change are defined by
-[ADR-0003](../adr/0003-retire-babel-preset.md). The preset remains a tested
-legacy-only adapter during that window; it is never an in-place Rust bridge.
-
-A rollback changes the backend for the whole build, invalidates compiler and
-metadata caches, and performs a full rebuild. Rust-generated sidecars or
-Preview artifacts MUST NOT be reused by a legacy rebuild.
+After 1.0, rollback means restoring a complete 0.30.1 application release and
+its lockfile. Compiler/runtime packages, generated output, package metadata,
+bundler caches, and Preview artifacts MUST NOT be mixed across that boundary.
 
 ## Performance and resource policy
 
@@ -232,9 +220,9 @@ fixed-point iterations. Each request owns its OXC allocator; AST and semantic
 references MUST NOT enter global caches. Parallel requests MUST produce the
 same observable result as sequential requests.
 
-Verification: compiler differential benchmarks, HIR/output guardrails, repeated
-thread-count comparisons, fuzz targets, native bundle size evidence, and clean
-native-package installation are required before default switching. Budget
+Verification: Rust crate/file budgets, repeated thread-count comparisons, fuzz
+targets, native bundle size evidence, and clean native-package installation are
+required for release. Budget
 values live in `.github/compiler-backend-budget.json`; changing a ceiling
 requires the same maintainer review as changing a performance or RSS budget.
 The standalone fuzz workspace owns an independent lockfile; CI MUST validate it
@@ -279,7 +267,7 @@ Reviewers MUST examine:
 - N-API thread affinity, cancellation, and panic boundaries;
 - cache false-hit risk and deterministic iteration;
 - native platform coverage and atomic package release;
-- Babel preset deprecation and Preview isolation.
+- 0.30.1-only rollback isolation and Preview isolation.
 
 The release-blocking target and Node runtime requirements are fixed by
 [ADR-0002](../adr/0002-native-compiler-support-matrix.md). Platform package
@@ -292,8 +280,8 @@ Existing contract evidence:
 
 ```bash
 pnpm -C packages/compiler test
-pnpm guardrails:hir
-pnpm bench:optimizer:guard
+pnpm guardrails:compiler-complexity
+pnpm guardrails:rust-crates
 pnpm test:api-boundaries
 pnpm test:preview-boundaries
 pnpm release:compiler:verify
@@ -306,14 +294,13 @@ cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 pnpm security:audit:rust
-pnpm test:compiler:differential
 pnpm test:compiler:native-packages
 pnpm release:verify
 ```
 
 These commands are live gates. Passing the native packaging commands proves the
-distribution boundary only; the migration is complete only when every
-milestone and completion condition in `plan.md` is also satisfied.
+distribution boundary only; publication still requires the complete release
+workflow, native certification, and rollout-state approval.
 
 # Citations
 
