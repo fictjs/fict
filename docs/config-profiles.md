@@ -21,7 +21,7 @@ Current `@fictjs/compiler` defaults:
 - `dev: NODE_ENV !== 'production' && NODE_ENV !== 'test'`
 
 Official bundler integrations keep module metadata in their graph and consume
-versioned metadata published by third-party packages. The 1.0 compiler does not
+versioned metadata published by third-party packages. The 0.31 compiler does not
 write source-adjacent or `.fict-cache/metadata` sidecars.
 
 ## Recommended Profiles

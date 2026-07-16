@@ -1,10 +1,10 @@
-# @fictjs/compiler v1.0.0 Release Notes (Draft)
+# @fictjs/compiler v0.31.0 Release Notes (Draft)
 
 Status: release candidate
 
 ## Rust-only compiler
 
-Fict 1.0 completes the compiler ownership transition. The package root is the
+Fict 0.31 completes the compiler ownership transition. The package root is the
 OXC/Rust request facade and exposes synchronous/asynchronous transform, scan,
 analysis, diagnostics, source maps, artifacts, metadata, stats, and native build
 information.
@@ -31,7 +31,7 @@ configuration, clear generated output and application-owned compiler/bundler
 caches, then run the native binding smoke in
 [`docs/migration-guide.md`](../../../docs/migration-guide.md).
 
-There is no code-level rollback after 1.0. Recovery means restoring a complete,
+There is no code-level rollback after 0.31. Recovery means restoring a complete,
 previously verified application release pinned to the 0.30.1 compatibility
 unit.
 

@@ -40,7 +40,7 @@ Publish a JSON metadata file containing the same shape used by the compiler:
 }
 ```
 
-`version: 1` is required. Fict 1.0 rejects unversioned payloads, unsupported
+`version: 1` is required. Fict 0.31 rejects unversioned payloads, unsupported
 future versions, unknown schema fields, and malformed hook shapes instead of
 guessing compatibility.
 
@@ -81,7 +81,7 @@ For packages with subpath exports or separate ESM/CJS entrypoints, use `fict.exp
 }
 ```
 
-The retired root `fictMetadata` shorthand is not read by Fict 1.0. Publish the
+The retired root `fictMetadata` shorthand is not read by Fict 0.31. Publish the
 versioned asset under `fict.metadata` or `fict.exports` before upgrading
 consumers.
 

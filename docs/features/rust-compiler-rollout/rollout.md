@@ -1,7 +1,7 @@
 ---
 type: rollout
 title: Rust Compiler Rollout
-description: Completed default migration and fail-closed authorization rules for the Rust-only 1.0 release.
+description: Completed default migration and fail-closed authorization rules for the Rust-only 0.31 release.
 owner: unadlib
 status: active
 risk_level: critical
@@ -19,7 +19,7 @@ The compiler migration uses real releases rather than empty versions:
 | `0.29.0` | First published Rust-default release with whole-build legacy rollback  |
 | `0.30.0` | Complete subsequent stable compatibility minor                         |
 | `0.30.1` | Final published preset, `./legacy` export, and rollback implementation |
-| `1.0.0`  | Breaking Rust-only removal release                                     |
+| `0.31.0` | Pre-1.0 breaking Rust-only removal release                             |
 
 Preview resumability is not promoted by this sequence. It remains default-off
 and outside the Core 1.0 compatibility promise.
@@ -28,7 +28,7 @@ and outside the Core 1.0 compatibility promise.
 
 The machine-readable phase is
 [`compiler-rollout-state.json`](../../../.github/compiler-rollout-state.json).
-The 1.0 removal candidate must use schema v4 and bind exactly:
+The 0.31 removal candidate must use schema v4 and bind exactly:
 
 ```json
 {
@@ -37,7 +37,7 @@ The 1.0 removal candidate must use schema v4 and bind exactly:
   "rustDefaultRelease": "0.29.0",
   "compatibilityRelease": "0.30.0",
   "finalLegacyRelease": "0.30.1",
-  "legacyRemovalRelease": "1.0.0"
+  "legacyRemovalRelease": "0.31.0"
 }
 ```
 
@@ -50,7 +50,7 @@ alone cannot authorize removal.
 The Rust-default decision remains bound to its approved two-candidate chain,
 source revision, native build ID, 8-platform by 2-Node certification, semantic
 comparison, performance/RSS measurements, package-size budgets, and human
-review. Those artifacts are retained as historical evidence; the 1.0 tree does
+review. Those artifacts are retained as historical evidence; the 0.31 tree does
 not keep the differential, shadow, candidate, or rollback execution harnesses.
 
 M7 approval cannot be reused as M9 approval.
@@ -67,7 +67,7 @@ must bind the published 0.29.0, 0.30.0, and 0.30.1 release records plus:
   unexplained regression;
 - a successful whole-build rollback exercise performed while 0.30.1 still
   contained the rollback implementation;
-- an executable 1.0 migration guide and proof that 0.30.1 is the final preset
+- an executable 0.31 migration guide and proof that 0.30.1 is the final preset
   publication.
 
 The aggregate document is content-digested. The release versions, tag commits,
@@ -88,12 +88,12 @@ Review schema v2 requires all eight areas:
 7. updated Core scope and release controls;
 8. removed legacy dependencies and implementation.
 
-Any missing, false, unknown, or unbound review area blocks 1.0.
+Any missing, false, unknown, or unbound review area blocks 0.31.
 
 ## Rust-only invariants
 
 The removal gate scans source, package manifests, tests, CI, docs, scope, and
-publish control. The 1.0 candidate must have:
+publish control. The 0.31 candidate must have:
 
 - one `@fictjs/compiler` root exposing `transform`, `scan`, `analyze`, and
   `nativeCompilerInfo`;
@@ -109,11 +109,11 @@ publish control. The 1.0 candidate must have:
 Native binding load errors, compiler errors, and incompatible protocol or cache
 records fail the build. No module may retry through another compiler.
 
-## Recovery after 1.0
+## Recovery after 0.31
 
 There is no code-level rollback. Restore a complete, previously verified
 application release pinned to the 0.30.1 compatibility unit. Do not mix 0.30.1
-compiler output, metadata, or Preview artifacts with 1.0 runtime or integration
+compiler output, metadata, or Preview artifacts with 0.31 runtime or integration
 packages. See the
 [compiler release rollback runbook](../../operations/runbooks/compiler-backend-rollback.md).
 

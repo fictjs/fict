@@ -24,7 +24,7 @@ export default defineConfig({
 })
 ```
 
-Fict 1.0 is Rust-only. The plugin has no `backend` or `shadow` option and does
+Fict 0.31 is Rust-only. The plugin has no `backend` or `shadow` option and does
 not read `FICT_COMPILER_BACKEND`, project Babel configuration, or the retired
 `@fictjs/babel-preset`. Native compiler load and transform failures fail the
 build. The only legacy recovery boundary is the complete application dependency
@@ -121,7 +121,7 @@ fict({
 ```
 
 The retired root `fictMetadata` field and unversioned metadata are not consumed
-by 1.0. See [Third-party Fict libraries](../../docs/third-party-libraries.md).
+by 0.31. See [Third-party Fict libraries](../../docs/third-party-libraries.md).
 
 ## Runtime behavior
 

@@ -55,8 +55,8 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 | `@fictjs/playground`       | **Internal**  | Private dev/demo tool.                                                                                                                    |
 | `fict-docs-site`           | **Internal**  | Already private.                                                                                                                          |
 
-Fict 1.0 is Rust-only. The final legacy preset release is `0.30.1`; it is not a
-workspace package, Core member, publish target, or supported 1.0 rollback path.
+Fict 0.31 is Rust-only. The final legacy preset release is `0.30.1`; it is not a
+workspace package, Core member, publish target, or supported 0.31 rollback path.
 Applications that still require it must pin their complete Fict dependency set
 to `0.30.1`, as recorded by
 [ADR-0003](./docs/adr/0003-retire-babel-preset.md).

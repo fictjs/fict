@@ -1,7 +1,7 @@
 /**
  * OXC/Rust compiler package root.
  *
- * The package root exposes the serializable OXC/Rust request API. Fict 1.0 has no in-package
+ * The package root exposes the serializable OXC/Rust request API. Fict 0.31 has no in-package
  * legacy compiler or per-file fallback path.
  */
 export { nativeCompilerInfo, transformSync, transform, scanSync } from './native-loader'

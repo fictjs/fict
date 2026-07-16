@@ -4,9 +4,9 @@ Webpack 5 integration for the Fict compiler. The plugin and loader cooperate so 
 metadata is available before importers receive their final transform, including cold builds and
 circular module graphs.
 
-Fict 1.0 requires this native integration for Webpack. Version `0.30.1` is the
+Fict 0.31 requires this native integration for Webpack. Version `0.30.1` is the
 final release of the retired preset and in-tree TypeScript compiler; neither is
-part of the 1.0 package graph.
+part of the 0.31 package graph.
 
 ```js
 const { FictWebpackPlugin } = require('@fictjs/webpack-plugin')
