@@ -1443,8 +1443,15 @@ fn jsx_values(root: &JsxNode) -> Vec<ValueId> {
                 }
             }
             Item::Child(JsxChild::Text { .. }) => {}
-            Item::Child(JsxChild::Expression { value, .. })
-            | Item::Child(JsxChild::Spread { value, .. }) => values.push(*value),
+            Item::Child(JsxChild::Expression {
+                value,
+                embedded_nodes,
+                ..
+            }) => {
+                values.push(*value);
+                stack.extend(embedded_nodes.iter().map(Item::Node));
+            }
+            Item::Child(JsxChild::Spread { value, .. }) => values.push(*value),
             Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
         }
     }

@@ -1481,8 +1481,15 @@ fn jsx_value_inputs(root: &JsxNode) -> Vec<ValueId> {
                     stack.push(Item::Child(child));
                 }
             }
-            Item::Child(JsxChild::Expression { value, .. })
-            | Item::Child(JsxChild::Spread { value, .. }) => values.push(*value),
+            Item::Child(JsxChild::Expression {
+                value,
+                embedded_nodes,
+                ..
+            }) => {
+                values.push(*value);
+                stack.extend(embedded_nodes.iter().map(Item::Node));
+            }
+            Item::Child(JsxChild::Spread { value, .. }) => values.push(*value),
             Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
             Item::Child(JsxChild::Text { .. }) => {}
         }
@@ -1719,8 +1726,15 @@ fn remap_jsx_node(
                     stack.push(Item::Child(child));
                 }
             }
-            Item::Child(JsxChild::Expression { value, .. })
-            | Item::Child(JsxChild::Spread { value, .. }) => remap_value_id(value, remap)?,
+            Item::Child(JsxChild::Expression {
+                value,
+                embedded_nodes,
+                ..
+            }) => {
+                remap_value_id(value, remap)?;
+                stack.extend(embedded_nodes.iter_mut().map(Item::Node));
+            }
+            Item::Child(JsxChild::Spread { value, .. }) => remap_value_id(value, remap)?,
             Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
             Item::Child(JsxChild::Text { .. }) => {}
         }
