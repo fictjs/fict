@@ -2,10 +2,6 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { transformSync } from '@babel/core'
-// @ts-expect-error - CommonJS module without proper types
-import presetTypescript from '@babel/preset-typescript'
-
 import { describe, it, expect, afterEach } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
@@ -22,7 +18,7 @@ import {
   __fictDisableSSR,
   __fictIsSSR,
 } from '@fictjs/runtime/internal'
-import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/legacy'
+import { transformSync as transformFictSync, type NativeCompilerOptions } from '../../compiler/src'
 import { parseHTML } from 'linkedom'
 
 import {
@@ -1055,40 +1051,55 @@ function compileResumableModule(source: string): {
   const entryPath = path.join(tempDir, 'entry.mjs')
   linkLocalFictPackage(tempDir)
 
-  const options: FictCompilerOptions = {
+  const options: NativeCompilerOptions = {
     dev: false,
     fineGrainedDom: true,
-    resumable: true,
     // SSR integration fixtures validate end-to-end rendering/rehydration behavior and
     // are not intended to enforce strict guarantee diagnostics.
     strictGuarantee: false,
-    emitModuleMetadata: false,
+    preview: {
+      resumable: true,
+      autoExtractHandlers: true,
+      autoExtractThreshold: 3,
+    },
   }
 
-  const result = transformSync(source, {
+  const result = transformFictSync({
+    code: source,
     filename: entryPath,
-    configFile: false,
-    babelrc: false,
-    sourceType: 'module',
-    parserOpts: {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      allowReturnOutsideFunction: true,
-    },
-    plugins: [[createFictPlugin, options]],
-    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
-    generatorOpts: { compact: false },
+    moduleId: entryPath,
+    publicModuleId: pathToFileURL(entryPath).href,
+    language: 'tsx',
+    moduleKind: 'module',
+    options,
   })
 
-  if (!result?.code) {
-    throw new Error('Failed to compile resumable fixture module')
+  const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error')
+  if (errors.length > 0) {
+    throw new Error(
+      errors.map(diagnostic => `[${diagnostic.code}] ${diagnostic.message}`).join('\n'),
+    )
   }
 
-  writeFileSync(entryPath, result.code, 'utf8')
+  let entryCode = result.code
+  for (const artifact of result.artifacts) {
+    if (artifact.kind !== 'handlerModule' || !artifact.handler) continue
+    const artifactPath = path.join(tempDir, `${artifact.id}.mjs`)
+    writeFileSync(artifactPath, artifact.code, 'utf8')
+    entryCode = entryCode.replace(
+      JSON.stringify(artifact.handler.moduleSpecifier),
+      JSON.stringify(pathToFileURL(artifactPath).href),
+    )
+  }
+  if (entryCode.includes('fict:compiler-artifact:')) {
+    throw new Error('Native compiler emitted an unclaimed handler artifact placeholder')
+  }
+
+  writeFileSync(entryPath, entryCode, 'utf8')
 
   return {
     url: pathToFileURL(entryPath).href,
-    code: result.code,
+    code: entryCode,
     cleanup: () => {
       try {
         rmSync(tempDir, { recursive: true, force: true })
