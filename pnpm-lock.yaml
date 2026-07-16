@@ -347,24 +347,9 @@ importers:
 
   packages/compiler:
     dependencies:
-      '@babel/helper-plugin-utils':
-        specifier: ^7.28.6
-        version: 7.28.6
-      '@babel/plugin-transform-destructuring':
-        specifier: ^7.27.1
-        version: 7.28.5(@babel/core@7.29.7)
-      '@babel/plugin-transform-typescript':
-        specifier: ^7.28.5
-        version: 7.28.5(@babel/core@7.29.7)
-      '@babel/traverse':
-        specifier: ^7.29.0
-        version: 7.29.0
       '@oxc-project/runtime':
         specifier: 0.139.0
         version: 0.139.0
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
     optionalDependencies:
       '@fictjs/compiler-darwin-arm64':
         specifier: workspace:*
@@ -1033,12 +1018,6 @@ packages:
 
   '@babel/plugin-syntax-typescript@7.27.1':
     resolution: {integrity: sha512-xfYCBMxveHrRMnAWl1ZlPXOZjzkN82THFvLhQhFXFt81Z5HnN+EtUkZhv/zcKpmT3fzmWZB0ywiBrbC3vogbwQ==}
-    engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-transform-destructuring@7.28.5':
-    resolution: {integrity: sha512-Kl9Bc6D0zTUcFUvkNuQh4eGXPKKNDOJQXVyyM4ZAQPMveniJdxi8XMJwLo+xSoW3MIq81bD33lcUe9kZpl0MCw==}
     engines: {node: '>=6.9.0'}
     peerDependencies:
       '@babel/core': ^7.0.0-0
@@ -7241,14 +7220,6 @@ snapshots:
     dependencies:
       '@babel/core': 7.29.7
       '@babel/helper-plugin-utils': 7.28.6
-
-  '@babel/plugin-transform-destructuring@7.28.5(@babel/core@7.29.7)':
-    dependencies:
-      '@babel/core': 7.29.7
-      '@babel/helper-plugin-utils': 7.28.6
-      '@babel/traverse': 7.29.0
-    transitivePeerDependencies:
-      - supports-color
 
   '@babel/plugin-transform-modules-commonjs@7.28.6(@babel/core@7.29.7)':
     dependencies:

@@ -1,9 +1,8 @@
 /**
  * OXC/Rust compiler package root.
  *
- * The package root exposes the serializable native request API after M7 promotion. The
- * Babel-based compiler remains available only through `@fictjs/compiler/legacy` during the
- * compatibility window.
+ * The package root exposes the serializable OXC/Rust request API. Fict 1.0 has no in-package
+ * legacy compiler or per-file fallback path.
  */
 export { nativeCompilerInfo, transformSync, transform, scanSync } from './native-loader'
 export { scan, analyzeSync, analyze } from './native-loader'

@@ -1,7 +1,7 @@
 {
   "name": "@fictjs/compiler",
   "version": "0.30.1",
-  "description": "Babel plugin for Fict Compiler",
+  "description": "OXC/Rust compiler for Fict",
   "publishConfig": {
     "access": "public",
     "provenance": true
@@ -38,16 +38,6 @@
         "default": "./dist/graph-host.cjs"
       }
     },
-    "./legacy": {
-      "import": {
-        "types": "./dist/legacy.d.ts",
-        "default": "./dist/legacy.js"
-      },
-      "require": {
-        "types": "./dist/legacy.d.cts",
-        "default": "./dist/legacy.cjs"
-      }
-    },
     "./native": {
       "import": {
         "types": "./dist/native-loader.d.ts",
@@ -73,21 +63,8 @@
     "typecheck:tests": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist"
   },
-  "peerDependencies": {
-    "@babel/core": "^7.0.0-0"
-  },
-  "peerDependenciesMeta": {
-    "@babel/core": {
-      "optional": true
-    }
-  },
   "dependencies": {
-    "@babel/helper-plugin-utils": "^7.28.6",
-    "@babel/plugin-transform-destructuring": "^7.27.1",
-    "@babel/plugin-transform-typescript": "^7.28.5",
-    "@babel/traverse": "^7.29.0",
-    "@oxc-project/runtime": "0.139.0",
-    "@types/babel__core": "^7.20.5"
+    "@oxc-project/runtime": "0.139.0"
   },
   "optionalDependencies": {
     "@fictjs/compiler-darwin-arm64": "workspace:*",

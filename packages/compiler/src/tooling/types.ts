@@ -1,4 +1,4 @@
-import type { FictCompilerOptions } from '../types'
+import type { NativeCompilerOptions } from '../types'
 
 export type TraceMarkerKind = 'once' | 'reactive' | 'effect'
 
@@ -51,7 +51,7 @@ export interface AnalyzeOptions {
   includeRegions?: boolean | undefined
   includeDiagnostics?: boolean | undefined
   verbosity?: 'minimal' | 'verbose' | undefined
-  compilerOptions?: Partial<FictCompilerOptions> | undefined
+  compilerOptions?: Partial<NativeCompilerOptions> | undefined
 }
 
 export interface AnalyzeResult {
