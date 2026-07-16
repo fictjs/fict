@@ -5,10 +5,6 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { PluginItem } from '@babel/core'
-import type { ParserPlugin } from '@babel/parser'
-import type { NodePath, Scope } from '@babel/traverse'
-import type * as BabelTypes from '@babel/types'
 import type {
   CompileRequest,
   CompileResult,
@@ -41,76 +37,15 @@ import {
 } from 'vite'
 
 import { createVitePluginCacheFingerprint } from './cache-fingerprint'
-import {
-  babelGenerate as generate,
-  babelParse as parse,
-  babelTraverse as traverse,
-  babelTypes as t,
-  getBabelLegacyRuntime,
-  type BabelGenerator,
-} from './legacy-compiler-runtime'
-import {
-  CompilerShadowRecorder,
-  type CompilerShadowBackendSnapshot,
-  type CompilerShadowDiagnostic,
-  type CompilerShadowModuleResult,
-  type CompilerShadowSemanticEvent,
-} from './shadow-rollout'
 
 const requireFromVitePlugin = createRequire(import.meta.url)
-
-export type {
-  CompilerShadowArtifact,
-  CompilerShadowDifference,
-  CompilerShadowDifferenceCategory,
-  CompilerShadowModuleResult,
-} from './shadow-rollout'
-
-// Babel's parser exposes the current standard decorator grammar as `decorators`;
-// semantic version selection belongs to the downstream decorator transform.
-const STANDARD_DECORATOR_PARSER_PLUGINS: ParserPlugin[] = ['decorators', 'decoratorAutoAccessors']
-const LEGACY_DECORATOR_PARSER_PLUGINS: ParserPlugin[] = [
-  'decorators-legacy',
-  'decoratorAutoAccessors',
-]
-const MODULE_ANALYSIS_PARSER_PLUGINS: ParserPlugin[] = ['jsx', 'typescript']
 
 const PACKAGE_METADATA_WATCH_GLOBS = [
   '!**/node_modules/**/package.json',
   '!**/node_modules/**/*.json',
 ] as const
 
-type BabelGeneratorOptions = NonNullable<Parameters<BabelGenerator>[1]>
-
-export type FictCompilerBackend = 'legacy' | 'rust' | 'shadow'
-
-export interface FictShadowOptions {
-  /** Privacy-safe JSON artifact path, relative to the Vite root. */
-  reportPath?: string
-  /** Versioned allowlist path, relative to the Vite root. */
-  allowlistPath?: string
-  /** Fail buildEnd when a difference is not covered by the exact allowlist. */
-  failOnDifference?: boolean
-  /** Receives hashes and categories only; source, paths, and generated code are omitted. */
-  onResult?: (result: CompilerShadowModuleResult) => void
-}
-
-interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions {
-  retainLines?: boolean
-  compact?: boolean
-  sourceMaps?: boolean
-  sourceFileName?: string
-  inputSourceMap?: TransformResult['map'] | null | undefined
-}
-
 export interface FictPluginOptions extends FictCompilerOptions {
-  /**
-   * Compiler implementation used by the Vite compile stage.
-   * @default 'rust'
-   */
-  backend?: FictCompilerBackend
-  /** Shadow comparison controls. Used only with `backend: 'shadow'`. */
-  shadow?: FictShadowOptions
   /**
    * Explicit native addon path for local development and release verification.
    * Production installations normally resolve the platform optional package.
@@ -415,17 +350,13 @@ interface TypeScriptApi {
 
 const CACHE_VERSION = 4
 const MAX_STALE_DEV_REQUEST_RETRIES = 3
-let transformCacheFingerprint: string | undefined
+let vitePluginCacheFingerprint: string | undefined
 
-// Lazy: both fingerprints read package artifacts from disk, so the cost is
-// deferred from module load to the first cache-key computation.
-function getTransformCacheFingerprint(): string {
-  return (transformCacheFingerprint ??= hashString(
-    [
-      hashString(getBabelLegacyRuntime().getCompilerCacheFingerprint()),
-      createVitePluginCacheFingerprint([String(extractAndRewriteHandlers)]),
-    ].join('|'),
-  ))
+// Defer reading built artifacts until the first cache-key computation.
+function getVitePluginCacheFingerprint(): string {
+  return (vitePluginCacheFingerprint ??= createVitePluginCacheFingerprint([
+    String(consumeStructuredHandlerArtifacts),
+  ]))
 }
 const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts']
 const TYPESCRIPT_IMPORT_PROBE_SOURCE = '__fict_ts_import_probe__'
@@ -514,8 +445,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const {
     include,
     exclude = ['**/node_modules/**'],
-    backend: backendOption,
-    shadow: shadowOption,
     nativeCompilerPath,
     cache: cacheOption,
     tsconfigPath,
@@ -526,21 +455,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     publicModuleId: _integrationOwnedPublicModuleId,
     ...compilerOptions
   } = options
-  const backendFromEnvironment = process.env.FICT_COMPILER_BACKEND
-  const backend = (backendOption ?? backendFromEnvironment ?? 'rust') as FictCompilerBackend
-  if (backend !== 'legacy' && backend !== 'rust' && backend !== 'shadow') {
-    throw new Error(`[fict] Unknown compiler backend ${JSON.stringify(backend)}.`)
-  }
-  if (shadowOption && backend !== 'shadow') {
-    throw new Error('[fict] The `shadow` options require backend: "shadow".')
-  }
-  const shadowFailOnDifference =
-    shadowOption?.failOnDifference ??
-    readBooleanEnv('FICT_COMPILER_SHADOW_FAIL_ON_DIFFERENCE') ??
-    false
   let nativeCompilerBinding: NativeCompilerBinding | undefined
   let nativeCompilerInfo: NativeCompilerInfo | undefined
-  let shadowRecorder: CompilerShadowRecorder | undefined
   const getNativeCompiler = (): NativeCompilerBinding => {
     if (!nativeCompilerBinding) {
       const nativePath = nativeCompilerPath ?? process.env.FICT_COMPILER_NATIVE_PATH
@@ -549,43 +465,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
     return nativeCompilerBinding
   }
-  const getShadowRecorder = (): CompilerShadowRecorder => {
-    if (backend !== 'shadow') {
-      throw new Error('[fict] Internal error: shadow recorder requested outside shadow mode.')
-    }
-    if (!shadowRecorder) {
-      getNativeCompiler()
-      const root = config?.root ?? process.cwd()
-      const allowlistPath =
-        shadowOption?.allowlistPath ?? process.env.FICT_COMPILER_SHADOW_ALLOWLIST
-      shadowRecorder = new CompilerShadowRecorder({
-        root,
-        compilerBuildId: nativeCompilerInfo!.compilerBuildId,
-        compilerBuildRevision: nativeCompilerInfo!.compilerBuildRevision,
-        reportPath:
-          shadowOption?.reportPath ??
-          process.env.FICT_COMPILER_SHADOW_REPORT ??
-          '.fict-cache/compiler-shadow.json',
-        ...(allowlistPath ? { allowlistPath } : {}),
-        ...(shadowOption?.onResult ? { onResult: shadowOption.onResult } : {}),
-      })
-    }
-    return shadowRecorder
-  }
   const getCompilerStageFingerprint = (): string => {
-    if (backend === 'legacy') return `legacy:${getTransformCacheFingerprint()}`
     getNativeCompiler()
     const native = `${nativeCompilerInfo!.compilerBuildId}:oxc${nativeCompilerInfo!.oxcVersion}`
-    return backend === 'shadow'
-      ? `shadow:${getTransformCacheFingerprint()}:${native}`
-      : `rust:${native}`
+    return `rust:${native}:${getVitePluginCacheFingerprint()}`
   }
   const collectCompilerStaticModuleSources = async (
     code: string,
     filename: string,
     moduleId = filename,
   ): Promise<string[]> => {
-    if (backend === 'legacy') return collectStaticModuleSources(code)
     const result = await getNativeCompiler().scan({ code, filename, moduleId })
     return consumeNativeScanResult(result, code, filename)
   }
@@ -594,16 +483,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     filename: string,
     moduleId = filename,
   ): string[] => {
-    if (backend === 'legacy') return collectStaticModuleSources(code)
     const result = getNativeCompiler().scanSync({ code, filename, moduleId })
-    return consumeNativeScanResult(result, code, filename)
-  }
-  const collectNativeCompilerStaticModuleSources = async (
-    code: string,
-    filename: string,
-    moduleId = filename,
-  ): Promise<string[]> => {
-    const result = await getNativeCompiler().scan({ code, filename, moduleId })
     return consumeNativeScanResult(result, code, filename)
   }
   const publicIdentityNamespace = publicIdentityNamespaceOption?.trim()
@@ -1426,30 +1306,17 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         configPath: project.configPath,
       }
     }
-    let nativeModuleSources: string[] = []
-    if (backend !== 'legacy') {
-      try {
-        nativeModuleSources = await collectNativeCompilerStaticModuleSources(
-          code,
-          normalizedFilename,
-          transformOptions?.publicIdentityId ?? normalizedFilename,
-        )
-      } catch (error) {
-        if (backend !== 'shadow') throw error
-        // Shadow mode must preserve the legacy build. The native transform below records
-        // parser/diagnostic divergence without letting a native scan change graph discovery.
-        nativeModuleSources = collectStaticModuleSources(code)
-      }
-    }
-    const nativeMetadata =
-      backend === 'legacy'
-        ? []
-        : createNativeMetadataSnapshot(
-            state,
-            nativeModuleSources,
-            normalizedFilename,
-            transformOptions?.metadataKey ?? normalizedFilename,
-          )
+    const nativeModuleSources = await collectCompilerStaticModuleSources(
+      code,
+      normalizedFilename,
+      transformOptions?.publicIdentityId ?? normalizedFilename,
+    )
+    const nativeMetadata = createNativeMetadataSnapshot(
+      state,
+      nativeModuleSources,
+      normalizedFilename,
+      transformOptions?.metadataKey ?? normalizedFilename,
+    )
     return { fictOptions, project, tsImportElision, nativeMetadata }
   }
 
@@ -1591,7 +1458,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       state.resolvedLocalModules,
       file => registerPackageMetadataDependency(state, file),
       node.key,
-      backend === 'rust' ? collectCompilerStaticModuleSourcesSync : undefined,
+      collectCompilerStaticModuleSourcesSync,
     )
     return {
       key: buildMetadataPreparationKey(
@@ -1625,11 +1492,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       fictOptions,
       tsImportElision,
       {
-        backend,
         moduleId: node.id,
         metadata: nativeMetadata,
-        ...(backend !== 'legacy' ? { nativeCompiler: getNativeCompiler() } : {}),
-        ...(backend === 'shadow' ? { shadowRecorder: getShadowRecorder() } : {}),
+        nativeCompiler: getNativeCompiler(),
       },
     )
     assertTransformStateActive(state)
@@ -1912,7 +1777,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         }
       }
       config = resolvedConfig
-      shadowRecorder = undefined
       transformFilter = createTransformFilter(config.root)
       if (resolvedConfig.build.watch) {
         const chokidar = (resolvedConfig.build.watch.chokidar ??= {})
@@ -1951,7 +1815,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     buildStart() {
-      if (backend === 'shadow') getShadowRecorder().reset()
       const context = this as { addWatchFile?: (file: string) => void } | undefined
       const addWatchFile = context?.addWatchFile
       addTypeScriptConfigWatchFiles =
@@ -1975,18 +1838,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           )?.root ?? normalizeFileName(config.root)
       }
       replaceBuildTransformState()
-    },
-
-    async buildEnd(error) {
-      if (backend !== 'shadow') return
-      const recorder = getShadowRecorder()
-      const artifact = await recorder.write()
-      if (!error && shadowFailOnDifference && artifact.summary.unexplainedDifferences > 0) {
-        this.error(
-          `[fict] Rust shadow comparison found ${artifact.summary.unexplainedDifferences} ` +
-            'unexplained difference(s). Inspect the configured privacy-safe shadow report.',
-        )
-      }
     },
 
     configureServer: {
@@ -2239,22 +2090,17 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           state.resolvedLocalModules,
           file => registerPackageMetadataDependency(state, file),
           metadataKey,
-          backend === 'rust' ? collectCompilerStaticModuleSourcesSync : undefined,
+          collectCompilerStaticModuleSourcesSync,
         )
         const cacheStore = ensureCache()
         const shouldSplit =
-          (backend === 'rust' && compilerOptions.resumable === true) ||
+          compilerOptions.resumable === true ||
           (options.functionSplitting ??
             (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr)))
         // Function callbacks are observable compiler output. Replaying only code/maps from
-        // either cache would silently drop warnings and explain artifacts. Shadow comparison is
-        // observable too: a cached legacy code/map has no Rust outcome and would create a false
-        // green report. Compile the requested root again while still allowing dependency
-        // metadata preparation to dedupe within the current build.
+        // either cache would silently drop warnings and explain artifacts.
         const hasObservableCompilerCallbacks =
-          backend === 'shadow' ||
-          typeof fictOptions.onWarn === 'function' ||
-          typeof fictOptions.explain === 'function'
+          typeof fictOptions.onWarn === 'function' || typeof fictOptions.explain === 'function'
         const cacheKey =
           cacheStore.enabled && !hasObservableCompilerCallbacks
             ? buildCacheKey(
@@ -2342,11 +2188,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               fictOptions,
               tsImportElision,
               {
-                backend,
                 moduleId: id,
                 metadata: nativeMetadata,
-                ...(backend !== 'legacy' ? { nativeCompiler: getNativeCompiler() } : {}),
-                ...(backend === 'shadow' ? { shadowRecorder: getShadowRecorder() } : {}),
+                nativeCompiler: getNativeCompiler(),
               },
             )
             assertTransformStateActive(state)
@@ -2377,54 +2221,36 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           file: filename,
         })
         if (shouldSplit) {
-          try {
-            const devHandlerModuleOptions =
-              state.devHandlerGeneration && state.devEnvironmentId
-                ? {
-                    base: config?.base,
-                    environmentId: state.devEnvironmentId,
-                    generationId: state.devHandlerGeneration.id,
-                    origin: config?.server.origin,
-                  }
-                : undefined
-            const resolveHandlerModuleId = devHandlerModuleOptions
-              ? (handlerId: string) =>
-                  createDevHandlerModuleId(
-                    handlerId,
-                    devHandlerModuleOptions.generationId,
-                    devHandlerModuleOptions.environmentId,
-                    devHandlerModuleOptions,
-                  )
+          const devHandlerModuleOptions =
+            state.devHandlerGeneration && state.devEnvironmentId
+              ? {
+                  base: config?.base,
+                  environmentId: state.devEnvironmentId,
+                  generationId: state.devHandlerGeneration.id,
+                  origin: config?.server.origin,
+                }
               : undefined
-            splitResult =
-              backend === 'rust'
-                ? consumeStructuredHandlerArtifacts(
-                    finalCode,
-                    id,
-                    compilerArtifacts,
-                    state.extractedHandlers,
-                    finalMap,
-                    config?.root,
-                    packageBoundaryCache,
-                    publicIdentityNamespace,
-                    config?.resolve?.preserveSymlinks === true,
-                    resolveHandlerModuleId,
-                  )
-                : extractAndRewriteHandlers(
-                    finalCode,
-                    id,
-                    state.extractedHandlers,
-                    finalMap,
-                    config?.root,
-                    packageBoundaryCache,
-                    publicIdentityNamespace,
-                    config?.resolve?.preserveSymlinks === true,
-                    resolveHandlerModuleId,
-                  )
-          } catch (error) {
-            if (backend === 'rust') throw error
-            this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
-          }
+          const resolveHandlerModuleId = devHandlerModuleOptions
+            ? (handlerId: string) =>
+                createDevHandlerModuleId(
+                  handlerId,
+                  devHandlerModuleOptions.generationId,
+                  devHandlerModuleOptions.environmentId,
+                  devHandlerModuleOptions,
+                )
+            : undefined
+          splitResult = consumeStructuredHandlerArtifacts(
+            finalCode,
+            id,
+            compilerArtifacts,
+            state.extractedHandlers,
+            finalMap,
+            config?.root,
+            packageBoundaryCache,
+            publicIdentityNamespace,
+            config?.resolve?.preserveSymlinks === true,
+            resolveHandlerModuleId,
+          )
           debugLog('Split result', {
             file: filename,
             handlers: splitResult?.handlers.length ?? 0,
@@ -4223,131 +4049,10 @@ function getStronglyConnectedMetadataComponents(graph: Map<string, MetadataGraph
   return components
 }
 
-function getImportSpecifierSemanticKey(
-  source: string,
-  specifier: BabelTypes.ImportDeclaration['specifiers'][number],
-): string {
-  if (t.isImportDefaultSpecifier(specifier)) {
-    return JSON.stringify([source, 'default', specifier.local.name])
-  }
-  if (t.isImportNamespaceSpecifier(specifier)) {
-    return JSON.stringify([source, 'namespace', specifier.local.name])
-  }
-  const imported = t.isIdentifier(specifier.imported)
-    ? specifier.imported.name
-    : specifier.imported.value
-  return JSON.stringify([source, 'named', imported, specifier.local.name])
-}
-
-function preserveTypeScriptImportSideEffects(): PluginItem {
-  const sourceSpecifiers = new Set<string>()
-  return {
-    name: 'fict-preserve-typescript-import-side-effects',
-    visitor: {
-      Program: {
-        enter(programPath: NodePath<BabelTypes.Program>) {
-          for (const statement of programPath.node.body) {
-            if (!t.isImportDeclaration(statement)) continue
-            for (const specifier of statement.specifiers) {
-              sourceSpecifiers.add(getImportSpecifierSemanticKey(statement.source.value, specifier))
-            }
-          }
-        },
-        exit(programPath: NodePath<BabelTypes.Program>) {
-          programPath.scope.crawl()
-          for (const statement of programPath.get('body')) {
-            if (!statement.isImportDeclaration() || statement.node.specifiers.length === 0) {
-              continue
-            }
-            for (const specifier of statement.get('specifiers')) {
-              const key = getImportSpecifierSemanticKey(statement.node.source.value, specifier.node)
-              if (!sourceSpecifiers.has(key)) continue
-              const binding = programPath.scope.getBinding(specifier.node.local.name)
-              if (binding && !binding.referenced && binding.constantViolations.length === 0) {
-                specifier.remove()
-              }
-            }
-          }
-        },
-      },
-    },
-  }
-}
-
-function lowerCtsModuleSyntax(): PluginItem {
-  return {
-    name: 'fict-lower-cts-module-syntax',
-    visitor: {
-      TSImportEqualsDeclaration(importPath: NodePath<BabelTypes.TSImportEqualsDeclaration>) {
-        const { node } = importPath
-        if (node.importKind === 'type') {
-          importPath.remove()
-          return
-        }
-        if (!t.isTSExternalModuleReference(node.moduleReference)) return
-
-        const declaration = t.importDeclaration(
-          [t.importDefaultSpecifier(t.cloneNode(node.id))],
-          t.cloneNode(node.moduleReference.expression),
-        )
-        t.inheritsComments(declaration, node)
-        if (node.isExport) {
-          importPath.replaceWithMultiple([
-            declaration,
-            t.exportNamedDeclaration(null, [
-              t.exportSpecifier(t.cloneNode(node.id), t.cloneNode(node.id)),
-            ]),
-          ])
-        } else {
-          importPath.replaceWith(declaration)
-        }
-      },
-      TSExportAssignment(exportPath: NodePath<BabelTypes.TSExportAssignment>) {
-        const declaration = t.exportDefaultDeclaration(exportPath.node.expression)
-        t.inheritsComments(declaration, exportPath.node)
-        exportPath.replaceWith(declaration)
-      },
-    },
-  }
-}
-
-function isBabelParseError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { code?: unknown }).code === 'BABEL_PARSE_ERROR'
-  )
-}
-
-function isUnsupportedParameterDecorator(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { reasonCode?: unknown }).reasonCode === 'UnsupportedParameterDecorator'
-  )
-}
-
-function parseModuleWithDecoratorFallback(code: string): ReturnType<typeof parse> {
-  try {
-    return parse(code, {
-      sourceType: 'module',
-      plugins: [...STANDARD_DECORATOR_PARSER_PLUGINS, ...MODULE_ANALYSIS_PARSER_PLUGINS],
-    })
-  } catch (error) {
-    if (!isUnsupportedParameterDecorator(error)) throw error
-    return parse(code, {
-      sourceType: 'module',
-      plugins: [...LEGACY_DECORATOR_PARSER_PLUGINS, ...MODULE_ANALYSIS_PARSER_PLUGINS],
-    })
-  }
-}
-
 interface CompilerStageOptions {
-  backend: FictCompilerBackend
   moduleId: string
   metadata: ResolvedMetadataInput[]
-  nativeCompiler?: NativeCompilerBinding
-  shadowRecorder?: CompilerShadowRecorder
+  nativeCompiler: NativeCompilerBinding
 }
 
 function sourcePositionForByteOffset(
@@ -4554,87 +4259,6 @@ function consumeNativeCompileResult(
   }
 }
 
-function warningToShadowDiagnostic(warning: CompilerWarning): CompilerShadowDiagnostic {
-  return {
-    code: warning.code,
-    severity: 'warning',
-    ...(warning.line > 0 ? { line: warning.line } : {}),
-    ...(warning.column > 0 ? { column: warning.column } : {}),
-  }
-}
-
-function errorToShadowDiagnostic(
-  error: unknown,
-  backend: 'legacy' | 'rust',
-): CompilerShadowDiagnostic {
-  if (!error || typeof error !== 'object') {
-    return {
-      code: backend === 'legacy' ? 'FICT-LEGACY-THROW' : 'FICT-NATIVE-THROW',
-      severity: 'error',
-    }
-  }
-  const candidate = error as {
-    code?: unknown
-    message?: unknown
-    loc?: { line?: unknown; column?: unknown }
-  }
-  const messageCodes =
-    typeof candidate.message === 'string' ? (candidate.message.match(/FICT-[A-Z0-9-]+/g) ?? []) : []
-  const code =
-    typeof candidate.code === 'string' && candidate.code.startsWith('FICT-')
-      ? candidate.code
-      : (messageCodes[0] ?? (backend === 'legacy' ? 'FICT-LEGACY-THROW' : 'FICT-NATIVE-THROW'))
-  return {
-    code,
-    severity: 'error',
-    ...(typeof candidate.loc?.line === 'number' ? { line: candidate.loc.line } : {}),
-    ...(typeof candidate.loc?.column === 'number' ? { column: candidate.loc.column + 1 } : {}),
-  }
-}
-
-function explainEventsToShadow(
-  events:
-    | readonly {
-        kind: string
-        name?: string | null
-        code?: string | null
-      }[]
-    | undefined,
-): CompilerShadowSemanticEvent[] {
-  return (events ?? []).map(event => ({
-    kind: event.kind,
-    ...(event.name ? { name: event.name } : {}),
-    ...(event.code ? { code: event.code } : {}),
-  }))
-}
-
-function nativeResultToShadowSnapshot(
-  result: CompileResult,
-  source: string,
-): CompilerShadowBackendSnapshot {
-  return {
-    status: result.diagnostics.some(diagnostic => diagnostic.severity === 'error')
-      ? 'failure'
-      : 'success',
-    code: result.code,
-    diagnostics: result.diagnostics.map(diagnostic => {
-      const position = diagnostic.primarySpan
-        ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
-        : undefined
-      return {
-        code: diagnostic.code,
-        severity: diagnostic.severity,
-        ...(position ? { line: position.line, column: position.column } : {}),
-      }
-    }),
-    metadata: result.moduleMetadata,
-    semanticEvents: explainEventsToShadow(result.explain?.events),
-    helpers: result.explain?.helpers ?? [],
-    sourceMap: result.map,
-    artifacts: result.artifacts,
-  }
-}
-
 async function compileFictCompilerStage(
   code: string,
   filename: string,
@@ -4642,189 +4266,17 @@ async function compileFictCompilerStage(
   tsImportElision: TypeScriptImportElision,
   stage: CompilerStageOptions,
 ): Promise<CompilerStageResult> {
-  if (stage.backend === 'shadow') {
-    if (!stage.nativeCompiler || !stage.shadowRecorder) {
-      throw new Error('[fict] Shadow compiler backend selected without its native binding/report.')
-    }
-    const warnings: CompilerWarning[] = []
-    let explanation: CompilerExplainArtifact | undefined
-    const originalWarning = fictOptions.onWarn
-    const originalExplain = fictOptions.explain
-    const shadowOptions: FictCompilerOptions = {
-      ...fictOptions,
-      onWarn(warning) {
-        warnings.push(warning)
-        originalWarning?.(warning)
-      },
-      explain(artifact) {
-        explanation = artifact
-        if (typeof originalExplain === 'function') originalExplain(artifact)
-      },
-    }
-
-    let legacyResult: CompilerStageResult | undefined
-    let legacyError: unknown
-    try {
-      legacyResult = await compileFictCompilerStage(
-        code,
-        filename,
-        shadowOptions,
-        tsImportElision,
-        { backend: 'legacy', moduleId: stage.moduleId, metadata: [] },
-      )
-    } catch (error) {
-      legacyError = error
-    }
-
-    let rustSnapshot: CompilerShadowBackendSnapshot
-    try {
-      const nativeResult = await stage.nativeCompiler.transform({
-        code,
-        filename,
-        moduleId: stage.moduleId,
-        ...(fictOptions.publicModuleId ? { publicModuleId: fictOptions.publicModuleId } : {}),
-        options: nativeCompilerOptions({ ...fictOptions, explain: true }, tsImportElision),
-        metadata: stage.metadata,
-        integrationDiagnostics: nativeIntegrationDiagnostics(
-          code,
-          fictOptions.integrationDiagnostics,
-        ),
-      })
-      rustSnapshot = nativeResultToShadowSnapshot(nativeResult, code)
-    } catch (error) {
-      rustSnapshot = {
-        status: 'failure',
-        code: '',
-        diagnostics: [errorToShadowDiagnostic(error, 'rust')],
-      }
-    }
-
-    const legacyMetadata = shadowOptions.moduleMetadata?.get(filename)
-    const legacySourceMap = legacyResult?.map as RawSourceMap | null | undefined
-    const legacySnapshot: CompilerShadowBackendSnapshot = {
-      status: legacyError === undefined ? 'success' : 'failure',
-      code: legacyResult?.code ?? '',
-      diagnostics: [
-        ...warnings.map(warningToShadowDiagnostic),
-        ...(legacyError === undefined ? [] : [errorToShadowDiagnostic(legacyError, 'legacy')]),
-      ],
-      ...(legacyMetadata ? { metadata: legacyMetadata } : {}),
-      semanticEvents: explainEventsToShadow(explanation?.events),
-      helpers: explanation?.helpers ?? [],
-      ...(legacySourceMap === undefined ? {} : { sourceMap: legacySourceMap }),
-      artifacts: [],
-    }
-    stage.shadowRecorder.record(filename, code, legacySnapshot, rustSnapshot)
-    if (legacyError !== undefined) throw legacyError
-    return legacyResult!
+  const request: CompileRequest = {
+    code,
+    filename,
+    moduleId: stage.moduleId,
+    ...(fictOptions.publicModuleId ? { publicModuleId: fictOptions.publicModuleId } : {}),
+    options: nativeCompilerOptions(fictOptions, tsImportElision),
+    metadata: stage.metadata,
+    integrationDiagnostics: nativeIntegrationDiagnostics(code, fictOptions.integrationDiagnostics),
   }
-
-  if (stage.backend === 'rust') {
-    if (!stage.nativeCompiler) {
-      throw new Error('[fict] Rust compiler backend selected without a native compiler binding.')
-    }
-    const request: CompileRequest = {
-      code,
-      filename,
-      moduleId: stage.moduleId,
-      ...(fictOptions.publicModuleId ? { publicModuleId: fictOptions.publicModuleId } : {}),
-      options: nativeCompilerOptions(fictOptions, tsImportElision),
-      metadata: stage.metadata,
-      integrationDiagnostics: nativeIntegrationDiagnostics(
-        code,
-        fictOptions.integrationDiagnostics,
-      ),
-    }
-    const result = await stage.nativeCompiler.transform(request)
-    return consumeNativeCompileResult(result, code, filename, fictOptions)
-  }
-
-  const { createFictPlugin, transformAsync, transformTypeScript } = getBabelLegacyRuntime()
-  const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
-  const isTSX = filename.endsWith('.tsx')
-  const isExplicitModuleTypeScript = filename.endsWith('.mts') || filename.endsWith('.cts')
-  const isCommonJS = filename.endsWith('.cjs')
-  const plugins: PluginItem[] = []
-  if (filename.endsWith('.cts')) plugins.push(lowerCtsModuleSyntax())
-  if (isTypeScript) {
-    plugins.push([
-      transformTypeScript,
-      {
-        isTSX,
-        allExtensions: true,
-        allowDeclareFields: true,
-        allowNamespaces: true,
-        disallowAmbiguousJSXLike: isExplicitModuleTypeScript,
-        onlyRemoveTypeImports: tsImportElision !== 'remove',
-      },
-    ])
-  }
-  plugins.push(['@babel/plugin-syntax-jsx', {}], [createFictPlugin, fictOptions])
-  if (isTypeScript && tsImportElision === 'preserve-side-effect') {
-    plugins.push(preserveTypeScriptImportSideEffects())
-  }
-  const transformWithDecoratorProfile = (decoratorPlugins: readonly ParserPlugin[]) =>
-    transformAsync(code, {
-      filename,
-      configFile: false,
-      babelrc: false,
-      parserOpts: {
-        plugins: [...decoratorPlugins],
-        ...(isCommonJS ? { allowReturnOutsideFunction: true } : {}),
-      },
-      ...(isTypeScript ? { generatorOpts: { decoratorsBeforeExport: true } } : {}),
-      sourceMaps: fictOptions.sourcemap,
-      sourceFileName: filename,
-      plugins,
-    })
-  let result: Awaited<ReturnType<typeof transformAsync>>
-  try {
-    result = await transformWithDecoratorProfile(STANDARD_DECORATOR_PARSER_PLUGINS)
-  } catch (error) {
-    if (!isBabelParseError(error) || !isUnsupportedParameterDecorator(error)) throw error
-    result = await transformWithDecoratorProfile(LEGACY_DECORATOR_PARSER_PLUGINS)
-  }
-  if (!result?.code) {
-    throw new Error(`[fict] Compiler returned no output for ${filename}.`)
-  }
-  return {
-    code: result.code,
-    map: result.map as TransformResult['map'],
-    artifacts: [],
-  }
-}
-
-function collectStaticModuleSources(code: string): string[] {
-  let ast: ReturnType<typeof parse>
-  try {
-    ast = parseModuleWithDecoratorFallback(code)
-  } catch {
-    return []
-  }
-
-  const sources = new Set<string>()
-  for (const node of ast.program.body) {
-    if (
-      t.isTSImportEqualsDeclaration(node) &&
-      node.importKind !== 'type' &&
-      t.isTSExternalModuleReference(node.moduleReference)
-    ) {
-      sources.add(node.moduleReference.expression.value)
-      continue
-    }
-    if (t.isImportDeclaration(node)) {
-      sources.add(node.source.value)
-      continue
-    }
-    if (t.isExportNamedDeclaration(node) && node.source) {
-      sources.add(node.source.value)
-      continue
-    }
-    if (t.isExportAllDeclaration(node)) {
-      sources.add(node.source.value)
-    }
-  }
-  return Array.from(sources).sort()
+  const result = await stage.nativeCompiler.transform(request)
+  return consumeNativeCompileResult(result, code, filename, fictOptions)
 }
 
 function resolveExistingModuleFile(base: string): string | null {
@@ -4882,7 +4334,7 @@ function computePackageMetadataCacheFingerprint(
   resolvedLocalModules?: ReadonlyMap<string, ResolvedMetadataModule>,
   onPackageMetadataDependency?: (filename: string) => void,
   metadataKey?: string,
-  collectModuleSources?: (code: string, filename: string) => string[],
+  collectModuleSources: (code: string, filename: string) => string[] = () => [],
 ): string {
   const normalizedFilename = normalizeFileName(filename, root)
   const currentMetadataKey = metadataKey ?? normalizedFilename
@@ -4890,8 +4342,7 @@ function computePackageMetadataCacheFingerprint(
   visited.add(currentMetadataKey)
 
   const entries: [string, string | null, string?][] = []
-  const sources =
-    collectModuleSources?.(code, normalizedFilename) ?? collectStaticModuleSources(code)
+  const sources = collectModuleSources(code, normalizedFilename)
   for (const source of sources) {
     const userMetadata = compilerOptions.resolveModuleMetadata?.(source, normalizedFilename)
     if (userMetadata !== undefined) {
@@ -5178,19 +4629,6 @@ function safeDebugString(value: unknown): string {
   }
 }
 
-function formatError(error: unknown): string {
-  if (error instanceof Error) return error.message
-  try {
-    return JSON.stringify(error)
-  } catch {
-    return String(error)
-  }
-}
-
-function buildPluginMessage(context: string, file: string, error: unknown): string {
-  return `[fict-plugin] ${context} (${file}): ${formatError(error)}`
-}
-
 async function loadTypeScript(): Promise<TypeScriptApi | null> {
   try {
     const mod = await import('typescript')
@@ -5436,50 +4874,6 @@ function createHandlerId(
   return `h${hashString(sourceIdentity).slice(0, 32)}$$${exportName}`
 }
 
-function detectRuntimeImportFamilyFromCode(body: readonly unknown[]): 'fict' | 'runtime' {
-  let sawFictFamily = false
-  let sawStandaloneRuntimeFamily = false
-
-  for (const stmt of body) {
-    const source =
-      stmt && typeof stmt === 'object' && 'source' in stmt
-        ? (stmt as { source?: { value?: string } | null }).source?.value
-        : undefined
-    if (typeof source !== 'string') continue
-
-    if (
-      source === 'fict' ||
-      source === 'fict/advanced' ||
-      source === 'fict/internal' ||
-      source === 'fict/internal/list' ||
-      source === 'fict/jsx-runtime' ||
-      source === 'fict/jsx-dev-runtime' ||
-      source === 'fict/experimental/loader' ||
-      source === 'fict/plus' ||
-      source === 'fict/slim'
-    ) {
-      sawFictFamily = true
-      continue
-    }
-
-    if (
-      source === '@fictjs/runtime' ||
-      source === '@fictjs/runtime/advanced' ||
-      source === '@fictjs/runtime/internal' ||
-      source === '@fictjs/runtime/internal/list' ||
-      source === '@fictjs/runtime/jsx-runtime' ||
-      source === '@fictjs/runtime/jsx-dev-runtime' ||
-      source === '@fictjs/runtime/experimental/loader'
-    ) {
-      sawStandaloneRuntimeFamily = true
-    }
-  }
-
-  if (sawFictFamily) return 'fict'
-  if (sawStandaloneRuntimeFamily) return 'runtime'
-  return 'fict'
-}
-
 function getRuntimeHelperModule(helperName: string, family: 'fict' | 'runtime'): string {
   if (helperName === 'keyedList') {
     return family === 'runtime' ? '@fictjs/runtime/internal/list' : 'fict/internal/list'
@@ -5715,823 +5109,4 @@ const RUNTIME_HELPERS: Record<string, { import: string; from: string }> = {
   __fictPopContext: { import: '__fictPopContext', from: 'fict/internal' },
   hydrateComponent: { import: 'hydrateComponent', from: 'fict/internal' },
   __fictQrl: { import: '__fictQrl', from: 'fict/internal' },
-}
-
-const RUNTIME_HELPER_IMPORT_SOURCES = new Set([
-  'fict/internal',
-  '@fictjs/runtime/internal',
-  'fict/internal/list',
-  '@fictjs/runtime/internal/list',
-])
-
-/** Known global identifiers that don't need to be imported */
-const GLOBAL_IDENTIFIERS = new Set([
-  // JavaScript globals
-  'undefined',
-  'null',
-  'true',
-  'false',
-  'NaN',
-  'Infinity',
-  'globalThis',
-  'window',
-  'document',
-  'console',
-  'setTimeout',
-  'setInterval',
-  'clearTimeout',
-  'clearInterval',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'fetch',
-  'URL',
-  'URLSearchParams',
-  'FormData',
-  'Headers',
-  'Request',
-  'Response',
-  'AbortController',
-  'AbortSignal',
-  // Built-in constructors
-  'Object',
-  'Array',
-  'String',
-  'Number',
-  'Boolean',
-  'Symbol',
-  'BigInt',
-  'Date',
-  'RegExp',
-  'Error',
-  'TypeError',
-  'RangeError',
-  'SyntaxError',
-  'Map',
-  'Set',
-  'WeakMap',
-  'WeakSet',
-  'Promise',
-  'Proxy',
-  'Reflect',
-  'JSON',
-  'Math',
-  'Intl',
-  // Event and DOM
-  'Event',
-  'CustomEvent',
-  'Element',
-  'Node',
-  'HTMLElement',
-])
-
-function collectRuntimeHelperImports(body: BabelTypes.Statement[]): Map<string, string> {
-  const helperImports = new Map<string, string>()
-
-  for (const stmt of body) {
-    if (!t.isImportDeclaration(stmt)) continue
-    if (!RUNTIME_HELPER_IMPORT_SOURCES.has(stmt.source.value)) continue
-
-    for (const specifier of stmt.specifiers) {
-      if (!t.isImportSpecifier(specifier)) continue
-      const imported = t.isIdentifier(specifier.imported)
-        ? specifier.imported.name
-        : specifier.imported.value
-      if (!RUNTIME_HELPERS[imported]) continue
-      helperImports.set(specifier.local.name, imported)
-    }
-  }
-
-  return helperImports
-}
-
-function collectRuntimeHelperUsages(
-  handlerPath: NodePath<BabelTypes.Node>,
-  runtimeHelperImports: Map<string, string>,
-): RuntimeHelperUsage[] {
-  const used = new Map<string, string>()
-
-  handlerPath.traverse({
-    Identifier(identifierPath) {
-      if (!identifierPath.isReferencedIdentifier()) return
-      if (isTypeOnlyIdentifierPath(identifierPath)) return
-
-      const localName = identifierPath.node.name
-      const importedHelperName = runtimeHelperImports.get(localName)
-      const binding = identifierPath.scope.getBinding(localName)
-
-      if (importedHelperName) {
-        if (!isRuntimeHelperImportBinding(binding, importedHelperName)) return
-        used.set(localName, importedHelperName)
-        return
-      }
-
-      if (!RUNTIME_HELPERS[localName]) return
-      if (binding) return
-      used.set(localName, localName)
-    },
-  })
-
-  return Array.from(used, ([localName, helperName]) =>
-    localName === helperName ? helperName : { helperName, localName },
-  )
-}
-
-function isRuntimeHelperImportBinding(
-  binding: ReturnType<Scope['getBinding']>,
-  helperName: string,
-): boolean {
-  if (!binding?.path.isImportSpecifier()) return false
-
-  const parent = binding.path.parent
-  if (!t.isImportDeclaration(parent)) return false
-  if (!RUNTIME_HELPER_IMPORT_SOURCES.has(parent.source.value)) return false
-
-  const imported = binding.path.node.imported
-  const importedName = t.isIdentifier(imported) ? imported.name : imported.value
-  return importedName === helperName
-}
-
-function isTypeOnlyIdentifierPath(path: NodePath<BabelTypes.Identifier>): boolean {
-  return Boolean(
-    path.findParent(
-      parent =>
-        parent.isTSTypeReference() ||
-        parent.isTSTypeAnnotation() ||
-        parent.isTSTypeAliasDeclaration() ||
-        parent.isTSInterfaceDeclaration() ||
-        parent.isTSTypeParameterDeclaration() ||
-        parent.isTSTypeParameterInstantiation() ||
-        parent.isTSExpressionWithTypeArguments() ||
-        parent.isTSImportType() ||
-        parent.isTSTypeQuery(),
-    ),
-  )
-}
-
-function isTypeOnlyImportSpecifier(
-  specifier: BabelTypes.ImportDeclaration['specifiers'][number],
-): boolean {
-  return t.isImportSpecifier(specifier) && specifier.importKind === 'type'
-}
-
-function collectHandlerTopLevelReferences(
-  handlerPath: NodePath<BabelTypes.Node>,
-  programScope: Scope,
-  topLevelDeclarations: Set<string>,
-  runtimeHelperImports: Map<string, string>,
-): Set<string> {
-  const referenced = new Set<string>()
-
-  handlerPath.traverse({
-    Identifier(identifierPath) {
-      if (!identifierPath.isReferencedIdentifier()) return
-      if (isTypeOnlyIdentifierPath(identifierPath)) return
-
-      const name = identifierPath.node.name
-      if (GLOBAL_IDENTIFIERS.has(name)) return
-      if (RUNTIME_HELPERS[name] || runtimeHelperImports.has(name)) return
-
-      const binding = identifierPath.scope.getBinding(name)
-      if (!binding || binding.scope !== programScope) return
-      if (!topLevelDeclarations.has(name)) return
-      if (name.match(/^__fict_[er]\d+$/)) return
-
-      referenced.add(name)
-    },
-  })
-
-  return referenced
-}
-
-function collectHandlerMutableTopLevelWrites(
-  handlerPath: NodePath<BabelTypes.Node>,
-  programScope: Scope,
-  mutableTopLevelDeclarations: Set<string>,
-): Set<string> {
-  const written = new Set<string>()
-
-  const addIdentifier = (identifierPath: NodePath<BabelTypes.Identifier>) => {
-    const name = identifierPath.node.name
-    if (!mutableTopLevelDeclarations.has(name)) return
-
-    const binding = identifierPath.scope.getBinding(name)
-    if (!binding || binding.scope !== programScope) return
-
-    written.add(name)
-  }
-
-  const collectAssignedPattern = (patternPath: NodePath<BabelTypes.Node>) => {
-    if (patternPath.isIdentifier()) {
-      addIdentifier(patternPath)
-      return
-    }
-
-    if (patternPath.isObjectPattern()) {
-      for (const propertyPath of patternPath.get('properties')) {
-        if (propertyPath.isObjectProperty()) {
-          collectAssignedPattern(propertyPath.get('value') as NodePath<BabelTypes.Node>)
-        } else if (propertyPath.isRestElement()) {
-          collectAssignedPattern(propertyPath.get('argument') as NodePath<BabelTypes.Node>)
-        }
-      }
-      return
-    }
-
-    if (patternPath.isArrayPattern()) {
-      for (const elementPath of patternPath.get('elements')) {
-        if (elementPath.node) {
-          collectAssignedPattern(elementPath as NodePath<BabelTypes.Node>)
-        }
-      }
-      return
-    }
-
-    if (patternPath.isRestElement()) {
-      collectAssignedPattern(patternPath.get('argument') as NodePath<BabelTypes.Node>)
-      return
-    }
-
-    if (patternPath.isAssignmentPattern()) {
-      collectAssignedPattern(patternPath.get('left') as NodePath<BabelTypes.Node>)
-    }
-  }
-
-  handlerPath.traverse({
-    AssignmentExpression(path) {
-      collectAssignedPattern(path.get('left') as NodePath<BabelTypes.Node>)
-    },
-
-    UpdateExpression(path) {
-      const argumentPath = path.get('argument')
-      if (argumentPath.isIdentifier()) {
-        addIdentifier(argumentPath)
-      }
-    },
-
-    ForInStatement(path) {
-      const leftPath = path.get('left')
-      if (!leftPath.isVariableDeclaration()) {
-        collectAssignedPattern(leftPath as NodePath<BabelTypes.Node>)
-      }
-    },
-
-    ForOfStatement(path) {
-      const leftPath = path.get('left')
-      if (!leftPath.isVariableDeclaration()) {
-        collectAssignedPattern(leftPath as NodePath<BabelTypes.Node>)
-      }
-    },
-  })
-
-  return written
-}
-
-function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<BabelTypes.Node>): boolean {
-  let found = false
-
-  handlerPath.traverse({
-    MetaProperty(path) {
-      if (
-        t.isIdentifier(path.node.meta, { name: 'import' }) &&
-        t.isIdentifier(path.node.property, { name: 'meta' })
-      ) {
-        found = true
-        path.stop()
-      }
-    },
-
-    CallExpression(path) {
-      if (!t.isImport(path.node.callee)) return
-
-      const [specifier] = path.node.arguments
-      if (!t.isStringLiteral(specifier)) {
-        found = true
-        path.stop()
-        return
-      }
-
-      const value = specifier.value
-      if (value === '.' || value === '..' || value.startsWith('./') || value.startsWith('../')) {
-        found = true
-        path.stop()
-      }
-    },
-  })
-
-  return found
-}
-
-/**
- * Collect identifier names from a pattern (for destructuring).
- */
-function collectPatternIdentifiers(pattern: BabelTypes.LVal | BabelTypes.PatternLike): string[] {
-  const names: string[] = []
-
-  if (t.isIdentifier(pattern)) {
-    names.push(pattern.name)
-  } else if (t.isObjectPattern(pattern)) {
-    for (const prop of pattern.properties) {
-      if (t.isObjectProperty(prop) && t.isLVal(prop.value)) {
-        names.push(...collectPatternIdentifiers(prop.value))
-      } else if (t.isRestElement(prop)) {
-        names.push(...collectPatternIdentifiers(prop.argument))
-      }
-    }
-  } else if (t.isArrayPattern(pattern)) {
-    for (const element of pattern.elements) {
-      if (element) {
-        names.push(...collectPatternIdentifiers(element))
-      }
-    }
-  } else if (t.isRestElement(pattern)) {
-    names.push(...collectPatternIdentifiers(pattern.argument))
-  } else if (t.isAssignmentPattern(pattern)) {
-    names.push(...collectPatternIdentifiers(pattern.left))
-  }
-
-  return names
-}
-
-function getExportedName(exported: BabelTypes.ExportSpecifier['exported']): string {
-  return t.isIdentifier(exported) ? exported.name : exported.value
-}
-
-function collectExportedNames(body: BabelTypes.Statement[]): Set<string> {
-  const names = new Set<string>()
-
-  for (const node of body) {
-    if (t.isExportDefaultDeclaration(node)) {
-      names.add('default')
-      continue
-    }
-
-    if (!t.isExportNamedDeclaration(node)) continue
-
-    for (const specifier of node.specifiers) {
-      if (t.isExportSpecifier(specifier)) {
-        names.add(getExportedName(specifier.exported))
-      }
-    }
-
-    const declaration = node.declaration
-    if (!declaration) continue
-
-    if (t.isFunctionDeclaration(declaration) && declaration.id) {
-      names.add(declaration.id.name)
-    } else if (t.isVariableDeclaration(declaration)) {
-      for (const declarator of declaration.declarations) {
-        for (const name of collectPatternIdentifiers(declarator.id)) {
-          names.add(name)
-        }
-      }
-    } else if (t.isClassDeclaration(declaration) && declaration.id) {
-      names.add(declaration.id.name)
-    } else if (t.isTSEnumDeclaration(declaration) && !declaration.declare) {
-      names.add(declaration.id.name)
-    } else if (
-      t.isTSModuleDeclaration(declaration) &&
-      !declaration.declare &&
-      t.isIdentifier(declaration.id)
-    ) {
-      names.add(declaration.id.name)
-    }
-  }
-
-  return names
-}
-
-function createHandlerDependencyExportName(
-  sourceModule: string,
-  localName: string,
-  usedExportNames: Set<string>,
-  rootDir?: string,
-  packageBoundaryCache?: Map<string, PackageBoundary | null>,
-  explicitNamespace?: string,
-  preserveSymlinks = false,
-): string {
-  const sourceIdentity = createHandlerSourceIdentity(
-    sourceModule,
-    rootDir,
-    packageBoundaryCache,
-    explicitNamespace,
-    preserveSymlinks,
-  )
-  const hash = hashString(`${sourceIdentity}:${localName}`).slice(0, 8)
-  const base = `${HANDLER_DEP_PREFIX}${hash}_${localName}`
-  let candidate = base
-  let suffix = 1
-
-  while (usedExportNames.has(candidate)) {
-    candidate = `${base}_${suffix}`
-    suffix++
-  }
-
-  usedExportNames.add(candidate)
-  return candidate
-}
-
-/**
- * Extract handlers using Babel AST and rewrite QRLs to use virtual modules.
- * Local dependencies are detected and re-exported for handlers to import from
- * the source module.
- */
-function extractAndRewriteHandlers(
-  code: string,
-  sourceModule: string,
-  handlerRegistry: Map<string, ExtractedHandler>,
-  inputSourceMap: TransformResult['map'] = null,
-  rootDir?: string,
-  packageBoundaryCache?: Map<string, PackageBoundary | null>,
-  explicitNamespace?: string,
-  preserveSymlinks = false,
-  resolveHandlerModuleId?: (handlerId: string) => string,
-): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
-  let ast: ReturnType<typeof parse>
-
-  try {
-    ast = parseModuleWithDecoratorFallback(code)
-  } catch (error) {
-    throw Object.assign(
-      new Error(
-        buildPluginMessage(
-          'Failed to parse transformed code for handler extraction',
-          sourceModule,
-          error,
-        ),
-      ),
-      { cause: error },
-    )
-  }
-
-  // Collect all top-level declarations that could be referenced by handlers
-  const topLevelDeclarations = new Set<string>()
-  const mutableTopLevelDeclarations = new Set<string>()
-  const importedNames = new Set<string>()
-  const usedExportNames = collectExportedNames(ast.program.body)
-  const runtimeHelperImports = collectRuntimeHelperImports(ast.program.body)
-
-  for (const node of ast.program.body) {
-    // Collect imports
-    if (t.isImportDeclaration(node)) {
-      if (node.importKind === 'type') continue
-      for (const specifier of node.specifiers) {
-        if (isTypeOnlyImportSpecifier(specifier)) continue
-        if (t.isImportSpecifier(specifier) || t.isImportDefaultSpecifier(specifier)) {
-          importedNames.add(specifier.local.name)
-        } else if (t.isImportNamespaceSpecifier(specifier)) {
-          importedNames.add(specifier.local.name)
-        }
-      }
-      continue
-    }
-
-    // Named default function and class declarations introduce module-local
-    // bindings even though their only public export name is `default`.
-    if (t.isExportDefaultDeclaration(node)) {
-      const declaration = node.declaration
-      if (t.isFunctionDeclaration(declaration) && declaration.id) {
-        topLevelDeclarations.add(declaration.id.name)
-        mutableTopLevelDeclarations.add(declaration.id.name)
-      } else if (t.isClassDeclaration(declaration) && declaration.id) {
-        topLevelDeclarations.add(declaration.id.name)
-      }
-      continue
-    }
-
-    // Collect function declarations
-    if (t.isFunctionDeclaration(node) && node.id) {
-      topLevelDeclarations.add(node.id.name)
-      mutableTopLevelDeclarations.add(node.id.name)
-      continue
-    }
-
-    // Collect variable declarations
-    if (t.isVariableDeclaration(node)) {
-      for (const declarator of node.declarations) {
-        for (const name of collectPatternIdentifiers(declarator.id)) {
-          topLevelDeclarations.add(name)
-          if (node.kind === 'let' || node.kind === 'var') {
-            mutableTopLevelDeclarations.add(name)
-          }
-        }
-      }
-      continue
-    }
-
-    // Collect class declarations
-    if (t.isClassDeclaration(node) && node.id) {
-      topLevelDeclarations.add(node.id.name)
-      continue
-    }
-
-    if (t.isTSEnumDeclaration(node) && !node.declare) {
-      topLevelDeclarations.add(node.id.name)
-      continue
-    }
-
-    if (t.isTSModuleDeclaration(node) && !node.declare && t.isIdentifier(node.id)) {
-      topLevelDeclarations.add(node.id.name)
-      continue
-    }
-
-    // Collect exported declarations
-    if (t.isExportNamedDeclaration(node) && node.declaration) {
-      if (t.isFunctionDeclaration(node.declaration) && node.declaration.id) {
-        topLevelDeclarations.add(node.declaration.id.name)
-        mutableTopLevelDeclarations.add(node.declaration.id.name)
-      } else if (t.isVariableDeclaration(node.declaration)) {
-        for (const declarator of node.declaration.declarations) {
-          for (const name of collectPatternIdentifiers(declarator.id)) {
-            topLevelDeclarations.add(name)
-            if (node.declaration.kind === 'let' || node.declaration.kind === 'var') {
-              mutableTopLevelDeclarations.add(name)
-            }
-          }
-        }
-      } else if (t.isClassDeclaration(node.declaration) && node.declaration.id) {
-        topLevelDeclarations.add(node.declaration.id.name)
-      } else if (t.isTSEnumDeclaration(node.declaration) && !node.declaration.declare) {
-        topLevelDeclarations.add(node.declaration.id.name)
-      } else if (
-        t.isTSModuleDeclaration(node.declaration) &&
-        !node.declaration.declare &&
-        t.isIdentifier(node.declaration.id)
-      ) {
-        topLevelDeclarations.add(node.declaration.id.name)
-      }
-    }
-  }
-
-  // Merge imports into top-level declarations (they're also available at top level)
-  for (const name of importedNames) {
-    topLevelDeclarations.add(name)
-  }
-
-  const handlerNames: string[] = []
-  const nodesToRemove = new Set<BabelTypes.Node>()
-  const handlerDeclaratorsToRemove = new Set<BabelTypes.VariableDeclarator>()
-  const dependencyExportNames = new Map<string, string>()
-  const runtimeImportFamily = detectRuntimeImportFamilyFromCode(ast.program.body)
-
-  // First pass: find all handler exports and extract their code
-  traverse(ast, {
-    ExportNamedDeclaration(path) {
-      const declarationPath = path.get('declaration')
-      const programScope = path.scope.getProgramParent()
-
-      // Handle: export const __fict_e0 = (scopeId, event, el) => { ... }
-      if (declarationPath.isVariableDeclaration()) {
-        const declaratorPaths = declarationPath.get('declarations')
-        for (const declaratorPath of declaratorPaths) {
-          const declarator = declaratorPath.node
-          if (!t.isIdentifier(declarator.id)) continue
-
-          const name = declarator.id.name
-          // Only extract event handlers (__fict_e*), not resume handlers (__fict_r*)
-          // Resume handlers have complex component dependencies that can't be easily extracted
-          if (!name.match(/^__fict_e\d+$/)) continue
-
-          const initPath = declaratorPath.get('init')
-          if (!initPath.node || !initPath.isExpression()) continue
-          if (hasModuleContextSensitiveHandlerSyntax(initPath)) continue
-
-          // Generate the handler function code
-          const handlerCode = generate(initPath.node).code
-
-          // Detect which runtime helpers are used
-          const helpersUsed = collectRuntimeHelperUsages(initPath, runtimeHelperImports)
-
-          // Detect local dependencies
-          const referencedIds = collectHandlerTopLevelReferences(
-            initPath,
-            programScope,
-            topLevelDeclarations,
-            runtimeHelperImports,
-          )
-          const localDepNames: string[] = []
-          for (const ref of referencedIds) {
-            localDepNames.push(ref)
-          }
-
-          const mutableWrites = collectHandlerMutableTopLevelWrites(
-            initPath,
-            programScope,
-            mutableTopLevelDeclarations,
-          )
-          if (mutableWrites.size > 0) continue
-
-          handlerNames.push(name)
-          const localDeps = localDepNames.map(localName => {
-            let exportName = dependencyExportNames.get(localName)
-            if (!exportName) {
-              exportName = createHandlerDependencyExportName(
-                sourceModule,
-                localName,
-                usedExportNames,
-                rootDir,
-                packageBoundaryCache,
-                explicitNamespace,
-                preserveSymlinks,
-              )
-              dependencyExportNames.set(localName, exportName)
-            }
-            return { localName, exportName }
-          })
-
-          // Register the handler with its full code
-          const handlerId = createHandlerId(
-            sourceModule,
-            name,
-            rootDir,
-            packageBoundaryCache,
-            explicitNamespace,
-            preserveSymlinks,
-          )
-          handlerRegistry.set(handlerId, {
-            sourceModule,
-            exportName: name,
-            helpersUsed,
-            localDeps,
-            code: handlerCode,
-            runtimeImportFamily,
-          })
-
-          // Remove only this handler declarator. Compiler output can share an
-          // exported variable declaration with ordinary exports, which must
-          // remain in the source module.
-          handlerDeclaratorsToRemove.add(declarator)
-        }
-        return
-      }
-
-      // Handle: export function __fict_e0(scopeId, event, el) { ... }
-      if (declarationPath.isFunctionDeclaration()) {
-        const declaration = declarationPath.node
-        const functionId = declaration.id
-        if (!functionId) return
-        const name = functionId.name
-        // Only extract event handlers (__fict_e*), not resume handlers (__fict_r*)
-        // Resume handlers have complex component dependencies that can't be easily extracted
-        if (!name.match(/^__fict_e\d+$/)) return
-        if (hasModuleContextSensitiveHandlerSyntax(declarationPath)) return
-
-        // Convert to arrow function expression for the virtual module
-        const params = declaration.params
-        const body = declaration.body
-        const arrowFn = t.arrowFunctionExpression(params, body, declaration.async)
-
-        // Generate the handler function code
-        const handlerCode = generate(arrowFn).code
-
-        // Detect which runtime helpers are used
-        const helpersUsed = collectRuntimeHelperUsages(declarationPath, runtimeHelperImports)
-
-        // Detect local dependencies
-        const referencedIds = collectHandlerTopLevelReferences(
-          declarationPath,
-          programScope,
-          topLevelDeclarations,
-          runtimeHelperImports,
-        )
-        const localDepNames: string[] = []
-        for (const ref of referencedIds) {
-          localDepNames.push(ref)
-        }
-
-        const mutableWrites = collectHandlerMutableTopLevelWrites(
-          declarationPath,
-          programScope,
-          mutableTopLevelDeclarations,
-        )
-        if (mutableWrites.size > 0) return
-
-        handlerNames.push(name)
-        const localDeps = localDepNames.map(localName => {
-          let exportName = dependencyExportNames.get(localName)
-          if (!exportName) {
-            exportName = createHandlerDependencyExportName(
-              sourceModule,
-              localName,
-              usedExportNames,
-              rootDir,
-              packageBoundaryCache,
-              explicitNamespace,
-              preserveSymlinks,
-            )
-            dependencyExportNames.set(localName, exportName)
-          }
-          return { localName, exportName }
-        })
-
-        // Register the handler with its full code
-        const handlerId = createHandlerId(
-          sourceModule,
-          name,
-          rootDir,
-          packageBoundaryCache,
-          explicitNamespace,
-          preserveSymlinks,
-        )
-        handlerRegistry.set(handlerId, {
-          sourceModule,
-          exportName: name,
-          helpersUsed,
-          localDeps,
-          code: handlerCode,
-          runtimeImportFamily,
-        })
-
-        // Mark this export for removal
-        nodesToRemove.add(path.node)
-      }
-    },
-  })
-
-  if (handlerNames.length === 0) {
-    return null
-  }
-
-  // Second pass: remove handler exports, rewrite QRL calls, and add re-exports for dependencies
-  traverse(ast, {
-    ExportNamedDeclaration(path) {
-      if (nodesToRemove.has(path.node)) {
-        path.remove()
-        return
-      }
-
-      const declaration = path.node.declaration
-      if (!t.isVariableDeclaration(declaration)) return
-
-      const remainingDeclarations = declaration.declarations.filter(
-        declarator => !handlerDeclaratorsToRemove.has(declarator),
-      )
-      if (remainingDeclarations.length === declaration.declarations.length) return
-
-      if (remainingDeclarations.length === 0) {
-        path.remove()
-        return
-      }
-
-      declaration.declarations = remainingDeclarations
-    },
-
-    CallExpression(path) {
-      // Rewrite __fictQrl(import.meta.url, "__fict_e0") to the handler module URL.
-      // Flagged QRLs retain the helper call so its metadata suffix is preserved:
-      // __fictQrl(import.meta.url, "__fict_e0", "pd")
-      //   -> __fictQrl("<handler-module-url>", "default", "pd")
-      if (!t.isIdentifier(path.node.callee, { name: '__fictQrl' })) return
-      if (path.node.arguments.length < 2) return
-
-      const secondArg = path.node.arguments[1]
-      if (!t.isStringLiteral(secondArg)) return
-
-      const handlerName = secondArg.value
-      if (!handlerNames.includes(handlerName)) return
-
-      // Replace with the virtual module URL
-      const handlerId = createHandlerId(
-        sourceModule,
-        handlerName,
-        rootDir,
-        packageBoundaryCache,
-        explicitNamespace,
-        preserveSymlinks,
-      )
-      const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
-      const handlerModuleId = resolveHandlerModuleId?.(handlerId) ?? virtualModuleId
-      if (path.node.arguments.length === 2) {
-        path.replaceWith(t.stringLiteral(`${handlerModuleId}#default`))
-        return
-      }
-
-      path.node.arguments = [
-        t.stringLiteral(handlerModuleId),
-        t.stringLiteral('default'),
-        ...path.node.arguments.slice(2),
-      ]
-    },
-  })
-
-  // Add private re-exports for local dependencies used by handlers.
-  // Generated names include a stable hash and collision suffix when needed.
-  if (dependencyExportNames.size > 0) {
-    const reExports: BabelTypes.ExportSpecifier[] = []
-    for (const [localName, exportName] of dependencyExportNames) {
-      reExports.push(t.exportSpecifier(t.identifier(localName), t.identifier(exportName)))
-    }
-    ast.program.body.push(t.exportNamedDeclaration(null, reExports))
-  }
-
-  // Generate the modified code
-  const generatorOptions: BabelGeneratorOptionsWithInputSourceMap = {
-    retainLines: true,
-    compact: false,
-    sourceMaps: inputSourceMap !== null,
-    inputSourceMap,
-    sourceFileName: sourceModule,
-  }
-  const result = generate(ast, generatorOptions)
-
-  return { code: result.code, handlers: handlerNames, map: result.map as TransformResult['map'] }
 }

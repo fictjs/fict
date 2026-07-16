@@ -611,30 +611,6 @@ importers:
 
   packages/vite-plugin:
     dependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@babel/generator':
-        specifier: ^7.29.1
-        version: 7.29.1
-      '@babel/parser':
-        specifier: ^7.29.0
-        version: 7.29.0
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-react-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-typescript':
-        specifier: ^7.28.5
-        version: 7.28.5(@babel/core@7.29.7)
-      '@babel/traverse':
-        specifier: ^7.29.0
-        version: 7.29.0
-      '@babel/types':
-        specifier: ^7.29.0
-        version: 7.29.0
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
