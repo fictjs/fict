@@ -19,9 +19,6 @@ import {
   type NativeCompilerBinding,
   type NativeCompilerFacade,
 } from '../../../packages/compiler/dist/native-loader.cjs'
-import legacyCompiler, {
-  createFictPlugin as explicitLegacyCompiler,
-} from '../../../packages/compiler/dist/legacy.cjs'
 import {
   parseModuleReactiveMetadata,
   resolvePackageModuleMetadata,
@@ -56,7 +53,6 @@ const directAnalysis: AnalyzeResult = analyzeSync(analyzeRequest)
 const directAsyncAnalysis: Promise<AnalyzeResult> = analyze(analyzeRequest)
 const buildId: string = nativeCompilerInfo().compilerBuildId
 const buildRevision: string | null = nativeCompilerInfo().compilerBuildRevision
-const legacyFactory: typeof explicitLegacyCompiler = legacyCompiler
 const parsedMetadata = parseModuleReactiveMetadata('{"version":1,"exports":{}}')
 const packageMetadata = resolvePackageModuleMetadata('fict-library', __filename)
 
@@ -73,6 +69,5 @@ void directAnalysis
 void directAsyncAnalysis
 void buildId
 void buildRevision
-void legacyFactory
 void parsedMetadata
 void packageMetadata

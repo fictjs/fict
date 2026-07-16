@@ -66,7 +66,6 @@ try {
     logLevel: 'silent',
     plugins: [
       fict({
-        backend: 'rust',
         nativeCompilerPath,
         cache: false,
         functionSplitting: false,
@@ -122,7 +121,6 @@ try {
     logLevel: 'silent',
     plugins: [
       fict({
-        backend: 'rust',
         nativeCompilerPath,
         cache: false,
         functionSplitting: false,

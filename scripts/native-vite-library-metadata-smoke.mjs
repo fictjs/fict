@@ -80,7 +80,6 @@ try {
     logLevel: 'silent',
     plugins: [
       fict({
-        backend: 'rust',
         nativeCompilerPath,
         library: true,
         cache: false,
@@ -149,7 +148,6 @@ try {
     logLevel: 'silent',
     plugins: [
       fict({
-        backend: 'rust',
         nativeCompilerPath,
         cache: false,
         functionSplitting: false,

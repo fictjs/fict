@@ -56,7 +56,6 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest run",
-    "test:differential": "vitest run test/differential",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
@@ -77,16 +76,6 @@
     "@fictjs/compiler-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
-    "@babel/generator": "^7.29.1",
-    "@babel/plugin-syntax-jsx": "^7.28.6",
-    "@babel/plugin-transform-modules-commonjs": "^7.28.6",
-    "@babel/plugin-transform-react-jsx": "^7.28.6",
-    "@babel/types": "^7.29.0",
-    "@fictjs/runtime": "workspace:*",
-    "@jridgewell/trace-mapping": "^0.3.31",
-    "@types/babel__helper-plugin-utils": "^7.10.3",
-    "@types/babel__traverse": "^7.28.0",
     "tsdown": "^0.22.3"
   }
 }

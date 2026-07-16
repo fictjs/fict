@@ -9,7 +9,6 @@ const FORBIDDEN_RUST_BACKEND_MODULES = [
   '@babel/plugin-transform-typescript',
   '@babel/traverse',
   '@babel/types',
-  '@fictjs/compiler/legacy',
 ] as const
 
 afterEach(() => {
@@ -19,7 +18,7 @@ afterEach(() => {
   vi.resetModules()
 })
 
-it('imports and runs the Rust backend without evaluating Babel or the legacy compiler', async () => {
+it('imports and runs the Rust compiler without evaluating Babel', async () => {
   for (const moduleId of FORBIDDEN_RUST_BACKEND_MODULES) {
     vi.doMock(moduleId, () => {
       throw new Error(`Rust backend loaded forbidden runtime module ${moduleId}`)
@@ -86,12 +85,11 @@ it('imports and runs the Rust backend without evaluating Babel or the legacy com
 
   const { default: fict } = await import('../index')
   const plugin = fict({
-    backend: 'rust',
     resumable: true,
     functionSplitting: false,
     useTypeScriptProject: false,
     publicIdentityNamespace: 'loading-test@1',
-  })
+  }) as any
   plugin.configResolved?.({
     command: 'build',
     mode: 'production',

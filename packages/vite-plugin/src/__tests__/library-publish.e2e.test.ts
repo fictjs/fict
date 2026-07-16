@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import type { Plugin, ResolvedConfig } from 'vite'
+import type { ResolvedConfig } from 'vite'
 import { build } from 'vite'
 import { describe, expect, it } from 'vitest'
 
@@ -51,7 +51,7 @@ const mockBuildConfig = {
   base: '/',
   build: { ssr: false },
   resolve: { alias: [] },
-} as ResolvedConfig
+} as unknown as ResolvedConfig
 
 describe('npm pack JSON compatibility', () => {
   const entry: NpmPackEntry = {
@@ -175,7 +175,7 @@ describe('vite-plugin library publishing e2e', () => {
         },
       )
 
-      const plugin = fict({ useTypeScriptProject: false, cache: false }) as Plugin
+      const plugin = fict({ useTypeScriptProject: false, cache: false }) as any
       if (typeof plugin.configResolved === 'function') {
         plugin.configResolved({ ...mockBuildConfig, root: consumerRoot })
       }

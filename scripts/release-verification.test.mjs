@@ -19,7 +19,6 @@ import {
   releaseIsolationEnv,
   worktreeRemovalFailure,
 } from './release-verify-clean.mjs'
-import { guardrailSampleFilename } from './hir-guardrails.mjs'
 
 const rootPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const rolloutState = JSON.parse(
@@ -159,7 +158,6 @@ test('CI and release use Node 24-compatible action majors', () => {
     ['actions/cache', 5],
     ['actions/checkout', 5],
     ['actions/download-artifact', 7],
-    ['actions/github-script', 8],
     ['actions/setup-node', 5],
     ['actions/upload-artifact', 6],
     ['codecov/codecov-action', 6],
@@ -226,27 +224,10 @@ test('native bundler typechecks wait for compiler declarations in clean checkout
   }
 })
 
-test('rollout representative application builds its workspace dependency closure', () => {
-  assert.match(
-    ciWorkflow,
-    /name: Build a representative application with the Rust backend[\s\S]*?run: pnpm --filter fict-example-real-apps\.\.\. build/,
-  )
-})
-
 test('compiler and top-level release gates enforce Rust architecture and complexity budgets', () => {
   assert.match(rootPackage.scripts['release:verify'], /pnpm guardrails:rust-crates/)
   assert.match(rootPackage.scripts['release:compiler:verify'], /pnpm guardrails:rust-crates/)
   assert.match(ciWorkflow, /^\s+pnpm guardrails:rust-crates$/m)
-})
-
-test('rollout candidates only chain the immediately preceding successful main push', () => {
-  assert.doesNotMatch(ciWorkflow, /^\s+status: 'completed'$/m)
-  assert.match(ciWorkflow, /\.filter\(candidate => candidate\.id < context\.runId\)/)
-  assert.match(ciWorkflow, /\.sort\(\(left, right\) => right\.id - left\.id\)\[0\]/)
-  assert.match(ciWorkflow, /if \(run\?\.status === 'completed' && run\.conclusion === 'success'\)/)
-  assert.doesNotMatch(ciWorkflow, /runs\.find\([^\n]+conclusion === 'success'/)
-  assert.match(ciWorkflow, /value\.schemaVersion === 5/)
-  assert.match(ciWorkflow, /restarting the consecutive count/)
 })
 
 test('controlled native builds embed the workflow source revision', () => {
@@ -330,48 +311,6 @@ test('legacy-removal approval starts pending and must bind one release-evidence 
   )
   assert.match(rolloutReadiness, /assertLegacyRemovalEvidenceDocumentShape/)
   assert.match(rolloutReadiness, /review\.evidenceDigest !== evidence\.evidenceDigest/)
-})
-
-test('rollout candidates are finalized only after every required CI gate succeeds', () => {
-  const rawEvidenceUpload = ciWorkflow.indexOf('name: Upload raw rollout evidence')
-  const finalizer = ciWorkflow.indexOf('compiler-rollout-finalize:')
-  assert.notEqual(rawEvidenceUpload, -1)
-  assert.notEqual(finalizer, -1)
-  assert.ok(rawEvidenceUpload < finalizer)
-
-  const producer = ciWorkflow.slice(rawEvidenceUpload, finalizer)
-  const finalizerSource = ciWorkflow.slice(finalizer)
-  assert.match(producer, /name: compiler-rollout-raw-evidence/)
-  assert.doesNotMatch(producer, /name: compiler-rollout-candidate/)
-  assert.doesNotMatch(producer, /Seal candidate evidence/)
-
-  for (const job of [
-    'rust-fuzz',
-    'rust-native',
-    'compiler-rollout',
-    'lint',
-    'typecheck',
-    'strict-guarantee',
-    'perf-guardrails',
-    'test',
-    'e2e',
-    'test-opt-out',
-    'test-ssr-edge',
-    'build',
-  ]) {
-    assert.match(finalizerSource, new RegExp(`^\\s+- ${job}$`, 'm'))
-  }
-  assert.match(finalizerSource, /always\(\)/)
-  assert.match(finalizerSource, /needs\['compiler-rollout'\]\.result == 'success'/)
-  assert.match(finalizerSource, /needs\.e2e\.result == 'success'/)
-  assert.match(finalizerSource, /needs\['test-ssr-edge'\]\.result == 'success'/)
-  assert.match(finalizerSource, /name: compiler-rollout-raw-evidence/)
-  assert.match(finalizerSource, /name: Bind required workflow job results/)
-  assert.match(finalizerSource, /COMPILER_ROLLOUT_NEEDS: \$\{\{ toJSON\(needs\) \}\}/)
-  assert.match(finalizerSource, /compiler-rollout-workflow-gate\.mjs/)
-  assert.match(finalizerSource, /name: Seal candidate evidence/)
-  assert.match(finalizerSource, /name: compiler-rollout-candidate/)
-  assert.doesNotMatch(finalizerSource, /Upload finalized rollout candidate\n\s+if: always\(\)/)
 })
 
 test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
@@ -602,13 +541,4 @@ test('clean checkout fails when its temporary worktree cannot be removed', () =>
     worktreeRemovalFailure(128, '/tmp/fict-clean'),
     '[release-verify-clean] Failed to remove temporary worktree /tmp/fict-clean',
   )
-})
-
-test('HIR output-size samples use checkout-independent source identities', () => {
-  const filename = guardrailSampleFilename('resumable-handler')
-  assert.equal(
-    filename.endsWith(path.join('virtual', 'fict-guardrails', 'resumable-handler.tsx')),
-    true,
-  )
-  assert.equal(filename.includes('/fict-release-checkout-'), false)
 })

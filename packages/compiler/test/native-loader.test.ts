@@ -18,18 +18,13 @@ import {
   transformSync,
   type NativeCompilerBinding,
 } from '../src/native-loader'
-import type { AnalyzeResult } from '../src/tooling'
+import type { AnalyzeResult } from '../src/tooling/types'
 import {
   COMPILER_PROTOCOL_VERSION,
   MODULE_REACTIVE_METADATA_VERSION,
   type CompileResult,
   type ScanResult,
 } from '../src/types'
-
-import legacyCompiler, {
-  createFictPlugin as explicitLegacyCompiler,
-  getCompilerCacheFingerprint as getLegacyCompilerCacheFingerprint,
-} from '../src/legacy'
 
 function createCompileResult(): CompileResult {
   return {
@@ -90,11 +85,6 @@ function createBinding(): NativeCompilerBinding {
 }
 
 describe('native compiler loader', () => {
-  it('keeps the explicit legacy entrypoint available during the compatibility window', () => {
-    expect(legacyCompiler).toBe(explicitLegacyCompiler)
-    expect(typeof getLegacyCompilerCacheFingerprint).toBe('function')
-  })
-
   it('exports the complete serializable direct compiler facade', () => {
     expect(typeof nativeCompilerInfo).toBe('function')
     expect(typeof transformSync).toBe('function')

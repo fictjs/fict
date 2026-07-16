@@ -348,36 +348,6 @@ importers:
         specifier: workspace:*
         version: link:../compiler-win32-x64-msvc
     devDependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@babel/generator':
-        specifier: ^7.29.1
-        version: 7.29.1
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-modules-commonjs':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-react-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/types':
-        specifier: ^7.29.0
-        version: 7.29.0
-      '@fictjs/runtime':
-        specifier: workspace:*
-        version: link:../runtime
-      '@jridgewell/trace-mapping':
-        specifier: ^0.3.31
-        version: 0.3.31
-      '@types/babel__helper-plugin-utils':
-        specifier: ^7.10.3
-        version: 7.10.3
-      '@types/babel__traverse':
-        specifier: ^7.28.0
-        version: 7.28.0
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(typescript@5.9.3)
@@ -593,15 +563,6 @@ importers:
         specifier: ^0.30.21
         version: 0.30.21
     devDependencies:
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
-      '@types/babel__generator':
-        specifier: ^7.6.8
-        version: 7.27.0
-      '@types/babel__traverse':
-        specifier: ^7.20.6
-        version: 7.28.0
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(typescript@5.9.3)

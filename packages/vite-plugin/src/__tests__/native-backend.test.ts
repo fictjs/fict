@@ -1,7 +1,3 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
-
 import type {
   CompileRequest,
   CompileResult,
@@ -9,7 +5,7 @@ import type {
   ScanRequest,
   ScanResult,
 } from '@fictjs/compiler'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const native = vi.hoisted(() => {
   const info = {
@@ -37,7 +33,9 @@ vi.mock('@fictjs/compiler/native', () => ({
 
 import fict from '..'
 
-const originalCompilerBackend = process.env.FICT_COMPILER_BACKEND
+function createTestPlugin(options: Parameters<typeof fict>[0] = {}) {
+  return fict(options) as any
+}
 
 const config = {
   command: 'build' as const,
@@ -143,17 +141,11 @@ describe('Rust compiler backend', () => {
     native.load.mockReturnValue(binding())
   })
 
-  afterEach(() => {
-    if (originalCompilerBackend === undefined) delete process.env.FICT_COMPILER_BACKEND
-    else process.env.FICT_COMPILER_BACKEND = originalCompilerBackend
-  })
-
-  it('uses Rust as the whole-build default', async () => {
-    delete process.env.FICT_COMPILER_BACKEND
+  it('uses Rust for the whole build', async () => {
     native.transform.mockResolvedValue(
       compileResult({ code: 'export const selectedByDefault = true;\n' }),
     )
-    const plugin = fict({
+    const plugin = createTestPlugin({
       cache: false,
       functionSplitting: false,
       useTypeScriptProject: false,
@@ -169,49 +161,6 @@ describe('Rust compiler backend', () => {
 
     expect(result.code).toContain('selectedByDefault')
     expect(native.transform).toHaveBeenCalledOnce()
-  })
-
-  it('selects a whole-build backend from the environment below an explicit option', async () => {
-    native.transform.mockResolvedValue(
-      compileResult({ code: 'export const selectedByExplicitOption = true;\n' }),
-    )
-    process.env.FICT_COMPILER_BACKEND = 'legacy'
-    const environmentPlugin = fict({
-      cache: false,
-      functionSplitting: false,
-      useTypeScriptProject: false,
-      publicIdentityNamespace: 'native-test@1',
-    })
-    environmentPlugin.configResolved?.(config as never)
-    const environmentResult = (await environmentPlugin.transform?.call(
-      context() as never,
-      'export const source = true',
-      '/project/src/environment.ts',
-    )) as { code: string }
-    expect(environmentResult.code).toContain('source')
-    expect(environmentResult.code).not.toContain('selectedByExplicitOption')
-    expect(native.transform).not.toHaveBeenCalled()
-
-    const explicitPlugin = fict({
-      backend: 'rust',
-      cache: false,
-      functionSplitting: false,
-      useTypeScriptProject: false,
-      publicIdentityNamespace: 'native-test@1',
-    })
-    explicitPlugin.configResolved?.(config as never)
-    const explicitResult = (await explicitPlugin.transform?.call(
-      context() as never,
-      'export const source = true',
-      '/project/src/explicit.ts',
-    )) as { code: string }
-    expect(explicitResult.code).toContain('selectedByExplicitOption')
-    expect(native.transform).toHaveBeenCalledOnce()
-  })
-
-  it('fails closed for an unknown environment backend', () => {
-    process.env.FICT_COMPILER_BACKEND = 'hybrid'
-    expect(() => fict()).toThrow('Unknown compiler backend "hybrid"')
   })
 
   it('passes a serializable metadata snapshot to the native compile stage', async () => {
@@ -258,8 +207,7 @@ describe('Rust compiler backend', () => {
     const warnings = vi.fn()
     const explanations = vi.fn()
     const metadataDependencies = vi.fn()
-    const plugin = fict({
-      backend: 'rust',
+    const plugin = createTestPlugin({
       cache: false,
       functionSplitting: false,
       useTypeScriptProject: false,
@@ -354,8 +302,7 @@ describe('Rust compiler backend', () => {
         ],
       }),
     )
-    const plugin = fict({
-      backend: 'rust',
+    const plugin = createTestPlugin({
       cache: false,
       functionSplitting: false,
       useTypeScriptProject: false,
@@ -385,8 +332,7 @@ describe('Rust compiler backend', () => {
         ],
       }),
     )
-    const plugin = fict({
-      backend: 'rust',
+    const plugin = createTestPlugin({
       cache: false,
       functionSplitting: false,
       useTypeScriptProject: false,
@@ -438,8 +384,7 @@ describe('Rust compiler backend', () => {
         ],
       }),
     )
-    const plugin = fict({
-      backend: 'rust',
+    const plugin = createTestPlugin({
       resumable: true,
       cache: false,
       functionSplitting: false,
@@ -475,8 +420,7 @@ describe('Rust compiler backend', () => {
   })
 
   it('preserves the Vite full-reload contract without loading the native compiler', () => {
-    const plugin = fict({
-      backend: 'rust',
+    const plugin = createTestPlugin({
       cache: false,
       functionSplitting: false,
       useTypeScriptProject: false,
@@ -497,78 +441,5 @@ describe('Rust compiler backend', () => {
     expect(native.scan).not.toHaveBeenCalled()
     expect(native.scanSync).not.toHaveBeenCalled()
     expect(native.transform).not.toHaveBeenCalled()
-  })
-
-  it('runs privacy-safe shadow comparison while delivering only the legacy result', async () => {
-    native.transform.mockResolvedValue(compileResult({ code: 'export const nativeOnly = true;\n' }))
-    const results: unknown[] = []
-    const plugin = fict({
-      backend: 'shadow',
-      shadow: { onResult: result => results.push(result) },
-      cache: true,
-      functionSplitting: false,
-      useTypeScriptProject: false,
-      publicIdentityNamespace: 'native-test@1',
-    })
-    plugin.configResolved?.(config as never)
-    const source = 'export function App() { return 1 }'
-
-    const transformed = (await plugin.transform?.call(
-      context() as never,
-      source,
-      '/project/src/private-customer-name.tsx',
-    )) as { code: string }
-    await plugin.transform?.call(
-      context() as never,
-      source,
-      '/project/src/private-customer-name.tsx',
-    )
-
-    expect(native.transform).toHaveBeenCalledTimes(2)
-    expect(transformed.code).toContain('export function App()')
-    expect(transformed.code).not.toContain('nativeOnly')
-    expect(results).toHaveLength(2)
-    expect(JSON.stringify(results[0])).not.toContain(source)
-    expect(JSON.stringify(results[0])).not.toContain('/project')
-    expect(JSON.stringify(results[0])).not.toContain('private-customer-name')
-    expect(results[0]).toEqual(
-      expect.objectContaining({
-        moduleHash: expect.stringMatching(/^sha256:/),
-        sourceDigest: expect.stringMatching(/^sha256:/),
-        equivalent: false,
-      }),
-    )
-  })
-
-  it('writes the shadow artifact before failing unexplained differences at build end', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-shadow-build-end-'))
-    const reportPath = path.join(directory, 'shadow.json')
-    try {
-      native.transform.mockResolvedValue(
-        compileResult({ code: 'export const nativeOnly = true;\n' }),
-      )
-      const plugin = fict({
-        backend: 'shadow',
-        shadow: { reportPath, failOnDifference: true },
-        cache: false,
-        functionSplitting: false,
-        useTypeScriptProject: false,
-        publicIdentityNamespace: 'native-test@1',
-      })
-      plugin.configResolved?.(config as never)
-      await plugin.transform?.call(
-        context() as never,
-        'export function App() { return 1 }',
-        '/project/src/App.tsx',
-      )
-
-      await expect(plugin.buildEnd?.call(context() as never)).rejects.toThrow(
-        'unexplained difference',
-      )
-      const artifact = JSON.parse(await readFile(reportPath, 'utf8'))
-      expect(artifact.summary.unexplainedDifferences).toBeGreaterThan(0)
-    } finally {
-      await rm(directory, { recursive: true })
-    }
   })
 })

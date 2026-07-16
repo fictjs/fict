@@ -68,12 +68,14 @@ describe('vite plugin cache fingerprint artifact resolution', () => {
 
   it('changes when sibling source artifacts change while dist is stale', async () => {
     const firstRoot = await makePackageFixture({
+      source: null,
       cacheSource: 'same cache helper',
       indexSource: 'index source v1',
       esm: 'same esm plugin artifact',
       cjs: 'same cjs plugin artifact',
     })
     const secondRoot = await makePackageFixture({
+      source: null,
       cacheSource: 'same cache helper',
       indexSource: 'index source v2',
       esm: 'same esm plugin artifact',
@@ -88,12 +90,14 @@ describe('vite plugin cache fingerprint artifact resolution', () => {
 
   it('changes when cache helper source changes from index remapped frames', async () => {
     const firstRoot = await makePackageFixture({
+      source: null,
       cacheSource: 'cache helper v1',
       indexSource: 'same index source',
       esm: 'same esm plugin artifact',
       cjs: 'same cjs plugin artifact',
     })
     const secondRoot = await makePackageFixture({
+      source: null,
       cacheSource: 'cache helper v2',
       indexSource: 'same index source',
       esm: 'same esm plugin artifact',

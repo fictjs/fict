@@ -30,7 +30,6 @@ function outputCode(result) {
 
 function nativePlugin() {
   return fict({
-    backend: 'rust',
     nativeCompilerPath,
     cache: false,
     functionSplitting: false,

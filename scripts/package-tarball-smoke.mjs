@@ -316,7 +316,6 @@ const forbidden = new Set([
   '@babel/plugin-transform-typescript',
   '@babel/traverse',
   '@babel/types',
-  '@fictjs/compiler/legacy',
 ])
 const compilerBuildId = 'fict-rust-p1-oxc0.139.0-m1-' + '7'.repeat(64)
 const scanResult = {
@@ -357,7 +356,6 @@ const nativeFacade = {
   }),
 }
 const originalLoad = Module._load
-delete process.env.FICT_COMPILER_BACKEND
 Module._load = function (request, parent, isMain) {
   if (request === '@fictjs/compiler/native') return nativeFacade
   if (forbidden.has(request)) throw new Error('Rust tarball path loaded ' + request)
