@@ -28,7 +28,7 @@
     "test:watch": "turbo run test:watch",
     "test:coverage": "pnpm build:compiler:native-host && env -u FICT_STRICT_GUARANTEE turbo run test:coverage --concurrency=1 -- --coverage.reporter=lcov",
     "test:e2e": "pnpm -C packages/fict test:e2e && pnpm test:real-apps",
-    "test:real-apps": "pnpm examples:build-real-apps && pnpm -C examples/ssr-streaming smoke:production && env -u FICT_STRICT_GUARANTEE playwright test --config examples/real-apps/playwright.config.ts",
+    "test:real-apps": "pnpm examples:build-real-apps && pnpm -C examples/ssr-streaming smoke:production && env -u FICT_STRICT_GUARANTEE NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1 playwright test --config examples/real-apps/playwright.config.ts",
     "test:real-apps:long": "FICT_REAL_APP_SOAK_MS=180000 pnpm test:real-apps",
     "test:ssr-matrix": "env -u FICT_STRICT_GUARANTEE pnpm --filter @fictjs/ssr test:matrix",
     "test:strict-guarantee": "cargo test -p fict-compiler --lib",

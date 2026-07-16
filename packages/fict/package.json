@@ -79,7 +79,7 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "env -u FICT_STRICT_GUARANTEE playwright test",
+    "test:e2e": "env -u FICT_STRICT_GUARANTEE NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1 playwright test",
     "clean": "rm -rf dist"
   },
   "dependencies": {
