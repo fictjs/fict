@@ -3,24 +3,22 @@
 /**
  * Compiler complexity guardrail.
  *
- * The compiler intentionally has deep IR/codegen machinery, but large files
- * need an explicit budget so refactors are driven by data instead of surprise.
+ * The TypeScript package is intentionally a thin native request/graph host.
+ * Compiler passes belong in Rust, so deleted compatibility code must not leave
+ * reusable TypeScript headroom behind.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 
 const compilerSrc = path.join(process.cwd(), 'packages/compiler/src')
-const topLimit = Number(process.env.COMPILER_COMPLEXITY_TOP ?? 12)
-const defaultMaxLoc = Number(process.env.COMPILER_COMPLEXITY_MAX_LOC ?? 1600)
-const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 58244)
+const topLimit = Number(process.env.COMPILER_COMPLEXITY_TOP ?? 7)
+const defaultMaxLoc = Number(process.env.COMPILER_COMPLEXITY_MAX_LOC ?? 100)
+const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 742)
 
 const fileBudgets = new Map([
-  ['packages/compiler/src/ir/codegen.ts', 10000],
-  ['packages/compiler/src/ir/optimize.ts', 7391],
-  ['packages/compiler/src/ir/regions.ts', 7129],
-  ['packages/compiler/src/legacy-compiler.ts', 4791],
-  ['packages/compiler/src/ir/build-hir.ts', 3611],
-  ['packages/compiler/src/ir/structurize.ts', 1602],
+  ['packages/compiler/src/module-metadata.ts', 253],
+  ['packages/compiler/src/native-loader.ts', 222],
+  ['packages/compiler/src/types.ts', 199],
 ])
 
 function toPosix(filePath) {
