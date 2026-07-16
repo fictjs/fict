@@ -1,8 +1,8 @@
 # fict
 
-## 1.0.0
+## 0.31.0
 
-### Major Changes
+### Breaking Changes
 
 - Remove the legacy TypeScript/Babel compiler stack and make the Rust native compiler mandatory.
   - `@fictjs/compiler` now exposes only the Rust request API; `./legacy` and `createFictPlugin` are removed.
@@ -14,7 +14,7 @@
 
 ### Patch Changes
 
-- @fictjs/runtime@1.0.0
+- @fictjs/runtime@0.31.0
 
 ## 0.30.1
 

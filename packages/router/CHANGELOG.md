@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- @fictjs/runtime@1.0.0
+- @fictjs/runtime@0.31.0
 
 ## 0.28.3
 

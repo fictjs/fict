@@ -1,8 +1,8 @@
 # @fictjs/webpack-plugin
 
-## 1.0.0
+## 0.31.0
 
-### Major Changes
+### Breaking Changes
 
 - Remove the legacy TypeScript/Babel compiler stack and make the Rust native compiler mandatory.
   - `@fictjs/compiler` now exposes only the Rust request API; `./legacy` and `createFictPlugin` are removed.
@@ -15,7 +15,7 @@
 ### Patch Changes
 
 - Updated dependencies
-  - @fictjs/compiler@1.0.0
+  - @fictjs/compiler@0.31.0
 
 ## 0.28.3
 
