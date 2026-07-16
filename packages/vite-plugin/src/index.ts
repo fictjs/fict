@@ -373,7 +373,6 @@ const FICT_FRAMEWORK_PACKAGES = new Set([
   'fict',
   '@fictjs/runtime',
   '@fictjs/compiler',
-  '@fictjs/babel-preset',
   '@fictjs/vite-plugin',
   '@fictjs/devtools',
   '@fictjs/router',

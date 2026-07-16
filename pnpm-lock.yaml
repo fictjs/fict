@@ -317,34 +317,6 @@ importers:
         specifier: ^7.3.6
         version: 7.3.6(@types/node@25.3.0)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.4)
 
-  packages/babel-preset:
-    dependencies:
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-syntax-typescript':
-        specifier: ^7.27.1
-        version: 7.27.1(@babel/core@7.29.7)
-      '@babel/plugin-transform-modules-commonjs':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-typescript':
-        specifier: ^7.28.5
-        version: 7.28.5(@babel/core@7.29.7)
-      '@fictjs/compiler':
-        specifier: workspace:*
-        version: link:../compiler
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
-    devDependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      tsdown:
-        specifier: ^0.22.3
-        version: 0.22.3(typescript@5.9.3)
-
   packages/compiler:
     dependencies:
       '@oxc-project/runtime':

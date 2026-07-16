@@ -15,7 +15,6 @@
       "@fictjs/compiler-linux-x64-musl",
       "@fictjs/compiler-win32-arm64-msvc",
       "@fictjs/compiler-win32-x64-msvc",
-      "@fictjs/babel-preset",
       "@fictjs/vite-plugin",
       "@fictjs/eslint-plugin"
     ]

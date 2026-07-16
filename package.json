@@ -53,7 +53,6 @@
     "test:runtime-bundler-smoke": "node scripts/runtime-bundler-smoke.mjs",
     "test:bundlers": "pnpm build:compiler:native-host && pnpm -C examples/counter-webpack build && pnpm -C examples/counter-basic build && pnpm examples:verify",
     "test:bundlers:strict-guarantee": "FICT_STRICT_GUARANTEE=1 pnpm test:bundlers",
-    "test:babel-preset:deprecation": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/babel-preset build && node --test scripts/babel-preset-deprecation.test.mjs",
     "examples:build-real-apps": "pnpm -C examples/real-apps build && pnpm -C examples/ssr-basic build && pnpm -C examples/ssr-streaming build",
     "examples:verify": "pnpm examples:build-real-apps && pnpm -C examples/ssr-streaming smoke:production",
     "security:audit:prod": "node --test scripts/audit-production-dependencies.test.mjs && node scripts/audit-production-dependencies.mjs",
@@ -92,7 +91,7 @@
     "bench:optimizer:update": "pnpm --filter @fictjs/compiler build && env -u FICT_STRICT_GUARANTEE node scripts/optimizer-bench.mjs --update",
     "bench:optimizer:guard": "pnpm --filter @fictjs/compiler build && env -u FICT_STRICT_GUARANTEE node scripts/optimizer-bench.mjs --compare",
     "bench:compiler:backends": "pnpm --filter @fictjs/compiler build && pnpm build:compiler:native-host && node scripts/compiler-backend-bench.mjs",
-    "release:compiler:rust-rollout": "pnpm test:compiler:rollout-state && pnpm test:babel-preset:deprecation && pnpm test:vite:native && pnpm test:webpack:native && pnpm test:playground:native && pnpm test:vscode:native && pnpm test:compiler:runtime-parity && pnpm test:compiler:shadow && pnpm test:compiler:rollback-drill && pnpm bench:compiler:backends",
+    "release:compiler:rust-rollout": "pnpm test:compiler:rollout-state && pnpm test:vite:native && pnpm test:webpack:native && pnpm test:playground:native && pnpm test:vscode:native && pnpm test:compiler:runtime-parity && pnpm test:compiler:shadow && pnpm test:compiler:rollback-drill && pnpm bench:compiler:backends",
     "release:compiler:verify": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm release:compiler:rust-rollout && pnpm guardrails:compiler-complexity && pnpm guardrails:rust-crates && pnpm guardrails:hir && pnpm bench:optimizer:guard"
   },
   "devDependencies": {

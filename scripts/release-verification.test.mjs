@@ -220,13 +220,6 @@ test('musl native releases use a pinned Zig cdylib build path', () => {
   assert.doesNotMatch(nativeBuild, /musl-tools|Install musl linker|mlugg\/setup-zig/)
 })
 
-test('Babel preset deprecation verification builds its compiler dependency first', () => {
-  assert.match(
-    rootPackage.scripts['test:babel-preset:deprecation'],
-    /^pnpm --filter @fictjs\/compiler build && pnpm --filter @fictjs\/babel-preset build &&/,
-  )
-})
-
 test('native bundler typechecks wait for compiler declarations in clean checkouts', () => {
   for (const task of ['@fictjs/vite-plugin#typecheck', '@fictjs/webpack-plugin#typecheck']) {
     assert.deepEqual(turboConfig.tasks[task]?.dependsOn, ['@fictjs/compiler#build'])
