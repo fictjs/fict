@@ -452,6 +452,30 @@ describe('DOM Module', () => {
       teardown()
     })
 
+    it('splits server text coalesced after a static prefix before an insert marker', async () => {
+      container.innerHTML = '<span>US East<!---->:65<!----></span>'
+      const label = createSignal('US East')
+      const capacity = createSignal(65)
+      const existing = container.firstChild
+
+      const teardown = hydrateComponent(() => {
+        const root = template('<span><!---->:<!----></span>')()
+        const labelMarker = resolvePath(root, [0])!
+        const capacityMarker = resolvePath(root, [2])!
+        insert(root as ParentNode & Node, label, labelMarker)
+        insert(root as ParentNode & Node, capacity, capacityMarker)
+      }, container)
+
+      expect(container.firstChild).toBe(existing)
+      expect(container.textContent).toBe('US East:65')
+
+      capacity(70)
+      await tick()
+
+      expect(container.textContent).toBe('US East:70')
+      teardown()
+    })
+
     it('claims matching nested resumable component hosts as opaque boundaries', () => {
       container.innerHTML =
         '<fict-host data-fict-host data-fict-s="sChild" data-fict-t="Child@test" data-fict-h="/child.js#resume"><button>1</button></fict-host>'

@@ -1141,15 +1141,29 @@ export function insert(
   const expectedMarker = (marker as Node & { [HYDRATED_TEMPLATE_NODE]?: Node })[
     HYDRATED_TEMPLATE_NODE
   ]
+  const expectedPreviousSibling = expectedMarker?.previousSibling
+  const hydratedPreviousSibling = marker.previousSibling
   if (
     __fictIsHydrating() &&
     !ownsMarker &&
     expectedMarker?.nodeType === 8 &&
-    expectedMarker.previousSibling === null &&
-    marker.previousSibling?.nodeType === 3
+    (expectedPreviousSibling === null || expectedPreviousSibling?.nodeType === 3) &&
+    hydratedPreviousSibling?.nodeType === 3
   ) {
-    currentText = marker.previousSibling as Text
-    currentNodes = [currentText]
+    const expectedStaticPrefix =
+      expectedPreviousSibling?.nodeType === 3 ? (expectedPreviousSibling as Text).data : ''
+    const hydratedText = hydratedPreviousSibling as Text
+    if (hydratedText.data.startsWith(expectedStaticPrefix)) {
+      if (expectedStaticPrefix.length === 0) {
+        currentText = hydratedText
+      } else {
+        const dynamicText = hydratedText.data.slice(expectedStaticPrefix.length)
+        hydratedText.data = expectedStaticPrefix
+        currentText = markerOwnerDocument.createTextNode(dynamicText)
+        marker.parentNode?.insertBefore(currentText, marker)
+      }
+      currentNodes = [currentText]
+    }
   }
 
   const clearCurrentNodes = () => {
