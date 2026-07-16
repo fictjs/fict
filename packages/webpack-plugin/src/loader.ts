@@ -14,6 +14,7 @@ import type {
   ScanResult,
   SourceLanguage,
 } from '@fictjs/compiler'
+import { MODULE_REACTIVE_METADATA_VERSION } from '@fictjs/compiler'
 import { loadNativeCompilerBinding, type NativeCompilerBinding } from '@fictjs/compiler/native'
 
 import { isUnresolvedPackageResolution, readPackageMetadataAtBoundary } from './package-metadata'
@@ -347,7 +348,10 @@ export default function fictWebpackLoader(
   }
   binding.state.incompleteModuleMetadata.delete(moduleIdentifier)
   if (!binding.state.moduleMetadata.has(moduleIdentifier)) {
-    binding.state.moduleMetadata.set(moduleIdentifier, { exports: {} })
+    binding.state.moduleMetadata.set(moduleIdentifier, {
+      version: MODULE_REACTIVE_METADATA_VERSION,
+      exports: {},
+    })
   }
   binding.state.metadataDependenciesByIdentifier.set(moduleIdentifier, new Set())
   binding.state.metadataSourcesByIdentifier.set(moduleIdentifier, new Set())

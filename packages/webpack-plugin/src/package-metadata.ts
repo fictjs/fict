@@ -129,12 +129,10 @@ function readFictPackageConfig(packageData: unknown): FictPackageConfig | undefi
   const data = packageData as Record<string, unknown>
   const config: FictPackageConfig = { hasValidDeclaration: false }
   let hasConfig = false
-  let hasRootMetadata = false
   if (data.fict && typeof data.fict === 'object' && !Array.isArray(data.fict)) {
     const fict = data.fict as { metadata?: unknown; exports?: unknown }
     if (Object.prototype.hasOwnProperty.call(fict, 'metadata')) {
       hasConfig = true
-      hasRootMetadata = true
       config.metadata = normalizeMetadataDeclaration(fict.metadata)
       if (config.metadata) config.hasValidDeclaration = true
     }
@@ -148,11 +146,6 @@ function readFictPackageConfig(packageData: unknown): FictPackageConfig | undefi
       }
       if (Object.keys(exportsConfig).length > 0) config.exports = exportsConfig
     }
-  }
-  if (!hasRootMetadata && Object.prototype.hasOwnProperty.call(data, 'fictMetadata')) {
-    hasConfig = true
-    config.metadata = normalizeMetadataDeclaration(data.fictMetadata)
-    if (config.metadata) config.hasValidDeclaration = true
   }
   return hasConfig ? config : undefined
 }
@@ -176,7 +169,7 @@ export function getPackageRuntimeMappingFingerprint(packageData: unknown): strin
   const data = packageData as Record<string, unknown>
   const mapping: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(data)) {
-    if (key !== 'fict' && key !== 'fictMetadata') mapping[key] = value
+    if (key !== 'fict') mapping[key] = value
   }
   return createHash('sha256').update(stableStringify(mapping)).digest('hex')
 }

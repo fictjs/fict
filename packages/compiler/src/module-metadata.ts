@@ -1,36 +1,11 @@
-import { createHash } from 'node:crypto'
-import {
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { isCanonicalArrayPropIndex } from './metadata-indices'
 import { MODULE_REACTIVE_METADATA_VERSION } from './types'
-import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
+import type { ModuleReactiveMetadata } from './types'
 
-type MetadataStore = Map<string, ModuleReactiveMetadata>
-
-const globalMetadata: MetadataStore = new Map()
-const lastWrittenMetadataPayload = new Map<string, string>()
-const diskLoadedMetadataKeysByStore = new WeakMap<MetadataStore, Set<string>>()
-const defaultResolutionCache = new Map<string, ModuleReactiveMetadata>()
-let resolutionCacheByOptions = new WeakMap<
-  FictCompilerOptions,
-  Map<string, ModuleReactiveMetadata>
->()
-
-const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
-const DEFAULT_META_EXTENSION = '.fict.meta.json'
-const DEFAULT_META_CACHE_DIR = path.join('.fict-cache', 'metadata')
-const FS_PROBE_CACHE_TTL_MS = 250
-const FS_PROBE_CACHE_MAX_SIZE = 50_000
 const UNKNOWN_FILENAME_TOKENS = new Set(['<unknown>', 'unknown', 'stdin', '[stdin]'])
 const VIRTUAL_FILENAME_PREFIXES = [
   'virtual:',
@@ -44,275 +19,26 @@ const VIRTUAL_FILENAME_PREFIXES = [
   'http://',
   'https://',
 ]
-
-type MetadataWriteMode = 'none' | 'adjacent' | 'cache'
-
-interface FsProbeCacheEntry {
-  exists: boolean
-  expiresAt: number
-}
-
-type FsProbeCache = Map<string, FsProbeCacheEntry>
+const MODULE_METADATA_KEYS = new Set(['version', 'exports', 'hooks', 'namespaces'])
+const HOOK_RETURN_KEYS = new Set(['objectProps', 'arrayProps', 'directAccessor'])
+const MAX_METADATA_NAMESPACE_DEPTH = 32
 
 interface FictPackageConfig {
   metadata?: string
   exports?: Record<string, string>
 }
 
-const sharedFsProbeCache: FsProbeCache = new Map()
-
-const shouldUseResolutionCache = (options?: FictCompilerOptions): boolean =>
-  !options?.resolveModuleMetadata && !options?.moduleMetadata
-
-function getResolutionCache(options?: FictCompilerOptions): Map<string, ModuleReactiveMetadata> {
-  if (!options) return defaultResolutionCache
-  let cache = resolutionCacheByOptions.get(options)
-  if (!cache) {
-    cache = new Map<string, ModuleReactiveMetadata>()
-    resolutionCacheByOptions.set(options, cache)
-  }
-  return cache
-}
-
-function clearResolutionCaches(): void {
-  defaultResolutionCache.clear()
-  resolutionCacheByOptions = new WeakMap<FictCompilerOptions, Map<string, ModuleReactiveMetadata>>()
-}
-
-const clearFsProbeCache = (): void => sharedFsProbeCache.clear()
-
-function getDiskLoadedMetadataKeys(store: MetadataStore): Set<string> {
-  let keys = diskLoadedMetadataKeysByStore.get(store)
-  if (!keys) {
-    keys = new Set<string>()
-    diskLoadedMetadataKeysByStore.set(store, keys)
-  }
-  return keys
-}
-
-const canReuseStoredMetadata = (store: MetadataStore, key: string): boolean =>
-  !diskLoadedMetadataKeysByStore.get(store)?.has(key)
-
-function cacheFsProbeResult(cache: FsProbeCache, pathName: string, exists: boolean): void {
-  // A missing manifest or sidecar can be created by another compiler process at
-  // any time. Keeping a negative entry, even briefly, makes the next transform
-  // observe stale metadata and can change emitted accessor semantics.
-  if (!exists) {
-    cache.delete(pathName)
-    return
-  }
-  if (cache.size >= FS_PROBE_CACHE_MAX_SIZE) {
-    cache.clear()
-  }
-  cache.set(pathName, {
-    exists,
-    expiresAt: Date.now() + FS_PROBE_CACHE_TTL_MS,
-  })
-}
-
-const isWindowsDrivePath = (fileName: string): boolean =>
-  /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
-
-function isVirtualFileName(fileName: string): boolean {
-  const trimmed = fileName.trim()
-  if (!trimmed) return true
-  const lower = trimmed.toLowerCase()
-  if (UNKNOWN_FILENAME_TOKENS.has(lower)) return true
-  if (trimmed.startsWith('\0')) return true
-  if (VIRTUAL_FILENAME_PREFIXES.some(prefix => lower.startsWith(prefix))) return true
-  if (trimmed.includes('://') && !lower.startsWith('file://') && !isWindowsDrivePath(trimmed)) {
-    return true
-  }
-  return false
-}
-
-function normalizeFileName(fileName: string): string {
-  let normalized = stripUrlLikeSuffix(fileName, true)
-  if (normalized.startsWith('/@fs/')) {
-    const fsPath = normalized.slice('/@fs/'.length)
-    normalized = fsPath.startsWith('/') || isWindowsDrivePath(fsPath) ? fsPath : `/${fsPath}`
-  }
-  if (normalized.startsWith('file://')) {
-    try {
-      normalized = fileURLToPath(normalized)
-    } catch {
-      // If URL parsing fails, fall back to the raw string.
-    }
-  }
-  return path.resolve(normalized)
-}
-
-function resolvePhysicalFileNameCandidate(candidate: string): string | null {
-  if (candidate.startsWith('file://')) {
-    // URL search/hash characters are suffixes; physical delimiters are encoded.
-    return null
-  }
-  const fileName = candidate.startsWith('/@fs/') ? candidate.slice('/@fs/'.length) : candidate
-  const normalized = path.resolve(fileName)
-  return pathIsFile(normalized) ? normalized : null
-}
-
-function stripUrlLikeSuffix(value: string, preserveExistingFile = false): string {
-  let normalized = value
-  const queryStart = normalized.indexOf('?')
-  const fragmentStart = normalized.indexOf('#')
-  const suffixStart =
-    queryStart === -1
-      ? fragmentStart
-      : fragmentStart === -1
-        ? queryStart
-        : Math.min(queryStart, fragmentStart)
-  if (preserveExistingFile && suffixStart !== -1) {
-    const candidateEnds = [value.length]
-    for (let index = value.length - 1; index >= 0; index--) {
-      if (value[index] === '?' || value[index] === '#') candidateEnds.push(index)
-    }
-    for (const end of candidateEnds) {
-      const candidate = value.slice(0, end)
-      if (candidate && resolvePhysicalFileNameCandidate(candidate)) {
-        return candidate
-      }
-    }
-  }
-  if (suffixStart !== -1) {
-    normalized = normalized.slice(0, suffixStart)
-  }
-  return normalized
-}
-
-const hasQuerySuffix = (source: string): boolean => source.includes('?')
-
-function resolveMetadataWriteMode(options?: FictCompilerOptions): MetadataWriteMode {
-  const opt = options?.emitModuleMetadata
-  if (opt === true) return 'adjacent'
-  if (opt === false) return 'none'
-  // auto: emit only when no external store/resolver is supplied
-  if (options?.moduleMetadata || options?.resolveModuleMetadata) return 'none'
-  return 'cache'
-}
-
-const normalizeConcreteFileName = (fileName: string | undefined): string | null =>
-  !fileName || isVirtualFileName(fileName) ? null : normalizeFileName(fileName)
-
-const getMetadataStore = (options?: FictCompilerOptions): Map<string, ModuleReactiveMetadata> =>
-  options?.moduleMetadata ?? globalMetadata
-
-const getMetadataExtension = (options?: FictCompilerOptions): string =>
-  options?.moduleMetadataExtension ?? DEFAULT_META_EXTENSION
-
-function getMetadataCacheDir(options?: FictCompilerOptions): string {
-  const configured = options?.moduleMetadataCacheDir
-  return path.resolve(configured?.trim() ? configured : DEFAULT_META_CACHE_DIR)
-}
-
-const getAdjacentMetadataFilePath = (
-  normalizedFileName: string,
-  options?: FictCompilerOptions,
-): string => `${normalizedFileName}${getMetadataExtension(options)}`
-
-function getCachedMetadataFilePath(
-  normalizedFileName: string,
-  options?: FictCompilerOptions,
-): string {
-  const cacheDir = getMetadataCacheDir(options)
-  const hash = createHash('sha256').update(normalizedFileName).digest('hex')
-  return path.join(cacheDir, `${hash}${getMetadataExtension(options)}`)
-}
-
-function getMetadataReadPaths(normalizedFileName: string, options?: FictCompilerOptions): string[] {
-  return [
-    getAdjacentMetadataFilePath(normalizedFileName, options),
-    getCachedMetadataFilePath(normalizedFileName, options),
-  ]
-}
-
-function getMetadataWritePath(
-  normalizedFileName: string,
-  writeMode: MetadataWriteMode,
-  options?: FictCompilerOptions,
-): string | null {
-  return writeMode === 'adjacent'
-    ? getAdjacentMetadataFilePath(normalizedFileName, options)
-    : writeMode === 'cache'
-      ? getCachedMetadataFilePath(normalizedFileName, options)
-      : null
-}
-
-function warnMetadata(
-  options: FictCompilerOptions | undefined,
-  normalizedFileName: string | null,
-  message: string,
-): void {
-  if (options?.dev === false) return
-  const label = normalizedFileName ?? '<unknown>'
-  console.warn(`[fict:metadata] ${message} (${label})`)
-}
-
-function writeMetadataAtomically(metaPath: string, payload: string): void {
-  const dir = path.dirname(metaPath)
-  mkdirSync(dir, { recursive: true })
-  const tempPath = `${metaPath}.${process.pid}.${Date.now().toString(36)}.tmp`
-  try {
-    writeFileSync(tempPath, payload, 'utf8')
-    renameSync(tempPath, metaPath)
-  } catch (error) {
-    try {
-      unlinkSync(tempPath)
-    } catch {
-      // Best-effort cleanup.
-    }
-    throw error
-  }
-}
-
-function pathIsFile(pathName: string, cache?: FsProbeCache): boolean {
-  const now = Date.now()
-  if (cache) {
-    const cached = cache.get(pathName)
-    if (cached && cached.expiresAt > now) return cached.exists
-  }
-  let exists: boolean
-  try {
-    exists = statSync(pathName).isFile()
-  } catch {
-    exists = false
-  }
-  if (cache) cacheFsProbeResult(cache, pathName, exists)
-  return exists
-}
-
-function readMetadataFromDisk(
-  fileName: string,
-  store: Map<string, ModuleReactiveMetadata>,
-  options?: FictCompilerOptions,
-  fsCache?: FsProbeCache,
-): ModuleReactiveMetadata | undefined {
-  const normalized = normalizeConcreteFileName(fileName)
-  if (!normalized) return undefined
-  const paths = getMetadataReadPaths(normalized, options)
-  for (const metaPath of paths) {
-    if (!pathIsFile(metaPath, fsCache)) continue
-    try {
-      const raw = readFileSync(metaPath, 'utf8')
-      const parsed = parseModuleReactiveMetadata(raw)
-      if (!parsed) continue
-      store.set(normalized, parsed)
-      getDiskLoadedMetadataKeys(store).add(normalized)
-      return parsed
-    } catch {
-      // Ignore malformed/partial metadata files and try the next path.
-    }
-  }
-  const diskLoadedMetadataKeys = diskLoadedMetadataKeysByStore.get(store)
-  if (diskLoadedMetadataKeys?.has(normalized)) {
-    store.delete(normalized)
-    diskLoadedMetadataKeys.delete(normalized)
-  }
-  return undefined
+export interface PackageModuleMetadataResolutionOptions {
+  /** Called for every package manifest and metadata asset consulted by the graph host. */
+  onDependency?: (filename: string) => void
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every(key => allowed.has(key))
 }
 
 function isReactiveExportKind(value: unknown): value is ModuleReactiveMetadata['exports'][string] {
@@ -320,7 +46,7 @@ function isReactiveExportKind(value: unknown): value is ModuleReactiveMetadata['
 }
 
 function isHookReturnInfo(value: unknown): boolean {
-  if (!isPlainObject(value)) return false
+  if (!isPlainObject(value) || !hasOnlyKeys(value, HOOK_RETURN_KEYS)) return false
 
   if ('directAccessor' in value && !isReactiveExportKind(value.directAccessor)) return false
 
@@ -338,11 +64,17 @@ function isHookReturnInfo(value: unknown): boolean {
   return true
 }
 
-function isModuleReactiveMetadata(value: unknown): value is ModuleReactiveMetadata {
-  if (!isPlainObject(value)) return false
-  if ('version' in value && value.version !== MODULE_REACTIVE_METADATA_VERSION) return false
-  if (!isPlainObject(value.exports)) return false
-  if (!Object.values(value.exports).every(isReactiveExportKind)) return false
+function isModuleReactiveMetadata(value: unknown, depth = 0): value is ModuleReactiveMetadata {
+  if (
+    depth > MAX_METADATA_NAMESPACE_DEPTH ||
+    !isPlainObject(value) ||
+    !hasOnlyKeys(value, MODULE_METADATA_KEYS) ||
+    value.version !== MODULE_REACTIVE_METADATA_VERSION ||
+    !isPlainObject(value.exports) ||
+    !Object.values(value.exports).every(isReactiveExportKind)
+  ) {
+    return false
+  }
 
   if ('hooks' in value) {
     if (!isPlainObject(value.hooks)) return false
@@ -351,19 +83,74 @@ function isModuleReactiveMetadata(value: unknown): value is ModuleReactiveMetada
 
   if ('namespaces' in value) {
     if (!isPlainObject(value.namespaces)) return false
-    if (!Object.values(value.namespaces).every(isModuleReactiveMetadata)) return false
+    if (
+      !Object.values(value.namespaces).every(namespace =>
+        isModuleReactiveMetadata(namespace, depth + 1),
+      )
+    ) {
+      return false
+    }
   }
 
   return true
 }
 
+/** Parse the versioned Rust metadata protocol. Unversioned and unknown-schema payloads fail closed. */
 export function parseModuleReactiveMetadata(raw: string): ModuleReactiveMetadata | null {
   try {
     const parsed = JSON.parse(raw) as unknown
-    if (!isModuleReactiveMetadata(parsed)) return null
-    return parsed as unknown as ModuleReactiveMetadata
+    return isModuleReactiveMetadata(parsed) ? parsed : null
   } catch {
     return null
+  }
+}
+
+const isWindowsDrivePath = (fileName: string): boolean =>
+  /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
+
+function isVirtualFileName(fileName: string): boolean {
+  const trimmed = fileName.trim()
+  if (!trimmed) return true
+  const lower = trimmed.toLowerCase()
+  if (UNKNOWN_FILENAME_TOKENS.has(lower) || trimmed.startsWith('\0')) return true
+  if (VIRTUAL_FILENAME_PREFIXES.some(prefix => lower.startsWith(prefix))) return true
+  return trimmed.includes('://') && !lower.startsWith('file://') && !isWindowsDrivePath(trimmed)
+}
+
+function stripUrlLikeSuffix(value: string): string {
+  const queryStart = value.indexOf('?')
+  const fragmentStart = value.indexOf('#')
+  const suffixStart =
+    queryStart === -1
+      ? fragmentStart
+      : fragmentStart === -1
+        ? queryStart
+        : Math.min(queryStart, fragmentStart)
+  return suffixStart === -1 ? value : value.slice(0, suffixStart)
+}
+
+function normalizeConcreteFileName(fileName: string | undefined): string | null {
+  if (!fileName || isVirtualFileName(fileName)) return null
+  let normalized = stripUrlLikeSuffix(fileName)
+  if (normalized.startsWith('/@fs/')) {
+    const fsPath = normalized.slice('/@fs/'.length)
+    normalized = fsPath.startsWith('/') || isWindowsDrivePath(fsPath) ? fsPath : `/${fsPath}`
+  }
+  if (normalized.startsWith('file://')) {
+    try {
+      normalized = fileURLToPath(normalized)
+    } catch {
+      return null
+    }
+  }
+  return path.resolve(normalized)
+}
+
+function pathIsFile(pathName: string): boolean {
+  try {
+    return statSync(pathName).isFile()
+  } catch {
+    return false
   }
 }
 
@@ -413,7 +200,7 @@ function findPackageJsonPath(packageName: string, importer: string | undefined):
   let current = path.dirname(normalizedImporter)
   while (true) {
     const candidate = path.join(current, 'node_modules', packageName, 'package.json')
-    if (pathIsFile(candidate, sharedFsProbeCache)) return candidate
+    if (pathIsFile(candidate)) return candidate
 
     const parent = path.dirname(current)
     if (parent === current) return null
@@ -423,35 +210,22 @@ function findPackageJsonPath(packageName: string, importer: string | undefined):
 
 function readPackageConfig(packageJsonPath: string): FictPackageConfig | null {
   try {
-    const raw = readFileSync(packageJsonPath, 'utf8')
-    const pkg = JSON.parse(raw) as {
-      fict?: unknown
-      fictMetadata?: unknown
-    }
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { fict?: unknown }
+    if (!isPlainObject(pkg.fict)) return null
+
     const config: FictPackageConfig = {}
-    if (pkg.fict && typeof pkg.fict === 'object') {
-      const fict = pkg.fict as { metadata?: unknown; exports?: unknown }
-      if (typeof fict.metadata === 'string') {
-        config.metadata = fict.metadata
+    if (typeof pkg.fict.metadata === 'string') config.metadata = pkg.fict.metadata
+    if (isPlainObject(pkg.fict.exports)) {
+      const exportsConfig: Record<string, string> = {}
+      for (const [key, value] of Object.entries(pkg.fict.exports)) {
+        if (typeof value === 'string') exportsConfig[key] = value
       }
-      if (fict.exports && typeof fict.exports === 'object') {
-        const exportsConfig: Record<string, string> = {}
-        for (const [key, value] of Object.entries(fict.exports as Record<string, unknown>)) {
-          if (typeof value === 'string') exportsConfig[key] = value
-        }
-        if (Object.keys(exportsConfig).length > 0) {
-          config.exports = exportsConfig
-        }
-      }
+      if (Object.keys(exportsConfig).length > 0) config.exports = exportsConfig
     }
-    if (!config.metadata && typeof pkg.fictMetadata === 'string') {
-      config.metadata = pkg.fictMetadata
-    }
-    if (config.metadata || config.exports) return config
+    return config.metadata || config.exports ? config : null
   } catch {
-    // Malformed package metadata is ignored so package resolution stays best-effort.
+    return null
   }
-  return null
 }
 
 function isPathInside(parent: string, child: string): boolean {
@@ -460,310 +234,61 @@ function isPathInside(parent: string, child: string): boolean {
 }
 
 function normalizePackageMetadataPath(packageDir: string, metadataPath: string): string | null {
-  if (!metadataPath || metadataPath.includes('\0')) return null
-  if (path.isAbsolute(metadataPath) || metadataPath.startsWith('file://')) return null
-  if (metadataPath.startsWith('/@fs/')) return null
+  if (
+    !metadataPath ||
+    metadataPath.includes('\0') ||
+    path.isAbsolute(metadataPath) ||
+    metadataPath.startsWith('file://') ||
+    metadataPath.startsWith('/@fs/')
+  ) {
+    return null
+  }
 
-  const normalizedPackageDir = normalizeFileName(packageDir)
-  const resolved = normalizeFileName(path.resolve(normalizedPackageDir, metadataPath))
-  if (!isPathInside(normalizedPackageDir, resolved)) return null
-  return resolved
+  const normalizedPackageDir = path.resolve(packageDir)
+  const resolved = path.resolve(normalizedPackageDir, metadataPath)
+  return isPathInside(normalizedPackageDir, resolved) ? resolved : null
 }
 
 function readPackageMetadataFile(
-  metaPath: string,
+  metadataPath: string,
   packageDir: string,
-  store: Map<string, ModuleReactiveMetadata>,
-  fsCache?: FsProbeCache,
 ): ModuleReactiveMetadata | undefined {
-  if (!pathIsFile(metaPath, fsCache)) return undefined
+  if (!pathIsFile(metadataPath)) return undefined
   try {
     const packageRoot = realpathSync(packageDir)
-    const realMetaPath = realpathSync(metaPath)
-    if (!isPathInside(packageRoot, realMetaPath)) return undefined
-
-    const parsed = parseModuleReactiveMetadata(readFileSync(realMetaPath, 'utf8'))
-    if (!parsed) return undefined
-    store.set(metaPath, parsed)
-    getDiskLoadedMetadataKeys(store).add(metaPath)
-    return parsed
+    const realMetadataPath = realpathSync(metadataPath)
+    if (!isPathInside(packageRoot, realMetadataPath)) return undefined
+    return parseModuleReactiveMetadata(readFileSync(realMetadataPath, 'utf8')) ?? undefined
   } catch {
     return undefined
   }
 }
 
+/** Resolve package-published Rust metadata. Source-adjacent Babel sidecars are not supported. */
 export function resolvePackageModuleMetadata(
   source: string,
   importer: string | undefined,
-  options?: FictCompilerOptions,
+  options: PackageModuleMetadataResolutionOptions = {},
 ): ModuleReactiveMetadata | undefined {
   const parsedSource = splitPackageSource(source)
   if (!parsedSource) return undefined
 
   const packageJsonPath = findPackageJsonPath(parsedSource.packageName, importer)
   if (!packageJsonPath) return undefined
-  options?.onModuleMetadataDependency?.(packageJsonPath)
+  options.onDependency?.(packageJsonPath)
 
   const packageConfig = readPackageConfig(packageJsonPath)
   if (!packageConfig) return undefined
 
   const packageDir = path.dirname(packageJsonPath)
-  const metadataPath =
+  const declaredPath =
     packageConfig.exports?.[parsedSource.rawSubpath] ??
     packageConfig.exports?.[parsedSource.subpath] ??
     (parsedSource.subpath === '.' ? packageConfig.metadata : undefined)
+  if (!declaredPath) return undefined
+
+  const metadataPath = normalizePackageMetadataPath(packageDir, declaredPath)
   if (!metadataPath) return undefined
-
-  const normalizedMetaPath = normalizePackageMetadataPath(packageDir, metadataPath)
-  if (!normalizedMetaPath) return undefined
-  options?.onModuleMetadataDependency?.(normalizedMetaPath)
-
-  const store = getMetadataStore(options)
-  const existing = store.get(normalizedMetaPath)
-  if (existing && canReuseStoredMetadata(store, normalizedMetaPath)) return existing
-
-  return readPackageMetadataFile(normalizedMetaPath, packageDir, store, sharedFsProbeCache)
-}
-
-function resolveImportSource(
-  source: string,
-  importer: string | undefined,
-  store: Map<string, ModuleReactiveMetadata>,
-  options?: { probeFs?: boolean | undefined; fsCache?: FsProbeCache | undefined },
-): string | undefined {
-  if (!importer) return undefined
-  const probeFs = options?.probeFs ?? true
-  const isAbsolute = path.isAbsolute(source)
-  const isFileUrl = source.startsWith('file://')
-  if (!isAbsolute && !isFileUrl && !source.startsWith('.')) return undefined
-
-  const base = isAbsolute || isFileUrl ? source : path.resolve(path.dirname(importer), source)
-  const normalized = normalizeFileName(base)
-
-  if (store.has(normalized)) return normalized
-  if (probeFs && pathIsFile(normalized, options?.fsCache)) return normalized
-
-  const ext = path.extname(normalized)
-  if (!ext) {
-    for (const suffix of MODULE_EXTENSIONS) {
-      const candidate = `${normalized}${suffix}`
-      if (store.has(candidate)) return candidate
-      if (probeFs && pathIsFile(candidate, options?.fsCache)) return candidate
-    }
-  }
-
-  for (const suffix of MODULE_EXTENSIONS) {
-    const candidate = path.join(normalized, `index${suffix}`)
-    if (store.has(candidate)) return candidate
-    if (probeFs && pathIsFile(candidate, options?.fsCache)) return candidate
-  }
-
-  return undefined
-}
-
-function resolveImportSourceByMetadata(
-  source: string,
-  importer: string | undefined,
-  options?: FictCompilerOptions,
-  fsCache?: FsProbeCache,
-): string | undefined {
-  if (!importer) return undefined
-  const isAbsolute = path.isAbsolute(source)
-  if (!isAbsolute && !source.startsWith('.')) return undefined
-
-  const base = isAbsolute ? source : path.resolve(path.dirname(importer), source)
-  const normalized = normalizeFileName(base)
-  const candidates: string[] = []
-  const ext = path.extname(normalized)
-  if (ext) {
-    candidates.push(normalized)
-  } else {
-    for (const suffix of MODULE_EXTENSIONS) {
-      candidates.push(`${normalized}${suffix}`)
-    }
-  }
-  for (const suffix of MODULE_EXTENSIONS) {
-    candidates.push(path.join(normalized, `index${suffix}`))
-  }
-
-  for (const candidate of candidates) {
-    const metaPaths = getMetadataReadPaths(candidate, options)
-    if (metaPaths.some(metaPath => pathIsFile(metaPath, fsCache))) return candidate
-  }
-
-  return undefined
-}
-
-export function resolveModuleMetadata(
-  source: string,
-  importer: string | undefined,
-  options?: FictCompilerOptions,
-): ModuleReactiveMetadata | undefined {
-  const useResolutionCache = shouldUseResolutionCache(options)
-  const cacheKey = `${importer ?? ''}\0${source}`
-  if (useResolutionCache) {
-    const cache = getResolutionCache(options)
-    if (cache.has(cacheKey)) return cache.get(cacheKey)
-  }
-
-  if (options?.resolveModuleMetadata) {
-    const resolved = options.resolveModuleMetadata(source, importer)
-    if (resolved !== undefined) return resolved ?? undefined
-  }
-  if (hasQuerySuffix(source)) {
-    const packageMetadata = resolvePackageModuleMetadata(source, importer, options)
-    if (packageMetadata) return packageMetadata
-    return undefined
-  }
-  const store = getMetadataStore(options)
-  const hasExternalMetadataStore = !!options?.moduleMetadata
-  // When a caller provides an explicit metadata store, treat it as the source
-  // of truth and avoid disk probing unless adjacent emission is explicitly enabled.
-  const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataStore
-  const fsCache = shouldProbeFs ? sharedFsProbeCache : undefined
-  const canUseStoreEntry = (key: string): boolean =>
-    hasExternalMetadataStore && !shouldProbeFs ? true : canReuseStoredMetadata(store, key)
-  const canReadSourceDirectly =
-    path.isAbsolute(source) || source.startsWith('/@fs/') || source.startsWith('file://')
-
-  let resolvedKey = resolveImportSource(source, importer, store, {
-    probeFs: false,
-    fsCache,
-  })
-  if (!resolvedKey && shouldProbeFs) {
-    resolvedKey = resolveImportSourceByMetadata(source, importer, options, fsCache)
-  }
-  let resolvedMetadata: ModuleReactiveMetadata | undefined
-  let resolvedFromDisk = false
-  if (resolvedKey) {
-    const existing = store.get(resolvedKey)
-    if (existing && canUseStoreEntry(resolvedKey)) {
-      resolvedMetadata = existing
-    } else if (shouldProbeFs) {
-      const loaded = shouldProbeFs
-        ? readMetadataFromDisk(resolvedKey, store, options, fsCache)
-        : undefined
-      if (loaded) {
-        resolvedMetadata = loaded
-        resolvedFromDisk = true
-      }
-    }
-  }
-  if (!resolvedMetadata && store.has(source) && canUseStoreEntry(source)) {
-    resolvedMetadata = store.get(source)
-  }
-  if (!resolvedMetadata && canReadSourceDirectly) {
-    if ((store.has(source) && !canUseStoreEntry(source)) || !store.has(source)) {
-      const loaded = shouldProbeFs
-        ? readMetadataFromDisk(source, store, options, fsCache)
-        : undefined
-      if (loaded) {
-        resolvedMetadata = loaded
-        resolvedFromDisk = true
-      }
-    }
-    if (!resolvedMetadata && store.has(source) && canUseStoreEntry(source)) {
-      resolvedMetadata = store.get(source)
-    }
-  }
-
-  if (!resolvedMetadata && shouldProbeFs && isBarePackageSource(source)) {
-    resolvedMetadata = resolvePackageModuleMetadata(source, importer, options)
-    if (resolvedMetadata) resolvedFromDisk = true
-  }
-
-  if (useResolutionCache) {
-    const cache = getResolutionCache(options)
-    if (resolvedMetadata && !resolvedFromDisk) {
-      cache.set(cacheKey, resolvedMetadata)
-    }
-  }
-  return resolvedMetadata
-}
-
-export function setModuleMetadata(
-  fileName: string | undefined,
-  metadata: ModuleReactiveMetadata,
-  options?: FictCompilerOptions,
-): void {
-  const writeMode = resolveMetadataWriteMode(options)
-  const normalized = normalizeConcreteFileName(fileName)
-  if (!normalized) {
-    if (writeMode === 'adjacent') {
-      warnMetadata(
-        options,
-        null,
-        'Skipping module metadata emission because filename is missing or virtual',
-      )
-    }
-    return
-  }
-  const store = getMetadataStore(options)
-  store.set(normalized, metadata)
-  diskLoadedMetadataKeysByStore.get(store)?.delete(normalized)
-  clearResolutionCaches()
-  const metaPath = getMetadataWritePath(normalized, writeMode, options)
-  if (!metaPath) return
-  const payload = JSON.stringify(metadata)
-  const hasMetaFile = pathIsFile(metaPath)
-  cacheFsProbeResult(sharedFsProbeCache, metaPath, hasMetaFile)
-  if (lastWrittenMetadataPayload.get(metaPath) === payload && hasMetaFile) {
-    try {
-      if (readFileSync(metaPath, 'utf8') === payload) return
-    } catch {
-      // Recreate the sidecar if it disappeared or became unreadable after the probe.
-    }
-  }
-  try {
-    writeMetadataAtomically(metaPath, payload)
-    lastWrittenMetadataPayload.set(metaPath, payload)
-    cacheFsProbeResult(sharedFsProbeCache, metaPath, true)
-  } catch {
-    lastWrittenMetadataPayload.delete(metaPath)
-    cacheFsProbeResult(sharedFsProbeCache, metaPath, pathIsFile(metaPath))
-    if (writeMode === 'adjacent') {
-      warnMetadata(options, normalized, 'Failed to write module metadata sidecar')
-    }
-  }
-}
-
-export function clearModuleMetadata(options?: FictCompilerOptions): void {
-  const store = getMetadataStore(options)
-  store.clear()
-  diskLoadedMetadataKeysByStore.delete(store)
-  if (store !== globalMetadata) return
-  lastWrittenMetadataPayload.clear()
-  clearResolutionCaches()
-  clearFsProbeCache()
-}
-
-/**
- * @internal Integration-owned validation clears only its explicit store and resolution caches.
- * Ordinary invalidation also clears default state and removes both possible sidecars.
- */
-export function invalidateModuleMetadata(fileName: string, options?: FictCompilerOptions): void {
-  const normalized = normalizeConcreteFileName(fileName)
-  if (!normalized) return
-  if (options?.validateIntegrationMetadata) {
-    const store = options.moduleMetadata
-    store?.delete(normalized)
-    if (store) diskLoadedMetadataKeysByStore.get(store)?.delete(normalized)
-    clearResolutionCaches()
-    return
-  }
-  globalMetadata.delete(normalized)
-  diskLoadedMetadataKeysByStore.get(globalMetadata)?.delete(normalized)
-  const externalStore = options?.moduleMetadata
-  externalStore?.delete(normalized)
-  if (externalStore) diskLoadedMetadataKeysByStore.get(externalStore)?.delete(normalized)
-  clearResolutionCaches()
-  for (const metaPath of getMetadataReadPaths(normalized, options)) {
-    lastWrittenMetadataPayload.delete(metaPath)
-    try {
-      unlinkSync(metaPath)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-    cacheFsProbeResult(sharedFsProbeCache, metaPath, false)
-  }
+  options.onDependency?.(metadataPath)
+  return readPackageMetadataFile(metadataPath, packageDir)
 }

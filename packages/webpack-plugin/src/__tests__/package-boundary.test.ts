@@ -62,6 +62,7 @@ describe('Webpack package metadata boundaries', () => {
       resource: filename,
     } as unknown as NormalModule
     const metadata: ModuleReactiveMetadata = {
+      version: 1,
       exports: {},
       hooks: { useCounter: { directAccessor: 'signal' } },
     }

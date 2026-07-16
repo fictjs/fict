@@ -158,6 +158,7 @@ describe('@fictjs/webpack-plugin resource-query metadata', () => {
       resource,
     } as unknown as NormalModule
     const metadata: ModuleReactiveMetadata = {
+      version: 1,
       exports: {},
       hooks: { useCounter: { directAccessor: 'signal' } },
     }

@@ -9,9 +9,7 @@ import type {
   CompileRequest,
   CompileResult,
   CompilerArtifact,
-  CompilerExplainArtifact,
-  CompilerWarning,
-  FictCompilerOptions,
+  CompilerExplainEventKind,
   FictDiagnostic,
   ModuleReactiveMetadata,
   NativeCompilerExplainArtifact,
@@ -45,7 +43,66 @@ const PACKAGE_METADATA_WATCH_GLOBS = [
   '!**/node_modules/**/*.json',
 ] as const
 
-export interface FictPluginOptions extends FictCompilerOptions {
+export interface FictPluginWarning {
+  code: string
+  message: string
+  fileName: string
+  line: number
+  column: number
+}
+
+export interface FictPluginExplainEvent {
+  kind: CompilerExplainEventKind
+  message: string
+  name?: string
+  code?: string
+  line?: number
+  column?: number
+}
+
+export interface FictPluginExplainArtifact {
+  version: 1
+  fileName: string
+  helpers: string[]
+  diagnostics: FictPluginWarning[]
+  events: FictPluginExplainEvent[]
+}
+
+interface FictPluginCompilerOptions extends Omit<
+  NativeCompilerOptions,
+  'explain' | 'preview' | 'typescript'
+> {
+  onWarn?: (warning: FictPluginWarning) => void
+  /** Diagnostics prepared by the integration before native compilation. @internal */
+  integrationDiagnostics?: FictPluginWarning[]
+  explain?: boolean | ((artifact: FictPluginExplainArtifact) => void)
+  /** Physical source filename used by the integration. @internal */
+  filename?: string
+  /** Stable graph identity embedded in Preview QRLs. @internal */
+  publicModuleId?: string
+  /** @experimental Enables Preview resumable output. */
+  resumable?: boolean
+  /** @experimental Enables automatic Preview handler extraction. */
+  autoExtractHandlers?: boolean
+  /** @experimental Minimum node count for automatic Preview handler extraction. */
+  autoExtractThreshold?: number
+  /** Integration-owned metadata graph for the current build. @internal */
+  moduleMetadata?: Map<string, ModuleReactiveMetadata>
+  resolveModuleMetadata?: (
+    source: string,
+    importer?: string,
+  ) => ModuleReactiveMetadata | null | undefined
+  onModuleMetadataDependency?: (filename: string) => void
+  /** TypeScript project state used only by Vite's import-elision integration. @internal */
+  typescript?: {
+    program?: unknown
+    checker?: unknown
+    projectVersion?: number
+    configPath?: string
+  }
+}
+
+export interface FictPluginOptions extends FictPluginCompilerOptions {
   /**
    * Explicit native addon path for local development and release verification.
    * Production installations normally resolve the platform optional package.
@@ -348,7 +405,7 @@ interface TypeScriptApi {
   ) => { resolvedModule?: { resolvedFileName?: string } } | undefined
 }
 
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 const MAX_STALE_DEV_REQUEST_RETRIES = 3
 let vitePluginCacheFingerprint: string | undefined
 
@@ -1147,9 +1204,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
     if (!packageSource) return undefined
     return resolvePackageModuleMetadata(packageSource, importerFile, {
-      ...compilerOptions,
-      moduleMetadata: state.moduleMetadata,
-      onModuleMetadataDependency: file => registerPackageMetadataDependency(state, file),
+      onDependency: file => registerPackageMetadataDependency(state, file),
     })
   }
 
@@ -1219,7 +1274,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       useTypeScriptProject?: boolean
     },
   ): Promise<{
-    fictOptions: FictCompilerOptions
+    fictOptions: FictPluginCompilerOptions
     project: TypeScriptProject | null
     tsImportElision: TypeScriptImportElision
     nativeMetadata: ResolvedMetadataInput[]
@@ -1265,7 +1320,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         },
       )
     }
-    const fictOptions: FictCompilerOptions = {
+    const fictOptions: FictPluginCompilerOptions = {
       ...compilerOptions,
       dev: compilerOptions.dev ?? isDev,
       sourcemap: compilerOptions.sourcemap ?? true,
@@ -1424,7 +1479,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     tsImportElision: TypeScriptImportElision,
   ): Promise<{
     key: string
-    fictOptions: FictCompilerOptions
+    fictOptions: FictPluginCompilerOptions
     outputMetadata: Map<string, ModuleReactiveMetadata>
     tsImportElision: TypeScriptImportElision
     nativeMetadata: ResolvedMetadataInput[]
@@ -1479,7 +1534,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const compileMetadataNode = async (
     state: MetadataTransformState,
     node: MetadataGraphNode,
-    fictOptions: FictCompilerOptions,
+    fictOptions: FictPluginCompilerOptions,
     outputMetadata: Map<string, ModuleReactiveMetadata>,
     tsImportElision: TypeScriptImportElision,
     nativeMetadata: ResolvedMetadataInput[],
@@ -1571,7 +1626,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         moduleKey: string
         prepared: PreparedCompilerTransform | undefined
         key: string
-        fictOptions: FictCompilerOptions
+        fictOptions: FictPluginCompilerOptions
         outputMetadata: Map<string, ModuleReactiveMetadata>
         tsImportElision: TypeScriptImportElision
         nativeMetadata: ResolvedMetadataInput[]
@@ -3451,9 +3506,6 @@ function applyFictPackageMappings(
     pkg.fict && typeof pkg.fict === 'object' && !Array.isArray(pkg.fict)
       ? { ...(pkg.fict as Record<string, unknown>) }
       : {}
-  if (typeof existingFict.metadata !== 'string' && typeof pkg.fictMetadata === 'string') {
-    existingFict.metadata = pkg.fictMetadata
-  }
   const existingExports =
     existingFict.exports &&
     typeof existingFict.exports === 'object' &&
@@ -4087,7 +4139,7 @@ function nativeDiagnosticToWarning(
   diagnostic: FictDiagnostic,
   source: string,
   filename: string,
-): CompilerWarning {
+): FictPluginWarning {
   const position = diagnostic.primarySpan
     ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
     : { line: 0, column: 0 }
@@ -4111,11 +4163,11 @@ function formatNativeDiagnostic(
   return `[${diagnostic.code}] ${diagnostic.message}${location}${help}`
 }
 
-function nativeExplainToLegacy(
+function nativeExplainForPlugin(
   artifact: NativeCompilerExplainArtifact,
   source: string,
   filename: string,
-): CompilerExplainArtifact {
+): FictPluginExplainArtifact {
   return {
     version: 1,
     fileName: artifact.fileName,
@@ -4139,7 +4191,7 @@ function nativeExplainToLegacy(
 }
 
 function nativeCompilerOptions(
-  options: FictCompilerOptions,
+  options: FictPluginCompilerOptions,
   tsImportElision: TypeScriptImportElision,
 ): NativeCompilerOptions {
   const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
@@ -4179,7 +4231,7 @@ function nativeCompilerOptions(
 
 function nativeIntegrationDiagnostics(
   source: string,
-  warnings: readonly CompilerWarning[] | undefined,
+  warnings: readonly FictPluginWarning[] | undefined,
 ): FictDiagnostic[] {
   return (warnings ?? []).map(warning => {
     const offset = sourceByteOffsetForPosition(source, warning.line, warning.column)
@@ -4223,7 +4275,7 @@ function consumeNativeCompileResult(
   result: CompileResult,
   source: string,
   filename: string,
-  options: FictCompilerOptions,
+  options: FictPluginCompilerOptions,
 ): CompilerStageResult {
   for (const dependency of result.metadataDependencies) {
     options.onModuleMetadataDependency?.(dependency)
@@ -4234,7 +4286,7 @@ function consumeNativeCompileResult(
     }
   }
   if (result.explain && typeof options.explain === 'function') {
-    options.explain(nativeExplainToLegacy(result.explain, source, filename))
+    options.explain(nativeExplainForPlugin(result.explain, source, filename))
   }
 
   const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error')
@@ -4261,7 +4313,7 @@ function consumeNativeCompileResult(
 async function compileFictCompilerStage(
   code: string,
   filename: string,
-  fictOptions: FictCompilerOptions,
+  fictOptions: FictPluginCompilerOptions,
   tsImportElision: TypeScriptImportElision,
   stage: CompilerStageOptions,
 ): Promise<CompilerStageResult> {
@@ -4325,7 +4377,7 @@ function resolveLocalModuleSource(
 function computePackageMetadataCacheFingerprint(
   code: string,
   filename: string,
-  compilerOptions: FictCompilerOptions,
+  compilerOptions: FictPluginCompilerOptions,
   moduleMetadata: Map<string, ModuleReactiveMetadata>,
   root?: string,
   aliases: AliasEntry[] = [],
@@ -4388,11 +4440,7 @@ function computePackageMetadataCacheFingerprint(
     const packageSource = resolveAliasedPackageSource(source, aliases)
     if (packageSource) {
       const metadata = resolvePackageModuleMetadata(packageSource, normalizedFilename, {
-        ...compilerOptions,
-        moduleMetadata,
-        ...(onPackageMetadataDependency
-          ? { onModuleMetadataDependency: onPackageMetadataDependency }
-          : {}),
+        ...(onPackageMetadataDependency ? { onDependency: onPackageMetadataDependency } : {}),
       })
       const serializedMetadata = metadata ? stableStringify(metadata) : null
       entries.push(
@@ -4462,7 +4510,9 @@ function readBooleanEnv(name: string): boolean | undefined {
   return undefined
 }
 
-function compilerEnvironmentCacheInputs(options: FictCompilerOptions): Record<string, unknown> {
+function compilerEnvironmentCacheInputs(
+  options: FictPluginCompilerOptions,
+): Record<string, unknown> {
   const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
   const nodeEnv = process.env.NODE_ENV
   return {
@@ -4473,7 +4523,7 @@ function compilerEnvironmentCacheInputs(options: FictCompilerOptions): Record<st
   }
 }
 
-function normalizeOptionsForCache(options: FictCompilerOptions): Record<string, unknown> {
+function normalizeOptionsForCache(options: FictPluginCompilerOptions): Record<string, unknown> {
   const normalized: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(options)) {
     if (value === undefined || typeof value === 'function') continue
@@ -4497,7 +4547,7 @@ function normalizeOptionsForCache(options: FictCompilerOptions): Record<string, 
 function buildCacheKey(
   filename: string,
   code: string,
-  options: FictCompilerOptions,
+  options: FictPluginCompilerOptions,
   tsProject: TypeScriptProject | null,
   tsImportElision: TypeScriptImportElision,
   shouldSplit: boolean,
@@ -4527,7 +4577,7 @@ function buildCacheKey(
 function buildMetadataPreparationKey(
   filename: string,
   code: string,
-  options: FictCompilerOptions,
+  options: FictPluginCompilerOptions,
   tsProject: TypeScriptProject | null,
   tsImportElision: TypeScriptImportElision,
   dependencyMetadataFingerprint: string,
