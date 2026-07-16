@@ -137,10 +137,7 @@ pub enum JsxChild {
         function_like: bool,
         /// Safe structural map candidate, retained independently from later receiver proofs.
         list: Option<JsxListExpression>,
-        /// JSX roots embedded in this expression outside nested function boundaries.
-        ///
-        /// Fine-grained lowering still owns the complete expression value. These nodes retain
-        /// enough structure for later passes such as Preview handler extraction.
+        /// JSX roots retained outside nested functions for downstream passes such as Preview.
         embedded_nodes: Vec<JsxNode>,
         /// Source provenance.
         origin: Origin,
@@ -281,21 +278,20 @@ impl HirFile {
                         stack.extend(children.iter().map(Item::Child));
                     }
                     Item::Child(JsxChild::Expression {
-                        list: Some(list),
+                        list,
                         embedded_nodes,
                         ..
                     }) => {
-                        if let Some(binding) = self
-                            .functions
-                            .get(list.callback.as_usize())
-                            .and_then(|function| function.parameters.first())
-                            .and_then(|parameter| parameter.binding)
-                        {
-                            bindings.insert(binding);
+                        if let Some(list) = list {
+                            if let Some(binding) = self
+                                .functions
+                                .get(list.callback.as_usize())
+                                .and_then(|function| function.parameters.first())
+                                .and_then(|parameter| parameter.binding)
+                            {
+                                bindings.insert(binding);
+                            }
                         }
-                        stack.extend(embedded_nodes.iter().map(Item::Node));
-                    }
-                    Item::Child(JsxChild::Expression { embedded_nodes, .. }) => {
                         stack.extend(embedded_nodes.iter().map(Item::Node));
                     }
                     Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),

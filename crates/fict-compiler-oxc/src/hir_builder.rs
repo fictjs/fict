@@ -6774,17 +6774,19 @@ fn raw_jsx_child(
                         };
                         let mut fragments = FragmentDetector::default();
                         fragments.visit_expression(expression);
+                        let mut embedded = EmbeddedJsxCollector {
+                            scoping,
+                            known_arrays,
+                            nodes: Vec::new(),
+                        };
+                        embedded.visit_expression(expression);
                         RawJsxChild::Expression {
                             span: source_span(expression.span()),
                             kind,
                             contains_fragment: fragments.found,
                             function_like: inner.is_function(),
                             list: raw_jsx_list_expression(scoping, known_arrays, expression),
-                            embedded_nodes: raw_embedded_jsx_nodes(
-                                scoping,
-                                known_arrays,
-                                expression,
-                            ),
+                            embedded_nodes: embedded.nodes,
                         }
                     }
                 }
@@ -6805,32 +6807,15 @@ struct EmbeddedJsxCollector<'facts> {
 
 impl<'a> Visit<'a> for EmbeddedJsxCollector<'_> {
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
-
     fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
-
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
         self.nodes
             .push(raw_jsx_element(self.scoping, self.known_arrays, element));
     }
-
     fn visit_jsx_fragment(&mut self, fragment: &JSXFragment<'a>) {
         self.nodes
             .push(raw_jsx_fragment(self.scoping, self.known_arrays, fragment));
     }
-}
-
-fn raw_embedded_jsx_nodes(
-    scoping: &Scoping,
-    known_arrays: &BTreeSet<SymbolId>,
-    expression: &Expression<'_>,
-) -> Vec<RawJsxNode> {
-    let mut collector = EmbeddedJsxCollector {
-        scoping,
-        known_arrays,
-        nodes: Vec::new(),
-    };
-    collector.visit_expression(expression);
-    collector.nodes
 }
 
 fn raw_jsx_list_expression(
