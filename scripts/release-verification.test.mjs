@@ -224,10 +224,19 @@ test('native bundler typechecks wait for compiler declarations in clean checkout
   }
 })
 
-test('compiler and top-level release gates enforce Rust architecture and complexity budgets', () => {
+test('CI and release verification share the complete pinned Rust workspace gate', () => {
+  assert.equal(
+    rootPackage.scripts['verify:rust-workspace'],
+    'cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && pnpm guardrails:rust-crates',
+  )
+  assert.match(rootPackage.scripts['release:verify'], /pnpm release:compiler:verify/)
+  assert.match(rootPackage.scripts['release:compiler:verify'], /pnpm verify:rust-workspace/)
   assert.match(rootPackage.scripts['release:verify'], /pnpm guardrails:rust-crates/)
-  assert.match(rootPackage.scripts['release:compiler:verify'], /pnpm guardrails:rust-crates/)
-  assert.match(ciWorkflow, /^\s+pnpm guardrails:rust-crates$/m)
+  assert.match(
+    ciWorkflow,
+    /name: Verify pinned Rust workspace[\s\S]*?^\s+pnpm verify:rust-workspace$/m,
+  )
+  assert.doesNotMatch(ciWorkflow, /^\s+cargo clippy --workspace/m)
 })
 
 test('controlled native builds embed the workflow source revision', () => {

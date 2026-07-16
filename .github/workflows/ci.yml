@@ -118,10 +118,7 @@ jobs:
         run: |
           rustc --version
           cargo --version
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
-          cargo test --workspace --all-features
-          pnpm guardrails:rust-crates
+          pnpm verify:rust-workspace
 
       - name: Build and smoke host native compiler
         run: pnpm test:compiler:native-host

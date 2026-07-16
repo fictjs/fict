@@ -290,9 +290,7 @@ pnpm release:compiler:verify
 Native implementation evidence, required as the corresponding milestones land:
 
 ```bash
-cargo fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
+pnpm verify:rust-workspace
 pnpm security:audit:rust
 pnpm test:compiler:native-packages
 pnpm release:verify

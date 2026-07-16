@@ -282,15 +282,14 @@ impl HirFile {
                         embedded_nodes,
                         ..
                     }) => {
-                        if let Some(list) = list {
-                            if let Some(binding) = self
+                        if let Some(list) = list
+                            && let Some(binding) = self
                                 .functions
                                 .get(list.callback.as_usize())
                                 .and_then(|function| function.parameters.first())
                                 .and_then(|parameter| parameter.binding)
-                            {
-                                bindings.insert(binding);
-                            }
+                        {
+                            bindings.insert(binding);
                         }
                         stack.extend(embedded_nodes.iter().map(Item::Node));
                     }

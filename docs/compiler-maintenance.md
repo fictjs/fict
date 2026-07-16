@@ -72,11 +72,11 @@ Use the Rust/native release gates for latency, RSS, output size, and package
 size evidence:
 
 ```bash
-pnpm guardrails:rust-crates
+pnpm verify:rust-workspace
 pnpm release:compiler:verify
 ```
 
 For release candidates, `pnpm release:verify:clean` runs both complexity
 reports as part of the top-level gate. `pnpm release:compiler:verify` also runs
-compiler lint, typecheck, native runtime/package, bundler, ABI, and Rust crate
-checks for compiler-focused changes.
+compiler lint, typecheck, native runtime/package, bundler, ABI, and the same
+complete Rust workspace verification used by CI.

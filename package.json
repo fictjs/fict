@@ -53,6 +53,7 @@
     "examples:verify": "pnpm examples:build-real-apps && pnpm -C examples/ssr-streaming smoke:production",
     "security:audit:prod": "node --test scripts/audit-production-dependencies.test.mjs && node scripts/audit-production-dependencies.mjs",
     "security:audit:rust": "cargo audit --deny warnings && cargo audit --deny warnings --file fuzz/Cargo.lock",
+    "verify:rust-workspace": "cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && pnpm guardrails:rust-crates",
     "guardrails:typecheck-config": "node scripts/check-typecheck-config.mjs",
     "typecheck:tests": "pnpm -C packages/runtime typecheck:tests && pnpm -C packages/compiler typecheck:tests && pnpm -C packages/vite-plugin typecheck:tests && pnpm -C packages/webpack-plugin typecheck:tests && pnpm -C packages/ssr typecheck:tests",
     "typecheck:strict-candidate": "node scripts/typecheck-strict-candidate.mjs --fail-on-error",
@@ -81,7 +82,7 @@
     "perf:results": "cd js-framework-benchmark && npm run results",
     "stress:runtime": "pnpm --dir packages/runtime test:stress",
     "stress:runtime:long": "pnpm --dir packages/runtime test:stress:long",
-    "release:compiler:verify": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm test:compiler:native-host && pnpm test:compiler:native-runtime && pnpm test:vite:native && pnpm test:webpack:native && pnpm test:playground:native && pnpm test:vscode:native && pnpm guardrails:runtime-abi && pnpm guardrails:compiler-complexity && pnpm guardrails:rust-crates"
+    "release:compiler:verify": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm test:compiler:native-host && pnpm test:compiler:native-runtime && pnpm test:vite:native && pnpm test:webpack:native && pnpm test:playground:native && pnpm test:vscode:native && pnpm guardrails:runtime-abi && pnpm guardrails:compiler-complexity && pnpm verify:rust-workspace"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
