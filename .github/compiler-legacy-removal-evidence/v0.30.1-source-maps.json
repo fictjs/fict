@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "kind": "source-maps",
+  "status": "pass",
+  "release": "0.30.1",
+  "sourceRevision": "8d4008929d46fc5f2c1e578423ff38ef95a5d084",
+  "workflow": {
+    "repository": "fictjs/fict",
+    "runId": "29452031541",
+    "runAttempt": "1",
+    "event": "push",
+    "conclusion": "success",
+    "url": "https://github.com/fictjs/fict/actions/runs/29452031541",
+    "job": {
+      "id": 87476559081,
+      "name": "Rust + Native (Node 24)",
+      "conclusion": "success",
+      "startedAt": "2026-07-15T21:28:08Z",
+      "completedAt": "2026-07-15T21:32:03Z",
+      "url": "https://github.com/fictjs/fict/actions/runs/29452031541/job/87476559081",
+      "step": {
+        "name": "Verify pinned Rust workspace",
+        "conclusion": "success"
+      }
+    }
+  },
+  "command": "cargo test --workspace --all-features",
+  "inputs": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "digest": "sha256:b51eb6ad99bd5ccb49b6e1b4a121d5e5e400571680b31e99e78066cfd80de924"
+    },
+    {
+      "path": "crates/fict-compiler/tests/source_map_probes.rs",
+      "digest": "sha256:05a2a23a76b6543fd0675a7e5a6804135c4df8c174b765d6106b95cc88d28ff3"
+    },
+    {
+      "path": "crates/fict-compiler-oxc/tests/feasibility.rs",
+      "digest": "sha256:e555738c0d035bdf911709b4ca01fcbe2375365de8657423d865abd4ae2630de"
+    }
+  ],
+  "artifacts": [],
+  "evidenceDigest": "sha256:83150d3c060632293690c17863b5894a776b8ca022bd71fd603ce98f5cc7639e"
+}

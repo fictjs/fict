@@ -369,12 +369,103 @@ function assertRecordedConsumerEvidence(summary, version, workspaceRoot) {
   }
 }
 
-function assertPassArtifact(artifact, label, release) {
+function assertPassArtifact(artifact, label, release, sourceRevision, workspaceRoot, kind) {
+  const proofPath = path.join(
+    workspaceRoot,
+    '.github',
+    'compiler-legacy-removal-evidence',
+    `v${release}-${kind}.json`,
+  )
+  const proof = readJson(proofPath, `${label} record`)
+  const expectedProofKeys = [
+    'artifacts',
+    'command',
+    'evidenceDigest',
+    'inputs',
+    'kind',
+    'release',
+    'schemaVersion',
+    'sourceRevision',
+    'status',
+    'workflow',
+  ].sort()
+  const { evidenceDigest, ...payload } = proof ?? {}
+  const computedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')}`
+  const workflow = proof?.workflow
+  const job = workflow?.job
+  const step = job?.step
+  const inputs = proof?.inputs
+  const artifacts = proof?.artifacts
+  const expectedRunUrl = `https://github.com/fictjs/fict/actions/runs/${workflow?.runId}`
+  const expectedJobUrl = `${expectedRunUrl}/job/${job?.id}`
+  const validInputs =
+    Array.isArray(inputs) &&
+    inputs.length > 0 &&
+    inputs.every(
+      input =>
+        input &&
+        JSON.stringify(Object.keys(input).sort()) === JSON.stringify(['digest', 'path']) &&
+        isRepositoryRelativePath(input.path) &&
+        isSha256(input.digest),
+    )
+  const validArtifacts =
+    Array.isArray(artifacts) &&
+    artifacts.every(
+      entry =>
+        entry &&
+        JSON.stringify(Object.keys(entry).sort()) ===
+          JSON.stringify(['createdAt', 'digest', 'id', 'name', 'sizeBytes'].sort()) &&
+        Number.isSafeInteger(entry.id) &&
+        entry.id > 0 &&
+        typeof entry.name === 'string' &&
+        Boolean(entry.name) &&
+        Number.isSafeInteger(entry.sizeBytes) &&
+        entry.sizeBytes > 0 &&
+        isSha256(entry.digest) &&
+        Number.isFinite(Date.parse(entry.createdAt ?? '')),
+    )
+  const requiresRawArtifact = kind === 'rollback-drill' || kind === 'performance-rss'
   if (
     !artifact ||
     artifact.release !== release ||
     artifact.status !== 'pass' ||
-    !isSha256(artifact.evidenceDigest)
+    artifact.evidenceDigest !== proof?.evidenceDigest ||
+    proof?.schemaVersion !== 1 ||
+    proof.status !== 'pass' ||
+    proof.kind !== kind ||
+    proof.release !== release ||
+    proof.sourceRevision !== sourceRevision ||
+    JSON.stringify(Object.keys(proof).sort()) !== JSON.stringify(expectedProofKeys) ||
+    evidenceDigest !== computedDigest ||
+    typeof proof.command !== 'string' ||
+    !proof.command ||
+    !validInputs ||
+    !validArtifacts ||
+    (requiresRawArtifact &&
+      !artifacts.some(entry => entry.name === 'compiler-rollout-raw-evidence')) ||
+    workflow?.repository !== 'fictjs/fict' ||
+    workflow.event !== 'push' ||
+    workflow.conclusion !== 'success' ||
+    typeof workflow.runId !== 'string' ||
+    !/^\d+$/.test(workflow.runId) ||
+    typeof workflow.runAttempt !== 'string' ||
+    !/^\d+$/.test(workflow.runAttempt) ||
+    BigInt(workflow.runAttempt) < 1n ||
+    workflow.url !== expectedRunUrl ||
+    !Number.isSafeInteger(job?.id) ||
+    job.id <= 0 ||
+    typeof job.name !== 'string' ||
+    !job.name ||
+    job.url !== expectedJobUrl ||
+    job.conclusion !== 'success' ||
+    !Number.isFinite(Date.parse(job.startedAt ?? '')) ||
+    !Number.isFinite(Date.parse(job.completedAt ?? '')) ||
+    Date.parse(job.completedAt) < Date.parse(job.startedAt) ||
+    typeof step?.name !== 'string' ||
+    !step.name ||
+    step.conclusion !== 'success'
   ) {
     throw new Error(`Legacy-removal evidence has invalid ${label}`)
   }
@@ -471,9 +562,30 @@ function assertLegacyRemovalEvidenceDocumentShape(evidence, workspaceRoot) {
   }
 
   assertRecordedConsumerEvidence(payload.consumerValidation, compatibility.value, workspaceRoot)
-  assertPassArtifact(payload.rollbackDrill, 'rollback drill proof', finalLegacy.value)
-  assertPassArtifact(payload.sourceMaps, 'source-map proof', finalLegacy.value)
-  assertPassArtifact(payload.performanceAndRss, 'performance/RSS proof', finalLegacy.value)
+  assertPassArtifact(
+    payload.rollbackDrill,
+    'rollback drill proof',
+    finalLegacy.value,
+    finalLegacyPublication.commitSha,
+    workspaceRoot,
+    'rollback-drill',
+  )
+  assertPassArtifact(
+    payload.sourceMaps,
+    'source-map proof',
+    finalLegacy.value,
+    finalLegacyPublication.commitSha,
+    workspaceRoot,
+    'source-maps',
+  )
+  assertPassArtifact(
+    payload.performanceAndRss,
+    'performance/RSS proof',
+    finalLegacy.value,
+    finalLegacyPublication.commitSha,
+    workspaceRoot,
+    'performance-rss',
+  )
 
   const guidance = payload.migrationGuidance
   const guidancePath = resolveWorkspaceStatePath(
