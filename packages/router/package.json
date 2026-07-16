@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/router",
-  "version": "0.28.3",
+  "version": "0.28.4",
   "description": "Reactive router for Fict applications",
   "publishConfig": {
     "access": "public",
