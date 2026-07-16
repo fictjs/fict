@@ -4923,6 +4923,23 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn emits_preview_handlers_inside_conditional_jsx_branches() {
+        let source = "import { $state } from 'fict'; export function App() { let show = $state(true); let count = $state(0); return <div><button onClick$={() => show = !show}>Toggle</button>{show && <button onClick$={() => count++}>{count}</button>}</div>; }";
+        let mut input = request(source, "preview-conditional-handler.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 2, "{}", result.code);
+        assert_eq!(result.code.matches("fict:compiler-artifact:").count(), 2);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn transforms_preview_handlers_with_source_spans_beyond_the_artifact_wrapper() {
         let source = format!(
             "/* {} */\nexport function App() {{ return <button onClick$={{(event: MouseEvent) => event.preventDefault()}}>Deploy</button>; }}",

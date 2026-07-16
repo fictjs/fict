@@ -1505,11 +1505,15 @@ impl Verifier<'_> {
                 Item::Child(JsxChild::Expression {
                     value,
                     list,
+                    embedded_nodes,
                     origin,
                     ..
                 }) => {
                     self.value(owner, *value, *origin);
                     self.verify_origin(*origin);
+                    for node in embedded_nodes.iter().rev() {
+                        stack.push(Item::Node(node));
+                    }
                     if let Some(list) = list {
                         self.verify_origin(list.items);
                         if list.key.is_some() != list.key_source.is_some()

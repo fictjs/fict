@@ -755,8 +755,16 @@ fn collect_template_event_candidates(
         JsxNode::Fragment { children, .. } => children,
     };
     for child in children {
-        if let JsxChild::Node(node) = child {
-            collect_template_event_candidates(owner, node, candidates, seen);
+        match child {
+            JsxChild::Node(node) => {
+                collect_template_event_candidates(owner, node, candidates, seen);
+            }
+            JsxChild::Expression { embedded_nodes, .. } => {
+                for node in embedded_nodes {
+                    collect_template_event_candidates(owner, node, candidates, seen);
+                }
+            }
+            JsxChild::Text { .. } | JsxChild::Spread { .. } => {}
         }
     }
 }

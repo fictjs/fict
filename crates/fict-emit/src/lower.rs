@@ -2521,16 +2521,19 @@ fn trusted_jsx_list_values(
             Item::Child(JsxChild::Expression {
                 value,
                 list: Some(list),
+                embedded_nodes,
                 ..
             }) => {
                 if trusted_jsx_list_receiver(list.receiver, reactive_bindings, list_item_bindings) {
                     trusted.insert(*value);
                 }
+                stack.extend(embedded_nodes.iter().map(Item::Node));
+            }
+            Item::Child(JsxChild::Expression { embedded_nodes, .. }) => {
+                stack.extend(embedded_nodes.iter().map(Item::Node));
             }
             Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
-            Item::Child(
-                JsxChild::Text { .. } | JsxChild::Expression { .. } | JsxChild::Spread { .. },
-            ) => {}
+            Item::Child(JsxChild::Text { .. } | JsxChild::Spread { .. }) => {}
         }
     }
     trusted
@@ -3800,6 +3803,7 @@ mod namespace_tests {
             contains_fragment: false,
             function_like: false,
             list: None,
+            embedded_nodes: Vec::new(),
             origin: test_origin(),
         }
     }

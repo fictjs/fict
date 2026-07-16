@@ -137,6 +137,11 @@ pub enum JsxChild {
         function_like: bool,
         /// Safe structural map candidate, retained independently from later receiver proofs.
         list: Option<JsxListExpression>,
+        /// JSX roots embedded in this expression outside nested function boundaries.
+        ///
+        /// Fine-grained lowering still owns the complete expression value. These nodes retain
+        /// enough structure for later passes such as Preview handler extraction.
+        embedded_nodes: Vec<JsxNode>,
         /// Source provenance.
         origin: Origin,
     },
@@ -276,7 +281,9 @@ impl HirFile {
                         stack.extend(children.iter().map(Item::Child));
                     }
                     Item::Child(JsxChild::Expression {
-                        list: Some(list), ..
+                        list: Some(list),
+                        embedded_nodes,
+                        ..
                     }) => {
                         if let Some(binding) = self
                             .functions
@@ -286,13 +293,13 @@ impl HirFile {
                         {
                             bindings.insert(binding);
                         }
+                        stack.extend(embedded_nodes.iter().map(Item::Node));
+                    }
+                    Item::Child(JsxChild::Expression { embedded_nodes, .. }) => {
+                        stack.extend(embedded_nodes.iter().map(Item::Node));
                     }
                     Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
-                    Item::Child(
-                        JsxChild::Text { .. }
-                        | JsxChild::Expression { .. }
-                        | JsxChild::Spread { .. },
-                    ) => {}
+                    Item::Child(JsxChild::Text { .. } | JsxChild::Spread { .. }) => {}
                 }
             }
         }

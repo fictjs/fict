@@ -273,6 +273,7 @@ fn print_jsx(output: &mut String, root: &JsxNode) {
                     contains_fragment,
                     function_like,
                     list,
+                    embedded_nodes,
                     origin,
                 },
                 depth,
@@ -285,6 +286,9 @@ fn print_jsx(output: &mut String, root: &JsxNode) {
                     print_origin(*origin)
                 )
                 .expect("writing to String cannot fail");
+                for node in embedded_nodes.iter().rev() {
+                    stack.push(JsxPrintItem::Node(node, depth + 1));
+                }
             }
             JsxPrintItem::Child(JsxChild::Spread { value, origin }, depth) => {
                 writeln!(
