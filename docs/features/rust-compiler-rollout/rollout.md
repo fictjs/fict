@@ -1,261 +1,135 @@
 ---
 type: rollout
 title: Rust Compiler Rollout
-description: Staged activation, evidence, review, and rollback rules for making the OXC-native compiler the Fict Core default.
+description: Completed default migration and fail-closed authorization rules for the Rust-only 1.0 release.
 owner: unadlib
-status: proposed
+status: active
 risk_level: critical
 tags: [compiler, rust, oxc, rollout]
 ---
 
 # Rust Compiler Rollout
 
-## Purpose
+## Release line
 
-The rollout exists to change compiler ownership without changing Fict language
-or runtime semantics. Rust may become the Vite/Core default only after the same
-candidate has passed semantic, runtime, package, performance, memory, and
-rollback gates and a maintainer has reviewed that evidence.
+The compiler migration uses real releases rather than empty versions:
 
-This rollout does not graduate Preview resumability, authorize per-file
-fallback, or remove the legacy compiler. Those are separate M8/M9 compatibility
-units governed by [ADR-0003](../../adr/0003-retire-babel-preset.md).
+| Release  | Role                                                                   |
+| -------- | ---------------------------------------------------------------------- |
+| `0.29.0` | First published Rust-default release with whole-build legacy rollback  |
+| `0.30.0` | Complete subsequent stable compatibility minor                         |
+| `0.30.1` | Final published preset, `./legacy` export, and rollback implementation |
+| `1.0.0`  | Breaking Rust-only removal release                                     |
+
+Preview resumability is not promoted by this sequence. It remains default-off
+and outside the Core 1.0 compatibility promise.
 
 ## Source of truth
 
-The machine-readable phase and default backend live in
+The machine-readable phase is
 [`compiler-rollout-state.json`](../../../.github/compiler-rollout-state.json).
-Do not copy or infer the current phase from release prose. The readiness check
-rejects a mismatch between that file and the Vite implementation. State schema
-v4 records the candidate, full native-certification, rollout-review,
-legacy-removal-evidence, and legacy-removal-review paths plus the Rust-default,
-completed compatibility-minor, final legacy, and planned legacy-removal
-releases; beta keeps all four version values `null`. Evidence and review paths
-must remain workspace-relative. Readiness validates both review document shapes
-in every phase and requires the legacy-removal evidence to be exactly pending
-until it is complete, so an unknown area, non-boolean value, or partial claim
-fails before promotion work starts.
-The same check binds the compiler package root to the phase: beta MUST retain
-the legacy facade, while `rust-default` and `legacy-removal` MUST expose the
-complete native request API without importing the legacy implementation.
-Changing only the state file or only one public default therefore fails closed.
+The 1.0 removal candidate must use schema v4 and bind exactly:
 
-The first Rust-default release, `0.29.0`, is now public. Release workflow
-`29441490475` bound tag commit
-`129a9cc395ab5c0e09465fa6ff3206e7209fe4ad` to the complete 8-target by 2-Node
-certification, npm provenance, and the stable GitHub Release. Its immutable
-publication record is
-[`compiler-release-evidence/v0.29.0.json`](../../../.github/compiler-release-evidence/v0.29.0.json)
-with evidence digest
-`sha256:6e88ca181b0563c9b1c9af5b43a4ec043f09f7f35f731d0fccf0c665f39d3a14`.
-The compatibility field remains unset until `0.30.0` is itself public; a target
-version or passing pre-release CI is not a completed compatibility window.
-
-## Rollout states
-
-```mermaid
-stateDiagram-v2
-  [*] --> Beta
-  Beta --> Candidate1: all automated gates pass
-  Candidate1 --> Candidate2: next candidate passes and chains prior digest
-  Candidate2 --> Reviewed: maintainer approves bound checklist
-  Reviewed --> RustDefault: Vite Core default changes
-  RustDefault --> Beta: rollback trigger
-  RustDefault --> LegacyRemoval: stable minor window + removal review complete
+```json
+{
+  "phase": "legacy-removal",
+  "rollbackBackend": "rust",
+  "rustDefaultRelease": "0.29.0",
+  "compatibilityRelease": "0.30.0",
+  "finalLegacyRelease": "0.30.1",
+  "legacyRemovalRelease": "1.0.0"
+}
 ```
 
-This state machine shows that candidate history and human review precede the
-default switch, while any blocking signal returns the whole build to legacy.
-Verification: `node scripts/compiler-rollout-readiness.mjs` and the
-`compiler-rollout` CI job.
+The same document points to the immutable M7 candidate/review/native
+certification and the independent M9 evidence/review documents. Version strings
+alone cannot authorize removal.
 
-## Legacy removal gate
+## M7 evidence is historical
 
-M9 is a separate, fail-closed transition. While `phase` is `rust-default`, the
-state keeps `rollbackBackend: legacy`; it may record a completed
-`compatibilityRelease`, but it cannot claim a removal release. Entering
-`legacy-removal` requires all of the following:
+The Rust-default decision remains bound to its approved two-candidate chain,
+source revision, native build ID, 8-platform by 2-Node certification, semantic
+comparison, performance/RSS measurements, package-size budgets, and human
+review. Those artifacts are retained as historical evidence; the 1.0 tree does
+not keep the differential, shadow, candidate, or rollback execution harnesses.
 
-- the same intact candidate and rollout review needed for Rust default;
-- Vite still defaults to Rust and the removed rollback backend is recorded as
-  `rust`;
-- an exact stable `rustDefaultRelease`;
-- a `compatibilityRelease` at `x.y.0` in a later minor of the same release line;
-- a stable `finalLegacyRelease` at or after that compatibility minor and before
-  removal;
-- a `legacyRemovalRelease` at a later semver major's `x.0.0` boundary;
-- one intact, digest-bound
-  [`compiler-legacy-removal-evidence.json`](../../../.github/compiler-legacy-removal-evidence.json)
-  record for the published Rust-default, compatibility, and final legacy
-  releases, plus the final native matrix, real-consumer validation, rollback,
-  source-map, performance/RSS, migration-guide, and final-preset evidence;
-- an approved
-  [`compiler-legacy-removal-review.json`](../../../.github/compiler-legacy-removal-review.json)
-  whose versions exactly match state, whose `evidenceDigest` matches that
-  evidence record, and whose checklist covers replacement availability,
-  migration guidance, published releases, final preset publication, Core scope
-  changes, and dependency removal.
+M7 approval cannot be reused as M9 approval.
 
-Version strings alone cannot authorize removal. Each of the first three
-published releases is identified by its tag, commit, Release workflow run,
-GitHub Release and evidence-asset digests, and npm integrity/provenance; the
-release collector writes each digest-bound record to
-`.github/compiler-release-evidence/vX.Y.Z.json` immediately after publication,
-and the aggregate M9 record must exactly reuse those committed documents. Run
-`pnpm release:evidence:compiler --version X.Y.Z` only after the public tag
-workflow succeeds. The maintainer signs the digest of that whole record. The
-planned breaking version remains a state/evidence boundary rather than a
-circular claim that the removal release is already published. Any missing
-version, prerelease, patch-only window, same-major removal, tampered evidence,
-mismatched review, retained Babel-preset/legacy-IR path, production Babel
-dependency, or stale Core scope/maturity/Changesets/publish/CI boundary
-reference blocks the phase, as does any incomplete review area. The gate also
-rejects the public `./legacy` export, Babel or legacy-subpath imports in
-production source, Vite shadow sources and backend selectors, legacy
-differential/rollback harnesses, Webpack v1–v5 cache compatibility, and a
-compiler root that does not expose the Rust `transform`/`scan`/`analyze` request
-API.
+## M9 legacy-removal gate
 
-## Backend modes
+[`compiler-legacy-removal-evidence.json`](../../../.github/compiler-legacy-removal-evidence.json)
+must bind the published 0.29.0, 0.30.0, and 0.30.1 release records plus:
 
-| Mode     | Purpose                                        | Delivered output | Allowed use                                   |
-| -------- | ---------------------------------------------- | ---------------- | --------------------------------------------- |
-| `legacy` | Compatibility and whole-build rollback         | Babel/TypeScript | Explicit recovery during the bounded window   |
-| `rust`   | Native Core compiler                           | OXC/Rust         | Core default; may also be selected explicitly |
-| `shadow` | Compare native behavior without changing build | Legacy           | CI or an explicit local diagnostic build only |
+- successful npm publication with provenance and immutable GitHub Releases;
+- the complete 8-platform × Node 22.18/24 native certification;
+- a real external consumer using the published Rust default;
+- source-map, performance, peak-RSS, and package-size evidence with no
+  unexplained regression;
+- a successful whole-build rollback exercise performed while 0.30.1 still
+  contained the rollback implementation;
+- an executable 1.0 migration guide and proof that 0.30.1 is the final preset
+  publication.
 
-One build MUST use one mode. A transform failure MUST NOT select another
-backend for only that file. Backend selection order and accepted values are
-owned by `FictPluginOptions` in the Vite plugin; `FICT_COMPILER_BACKEND` exists
-as the build-level operational override.
+The aggregate document is content-digested. The release versions, tag commits,
+workflow runs, evidence assets, npm integrities, and provenance must agree with
+their committed release records.
 
-The `rust` Vite runtime graph MUST use `@fictjs/compiler/graph-host` and the
-native facade without evaluating any Babel module or
-`@fictjs/compiler/legacy`. Compatibility packages may remain installed until
-M9. Only `legacy` and `shadow` may lazy-load the compatibility runtime after
-their whole-build mode is selected. Verification:
-`rust-backend-loading.test.ts` forces every forbidden module to fail on load
-while exercising cached TSX compilation and structured Preview handlers;
-`pnpm test:api-boundaries` rejects a static runtime import that would bypass
-that isolation.
+After code removal and evidence generation, a maintainer signs the exact digest
+in
+[`compiler-legacy-removal-review.json`](../../../.github/compiler-legacy-removal-review.json).
+Review schema v2 requires all eight areas:
 
-## Shadow evidence
+1. replacement availability;
+2. migration guidance;
+3. candidate and rollback evidence;
+4. published Rust-default release;
+5. completed subsequent stable minor;
+6. published final preset/legacy release;
+7. updated Core scope and release controls;
+8. removed legacy dependencies and implementation.
 
-Shadow mode compares status, diagnostic identity/location, module metadata,
-semantic event classes, helper selection, source-map integrity, structured
-artifacts, and output identity. Its report contains hashes and categories only;
-it MUST NOT contain source text, generated text, absolute paths, or project
-names.
+Any missing, false, unknown, or unbound review area blocks 1.0.
 
-Expected native printer/helper differences are controlled by the versioned
-[`compiler-shadow-allowlist.json`](../../../.github/compiler-shadow-allowlist.json).
-Semantic categories cannot use wildcard rules. A new semantic digest requires
-a fixture-level rule with a documented reason or a compiler fix.
+## Rust-only invariants
 
-Verification:
+The removal gate scans source, package manifests, tests, CI, docs, scope, and
+publish control. The 1.0 candidate must have:
 
-```bash
-pnpm test:compiler:shadow
-pnpm -C packages/vite-plugin test -- shadow-rollout.test.ts native-backend.test.ts
-```
+- one `@fictjs/compiler` root exposing `transform`, `scan`, `analyze`, and
+  `nativeCompilerInfo`;
+- no `./legacy` export, TypeScript compiler IR, `createFictPlugin`, preset
+  package, production Babel dependency, or old metadata/cache schema reader;
+- no Vite backend/shadow option or environment fallback;
+- a mandatory native Webpack loader with fail-closed V7 cache records;
+- versioned Rust package metadata and no source-adjacent Babel sidecars;
+- no differential/shadow/rollback/candidate CI harness;
+- `SCOPE.md`, `maturity.json`, Changesets, API boundaries, and npm publish
+  allowlist that describe the Rust-only Core set.
 
-## Candidate evidence
+Native binding load errors, compiler errors, and incompatible protocol or cache
+records fail the build. No module may retry through another compiler.
 
-The CI candidate is valid only when all evidence files report the same native
-compiler build identifier:
+## Recovery after 1.0
 
-- representative Vite shadow build with no unexplained semantic difference;
-- Core runtime parity and strict-guarantee matrix;
-- large-project paired/interleaved throughput and isolated peak RSS budgets;
-- clean native-package installation plus compressed and unpacked-size budgets;
-- native Vite, Webpack, editor, playground, and real-application paths;
-- successful whole-build Rust-to-legacy rollback drill.
-
-`compiler-rollout-candidate.mjs` hashes those artifacts, requires one native
-compiler build identifier and compiled Git revision across them, requires that
-revision to equal the workflow source revision, and chains the previous green
-candidate digest. Candidate schema v5 also binds a finalizer-produced workflow gate: the
-canonical repository/workflow/job identity, run/attempt, revision, event/ref,
-and the result of every required CI job. The finalizer depends on native,
-integration, lint, typecheck, strict-guarantee, performance, unit, browser,
-real-app, SSR, opt-out, and build jobs; it cannot seal a candidate while one of
-those jobs is failed, cancelled, or incomplete. The scheduled fuzz job must
-pass when selected and may only be `skipped` on events where its workflow
-condition does not run it. Unknown/missing jobs, a binary compiled from another
-revision, and modified payloads fail closed. CI and release builds set
-`FICT_COMPILER_BUILD_REVISION` from `github.sha`; locally built binaries expose
-a null revision unless the variable is explicitly provided. Local contract
-smokes remain non-evidence even when a revision is injected; only the canonical
-CI artifact and its human review establish promotion provenance.
-
-Pull-request and scheduled candidates record zero promotion-eligible builds. A
-first main-push candidate records one; only the immediately following
-successful main-push workflow can record two. A failed or artifact-less
-intervening workflow resets the chain. An overlapping newer run does not skip
-an unfinished predecessor; it starts a fresh count. Schema v4 and older
-artifacts cannot extend a v5 chain. Local smoke runs do not become release
-evidence.
-
-The performance budget is owned by
-[`compiler-backend-budget.json`](../../../.github/compiler-backend-budget.json).
-It also owns the native tarball and npm unpacked-size ceilings. Every platform
-bundle records the measured bytes, selected profile, limits, and pass/fail
-result in its checksummed build evidence; bundle verification recalculates the
-result before publication. Raw paired samples and platform evidence remain in
-downloadable CI artifacts; documentation MUST NOT replace them with a
-hand-maintained benchmark or package-size claim.
-
-## Human review gate
-
-The checked-in
-[`compiler-rollout-review.json`](../../../.github/compiler-rollout-review.json)
-begins pending and may become approved only after a maintainer reviews a
-two-candidate artifact.
-The same candidate source revision MUST also complete the Release workflow's
-8-target × 2-Node certification; its retained JSON is copied to the
-`nativeCertificationPath` declared by rollout state. Approval MUST bind both
-its `candidateDigest` and `nativeCertificationDigest` and cover every listed
-area. The readiness check recomputes both digests, requires the certification's
-compiler revision and build ID to match the candidate, validates all 16 pairs
-with their actual Node versions and raw-evidence digests plus all eight bundle
-size records, and fails if either record is missing, incomplete, tampered, or
-from another source. Review schema v3 requires an
-explicit `nativePackageSizeBudget` approval, so that checkbox covers the exact
-candidate host measurement and every certified release bundle rather than an
-unversioned prose budget.
-
-Reviewer focus:
-
-- Guaranteed and strict-guarantee behavior, not printer snapshots;
-- TypeScript namespace/CTS ownership and cross-module metadata;
-- runtime helper, metadata schema, and N-API build identity;
-- source-map origins and platform-package coverage;
-- p95 throughput, peak RSS, output-size, and native-package size budgets;
-- proof that the rollback purges every compatibility cache and artifact.
-
-## Monitoring and stop conditions
-
-Compiler evidence stays local or in CI artifacts; the rollout does not add
-external telemetry. Any unexplained semantic difference, native panic, ABI or
-metadata mismatch, map regression, platform installation failure, performance
-budget violation, or rollback-drill failure blocks promotion.
-
-Operational recovery is defined by the
-[compiler backend rollback runbook](../../operations/runbooks/compiler-backend-rollback.md).
+There is no code-level rollback. Restore a complete, previously verified
+application release pinned to the 0.30.1 compatibility unit. Do not mix 0.30.1
+compiler output, metadata, or Preview artifacts with 1.0 runtime or integration
+packages. See the
+[compiler release rollback runbook](../../operations/runbooks/compiler-backend-rollback.md).
 
 ## Verification
 
 ```bash
 pnpm test:compiler:rollout-state
-pnpm --filter @fictjs/vite-plugin exec vitest run src/__tests__/rust-backend-loading.test.ts
 pnpm test:api-boundaries
-pnpm release:compiler:rust-rollout
+pnpm test:preview-boundaries
+pnpm release:compiler:verify
 pnpm release:verify:clean
 ```
 
-The first command validates phase consistency and the digest-bound human
-approval. The second produces current Rust evidence. Only the clean detached
-release gate can count for publishing.
+The first command validates release ordering, evidence digests, human approval,
+and removal scans. Only the complete clean-checkout release gate and successful
+tag workflow authorize publication.
 
 ## Related decisions
 

@@ -1,5 +1,11 @@
 # @fictjs/router
 
+## 0.28.4
+
+### Patch Changes
+
+- @fictjs/runtime@1.0.0
+
 ## 0.28.3
 
 ### Patch Changes

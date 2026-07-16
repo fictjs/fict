@@ -12,9 +12,9 @@ tags: [compiler, babel, migration, deprecation, scope]
 
 ## Context
 
-`@fictjs/babel-preset` is currently a Core package in Fict's Changesets fixed
-group. It performs an isolated TypeScript and module prepass before the legacy
-Babel compiler and is used directly by the Webpack integration and Babel
+At the time of this decision, `@fictjs/babel-preset` was a Core package in
+Fict's Changesets fixed group. It performed an isolated TypeScript/module
+prepass before the old compiler and was used by Webpack and direct Babel
 consumers.
 
 The native compiler is an entire-file OXC pipeline. A Babel `Program` visitor
@@ -36,6 +36,13 @@ will then be retired. It MUST NOT call the Rust compiler from a Babel visitor,
 print and reparse native output, or select backends per file.
 
 The lifecycle has four phases.
+
+The approved sequence completed as `0.29.0` (Rust default), `0.30.0`
+(subsequent compatibility minor), `0.30.1` (final legacy/preset release), and
+`1.0.0` (breaking removal). In the 1.0 tree the preset, old compiler, `./legacy`
+export, backend selectors, production Babel edges, and compatibility harnesses
+are absent. Registry deprecation of the historical preset is performed only
+after 1.0 publication, with a message that points to the migration guide.
 
 ### Phase A — Supported legacy adapter
 
@@ -112,7 +119,7 @@ new architecture decision and executable evidence.
 
 | Existing use                        | Replacement                                                                        |
 | ----------------------------------- | ---------------------------------------------------------------------------------- |
-| Babel via Vite                      | `@fictjs/vite-plugin` using one build-level native backend                         |
+| Babel via Vite                      | `@fictjs/vite-plugin` using its mandatory native compiler                          |
 | Babel via Webpack                   | `@fictjs/webpack-plugin` native loader                                             |
 | Direct `transformSync` with preset  | `@fictjs/compiler` `transformSync`                                                 |
 | Direct asynchronous Babel transform | `@fictjs/compiler` `transform`                                                     |
@@ -203,19 +210,6 @@ changes.
 
 ## Verification
 
-During Phases A–C:
-
-```bash
-pnpm -C packages/compiler test -- babel-typescript-integration.test.ts
-pnpm -C packages/babel-preset build
-pnpm test:babel-preset:deprecation
-pnpm test:compiler:differential
-pnpm test:compiler:rollout-state
-pnpm test:bundlers:strict-guarantee
-pnpm test:api-boundaries
-pnpm test:release-publish-plan
-```
-
 At Phase D, repository and packed-artifact checks MUST prove that no Core
 runtime dependency, export, loader, fixed-group entry, or release plan refers
 to `@fictjs/babel-preset` or the legacy compiler. The explicit `./legacy`
@@ -223,6 +217,14 @@ subpath, shadow/differential/rollback-only harnesses, production Babel imports,
 and old cache-schema compatibility readers must be absent, while the compiler
 root must expose the Rust request API. Historical package installability is
 verified against the registry separately from the current workspace.
+
+```bash
+pnpm test:compiler:rollout-state
+pnpm test:api-boundaries
+pnpm test:release-publish-plan
+pnpm release:compiler:verify
+pnpm release:verify:clean
+```
 
 ## Related decisions
 

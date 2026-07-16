@@ -5752,6 +5752,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 contains_fragment,
                 function_like,
                 list,
+                embedded_nodes,
             } => JsxChild::Expression {
                 value: self.syntax_value(owner, *span, self.referenced_bindings(*span)),
                 kind: *kind,
@@ -5760,6 +5761,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 list: list
                     .as_ref()
                     .and_then(|list| self.lower_jsx_list_expression(list)),
+                embedded_nodes: embedded_nodes
+                    .iter()
+                    .map(|node| self.lower_jsx_node(owner, node))
+                    .collect(),
                 origin: Origin::source(*span),
             },
             RawJsxChild::Node(node) => JsxChild::Node(Box::new(self.lower_jsx_node(owner, node))),
@@ -6202,6 +6207,7 @@ enum RawJsxChild {
         contains_fragment: bool,
         function_like: bool,
         list: Option<RawJsxListExpression>,
+        embedded_nodes: Vec<RawJsxNode>,
     },
     Node(Box<RawJsxNode>),
     Spread {
@@ -6768,12 +6774,19 @@ fn raw_jsx_child(
                         };
                         let mut fragments = FragmentDetector::default();
                         fragments.visit_expression(expression);
+                        let mut embedded = EmbeddedJsxCollector {
+                            scoping,
+                            known_arrays,
+                            nodes: Vec::new(),
+                        };
+                        embedded.visit_expression(expression);
                         RawJsxChild::Expression {
                             span: source_span(expression.span()),
                             kind,
                             contains_fragment: fragments.found,
                             function_like: inner.is_function(),
                             list: raw_jsx_list_expression(scoping, known_arrays, expression),
+                            embedded_nodes: embedded.nodes,
                         }
                     }
                 }
@@ -6783,6 +6796,25 @@ fn raw_jsx_child(
             expression: source_span(spread.expression.span()),
             span: source_span(spread.span),
         }),
+    }
+}
+
+struct EmbeddedJsxCollector<'facts> {
+    scoping: &'facts Scoping,
+    known_arrays: &'facts BTreeSet<SymbolId>,
+    nodes: Vec<RawJsxNode>,
+}
+
+impl<'a> Visit<'a> for EmbeddedJsxCollector<'_> {
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+    fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
+        self.nodes
+            .push(raw_jsx_element(self.scoping, self.known_arrays, element));
+    }
+    fn visit_jsx_fragment(&mut self, fragment: &JSXFragment<'a>) {
+        self.nodes
+            .push(raw_jsx_fragment(self.scoping, self.known_arrays, fragment));
     }
 }
 

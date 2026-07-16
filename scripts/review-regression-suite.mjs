@@ -18,9 +18,9 @@ const suites = [
     ],
   },
   {
-    name: 'Vite resumable handler extraction',
+    name: 'Vite native compilation, metadata, and resumable handler extraction',
     packageDir: 'packages/vite-plugin',
-    files: ['src/__tests__/index.test.ts'],
+    files: ['src/__tests__/native-backend.test.ts', 'src/__tests__/cache-fingerprint-path.test.ts'],
   },
   {
     name: 'Runtime DOM binding, selector, and store ownership',

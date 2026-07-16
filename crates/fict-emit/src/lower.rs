@@ -2492,8 +2492,8 @@ fn is_runtime_resettable_boundary(hir: &HirFile, name: &JsxElementName) -> bool 
 }
 fn trusted_jsx_list_values(
     root: &JsxNode,
-    reactive_bindings: &BTreeMap<BindingId, ReactiveBindingSite>,
-    list_item_bindings: &BTreeSet<BindingId>,
+    reactive: &BTreeMap<BindingId, ReactiveBindingSite>,
+    items: &BTreeSet<BindingId>,
 ) -> BTreeSet<ValueId> {
     enum Item<'a> {
         Node(&'a JsxNode),
@@ -2520,44 +2520,44 @@ fn trusted_jsx_list_values(
             }
             Item::Child(JsxChild::Expression {
                 value,
-                list: Some(list),
+                list,
+                embedded_nodes,
                 ..
             }) => {
-                if trusted_jsx_list_receiver(list.receiver, reactive_bindings, list_item_bindings) {
+                if matches!(list, Some(list) if trusted_receiver(list.receiver, reactive, items)) {
                     trusted.insert(*value);
                 }
+                stack.extend(embedded_nodes.iter().map(Item::Node));
             }
             Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
-            Item::Child(
-                JsxChild::Text { .. } | JsxChild::Expression { .. } | JsxChild::Spread { .. },
-            ) => {}
+            Item::Child(JsxChild::Text { .. } | JsxChild::Spread { .. }) => {}
         }
     }
     trusted
 }
-fn trusted_jsx_list_receiver(
+fn trusted_receiver(
     receiver: JsxListReceiver,
-    reactive_bindings: &BTreeMap<BindingId, ReactiveBindingSite>,
-    list_item_bindings: &BTreeSet<BindingId>,
+    reactive: &BTreeMap<BindingId, ReactiveBindingSite>,
+    items: &BTreeSet<BindingId>,
 ) -> bool {
     match receiver {
         JsxListReceiver::ArrayLiteral => true,
         JsxListReceiver::Binding {
             known_array: true, ..
         } => true,
-        JsxListReceiver::Binding { root, .. } if list_item_bindings.contains(&root) => true,
+        JsxListReceiver::Binding { root, .. } if items.contains(&root) => true,
         JsxListReceiver::Binding {
             root,
             projected: false,
             known_array: false,
-        } => reactive_bindings.get(&root).is_some_and(|site| {
+        } => reactive.get(&root).is_some_and(|site| {
             matches!(site.kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
         }),
         JsxListReceiver::Binding {
             root,
             projected: true,
             known_array: false,
-        } => reactive_bindings
+        } => reactive
             .get(&root)
             .is_some_and(|site| site.kind == ReactiveSlotKind::Store),
     }
@@ -3800,6 +3800,7 @@ mod namespace_tests {
             contains_fragment: false,
             function_like: false,
             list: None,
+            embedded_nodes: Vec::new(),
             origin: test_origin(),
         }
     }

@@ -12,9 +12,6 @@ import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 
-import { transformSync } from '@babel/core'
-// @ts-expect-error - CommonJS module without proper types
-import presetTypescript from '@babel/preset-typescript'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
@@ -36,7 +33,11 @@ import {
   serializeValue,
   deserializeValue,
 } from '@fictjs/runtime/internal'
-import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/legacy'
+import {
+  transformSync as transformFictSync,
+  type CompilerArtifact,
+  type NativeCompilerOptions,
+} from '../../compiler/src'
 import { parseHTML } from 'linkedom'
 
 import {
@@ -71,12 +72,19 @@ function linkLocalFictPackage(tempDir: string): void {
 interface CompiledModule {
   url: string
   code: string
+  artifacts: readonly CompilerArtifact[]
+  handlerModules: readonly {
+    sourceExportName: string
+    artifactExportName: string
+    url: string
+    code: string
+  }[]
   cleanup: () => void
 }
 
 function compileModule(
   source: string,
-  options?: Partial<FictCompilerOptions> & { baseDir?: string },
+  options?: Partial<NativeCompilerOptions> & { baseDir?: string },
 ): CompiledModule {
   const { baseDir, ...compilerOverrides } = options ?? {}
   const tempBase = baseDir ?? path.join(process.cwd(), '.tmp')
@@ -85,41 +93,71 @@ function compileModule(
   const entryPath = path.join(tempDir, 'entry.mjs')
   linkLocalFictPackage(tempDir)
 
-  const compilerOptions: FictCompilerOptions = {
+  const compilerOptions: NativeCompilerOptions = {
     dev: false,
     fineGrainedDom: true,
-    resumable: true,
     // Resumable fixture tests intentionally cover fallback patterns (e.g. state snapshots
     // passed through helper boundaries) and should not fail-closed on guarantee diagnostics.
     strictGuarantee: false,
-    emitModuleMetadata: false,
+    preview: {
+      resumable: true,
+      autoExtractHandlers: true,
+      autoExtractThreshold: 3,
+    },
     ...compilerOverrides,
   }
 
-  const result = transformSync(source, {
+  const result = transformFictSync({
+    code: source,
     filename: entryPath,
-    configFile: false,
-    babelrc: false,
-    sourceType: 'module',
-    parserOpts: {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      allowReturnOutsideFunction: true,
-    },
-    plugins: [[createFictPlugin, compilerOptions]],
-    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
-    generatorOpts: { compact: false },
+    moduleId: entryPath,
+    publicModuleId: pathToFileURL(entryPath).href,
+    language: 'tsx',
+    moduleKind: 'module',
+    options: compilerOptions,
   })
 
-  if (!result?.code) {
-    throw new Error('Failed to compile module')
+  const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error')
+  if (errors.length > 0) {
+    throw new Error(
+      errors.map(diagnostic => `[${diagnostic.code}] ${diagnostic.message}`).join('\n'),
+    )
   }
 
-  writeFileSync(entryPath, result.code, 'utf8')
+  let entryCode = result.code
+  const handlerModules: Array<{
+    sourceExportName: string
+    artifactExportName: string
+    url: string
+    code: string
+  }> = []
+  for (const artifact of result.artifacts) {
+    if (artifact.kind !== 'handlerModule' || !artifact.handler) continue
+    const artifactPath = path.join(tempDir, `${artifact.id}.mjs`)
+    const artifactUrl = pathToFileURL(artifactPath).href
+    writeFileSync(artifactPath, artifact.code, 'utf8')
+    entryCode = entryCode.replace(
+      JSON.stringify(artifact.handler.moduleSpecifier),
+      JSON.stringify(artifactUrl),
+    )
+    handlerModules.push({
+      sourceExportName: artifact.handler.sourceExportName,
+      artifactExportName: artifact.handler.artifactExportName,
+      url: artifactUrl,
+      code: artifact.code,
+    })
+  }
+  if (entryCode.includes('fict:compiler-artifact:')) {
+    throw new Error('Native compiler emitted an unclaimed handler artifact placeholder')
+  }
+
+  writeFileSync(entryPath, entryCode, 'utf8')
 
   return {
     url: pathToFileURL(entryPath).href,
-    code: result.code,
+    code: entryCode,
+    artifacts: result.artifacts,
+    handlerModules,
     cleanup: () => {
       try {
         rmSync(tempDir, { recursive: true, force: true })
@@ -341,17 +379,17 @@ describe('QRL Generation and Event Handler Resolution', () => {
       // console.log(compiled.code)
       // console.log('=== End Compiled Code ===')
 
-      // Verify QRL handler is exported
-      expect(compiled.code).toContain('__fict_e')
-      expect(compiled.code).toContain('export')
+      // Rust emits handlers as standalone artifacts with stable source identities.
+      expect(compiled.handlerModules).toHaveLength(1)
+      expect(compiled.handlerModules[0]?.sourceExportName).toBe('__fict_e0')
+      expect(compiled.handlerModules[0]?.artifactExportName).toBe('default')
 
       // Verify on:click attribute is set
       expect(compiled.code).toContain('on:click')
 
-      // Verify handler properly modifies signal - the handler should use signal setter
-      // The handler should NOT just have 'count++' as a raw expression
-      const handlerMatch = compiled.code.match(/export const __fict_e0[\s\S]*?;(?=\s*export|$)/)
-      expect(handlerMatch).not.toBeNull()
+      // Verify the standalone handler restores and writes the captured signal.
+      expect(compiled.handlerModules[0]?.code).toContain('__fictUseLexicalScope')
+      expect(compiled.handlerModules[0]?.code).toContain('count(__fict_previous + 1)')
       // console.log('=== Handler Code ===')
       // console.log(handlerMatch?.[0])
     } finally {
@@ -401,7 +439,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
       const qrl = onClickMatch![1]
       expect(qrl).toContain('#')
-      expect(qrl).toContain('__fict_e')
+      expect(qrl.endsWith('#default')).toBe(true)
 
       const env = setupClientEnvironment(html)
       cleanup = env.cleanup
@@ -632,20 +670,11 @@ describe('QRL Generation and Event Handler Resolution', () => {
       // console.log(compiled.code)
       // console.log('=== End Compiled Code ===')
 
-      // Verify the handler is exported
-      expect(compiled.code).toContain('export const __fict_e0')
-
-      // Verify the formatNumber function is hoisted with a unique name
-      // The pattern should be __fict_fn_formatNumber_<counter>
-      expect(compiled.code).toMatch(/export const __fict_fn_formatNumber_\d+/)
-
-      // Verify the handler references the hoisted function name
-      const handlerMatch = compiled.code.match(/export const __fict_e0[\s\S]*?;(?=\s*export|$)/)
-      expect(handlerMatch).not.toBeNull()
-
-      // The handler should use the hoisted name instead of formatNumber
-      expect(handlerMatch![0]).toMatch(/__fict_fn_formatNumber_\d+/)
-      expect(handlerMatch![0]).not.toMatch(/\bformatNumber\(/)
+      expect(compiled.handlerModules).toHaveLength(1)
+      const handler = compiled.handlerModules[0]!
+      expect(handler.sourceExportName).toBe('__fict_e0')
+      expect(handler.code).toContain('const formatNumber =')
+      expect(handler.code).toContain('formatNumber(1e3)')
     } finally {
       compiled.cleanup()
     }
@@ -671,21 +700,17 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
     const compiled = compileModule(source)
     try {
-      // Both helper functions should be hoisted
-      expect(compiled.code).toMatch(/export const __fict_fn_add_\d+/)
-      expect(compiled.code).toMatch(/export const __fict_fn_multiply_\d+/)
-
-      // Handler should reference hoisted names
-      const handlerMatch = compiled.code.match(/export const __fict_e0[\s\S]*?;(?=\s*export|$)/)
-      expect(handlerMatch).not.toBeNull()
-      expect(handlerMatch![0]).toMatch(/__fict_fn_add_\d+/)
-      expect(handlerMatch![0]).toMatch(/__fict_fn_multiply_\d+/)
+      const handler = compiled.handlerModules[0]
+      expect(handler?.sourceExportName).toBe('__fict_e0')
+      expect(handler?.code).toContain('const add =')
+      expect(handler?.code).toContain('const multiply =')
+      expect(handler?.code).toContain('add(1, multiply(2, 2))')
     } finally {
       compiled.cleanup()
     }
   })
 
-  it('shared function between handlers is hoisted once', () => {
+  it('copies a shared local helper into each self-contained handler artifact', () => {
     const source = `
       import { $state } from 'fict'
       export function App() {
@@ -703,11 +728,14 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
     const compiled = compileModule(source)
     try {
-      // validate should only be hoisted once
-      const hoistedMatches = compiled.code.match(/export const __fict_fn_validate_\d+/g)
-      expect(hoistedMatches).not.toBeNull()
-      // Should have exactly one export for the hoisted function
-      expect(hoistedMatches!.length).toBe(1)
+      expect(compiled.handlerModules.map(handler => handler.sourceExportName)).toEqual([
+        '__fict_e0',
+        '__fict_e1',
+      ])
+      for (const handler of compiled.handlerModules) {
+        expect(handler.code.match(/const validate =/g)).toHaveLength(1)
+        expect(handler.code).toContain('__fictUseLexicalScope')
+      }
     } finally {
       compiled.cleanup()
     }
@@ -1221,6 +1249,7 @@ describe('Complex DOM Boundaries', () => {
       // Increment counter
       dispatchClick(counterBtn!, env.window)
       await tick(3)
+      counterBtn = env.document.querySelector('[data-testid="counter"]')
       expect(counterBtn!.textContent).toContain('1')
 
       // Toggle off
@@ -2137,15 +2166,13 @@ describe('Function-level Code Splitting', () => {
 
     const compiled = compileModule(source)
     try {
-      // Should have multiple handler exports
-      const e0Match = compiled.code.match(/export\s+(const|function)\s+__fict_e0/g)
-      const e1Match = compiled.code.match(/export\s+(const|function)\s+__fict_e1/g)
-
-      expect(e0Match).not.toBeNull()
-      expect(e1Match).not.toBeNull()
-
-      // Each handler should use useLexicalScope for variable restoration
-      expect(compiled.code).toContain('__fictUseLexicalScope')
+      expect(compiled.handlerModules.map(handler => handler.sourceExportName)).toEqual([
+        '__fict_e0',
+        '__fict_e1',
+      ])
+      for (const handler of compiled.handlerModules) {
+        expect(handler.code).toContain('__fictUseLexicalScope')
+      }
     } finally {
       compiled.cleanup()
     }
@@ -2166,13 +2193,9 @@ describe('Function-level Code Splitting', () => {
 
     const compiled = compileModule(source)
     try {
-      // Handler should restore both count and step from lexical scope
-      const handlerMatch = compiled.code.match(
-        /export\s+(const|function)\s+__fict_e0[\s\S]*?(?=export|$)/,
-      )
-      expect(handlerMatch).not.toBeNull()
-
-      const handler = handlerMatch![0]
+      // Handler should restore both count and step from lexical scope.
+      expect(compiled.handlerModules).toHaveLength(1)
+      const handler = compiled.handlerModules[0]!.code
       expect(handler).toContain('__fictUseLexicalScope')
       // Should reference the captured variables
       expect(handler).toContain('count')
@@ -2206,12 +2229,12 @@ describe('Function-level Code Splitting', () => {
       const qrl = qrlMatch![1]
       // QRL format: url#exportName
       expect(qrl).toContain('#')
-      expect(qrl).toContain('__fict_e')
+      expect(qrl.endsWith('#default')).toBe(true)
 
       // Parse QRL
       const [url, exportName] = qrl.split('#')
       expect(url).toBeTruthy()
-      expect(exportName).toMatch(/^__fict_e\d+$/)
+      expect(exportName).toBe('default')
 
       const env = setupClientEnvironment(html)
       cleanup = env.cleanup
@@ -2934,7 +2957,13 @@ describe('Full E2E Integration', () => {
       expect(first.done).toBe(false)
       const shellChunk = decoder.decode(first.value)
       const filePath = fileURLToPath(compiled.url)
-      const manifest = { [`/@fs${filePath}`]: compiled.url }
+      const manifest = Object.fromEntries([
+        [`/@fs${filePath}`, compiled.url],
+        ...compiled.handlerModules.map(handler => [
+          `/@fs${fileURLToPath(handler.url)}`,
+          handler.url,
+        ]),
+      ])
       await callWorker('init', { html: shellChunk, manifest })
 
       ready = true

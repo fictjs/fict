@@ -3,7 +3,7 @@
   "include": [
     "src/index.ts",
     "src/cache-fingerprint.ts",
-    "src/__tests__/index.test.ts",
+    "src/__tests__/*.test.ts",
     "../compiler/src/types/**/*.d.ts",
     "../runtime/src/dev.d.ts"
   ],

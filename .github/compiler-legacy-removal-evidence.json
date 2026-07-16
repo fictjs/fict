@@ -1,5 +1,178 @@
 {
   "schemaVersion": 1,
-  "status": "pending",
-  "evidenceDigest": null
+  "status": "pass",
+  "rustDefaultRelease": "0.29.0",
+  "compatibilityRelease": "0.30.0",
+  "finalLegacyRelease": "0.30.1",
+  "legacyRemovalRelease": "1.0.0",
+  "publishedReleases": {
+    "rustDefault": {
+      "schemaVersion": 1,
+      "status": "pass",
+      "version": "0.29.0",
+      "tag": "v0.29.0",
+      "commitSha": "129a9cc395ab5c0e09465fa6ff3206e7209fe4ad",
+      "workflowRunId": "29441490475",
+      "githubRelease": {
+        "id": 354658033,
+        "url": "https://github.com/fictjs/fict/releases/tag/v0.29.0",
+        "publishedAt": "2026-07-15T19:17:15Z",
+        "assets": [
+          {
+            "name": "native-certification.json",
+            "id": 478289498,
+            "size": 10007,
+            "digest": "sha256:762471e68ac95cb6599b2de8fa0af6b5452607d214e36f498906f9ea3b54e15d"
+          },
+          {
+            "name": "npm-publish-plan.json",
+            "id": 478289499,
+            "size": 3405,
+            "digest": "sha256:78cdc388dfe14c2f6c27df8667d6c9868d464b64509bc5f96cb0bd43405e8906"
+          },
+          {
+            "name": "release-artifacts.json",
+            "id": 478289503,
+            "size": 5679,
+            "digest": "sha256:6e3883bfa6f03ca5c6cdc7472b948f6c850e66c9b72c8c0f8e70d3690fe1befe"
+          }
+        ]
+      },
+      "npm": {
+        "packageName": "@fictjs/compiler",
+        "version": "0.29.0",
+        "integrity": "sha512-3SMeN2PPR73/ljkYhMYMVRqlzqv36iPQhFhp7N7hD6aibHXDidL92NA3IhLEFXWEGgj3zN6JMW6e41b+vxE9mg==",
+        "provenance": true,
+        "attestationUrl": "https://registry.npmjs.org/-/npm/v1/attestations/@fictjs%2fcompiler@0.29.0",
+        "publishedAt": "2026-07-15T19:16:09.438Z"
+      },
+      "evidenceDigest": "sha256:6e88ca181b0563c9b1c9af5b43a4ec043f09f7f35f731d0fccf0c665f39d3a14"
+    },
+    "compatibility": {
+      "schemaVersion": 1,
+      "status": "pass",
+      "version": "0.30.0",
+      "tag": "v0.30.0",
+      "commitSha": "b804ffbbff84f5183f23473fb034188a8e8f3be9",
+      "workflowRunId": "29445934623",
+      "githubRelease": {
+        "id": 354692453,
+        "url": "https://github.com/fictjs/fict/releases/tag/v0.30.0",
+        "publishedAt": "2026-07-15T20:28:02Z",
+        "assets": [
+          {
+            "name": "native-certification.json",
+            "id": 478354578,
+            "size": 10007,
+            "digest": "sha256:472cb630b5d2e0f4043fe0886f38acb5d97a4c2627c65f6cb0e53c91505a6bc7"
+          },
+          {
+            "name": "npm-publish-plan.json",
+            "id": 478354580,
+            "size": 3405,
+            "digest": "sha256:09299a028442453ba777b744d308e07220d13e3565141fda903bd07e187ca220"
+          },
+          {
+            "name": "release-artifacts.json",
+            "id": 478354576,
+            "size": 5679,
+            "digest": "sha256:9fcf2c1e242b42cd06cc48478e6c6b91abac92e925788aafb6d1bb50a5a52d4f"
+          }
+        ]
+      },
+      "npm": {
+        "packageName": "@fictjs/compiler",
+        "version": "0.30.0",
+        "integrity": "sha512-Qo11l1UUgiW6T2F/WloNYJ/eDpm0vVFu145f9YvrV2SbmYYciMAK7+ROtmoeDJuaNHGL5n0fECkd+XFqMJ7Eqg==",
+        "provenance": true,
+        "attestationUrl": "https://registry.npmjs.org/-/npm/v1/attestations/@fictjs%2fcompiler@0.30.0",
+        "publishedAt": "2026-07-15T20:27:21.821Z"
+      },
+      "evidenceDigest": "sha256:1fddc1a02ef29c0c5facb15315b6c748bcae1e0a20c6119701e88dba88b3acd4"
+    },
+    "finalLegacy": {
+      "schemaVersion": 1,
+      "status": "pass",
+      "version": "0.30.1",
+      "tag": "v0.30.1",
+      "commitSha": "8d4008929d46fc5f2c1e578423ff38ef95a5d084",
+      "workflowRunId": "29452739078",
+      "githubRelease": {
+        "id": 354740286,
+        "url": "https://github.com/fictjs/fict/releases/tag/v0.30.1",
+        "publishedAt": "2026-07-15T22:14:29Z",
+        "assets": [
+          {
+            "name": "native-certification.json",
+            "id": 478437552,
+            "size": 10007,
+            "digest": "sha256:81ab9a2bdc7e21d1bea13db29eea40b458fdaf0ae5e1dab8b78dab2fd30051a4"
+          },
+          {
+            "name": "npm-publish-plan.json",
+            "id": 478437554,
+            "size": 3405,
+            "digest": "sha256:d09bb075e6127700d0e6fc32c2b3c7ca263b47e42459397236cd8343c2951da6"
+          },
+          {
+            "name": "release-artifacts.json",
+            "id": 478437553,
+            "size": 5679,
+            "digest": "sha256:5eb91fd4d5d0b5f83c0b437dc31294791b8915e17df748c373991710ad332a1e"
+          }
+        ]
+      },
+      "npm": {
+        "packageName": "@fictjs/compiler",
+        "version": "0.30.1",
+        "integrity": "sha512-N7gzdPC9G9X8lD+0v7ClQl7v45T2Ep+DgdZgUJOuogkdTGqcBoofb+DJwKQ6IvCNmWCuujE7xbUrzhf/SI5ujA==",
+        "provenance": true,
+        "attestationUrl": "https://registry.npmjs.org/-/npm/v1/attestations/@fictjs%2fcompiler@0.30.1",
+        "publishedAt": "2026-07-15T22:13:43.753Z"
+      },
+      "evidenceDigest": "sha256:de4ba8141ae7b5d5cef78a8b92100a138706f11913aaeaf8ee31bab43ce6acbd"
+    }
+  },
+  "nativeCertification": {
+    "release": "0.30.1",
+    "workflowRunId": "29452739078",
+    "sourceRevision": "8d4008929d46fc5f2c1e578423ff38ef95a5d084",
+    "certificationDigest": "sha256:7d2540eb9e750d181435bc93c4647fa30f683276df0799adcbe128be3727a798",
+    "targets": 8,
+    "nodeLanes": ["22.18.0", "24"],
+    "certifications": 16
+  },
+  "consumerValidation": {
+    "release": "0.30.0",
+    "repository": "https://github.com/fictjs/shadcn",
+    "commitSha": "adc6fcb33844d7f1f4439f9183ac3e295da7ec4a",
+    "status": "pass",
+    "evidenceDigest": "sha256:1ec74c800d12a875368236303fb1685cdc5de5ebdc4d721ea39f2a6e8db98c83"
+  },
+  "rollbackDrill": {
+    "release": "0.30.1",
+    "status": "pass",
+    "evidenceDigest": "sha256:27d5538b09847ee16d4de11924069145023a5caf9d72c7f674158b729e63b64e"
+  },
+  "sourceMaps": {
+    "release": "0.30.1",
+    "status": "pass",
+    "evidenceDigest": "sha256:83150d3c060632293690c17863b5894a776b8ca022bd71fd603ce98f5cc7639e"
+  },
+  "performanceAndRss": {
+    "release": "0.30.1",
+    "status": "pass",
+    "evidenceDigest": "sha256:7892f336563dfad459f8a2b16293cdc4f16c91f5514d9e8bbd22f1f271357046"
+  },
+  "migrationGuidance": {
+    "path": "docs/migration-guide.md",
+    "digest": "sha256:c2e835cd0853506ee4d1c1092c14703f94c78de4a35368b1d8b2415d387718fa"
+  },
+  "finalPreset": {
+    "packageName": "@fictjs/babel-preset",
+    "version": "0.30.1",
+    "integrity": "sha512-0rZ8fAY3oJ4IwZBTel+a+Dym8+qeXssKuxfFWpp11Ed0/rswWKUkc5cVHB8qPw7Rp+WCwCSbUc+mbD9C9kbkZQ==",
+    "provenance": true
+  },
+  "evidenceDigest": "sha256:77e08e0f6761d7ed43d11adf04345c55bea8ba27d80f74db70594f6badbf101a"
 }

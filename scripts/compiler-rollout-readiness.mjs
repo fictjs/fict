@@ -15,7 +15,38 @@ import {
   REQUIRED_REAL_CONSUMER_PACKAGES,
 } from './compiler-consumer-evidence.mjs'
 import { assertCliArguments } from './strict-cli-arguments.mjs'
-import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
+
+// The rollout-candidate CI harness was retired with the legacy backend. Keep the
+// historical schema validator here because the immutable M7 approval remains an
+// input to the M9 removal decision.
+export const REQUIRED_ROLLOUT_JOBS = Object.freeze([
+  'rust-fuzz',
+  'rust-native',
+  'compiler-rollout',
+  'lint',
+  'typecheck',
+  'strict-guarantee',
+  'perf-guardrails',
+  'test',
+  'e2e',
+  'test-opt-out',
+  'test-ssr-edge',
+  'build',
+])
+
+const HISTORICAL_WORKFLOW_GATE_FIELDS = Object.freeze([
+  'jobs',
+  'repository',
+  'runAttempt',
+  'runId',
+  'schemaVersion',
+  'sourceRef',
+  'sourceRevision',
+  'status',
+  'workflowEvent',
+  'workflowJob',
+  'workflowName',
+])
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const requiredRealConsumerCorePackages = new Set(REQUIRED_REAL_CONSUMER_CORE_PACKAGES)
@@ -87,6 +118,71 @@ function assertAreaShape(areas, requiredAreas, label) {
 
 function isSha256(value) {
   return /^sha256:[0-9a-f]{64}$/.test(value ?? '')
+}
+
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function validateWorkflowGateArtifact(artifact, expected = {}) {
+  if (!isRecord(artifact)) throw new Error('Compiler rollout workflow gate must be an object')
+  if (
+    JSON.stringify(Object.keys(artifact).sort()) !==
+    JSON.stringify([...HISTORICAL_WORKFLOW_GATE_FIELDS])
+  ) {
+    throw new Error('Compiler rollout workflow gate has an unsupported field shape')
+  }
+  if (artifact.schemaVersion !== 1 || artifact.status !== 'pass') {
+    throw new Error('Compiler rollout workflow gate did not pass')
+  }
+  if (
+    artifact.repository !== 'fictjs/fict' ||
+    artifact.workflowName !== 'CI' ||
+    artifact.workflowJob !== 'compiler-rollout-finalize'
+  ) {
+    throw new Error('Workflow gate must originate from the canonical Fict CI finalizer')
+  }
+  if (typeof artifact.runId !== 'string' || !/^\d+$/.test(artifact.runId)) {
+    throw new Error('Workflow gate run id must be numeric')
+  }
+  if (
+    typeof artifact.runAttempt !== 'string' ||
+    !/^\d+$/.test(artifact.runAttempt) ||
+    BigInt(artifact.runAttempt) < 1n
+  ) {
+    throw new Error('Workflow gate run attempt must be a positive integer')
+  }
+  if (!/^[0-9a-f]{40}$/.test(artifact.sourceRevision ?? '')) {
+    throw new Error('Workflow gate source revision must be a git SHA-1')
+  }
+  if (typeof artifact.workflowEvent !== 'string' || !artifact.workflowEvent) {
+    throw new Error('Workflow gate event is required')
+  }
+  if (!/^refs\//.test(artifact.sourceRef ?? '')) {
+    throw new Error('Workflow gate source ref must be a full Git ref')
+  }
+
+  if (!isRecord(artifact.jobs)) {
+    throw new Error('Compiler rollout workflow jobs must be an object')
+  }
+  const actualJobs = Object.keys(artifact.jobs).sort()
+  const expectedJobs = [...REQUIRED_ROLLOUT_JOBS].sort()
+  if (JSON.stringify(actualJobs) !== JSON.stringify(expectedJobs)) {
+    throw new Error('Compiler rollout finalizer does not bind the exact required CI job set')
+  }
+  for (const job of REQUIRED_ROLLOUT_JOBS) {
+    const result = artifact.jobs[job]
+    const allowed = job === 'rust-fuzz' ? ['success', 'skipped'] : ['success']
+    if (typeof result !== 'string' || !allowed.includes(result)) {
+      throw new Error(`Compiler rollout CI job ${job} did not pass: ${String(result)}`)
+    }
+  }
+
+  for (const field of ['runId', 'runAttempt', 'sourceRevision', 'workflowEvent', 'sourceRef']) {
+    if (expected[field] !== undefined && String(artifact[field]) !== String(expected[field])) {
+      throw new Error(`Compiler rollout workflow gate does not bind ${field}`)
+    }
+  }
 }
 
 function assertPublishedReleaseEvidence(entry, version, label, workspaceRoot) {
@@ -273,12 +369,103 @@ function assertRecordedConsumerEvidence(summary, version, workspaceRoot) {
   }
 }
 
-function assertPassArtifact(artifact, label, release) {
+function assertPassArtifact(artifact, label, release, sourceRevision, workspaceRoot, kind) {
+  const proofPath = path.join(
+    workspaceRoot,
+    '.github',
+    'compiler-legacy-removal-evidence',
+    `v${release}-${kind}.json`,
+  )
+  const proof = readJson(proofPath, `${label} record`)
+  const expectedProofKeys = [
+    'artifacts',
+    'command',
+    'evidenceDigest',
+    'inputs',
+    'kind',
+    'release',
+    'schemaVersion',
+    'sourceRevision',
+    'status',
+    'workflow',
+  ].sort()
+  const { evidenceDigest, ...payload } = proof ?? {}
+  const computedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')}`
+  const workflow = proof?.workflow
+  const job = workflow?.job
+  const step = job?.step
+  const inputs = proof?.inputs
+  const artifacts = proof?.artifacts
+  const expectedRunUrl = `https://github.com/fictjs/fict/actions/runs/${workflow?.runId}`
+  const expectedJobUrl = `${expectedRunUrl}/job/${job?.id}`
+  const validInputs =
+    Array.isArray(inputs) &&
+    inputs.length > 0 &&
+    inputs.every(
+      input =>
+        input &&
+        JSON.stringify(Object.keys(input).sort()) === JSON.stringify(['digest', 'path']) &&
+        isRepositoryRelativePath(input.path) &&
+        isSha256(input.digest),
+    )
+  const validArtifacts =
+    Array.isArray(artifacts) &&
+    artifacts.every(
+      entry =>
+        entry &&
+        JSON.stringify(Object.keys(entry).sort()) ===
+          JSON.stringify(['createdAt', 'digest', 'id', 'name', 'sizeBytes'].sort()) &&
+        Number.isSafeInteger(entry.id) &&
+        entry.id > 0 &&
+        typeof entry.name === 'string' &&
+        Boolean(entry.name) &&
+        Number.isSafeInteger(entry.sizeBytes) &&
+        entry.sizeBytes > 0 &&
+        isSha256(entry.digest) &&
+        Number.isFinite(Date.parse(entry.createdAt ?? '')),
+    )
+  const requiresRawArtifact = kind === 'rollback-drill' || kind === 'performance-rss'
   if (
     !artifact ||
     artifact.release !== release ||
     artifact.status !== 'pass' ||
-    !isSha256(artifact.evidenceDigest)
+    artifact.evidenceDigest !== proof?.evidenceDigest ||
+    proof?.schemaVersion !== 1 ||
+    proof.status !== 'pass' ||
+    proof.kind !== kind ||
+    proof.release !== release ||
+    proof.sourceRevision !== sourceRevision ||
+    JSON.stringify(Object.keys(proof).sort()) !== JSON.stringify(expectedProofKeys) ||
+    evidenceDigest !== computedDigest ||
+    typeof proof.command !== 'string' ||
+    !proof.command ||
+    !validInputs ||
+    !validArtifacts ||
+    (requiresRawArtifact &&
+      !artifacts.some(entry => entry.name === 'compiler-rollout-raw-evidence')) ||
+    workflow?.repository !== 'fictjs/fict' ||
+    workflow.event !== 'push' ||
+    workflow.conclusion !== 'success' ||
+    typeof workflow.runId !== 'string' ||
+    !/^\d+$/.test(workflow.runId) ||
+    typeof workflow.runAttempt !== 'string' ||
+    !/^\d+$/.test(workflow.runAttempt) ||
+    BigInt(workflow.runAttempt) < 1n ||
+    workflow.url !== expectedRunUrl ||
+    !Number.isSafeInteger(job?.id) ||
+    job.id <= 0 ||
+    typeof job.name !== 'string' ||
+    !job.name ||
+    job.url !== expectedJobUrl ||
+    job.conclusion !== 'success' ||
+    !Number.isFinite(Date.parse(job.startedAt ?? '')) ||
+    !Number.isFinite(Date.parse(job.completedAt ?? '')) ||
+    Date.parse(job.completedAt) < Date.parse(job.startedAt) ||
+    typeof step?.name !== 'string' ||
+    !step.name ||
+    step.conclusion !== 'success'
   ) {
     throw new Error(`Legacy-removal evidence has invalid ${label}`)
   }
@@ -375,9 +562,30 @@ function assertLegacyRemovalEvidenceDocumentShape(evidence, workspaceRoot) {
   }
 
   assertRecordedConsumerEvidence(payload.consumerValidation, compatibility.value, workspaceRoot)
-  assertPassArtifact(payload.rollbackDrill, 'rollback drill proof', finalLegacy.value)
-  assertPassArtifact(payload.sourceMaps, 'source-map proof', finalLegacy.value)
-  assertPassArtifact(payload.performanceAndRss, 'performance/RSS proof', finalLegacy.value)
+  assertPassArtifact(
+    payload.rollbackDrill,
+    'rollback drill proof',
+    finalLegacy.value,
+    finalLegacyPublication.commitSha,
+    workspaceRoot,
+    'rollback-drill',
+  )
+  assertPassArtifact(
+    payload.sourceMaps,
+    'source-map proof',
+    finalLegacy.value,
+    finalLegacyPublication.commitSha,
+    workspaceRoot,
+    'source-maps',
+  )
+  assertPassArtifact(
+    payload.performanceAndRss,
+    'performance/RSS proof',
+    finalLegacy.value,
+    finalLegacyPublication.commitSha,
+    workspaceRoot,
+    'performance-rss',
+  )
 
   const guidance = payload.migrationGuidance
   const guidancePath = resolveWorkspaceStatePath(
@@ -808,6 +1016,7 @@ function assertLegacyRemovalReview(review, state, evidence) {
 }
 
 function assertLegacySourcesRemoved(workspaceRoot) {
+  const nonProductionSourceDirectories = new Set(['__fixtures__', '__tests__', 'test', 'tests'])
   const retainedPaths = [
     '.github/compiler-shadow-allowlist.json',
     'packages/babel-preset',
@@ -843,12 +1052,14 @@ function assertLegacySourcesRemoved(workspaceRoot) {
           for (const sourceEntry of readdirSync(directory, { withFileTypes: true })) {
             const filename = path.join(directory, sourceEntry.name)
             if (sourceEntry.isDirectory()) {
+              if (nonProductionSourceDirectories.has(sourceEntry.name)) continue
               pending.push(filename)
               continue
             }
             if (!sourceEntry.isFile() || !/\.(?:[cm]?[jt]sx?|d\.ts)$/.test(sourceEntry.name)) {
               continue
             }
+            if (/\.(?:spec|test)\.[cm]?[jt]sx?$/.test(sourceEntry.name)) continue
             const source = readFileSync(filename, 'utf8')
             if (source.includes('@babel/') || source.includes('@fictjs/compiler/legacy')) {
               productionSourceReferences.push(path.relative(workspaceRoot, filename))

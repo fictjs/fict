@@ -26,9 +26,7 @@ describe('release strict guarantee scope', () => {
   const scripts = rootPackage.scripts
 
   it('owns strict compiler gates in explicit root scripts', () => {
-    expect(scripts['test:strict-guarantee']).toBe(
-      'FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts',
-    )
+    expect(scripts['test:strict-guarantee']).toBe('cargo test -p fict-compiler --lib')
     expect(scripts['build:strict-guarantee']).toBe('FICT_STRICT_GUARANTEE=1 pnpm build')
     expect(scripts['test:bundlers:strict-guarantee']).toBe(
       'FICT_STRICT_GUARANTEE=1 pnpm test:bundlers',

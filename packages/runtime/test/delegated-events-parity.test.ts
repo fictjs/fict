@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest'
 
+import runtimeAbi from '../runtime-abi.json'
 import { DelegatedEvents as RuntimeDelegatedEvents } from '../src/constants'
-import { DelegatedEvents as CompilerDelegatedEvents } from '../../compiler/src/constants'
 
 describe('DelegatedEvents parity', () => {
-  it('runtime and compiler have the same delegated events', () => {
+  it('runtime and generated compiler ABI have the same delegated events', () => {
     const runtimeEvents = [...RuntimeDelegatedEvents].sort()
-    const compilerEvents = [...CompilerDelegatedEvents].sort()
+    const compilerEvents = [...runtimeAbi.delegatedEvents].sort()
 
     expect(runtimeEvents).toEqual(compilerEvents)
   })
@@ -16,7 +16,7 @@ describe('DelegatedEvents parity', () => {
 
     for (const event of coreEvents) {
       expect(RuntimeDelegatedEvents.has(event)).toBe(true)
-      expect(CompilerDelegatedEvents.has(event)).toBe(true)
+      expect(runtimeAbi.delegatedEvents).toContain(event)
     }
   })
 
@@ -24,7 +24,7 @@ describe('DelegatedEvents parity', () => {
     expect(RuntimeDelegatedEvents.size).toBeGreaterThan(0)
   })
 
-  it('compiler delegated events are non-empty', () => {
-    expect(CompilerDelegatedEvents.size).toBeGreaterThan(0)
+  it('compiler ABI delegated events are non-empty', () => {
+    expect(runtimeAbi.delegatedEvents.length).toBeGreaterThan(0)
   })
 })

@@ -35,7 +35,6 @@
       "@fictjs/runtime/*": ["packages/runtime/src/*"],
       "@fictjs/compiler": ["packages/compiler/src"],
       "@fictjs/compiler/*": ["packages/compiler/src/*"],
-      "@fictjs/babel-preset": ["packages/babel-preset/src"],
       "@fictjs/vite-plugin": ["packages/vite-plugin/src"],
       "@fictjs/webpack-plugin": ["packages/webpack-plugin/src"],
       "@fictjs/eslint-plugin": ["packages/eslint-plugin/src"],

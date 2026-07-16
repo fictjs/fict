@@ -1841,7 +1841,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
         module => (module as { resource?: unknown }).resource === entryPath,
       ) as { buildInfo?: Record<string, unknown> } | undefined
       return (
-        entryModule?.buildInfo?.fictWebpackMetadata as
+        entryModule?.buildInfo?.fictWebpackMetadataV7 as
           | { dependencyFingerprint?: unknown }
           | undefined
       )?.dependencyFingerprint
@@ -2286,8 +2286,8 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
       const hookModule = [...firstStats.compilation.modules].find(
         module => (module as { resource?: unknown }).resource === hookPath,
       ) as { buildInfo?: Record<string, unknown> } | undefined
-      expect(hookModule?.buildInfo?.fictWebpackMetadata).toMatchObject({
-        version: 6,
+      expect(hookModule?.buildInfo?.fictWebpackMetadataV7).toMatchObject({
+        version: 7,
         incomplete: true,
       })
 

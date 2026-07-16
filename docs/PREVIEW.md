@@ -62,7 +62,7 @@ Preview capability into a stable Core promise.
      `./experimental` re-exports the Preview surface.
 
    Cross-cutting opt-ins remain properties of their host configuration types:
-   `FictCompilerOptions.resumable` and `RenderToStringOptions.includeSnapshot`.
+   `FictPluginOptions.resumable` and `RenderToStringOptions.includeSnapshot`.
    Both are tagged `@experimental`; both default to false. Resumable SSR must
    therefore say both `resumable: true` at compile time and
    `includeSnapshot: true` at render time.

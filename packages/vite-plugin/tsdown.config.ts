@@ -13,19 +13,6 @@ export default defineConfig({
     exports: 'named',
   },
   deps: {
-    neverBundle: [
-      '@babel/core',
-      '@babel/generator',
-      '@babel/parser',
-      '@babel/plugin-syntax-jsx',
-      '@babel/plugin-transform-typescript',
-      '@babel/plugin-transform-react-jsx',
-      '@babel/traverse',
-      '@babel/types',
-      '@fictjs/compiler',
-      '@fictjs/compiler/legacy',
-      'typescript',
-      'vite',
-    ],
+    neverBundle: ['@fictjs/compiler', 'vite'],
   },
 })

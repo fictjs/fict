@@ -7,8 +7,10 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
-import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
+import {
+  REQUIRED_ROLLOUT_JOBS,
+  validateCompilerRolloutReadiness,
+} from './compiler-rollout-readiness.mjs'
 import {
   REQUIRED_REAL_CONSUMER_CORE_PACKAGES,
   REQUIRED_REAL_CONSUMER_PACKAGES,
@@ -171,16 +173,87 @@ function recordedConsumerEvidence(release, overrides = {}) {
   }
 }
 
-function legacyRemovalEvidence(state, overrides = {}) {
-  const artifact = release => ({
-    release,
+function legacyRemovalProof(kind, release, sourceRevision) {
+  const proofNames = {
+    'rollback-drill': {
+      command: 'node scripts/compiler-backend-rollback-drill.mjs --output=rollback.json',
+      input: 'scripts/compiler-backend-rollback-drill.mjs',
+      step: 'Drill whole-build Rust to legacy rollback',
+    },
+    'source-maps': {
+      command: 'cargo test --workspace --all-features',
+      input: 'crates/fict-compiler/tests/source_map_probes.rs',
+      step: 'Verify pinned Rust workspace',
+    },
+    'performance-rss': {
+      command: 'node scripts/compiler-backend-bench.mjs --output=benchmark.json',
+      input: 'scripts/compiler-backend-bench.mjs',
+      step: 'Gate large-project throughput and peak RSS',
+    },
+  }
+  const definition = proofNames[kind]
+  const payload = {
+    schemaVersion: 1,
+    kind,
     status: 'pass',
-    evidenceDigest: `sha256:${'e'.repeat(64)}`,
-  })
+    release,
+    sourceRevision,
+    workflow: {
+      repository: 'fictjs/fict',
+      runId: '123',
+      runAttempt: '1',
+      event: 'push',
+      conclusion: 'success',
+      url: 'https://github.com/fictjs/fict/actions/runs/123',
+      job: {
+        id: 456,
+        name:
+          kind === 'source-maps' ? 'Rust + Native (Node 24)' : 'Rust Compiler Rollout Candidate',
+        conclusion: 'success',
+        startedAt: '2026-07-20T10:00:00.000Z',
+        completedAt: '2026-07-20T10:05:00.000Z',
+        url: 'https://github.com/fictjs/fict/actions/runs/123/job/456',
+        step: { name: definition.step, conclusion: 'success' },
+      },
+    },
+    command: definition.command,
+    inputs: [{ path: definition.input, digest: `sha256:${'a'.repeat(64)}` }],
+    artifacts:
+      kind === 'source-maps'
+        ? []
+        : [
+            {
+              id: 789,
+              name: 'compiler-rollout-raw-evidence',
+              digest: `sha256:${'b'.repeat(64)}`,
+              sizeBytes: 1024,
+              createdAt: '2026-07-20T10:05:00.000Z',
+            },
+          ],
+  }
+  return {
+    ...payload,
+    evidenceDigest: `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+  }
+}
+
+function legacyRemovalEvidence(state, overrides = {}) {
   const publishedReleases = {
     rustDefault: publishedReleaseEvidence(state.rustDefaultRelease, 1),
     compatibility: publishedReleaseEvidence(state.compatibilityRelease, 2),
     finalLegacy: publishedReleaseEvidence(state.finalLegacyRelease, 3),
+  }
+  const artifact = kind => {
+    const proof = legacyRemovalProof(
+      kind,
+      state.finalLegacyRelease,
+      publishedReleases.finalLegacy.commitSha,
+    )
+    return {
+      release: state.finalLegacyRelease,
+      status: 'pass',
+      evidenceDigest: proof.evidenceDigest,
+    }
   }
   const consumerEvidence = recordedConsumerEvidence(state.compatibilityRelease)
   const payload = {
@@ -207,9 +280,9 @@ function legacyRemovalEvidence(state, overrides = {}) {
       status: 'pass',
       evidenceDigest: consumerEvidence.evidenceDigest,
     },
-    rollbackDrill: artifact(state.finalLegacyRelease),
-    sourceMaps: artifact(state.finalLegacyRelease),
-    performanceAndRss: artifact(state.finalLegacyRelease),
+    rollbackDrill: artifact('rollback-drill'),
+    sourceMaps: artifact('source-maps'),
+    performanceAndRss: artifact('performance-rss'),
     migrationGuidance: {
       path: 'docs/compiler-rust-only-migration.md',
       digest: `sha256:${createHash('sha256').update(migrationGuidanceContent).digest('hex')}`,
@@ -471,6 +544,19 @@ async function fixture(
       path.join(consumerEvidenceDirectory, `v${removalEvidence.compatibilityRelease}.json`),
       JSON.stringify(recordedConsumerEvidence(removalEvidence.compatibilityRelease)),
     )
+    const removalProofDirectory = path.join(root, '.github', 'compiler-legacy-removal-evidence')
+    await mkdir(removalProofDirectory, { recursive: true })
+    for (const kind of ['rollback-drill', 'source-maps', 'performance-rss']) {
+      const proof = legacyRemovalProof(
+        kind,
+        removalEvidence.finalLegacyRelease,
+        removalEvidence.publishedReleases.finalLegacy.commitSha,
+      )
+      await writeFile(
+        path.join(removalProofDirectory, `v${removalEvidence.finalLegacyRelease}-${kind}.json`),
+        JSON.stringify(proof),
+      )
+    }
   }
   await writeFile(
     path.join(root, 'docs', 'compiler-rust-only-migration.md'),
@@ -816,6 +902,39 @@ test('legacy removal requires a bound review and a completed stable minor window
   )
   t.after(() => rm(root, { recursive: true }))
   assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
+
+  const nativeBoundaryTestPath = path.join(
+    root,
+    'packages',
+    'vite-plugin',
+    'src',
+    '__tests__',
+    'native-boundary.test.ts',
+  )
+  await mkdir(path.dirname(nativeBoundaryTestPath), { recursive: true })
+  await writeFile(
+    nativeBoundaryTestPath,
+    "expect(source).not.toContain('@babel/core')\nexpect(source).not.toContain('@fictjs/compiler/legacy')\n",
+  )
+  assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
+
+  const sourceMapProofPath = path.join(
+    root,
+    '.github',
+    'compiler-legacy-removal-evidence',
+    `v${state.finalLegacyRelease}-source-maps.json`,
+  )
+  const sourceMapProof = legacyRemovalProof(
+    'source-maps',
+    state.finalLegacyRelease,
+    removalEvidence.publishedReleases.finalLegacy.commitSha,
+  )
+  await writeFile(
+    sourceMapProofPath,
+    JSON.stringify({ ...sourceMapProof, command: 'cargo test --doc' }),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /invalid source-map proof/)
+  await writeFile(sourceMapProofPath, JSON.stringify(sourceMapProof))
 
   const recordedFinalLegacyPath = path.join(
     root,

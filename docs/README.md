@@ -29,8 +29,8 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
   dependency, compatibility, and rollout architecture
 - `architecture/oxc-feasibility.md` — Executable M0 findings for TypeScript,
   CTS, decorators, comments, CommonJS, and source-map compatibility
-- `features/rust-compiler-rollout/rollout.md` — Staged native compiler
-  activation, evidence chain, performance/RSS gate, and human review rules
+- `features/rust-compiler-rollout/rollout.md` — Completed native activation and
+  digest-bound Rust-only 1.0 removal rules
 - `adr/0001-adopt-oxc-rust-compiler.md` — Decision and trade-offs for replacing
   the Babel compiler with an OXC-native Rust compiler
 - `architecture/security-boundaries.md` — Security threat model, findings,
@@ -70,8 +70,8 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 
 ## Operations
 
-- `operations/runbooks/compiler-backend-rollback.md` — Whole-build Rust to
-  legacy recovery, cache purge, verification, and escalation procedure
+- `operations/runbooks/compiler-backend-rollback.md` — Whole-release recovery
+  to the final 0.30.1 compatibility unit
 
 ## Testing
 

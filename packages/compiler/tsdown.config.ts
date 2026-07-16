@@ -6,7 +6,6 @@ export default defineConfig({
   entry: {
     'graph-host': 'src/graph-host.ts',
     index: 'src/index.ts',
-    legacy: 'src/legacy.ts',
     'native-loader': 'src/native-loader.ts',
   },
   format: ['cjs', 'esm'],
@@ -15,14 +14,5 @@ export default defineConfig({
   outExtensions: packageOutExtensions,
   outputOptions: {
     exports: 'named',
-  },
-  deps: {
-    neverBundle: [
-      '@babel/core',
-      '@babel/helper-plugin-utils',
-      '@babel/plugin-transform-destructuring',
-      '@babel/traverse',
-    ],
-    onlyBundle: [/^@babel\/(types|helper-validator-identifier|helper-string-parser)$/],
   },
 })

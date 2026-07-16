@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const e2eOrigin = 'http://127.0.0.1:43176'
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -10,7 +12,7 @@ export default defineConfig({
     ? [['list'], ['github'], ['html', { open: 'never' }]]
     : 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: e2eOrigin,
     trace: 'on-first-retry',
   },
   projects: [
@@ -20,8 +22,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm vite e2e',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    command: 'pnpm vite e2e --host 127.0.0.1 --port 43176 --strictPort',
+    url: e2eOrigin,
+    reuseExistingServer: false,
   },
 })

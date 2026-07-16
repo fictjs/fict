@@ -13,10 +13,11 @@ pnpm guardrails:compiler-complexity
 pnpm guardrails:rust-crates
 ```
 
-The TypeScript report scans `packages/compiler/src`, prints the largest legacy
-compiler files, and fails when a file or total effective-source budget is
-exceeded. Effective source lines exclude blank lines and pure comment lines, so
-formatting-only changes cannot move that guardrail.
+The TypeScript report scans the thin `packages/compiler/src` request/graph host
+and fails when a file or total effective-source budget is exceeded. Effective
+source lines exclude blank lines and pure comment lines, so formatting-only
+changes cannot move that guardrail. Compiler passes must not migrate back into
+this host.
 
 The Rust guardrail checks both crate dependency boundaries and raw `.rs` source
 lines. It fails when the workspace crate set changes without review, any crate
@@ -67,14 +68,15 @@ When touching one of the budgeted files:
 
 ## Compile-Time Profiling
 
-Use the existing optimizer and HIR guardrails for latency and output size:
+Use the Rust/native release gates for latency, RSS, output size, and package
+size evidence:
 
 ```bash
-pnpm bench:optimizer:guard
-pnpm guardrails:hir
+pnpm verify:rust-workspace
+pnpm release:compiler:verify
 ```
 
 For release candidates, `pnpm release:verify:clean` runs both complexity
 reports as part of the top-level gate. `pnpm release:compiler:verify` also runs
-compiler lint, typecheck, tests, Rust crate boundaries, HIR guardrails, and
-optimizer guardrails for compiler-focused changes.
+compiler lint, typecheck, native runtime/package, bundler, ABI, and the same
+complete Rust workspace verification used by CI.

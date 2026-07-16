@@ -16,7 +16,6 @@ A release candidate MUST pass from committed source in a detached checkout. Loca
 The authoritative command is:
 
 ```bash
-export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
 pnpm release:verify:clean
 ```
 
@@ -31,6 +30,7 @@ The inner release gate MUST retain all of these checks:
 | Review regressions           | `pnpm test:review-regressions`       | Confirmed high- and medium-risk repository findings retain focused behavioral coverage, including test-file existence checks.                                                                                                                             |
 | Browser behavior             | `pnpm test:e2e`                      | Chromium exercises the core fixture plus three production-shaped applications, including mixed-workload soak.                                                                                                                                             |
 | SSR portability              | `pnpm test:ssr-matrix`               | Node and edge-oriented SSR configurations retain their supported rendering behavior.                                                                                                                                                                      |
+| Rust workspace               | `pnpm verify:rust-workspace`         | The pinned Rust toolchain passes formatting, Clippy with warnings denied, all workspace tests with all features, and crate boundary and complexity guardrails.                                                                                            |
 | JavaScript package archives  | `pnpm test:package-tarballs`         | Every non-native package in `.github/npm-publish-packages.json` is packed, installed outside the workspace, and consumed through Node ESM and CJS; non-Node ESM branches shadowed by a `node` condition are consumed directly from the installed archive. |
 | Declaration consumption      | `pnpm test:package-tarballs`         | The installed JavaScript archives compile from both `.mts` and `.cts` consumers with strict TypeScript checking and `skipLibCheck` disabled.                                                                                                              |
 | Native package clean install | `pnpm test:compiler:native-packages` | The host package is checksummed, packed with the facade, installed with lifecycle scripts disabled and Rust unavailable, then exercised through ESM/CJS plus synchronous/asynchronous compilation.                                                        |
@@ -48,4 +48,8 @@ The JavaScript tarball gate also MUST reject unresolved `workspace:` dependency 
 
 ## Human review focus
 
-Before tagging, a release owner MUST review the final command exit status, the optimizer benchmark artifact, and any warnings emitted while packing or installing the consumer project. Changes to package `exports`, the publish allowlist, SSR matrix membership, or Playwright coverage deserve focused review even when automation passes.
+Before tagging, a release owner MUST review the final command exit status, the
+Rust complexity/performance/RSS evidence, native certification, and any warnings
+emitted while packing or installing the consumer project. Changes to compiler
+protocols, package `exports`, the publish allowlist, SSR matrix membership, or
+Playwright coverage deserve focused review even when automation passes.

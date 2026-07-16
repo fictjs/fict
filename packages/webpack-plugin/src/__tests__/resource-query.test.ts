@@ -31,12 +31,12 @@ function readStoredMetadata(
   const module = [...stats.compilation.modules].find(
     candidate => (candidate as { resource?: unknown }).resource === resource,
   ) as NormalModule | undefined
-  const stored = module?.buildInfo?.fictWebpackMetadata as
+  const stored = module?.buildInfo?.fictWebpackMetadataV7 as
     | { identifier?: unknown; metadataJson?: unknown; resource?: unknown; version?: unknown }
     | undefined
   if (
     !module ||
-    stored?.version !== 6 ||
+    stored?.version !== 7 ||
     typeof stored?.identifier !== 'string' ||
     typeof stored.metadataJson !== 'string' ||
     typeof stored.resource !== 'string'
@@ -147,7 +147,7 @@ describe('@fictjs/webpack-plugin resource-query metadata', () => {
     }
   })
 
-  it('rehydrates a legacy resource-keyed record under the current module identity', () => {
+  it('ignores pre-V7 resource-keyed cache records', () => {
     const state = createCompilationState()
     const physicalFilename = path.resolve('/virtual/use-counter.ts')
     const resource = `${physicalFilename}?raw`
@@ -158,25 +158,22 @@ describe('@fictjs/webpack-plugin resource-query metadata', () => {
       resource,
     } as unknown as NormalModule
     const metadata: ModuleReactiveMetadata = {
+      version: 1,
       exports: {},
       hooks: { useCounter: { directAccessor: 'signal' } },
     }
 
     registerFictModule(state, module)
     storeFictModuleMetadata(state, module, metadata, 'old-fingerprint')
-    const stored = (module.buildInfo as unknown as Record<string, unknown>)
-      .fictWebpackMetadata as Record<string, unknown>
+    const buildInfo = module.buildInfo as unknown as Record<string, unknown>
+    const stored = buildInfo.fictWebpackMetadataV7 as Record<string, unknown>
+    delete buildInfo.fictWebpackMetadataV7
     stored.version = 3
     stored.filename = physicalFilename
     delete stored.identifier
     delete stored.resource
+    buildInfo.fictWebpackMetadata = stored
 
-    expect(restoreFictModuleMetadata(module)).toMatchObject({
-      identifier,
-      resource: path.resolve(resource),
-      metadata,
-      incomplete: true,
-      dependencyFingerprint: null,
-    })
+    expect(restoreFictModuleMetadata(module)).toBeUndefined()
   })
 })

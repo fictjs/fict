@@ -519,6 +519,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                         contains_fragment: false,
                         function_like: false,
                         list: None,
+                        embedded_nodes: Vec::new(),
                         origin: origin(),
                     }],
                     origin: origin(),
@@ -634,8 +635,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             }
         )
     }));
-    assert!(!declare.0.contains("onClick"));
-    assert!(!declare.0.contains(" ref"));
+    assert!(!declare.0.contains("onClick") && !declare.0.contains(" ref"));
 
     let vnode = lower_core!(
         &hir,

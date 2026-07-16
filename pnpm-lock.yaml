@@ -317,54 +317,11 @@ importers:
         specifier: ^7.3.6
         version: 7.3.6(@types/node@25.3.0)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.4)
 
-  packages/babel-preset:
-    dependencies:
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-syntax-typescript':
-        specifier: ^7.27.1
-        version: 7.27.1(@babel/core@7.29.7)
-      '@babel/plugin-transform-modules-commonjs':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-typescript':
-        specifier: ^7.28.5
-        version: 7.28.5(@babel/core@7.29.7)
-      '@fictjs/compiler':
-        specifier: workspace:*
-        version: link:../compiler
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
-    devDependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      tsdown:
-        specifier: ^0.22.3
-        version: 0.22.3(typescript@5.9.3)
-
   packages/compiler:
     dependencies:
-      '@babel/helper-plugin-utils':
-        specifier: ^7.28.6
-        version: 7.28.6
-      '@babel/plugin-transform-destructuring':
-        specifier: ^7.27.1
-        version: 7.28.5(@babel/core@7.29.7)
-      '@babel/plugin-transform-typescript':
-        specifier: ^7.28.5
-        version: 7.28.5(@babel/core@7.29.7)
-      '@babel/traverse':
-        specifier: ^7.29.0
-        version: 7.29.0
       '@oxc-project/runtime':
         specifier: 0.139.0
         version: 0.139.0
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
     optionalDependencies:
       '@fictjs/compiler-darwin-arm64':
         specifier: workspace:*
@@ -391,36 +348,6 @@ importers:
         specifier: workspace:*
         version: link:../compiler-win32-x64-msvc
     devDependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@babel/generator':
-        specifier: ^7.29.1
-        version: 7.29.1
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-modules-commonjs':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-react-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/types':
-        specifier: ^7.29.0
-        version: 7.29.0
-      '@fictjs/runtime':
-        specifier: workspace:*
-        version: link:../runtime
-      '@jridgewell/trace-mapping':
-        specifier: ^0.3.31
-        version: 0.3.31
-      '@types/babel__helper-plugin-utils':
-        specifier: ^7.10.3
-        version: 7.10.3
-      '@types/babel__traverse':
-        specifier: ^7.28.0
-        version: 7.28.0
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(typescript@5.9.3)
@@ -626,30 +553,6 @@ importers:
 
   packages/vite-plugin:
     dependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@babel/generator':
-        specifier: ^7.29.1
-        version: 7.29.1
-      '@babel/parser':
-        specifier: ^7.29.0
-        version: 7.29.0
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-react-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/plugin-transform-typescript':
-        specifier: ^7.28.5
-        version: 7.28.5(@babel/core@7.29.7)
-      '@babel/traverse':
-        specifier: ^7.29.0
-        version: 7.29.0
-      '@babel/types':
-        specifier: ^7.29.0
-        version: 7.29.0
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
@@ -660,15 +563,6 @@ importers:
         specifier: ^0.30.21
         version: 0.30.21
     devDependencies:
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
-      '@types/babel__generator':
-        specifier: ^7.6.8
-        version: 7.27.0
-      '@types/babel__traverse':
-        specifier: ^7.20.6
-        version: 7.28.0
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(typescript@5.9.3)
@@ -710,12 +604,6 @@ importers:
         specifier: workspace:*
         version: link:../compiler
     devDependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@fictjs/babel-preset':
-        specifier: workspace:*
-        version: link:../babel-preset
       '@jridgewell/trace-mapping':
         specifier: ^0.3.31
         version: 0.3.31
@@ -1033,12 +921,6 @@ packages:
 
   '@babel/plugin-syntax-typescript@7.27.1':
     resolution: {integrity: sha512-xfYCBMxveHrRMnAWl1ZlPXOZjzkN82THFvLhQhFXFt81Z5HnN+EtUkZhv/zcKpmT3fzmWZB0ywiBrbC3vogbwQ==}
-    engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-transform-destructuring@7.28.5':
-    resolution: {integrity: sha512-Kl9Bc6D0zTUcFUvkNuQh4eGXPKKNDOJQXVyyM4ZAQPMveniJdxi8XMJwLo+xSoW3MIq81bD33lcUe9kZpl0MCw==}
     engines: {node: '>=6.9.0'}
     peerDependencies:
       '@babel/core': ^7.0.0-0
@@ -7241,14 +7123,6 @@ snapshots:
     dependencies:
       '@babel/core': 7.29.7
       '@babel/helper-plugin-utils': 7.28.6
-
-  '@babel/plugin-transform-destructuring@7.28.5(@babel/core@7.29.7)':
-    dependencies:
-      '@babel/core': 7.29.7
-      '@babel/helper-plugin-utils': 7.28.6
-      '@babel/traverse': 7.29.0
-    transitivePeerDependencies:
-      - supports-color
 
   '@babel/plugin-transform-modules-commonjs@7.28.6(@babel/core@7.29.7)':
     dependencies:

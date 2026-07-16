@@ -43,8 +43,7 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 | -------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `fict`                     | **Core**      | Public API surface. Only `.`, `/jsx-runtime`, `/jsx-dev-runtime`, `/plus`, `/advanced` are guaranteed; `/experimental/loader` is Preview. |
 | `@fictjs/runtime`          | **Core**      | Reactive graph + fine-grained DOM.                                                                                                        |
-| `@fictjs/compiler`         | **Core**      | HIR/SSA/region lowering. The thesis lives here.                                                                                           |
-| `@fictjs/babel-preset`     | **Core**      | Legacy compiler plumbing during the Rust migration.                                                                                       |
+| `@fictjs/compiler`         | **Core**      | OXC/Rust analysis and lowering plus the eight lockstep native platform packages. The thesis lives here.                                   |
 | `@fictjs/vite-plugin`      | **Core**      | The delivery mechanism. Without it nobody can use Fict.                                                                                   |
 | `@fictjs/eslint-plugin`    | **Core**      | Mirrors compiler diagnostics — part of the fail-closed DX, not an add-on.                                                                 |
 | `@fictjs/ssr`              | **Satellite** | `renderToString`/`renderToStream`/`renderToPipeableStream` are supported. Snapshot/resume/PPR behavior is **Preview** (see below).        |
@@ -56,8 +55,10 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 | `@fictjs/playground`       | **Internal**  | Private dev/demo tool.                                                                                                                    |
 | `fict-docs-site`           | **Internal**  | Already private.                                                                                                                          |
 
-`@fictjs/babel-preset` remains Core and lockstep throughout the compatibility
-window, then leaves Core in the coordinated breaking removal defined by
+Fict 1.0 is Rust-only. The final legacy preset release is `0.30.1`; it is not a
+workspace package, Core member, publish target, or supported 1.0 rollback path.
+Applications that still require it must pin their complete Fict dependency set
+to `0.30.1`, as recorded by
 [ADR-0003](./docs/adr/0003-retire-babel-preset.md).
 
 ### Preview surface (lives inside Core/Satellite packages, but NOT guaranteed)
@@ -134,8 +135,9 @@ of independent satellites + ignored internal tooling."
 > describe a config that isn't in the tree.
 
 - [x] **Step 1 — Define tiers** (this file + [docs/PREVIEW.md](./docs/PREVIEW.md)).
-- [x] **Step 2 — Encode Core via changesets.** `fixed` reduced to the 6 Core
-      packages; `ssr`/`router`/`testing-library` moved to independent versioning;
+- [x] **Step 2 — Encode Core via changesets.** `fixed` reduced to the five Core
+      public surfaces plus the compiler's eight native distribution packages;
+      `ssr`/`router`/`testing-library` moved to independent versioning;
       then-internal `mcp`/`skill` were temporarily added to `ignore` before their
       standalone repo split. (See `.changeset/config.json`.)
 - [x] **Step 3 — Move Preview off stable-looking exports.** Added the

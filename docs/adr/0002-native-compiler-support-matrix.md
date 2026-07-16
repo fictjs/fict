@@ -61,7 +61,7 @@ For every target and Node lane, CI MUST prove all of the following:
 4. the binding loads and executes compiler-info, synchronous compile, and
    asynchronous compile smoke calls;
 5. missing, corrupt, wrong-target, or partial packages fail with a structured
-   platform error and never select the legacy backend;
+   platform error and never fall back to a second compiler;
 6. the release plan contains the facade and all eight platform packages before
    any publish operation begins.
 

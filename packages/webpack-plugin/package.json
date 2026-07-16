@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/webpack-plugin",
-  "version": "0.28.3",
+  "version": "1.0.0",
   "description": "Webpack integration for the Fict compiler",
   "publishConfig": {
     "access": "public",
@@ -57,8 +57,6 @@
     "@fictjs/compiler": "workspace:*"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
-    "@fictjs/babel-preset": "workspace:*",
     "@jridgewell/trace-mapping": "^0.3.31",
     "fict": "workspace:*",
     "tsdown": "^0.22.3",

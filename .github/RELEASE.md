@@ -47,10 +47,11 @@ pnpm release:plan --tag v0.27.0 --require-existing-packages
 
 `release:verify:clean` refuses tracked or untracked changes, creates a detached
 temporary worktree at `HEAD`, installs the frozen lockfile, and runs the complete
-`release:verify` gate there. That gate includes the SSR runtime matrix, browser
-E2E, the focused repository-review regression suite, and install-and-consume
-checks for the actual package tarballs in Node ESM, generic ESM targets shadowed
-by `node` conditions, CJS, and TypeScript projects.
+`release:verify` gate there. That gate includes the pinned Rust workspace
+format, Clippy, test, and boundary checks; the SSR runtime matrix; browser E2E;
+the focused repository-review regression suite; and install-and-consume checks
+for the actual package tarballs in Node ESM, generic ESM targets shadowed by
+`node` conditions, CJS, and TypeScript projects.
 Only pnpm's content-addressed download store is shared;
 `node_modules`, build output, and Turbo output remain isolated. The temporary
 checkout is always removed. The inner gate runs with `CI=true`, so Playwright

@@ -137,6 +137,8 @@ pub enum JsxChild {
         function_like: bool,
         /// Safe structural map candidate, retained independently from later receiver proofs.
         list: Option<JsxListExpression>,
+        /// JSX roots retained outside nested functions for downstream passes such as Preview.
+        embedded_nodes: Vec<JsxNode>,
         /// Source provenance.
         origin: Origin,
     },
@@ -276,23 +278,23 @@ impl HirFile {
                         stack.extend(children.iter().map(Item::Child));
                     }
                     Item::Child(JsxChild::Expression {
-                        list: Some(list), ..
+                        list,
+                        embedded_nodes,
+                        ..
                     }) => {
-                        if let Some(binding) = self
-                            .functions
-                            .get(list.callback.as_usize())
-                            .and_then(|function| function.parameters.first())
-                            .and_then(|parameter| parameter.binding)
+                        if let Some(list) = list
+                            && let Some(binding) = self
+                                .functions
+                                .get(list.callback.as_usize())
+                                .and_then(|function| function.parameters.first())
+                                .and_then(|parameter| parameter.binding)
                         {
                             bindings.insert(binding);
                         }
+                        stack.extend(embedded_nodes.iter().map(Item::Node));
                     }
                     Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
-                    Item::Child(
-                        JsxChild::Text { .. }
-                        | JsxChild::Expression { .. }
-                        | JsxChild::Spread { .. },
-                    ) => {}
+                    Item::Child(JsxChild::Text { .. } | JsxChild::Spread { .. }) => {}
                 }
             }
         }

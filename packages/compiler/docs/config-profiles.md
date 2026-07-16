@@ -1,75 +1,67 @@
-# Compiler Config Profiles
+# Native Compiler Config Profiles
 
-Use these presets as stable starting points for different environments.
+Applications configure these options through `@fictjs/vite-plugin` or the
+native Webpack loader. Direct hosts place the equivalent values in
+`CompileRequest.options`.
 
-## 1) App Default (Recommended)
-
-Use fail-closed guarantees in normal application builds.
+## App default
 
 ```ts
-createFictPlugin({
+fict({
   strictGuarantee: true,
   lazyConditional: true,
-  emitModuleMetadata: 'auto',
+  optimizeLevel: 'safe',
 })
 ```
 
-Notes:
+This is the supported production baseline. Official integrations force
+`strictGuarantee` when `NODE_ENV=production`.
 
-- `strictGuarantee` is already `true` by default.
-- `emitModuleMetadata: 'auto'` writes only to cache (`.fict-cache/metadata`) when needed.
-
-## 2) CI Hard Gate
-
-Use strict compile failures for guarantee boundaries.
+## CI hard gate
 
 ```ts
-createFictPlugin({
+fict({
   strictGuarantee: true,
-  dev: false,
+  strictReactivity: true,
+  warningsAsErrors: true,
 })
 ```
 
-And enforce in CI environment:
+Also set the integration-level override:
 
 ```bash
 FICT_STRICT_GUARANTEE=1
 ```
 
-Notes:
-
-- `strictGuarantee` disallows `fict-ignore` suppression and downgrade overrides for guarantee codes.
-- Keep this on for production branches if you want fail-closed reactivity contracts.
-
-## 3) Migration / Benchmark Compatibility
-
-Use this when you must keep compiling legacy or intentionally fallback-heavy code.
+## Non-production migration inventory
 
 ```ts
-createFictPlugin({
+fict({
   strictGuarantee: false,
-  dev: false,
+  dev: true,
+  onWarn(warning) {
+    console.warn(warning)
+  },
 })
 ```
 
-Use cases:
+Use this only to inventory diagnostics in a migration branch. Production builds
+restore fail-closed behavior.
 
-- benchmark fixtures
-- migration periods before codebase cleanup
-- exploratory prototyping
-
-## 4) One-shot Build / Fixture Mode (No Metadata Files)
-
-Disable module metadata sidecar/cache output when cross-module reuse is unnecessary.
+## Direct host
 
 ```ts
-createFictPlugin({
-  emitModuleMetadata: false,
+transformSync({
+  code,
+  filename,
+  options: {
+    strictGuarantee: true,
+    sourcemap: true,
+    typescript: { allowNamespaces: true },
+  },
+  metadata: resolvedMetadataSnapshot,
 })
 ```
 
-Use cases:
-
-- isolated fixture builds
-- performance benchmark pipelines
-- ephemeral CI jobs with no cross-module incremental analysis
+The host owns graph resolution and passes a serializable metadata snapshot.
+There is no 1.0 option for Babel sidecar emission or a legacy backend.

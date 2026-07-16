@@ -1,5 +1,21 @@
 # fict
 
+## 1.0.0
+
+### Major Changes
+
+- Remove the legacy TypeScript/Babel compiler stack and make the Rust native compiler mandatory.
+  - `@fictjs/compiler` now exposes only the Rust request API; `./legacy` and `createFictPlugin` are removed.
+  - `@fictjs/vite-plugin` no longer accepts legacy or shadow backend selection and always uses the native compiler.
+  - `@fictjs/webpack-plugin` no longer provides the Babel preset/legacy loader path and requires the native compiler.
+  - `@fictjs/babel-preset` is retired; `0.30.1` remains the final legacy-compatible release and rollback target.
+
+  Follow `docs/migration-guide.md` before upgrading. Native compiler installation failures now fail closed instead of falling back to Babel.
+
+### Patch Changes
+
+- @fictjs/runtime@1.0.0
+
 ## 0.30.1
 
 ### Patch Changes

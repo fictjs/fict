@@ -558,25 +558,12 @@ do not inline user-named derived values by default, to preserve accessor return 
 Optimizer safety: `optimizeLevel` controls algebraic simplification. Defaults to `'safe'`,
 which avoids non-constant algebraic rewrites that can change JavaScript semantics.
 Use `optimizeLevel: 'full'` to enable those rewrites for maximum optimization.
-Benchmarking: run `pnpm bench:optimizer` (builds the compiler and prints average compile
-times with optimization enabled/disabled). Set `BENCH_OUTPUT=path/to/report.json` or
-pass `--output path/to/report.json` to `scripts/optimizer-bench.mjs` to write the raw
-JSON report used by CI/release evidence artifacts. Pass `--baseline path/to/baseline.json`
-to compare or update an isolated baseline explicitly.
-Optimizer baselines: `pnpm bench:optimizer:guard` compares results to
-`scripts/optimizer-bench.baseline.json`. Timings use paired/interleaved optimized and
-unoptimized samples. Timing-only failures are re-measured once with the first attempt's
-runner calibration fixed, and fail only when the same sample regresses twice. Missing
-baselines and output-size regressions fail immediately. Use `pnpm bench:optimizer:update`
-to refresh the baseline when changes are intentional. Invalid benchmark counts, timings,
-budgets, byte sizes, scales, and malformed baseline samples fail closed.
-Snapshot baselines: `pnpm -C packages/compiler test -- optimizer-baseline.test.ts -u`
-updates the optimizer output snapshots for core scenarios.
-Guardrails: `pnpm guardrails:hir` compares current output to
-`scripts/hir-guardrails.baseline.json`. Helper and region counts must match the
-baseline exactly; raw and gzip output size may shrink, but size increases must
-stay within the baseline regression budgets. Use `pnpm guardrails:hir:update`
-to refresh the baseline when changes are intentional.
+Benchmarking and optimizer evidence are owned by the Rust compiler crates and
+the release-native evidence pipeline. Run `pnpm guardrails:rust-crates` for
+crate/largest-file budgets and `pnpm release:compiler:verify` for native
+runtime, ABI, bundler, and package checks. The release workflow retains paired
+performance/RSS and output-size evidence; the retired TypeScript optimizer
+benchmarks and HIR snapshot baselines are not 1.0 gates.
 Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
 `warningLevels` let you turn warnings into errors or suppress specific codes.
 Set `strictReactivity: true` to escalate control-flow fallback diagnostics

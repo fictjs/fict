@@ -1,7 +1,6 @@
 {
   "registry": "https://registry.npmjs.org",
   "packages": [
-    "@fictjs/babel-preset",
     "@fictjs/compiler",
     "@fictjs/compiler-darwin-arm64",
     "@fictjs/compiler-darwin-x64",

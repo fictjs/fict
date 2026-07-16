@@ -19,8 +19,8 @@ profile. Production builds force strict guarantee back on.
 
 ## Compiler Backend Migration
 
-The OXC-native compiler is the Vite/Core default starting with the published
-0.29.0 release. A build still selects exactly one backend:
+Fict 1.0 has one compiler: the OXC-native Rust implementation. Vite uses it
+without a backend option:
 
 ```ts
 import fict from '@fictjs/vite-plugin'
@@ -30,14 +30,29 @@ export default {
 }
 ```
 
-The bounded compatibility line is explicit:
+The completed compatibility line is:
 
 | Release  | Compiler role                                                                                        |
 | -------- | ---------------------------------------------------------------------------------------------------- |
 | `0.29.0` | First published Rust-default release; whole-build legacy rollback remains available.                 |
 | `0.30.0` | Subsequent stable compatibility minor; Rust remains the default and legacy remains release-blocking. |
 | `0.30.1` | Final release of the Babel preset, `@fictjs/compiler/legacy`, and in-tree rollback implementation.   |
-| `1.0.0`  | Planned breaking Rust-only release; rollback means pinning the whole application to `0.30.1`.        |
+| `1.0.0`  | Rust-only breaking release; rollback means pinning the whole application to `0.30.1`.                |
+
+Before changing versions, make the migration explicit:
+
+1. Upgrade the complete Fict dependency set to `0.30.1` and establish a green
+   baseline.
+2. Remove `@fictjs/babel-preset`, `@fictjs/compiler/legacy`, Babel Fict config,
+   and any direct `createFictPlugin` import.
+3. Remove Vite `backend` / `shadow` options and `FICT_COMPILER_BACKEND` from
+   source, CI, containers, and deployment configuration.
+4. Replace custom Webpack Babel compilation with
+   `@fictjs/webpack-plugin/loader` plus `FictWebpackPlugin`.
+5. Delete source-adjacent compiler metadata and `.fict-cache/metadata`; Fict 1.0
+   uses graph-host snapshots and versioned package metadata instead.
+6. Upgrade the Core packages together, reinstall from a clean lockfile, and run
+   the native smoke below before the application test suite.
 
 After installing the release, run this package-root smoke from the application
 directory. It proves that the selected platform binding is Rust and executes a
@@ -66,42 +81,11 @@ console.log(info)
 EOF
 ```
 
-Use `FICT_COMPILER_BACKEND=legacy` for operational rollback. An explicit plugin
-option takes precedence over the environment, so `backend: 'legacy'` can pin a
-committed recovery build while `backend: 'rust'` can pin the normal default.
-Do not choose the backend from a per-file callback or retry a failed Rust file
-through Babel.
-
-Rollback is a whole-build operation: pin the compiler, runtime, integration,
-SSR, generated metadata, and caches to one compatible release unit. After
-`1.0.0`, no code-level legacy selector remains; the supported recovery boundary
-is the complete `0.30.1` application dependency set.
-
-With `backend: 'rust'`, the Vite runtime graph uses the native compiler and the
-Babel-free compiler graph host. Babel packages can remain installed during the
-compatibility window, but neither they nor `@fictjs/compiler/legacy` are
-evaluated by Rust compilation, including cache-key computation and structured
-handler consumption. `legacy` and `shadow` load that compatibility runtime only
-after their whole-build mode has been selected.
-
-Before changing an application, run shadow mode. It returns legacy output but
-creates a privacy-safe comparison artifact:
-
-```ts
-fict({
-  backend: 'shadow',
-  shadow: {
-    reportPath: '.fict-cache/compiler-shadow.json',
-    allowlistPath: '.github/compiler-shadow-allowlist.json',
-    failOnDifference: true,
-  },
-})
-```
-
-Copy and review the repository allowlist instead of adding a wildcard for a
-semantic category. Output-printer and helper-composition differences may be
-structural; diagnostics, metadata, semantic events, maps, and artifacts remain
-blocking.
+There is no `legacy`, `rust`, or `shadow` selector in 1.0 and no per-file
+fallback. A native binding load failure or compiler diagnostic fails the build.
+Operational rollback is therefore a dependency rollback: restore the complete
+`0.30.1` lockfile, generated output, metadata, and caches as one release unit.
+Do not mix a 0.30.1 compiler or preset with a 1.0 runtime or integration.
 
 Webpack users should migrate from `@fictjs/babel-preset` to the native
 `@fictjs/webpack-plugin` loader. Direct compiler integrations import the
@@ -112,18 +96,18 @@ platform binding. Custom Babel pipelines that still
 need sibling plugins should run native Fict compilation as a separate first
 stage and compose source maps explicitly.
 
-`@fictjs/babel-preset@0.30.1` is the final tested whole-build legacy rollback,
-but emits one development-time deprecation warning per process. Do not suppress
-that warning in committed configuration; migrate to an official Vite, Webpack,
-or direct native integration before adopting `1.0.0`.
+`@fictjs/babel-preset@0.30.1` remains available only as the final whole-build
+rollback release. It is not part of the 1.0 workspace, publish plan, or support
+surface. Custom Babel plugins may still run as a separate downstream transform,
+but they must not attempt to compile Fict reactivity.
 
 Preview `resumable: true` is available with the Rust compiler through compiler-owned
 structured handler artifacts. It remains explicit and Preview; native support
 does not graduate it or make it a Core default.
 
-See the [Rust compiler rollout](features/rust-compiler-rollout/rollout.md) and
+See the [Rust compiler architecture](architecture/rust-compiler.md) and
 [rollback runbook](operations/runbooks/compiler-backend-rollback.md) for the
-candidate, cache, and review gates.
+request boundary and 1.0 recovery procedure.
 
 ## Concept Map
 

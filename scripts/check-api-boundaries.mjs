@@ -127,7 +127,6 @@ assertEqualSet('runtime package exports', packageExports('packages/runtime/packa
 assertEqualSet('compiler package exports', packageExports('packages/compiler/package.json'), [
   '.',
   './graph-host',
-  './legacy',
   './native',
 ])
 
@@ -178,7 +177,6 @@ assertEqualSet(
 
 for (const packagePath of [
   'packages/compiler/package.json',
-  'packages/babel-preset/package.json',
   'packages/vite-plugin/package.json',
   'packages/webpack-plugin/package.json',
   'packages/testing-library/package.json',
@@ -200,7 +198,6 @@ for (const packagePath of [
 const compilerPackage = readJson('packages/compiler/package.json')
 for (const [subpath, basename] of [
   ['./graph-host', 'graph-host'],
-  ['./legacy', 'legacy'],
   ['./native', 'native-loader'],
 ]) {
   const entry = compilerPackage.exports?.[subpath]
@@ -223,19 +220,8 @@ if (
   fail('@fictjs/compiler/graph-host must not load the legacy compiler or Babel')
 }
 
-const compilerLegacyEntrypoint = readText('packages/compiler/src/legacy.ts')
-if (
-  compilerLegacyEntrypoint.includes("from './index'") ||
-  !compilerLegacyEntrypoint.includes("from './legacy-compiler'")
-) {
-  fail('@fictjs/compiler/legacy must own its implementation edge instead of importing the root')
-}
-
 const viteForbiddenRuntimeImports = /^@babel\/|^@fictjs\/compiler\/legacy$/
-for (const file of [
-  'packages/vite-plugin/src/index.ts',
-  'packages/vite-plugin/src/legacy-compiler-runtime.ts',
-]) {
+for (const file of ['packages/vite-plugin/src/index.ts']) {
   for (const imported of staticImports(readText(file))) {
     if (!imported.typeOnly && viteForbiddenRuntimeImports.test(imported.source)) {
       fail(`Vite Rust module graph must not statically load ${imported.source}: ${file}`)
@@ -254,18 +240,11 @@ for (const [source, expected] of [
   assertEqualSet('Vite static runtime import matcher', actual, expected)
 }
 
-for (const packagePath of [
-  'packages/compiler/package.json',
-  'packages/babel-preset/package.json',
-]) {
-  const packageJson = readJson(packagePath)
-  if (!packageJson.dependencies?.['@types/babel__core']) {
-    fail(
-      `${packageJson.name ?? packagePath} must publish @types/babel__core because its public declarations reference @babel/core`,
-    )
-  }
-  if (packageJson.peerDependencies?.['@babel/core'] !== '^7.0.0-0') {
-    fail(`${packageJson.name ?? packagePath} must match its Babel 7 api.assertVersion contract`)
+for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+  for (const dependency of Object.keys(compilerPackage[section] ?? {})) {
+    if (dependency.startsWith('@babel/')) {
+      fail(`@fictjs/compiler must not publish a Babel dependency: ${section}.${dependency}`)
+    }
   }
 }
 

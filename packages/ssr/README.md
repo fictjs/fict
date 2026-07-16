@@ -873,7 +873,7 @@ for (const script of snapshots) {
 ## Related Packages
 
 - `@fictjs/runtime` - Core runtime, containing signal/effect system
-- `@fictjs/compiler` - Babel plugin, handling JSX transform and handler extraction
+- `@fictjs/compiler` - OXC/Rust compiler, handling JSX lowering and structured handler artifacts
 - `@fictjs/vite-plugin` - Vite integration, handling build and code splitting
 
 ## License

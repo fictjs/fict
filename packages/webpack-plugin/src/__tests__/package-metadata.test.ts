@@ -76,7 +76,7 @@ function storedMetadata(stats: Stats, resource: string): StoredWebpackMetadata {
   const module = [...stats.compilation.modules].find(
     candidate => (candidate as { resource?: unknown }).resource === resource,
   ) as { buildInfo?: Record<string, unknown> } | undefined
-  const stored = module?.buildInfo?.fictWebpackMetadata
+  const stored = module?.buildInfo?.fictWebpackMetadataV7
   if (!stored || typeof stored !== 'object') {
     throw new Error(`No persisted Fict metadata found for ${resource}.`)
   }
@@ -117,40 +117,6 @@ function createRebuildObserver(): {
     },
   }
   return observation
-}
-
-function createLegacyCachePlugin(
-  resource: string,
-  version: 1 | 4 | 5,
-): { apply(compiler: Compiler): void } {
-  let downgradeNextCompilation = true
-  return {
-    apply(compiler: Compiler): void {
-      compiler.hooks.afterCompile.tap('FictWebpackLegacyCacheFixture', compilation => {
-        if (!downgradeNextCompilation) return
-        downgradeNextCompilation = false
-        const module = [...compilation.modules].find(
-          candidate => (candidate as { resource?: unknown }).resource === resource,
-        ) as { buildInfo?: Record<string, unknown> } | undefined
-        const stored = module?.buildInfo?.fictWebpackMetadata
-        if (!stored || typeof stored !== 'object') {
-          throw new Error(`No persisted Fict metadata found for ${resource}.`)
-        }
-        const legacy = stored as Record<string, unknown>
-        legacy.version = version
-        delete legacy.metadataRequestMappings
-        if (version !== 5) delete legacy.metadataSources
-        if (version === 1) {
-          legacy.filename = resource
-          legacy.dependencyFingerprint = '{"localDependencies":[],"packageMetadataDependencies":[]}'
-          delete legacy.identifier
-          delete legacy.incomplete
-          delete legacy.metadataDependencies
-          delete legacy.resource
-        }
-      })
-    },
-  }
 }
 
 describe('@fictjs/webpack-plugin package metadata', () => {
@@ -345,52 +311,4 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
-
-  it.each([1, 4, 5] as const)(
-    'rebuilds a v%i filesystem-cache record missing current graph inputs',
-    async legacyVersion => {
-      const root = await createFixture({
-        'entry.ts': entrySource,
-        'node_modules/hook-lib/index.js': 'exports.useCounter = () => 1',
-        'node_modules/hook-lib/package.json': packageJson('./hook.fict.meta.json'),
-        'node_modules/hook-lib/hook.fict.meta.json': hookMetadata(true),
-      })
-      const entryPath = path.join(root, 'entry.ts')
-      const cache = {
-        type: 'filesystem' as const,
-        cacheDirectory: path.join(root, '.webpack-cache'),
-      }
-      const rebuildObserver = createRebuildObserver()
-      const legacyCachePlugin = createLegacyCachePlugin(entryPath, legacyVersion)
-      const baseOptions = {
-        cache,
-        plugins: [legacyCachePlugin, rebuildObserver.plugin],
-      }
-      const configuration = () => excludeHookPackage(createWebpackConfiguration(root, baseOptions))
-
-      try {
-        await backdateFixtureInputs([
-          entryPath,
-          path.join(root, 'node_modules', 'hook-lib', 'index.js'),
-          path.join(root, 'node_modules', 'hook-lib', 'package.json'),
-          path.join(root, 'node_modules', 'hook-lib', 'hook.fict.meta.json'),
-        ])
-        const firstStats = await runCompiler(configuration())
-        expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
-        expect(storedMetadata(firstStats, entryPath).version).toBe(legacyVersion)
-
-        const migratedStats = await runCompiler(configuration())
-        expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
-        expect(rebuildObserver.rebuiltByFict).toContain(entryPath)
-        expect(storedMetadata(migratedStats, entryPath).version).toBe(6)
-
-        const recachedStats = await runCompiler(configuration())
-        expect(builtFixtureFiles(recachedStats, root)).toEqual([])
-        expect(rebuildObserver.rebuiltByFict).toEqual([])
-        expect(storedMetadata(recachedStats, entryPath).version).toBe(6)
-      } finally {
-        await rm(root, { recursive: true, force: true })
-      }
-    },
-  )
 })

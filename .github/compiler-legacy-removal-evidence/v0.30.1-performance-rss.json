@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "kind": "performance-rss",
+  "status": "pass",
+  "release": "0.30.1",
+  "sourceRevision": "8d4008929d46fc5f2c1e578423ff38ef95a5d084",
+  "workflow": {
+    "repository": "fictjs/fict",
+    "runId": "29452031541",
+    "runAttempt": "1",
+    "event": "push",
+    "conclusion": "success",
+    "url": "https://github.com/fictjs/fict/actions/runs/29452031541",
+    "job": {
+      "id": 87476559028,
+      "name": "Rust Compiler Rollout Candidate",
+      "conclusion": "success",
+      "startedAt": "2026-07-15T21:28:08Z",
+      "completedAt": "2026-07-15T21:35:17Z",
+      "url": "https://github.com/fictjs/fict/actions/runs/29452031541/job/87476559028",
+      "step": {
+        "name": "Gate large-project throughput and peak RSS",
+        "conclusion": "success"
+      }
+    }
+  },
+  "command": "node scripts/compiler-backend-bench.mjs --modules=1000 --rows=10 --samples=5 --warmup=8 --profile=ci --native-path=target/release/fict_compiler_napi.node --output=${RUNNER_TEMP}/compiler-rollout/benchmark.json",
+  "inputs": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "digest": "sha256:b51eb6ad99bd5ccb49b6e1b4a121d5e5e400571680b31e99e78066cfd80de924"
+    },
+    {
+      "path": ".github/compiler-backend-budget.json",
+      "digest": "sha256:fd2a10faee47ebbfe8fe596704ed1d48f39df7024f640403c9e818e1a5d4ee7f"
+    },
+    {
+      "path": "scripts/compiler-backend-bench.mjs",
+      "digest": "sha256:c35eeb1894adaac897465a76a712fe4bdf4f1803b632d798643cbf74803cfc7a"
+    },
+    {
+      "path": "scripts/compiler-rollout-candidate.mjs",
+      "digest": "sha256:e7df87150681eb9fea65733064fa1a8fa3017e4bf5328567047fc9c8a0e38c00"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": 8358022220,
+      "name": "compiler-rollout-raw-evidence",
+      "digest": "sha256:e4af2d095200edb154fc9e7f9bdd6b73fcf605fb64184c20bd36af83c078b003",
+      "sizeBytes": 3662,
+      "createdAt": "2026-07-15T21:35:15Z"
+    },
+    {
+      "id": 8358119424,
+      "name": "compiler-rollout-candidate",
+      "digest": "sha256:a4925cc4c46f3a4ed3ca05bcb10aa0fb8c56cd1543ce1651135d90abcaa6fb10",
+      "sizeBytes": 5085,
+      "createdAt": "2026-07-15T21:39:29Z"
+    }
+  ],
+  "evidenceDigest": "sha256:7892f336563dfad459f8a2b16293cdc4f16c91f5514d9e8bbd22f1f271357046"
+}

@@ -40,7 +40,9 @@ Publish a JSON metadata file containing the same shape used by the compiler:
 }
 ```
 
-`version: 1` is the current metadata ABI version. Consumers also accept older metadata files without a `version` field, but unsupported future versions are ignored instead of being guessed.
+`version: 1` is required. Fict 1.0 rejects unversioned payloads, unsupported
+future versions, unknown schema fields, and malformed hook shapes instead of
+guessing compatibility.
 
 Then point to it from `package.json`:
 
@@ -79,13 +81,9 @@ For packages with subpath exports or separate ESM/CJS entrypoints, use `fict.exp
 }
 ```
 
-The legacy shorthand is also accepted for single-entry packages:
-
-```json
-{
-  "fictMetadata": "./dist/index.fict.meta.json"
-}
-```
+The retired root `fictMetadata` shorthand is not read by Fict 1.0. Publish the
+versioned asset under `fict.metadata` or `fict.exports` before upgrading
+consumers.
 
 ## Authoring hooks
 
