@@ -903,6 +903,21 @@ test('legacy removal requires a bound review and a completed stable minor window
   t.after(() => rm(root, { recursive: true }))
   assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
 
+  const nativeBoundaryTestPath = path.join(
+    root,
+    'packages',
+    'vite-plugin',
+    'src',
+    '__tests__',
+    'native-boundary.test.ts',
+  )
+  await mkdir(path.dirname(nativeBoundaryTestPath), { recursive: true })
+  await writeFile(
+    nativeBoundaryTestPath,
+    "expect(source).not.toContain('@babel/core')\nexpect(source).not.toContain('@fictjs/compiler/legacy')\n",
+  )
+  assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'legacy-removal')
+
   const sourceMapProofPath = path.join(
     root,
     '.github',

@@ -1016,6 +1016,7 @@ function assertLegacyRemovalReview(review, state, evidence) {
 }
 
 function assertLegacySourcesRemoved(workspaceRoot) {
+  const nonProductionSourceDirectories = new Set(['__fixtures__', '__tests__', 'test', 'tests'])
   const retainedPaths = [
     '.github/compiler-shadow-allowlist.json',
     'packages/babel-preset',
@@ -1051,12 +1052,14 @@ function assertLegacySourcesRemoved(workspaceRoot) {
           for (const sourceEntry of readdirSync(directory, { withFileTypes: true })) {
             const filename = path.join(directory, sourceEntry.name)
             if (sourceEntry.isDirectory()) {
+              if (nonProductionSourceDirectories.has(sourceEntry.name)) continue
               pending.push(filename)
               continue
             }
             if (!sourceEntry.isFile() || !/\.(?:[cm]?[jt]sx?|d\.ts)$/.test(sourceEntry.name)) {
               continue
             }
+            if (/\.(?:spec|test)\.[cm]?[jt]sx?$/.test(sourceEntry.name)) continue
             const source = readFileSync(filename, 'utf8')
             if (source.includes('@babel/') || source.includes('@fictjs/compiler/legacy')) {
               productionSourceReferences.push(path.relative(workspaceRoot, filename))
