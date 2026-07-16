@@ -4,7 +4,7 @@
   "rustDefaultRelease": "0.29.0",
   "compatibilityRelease": "0.30.0",
   "finalLegacyRelease": "0.30.1",
-  "legacyRemovalRelease": "1.0.0",
+  "legacyRemovalRelease": "0.31.0",
   "publishedReleases": {
     "rustDefault": {
       "schemaVersion": 1,
@@ -166,7 +166,7 @@
   },
   "migrationGuidance": {
     "path": "docs/migration-guide.md",
-    "digest": "sha256:c2e835cd0853506ee4d1c1092c14703f94c78de4a35368b1d8b2415d387718fa"
+    "digest": "sha256:9806a1c059d677200dde5b23eaaceae32fc4364dda7acdf29ca8d0190549808a"
   },
   "finalPreset": {
     "packageName": "@fictjs/babel-preset",
@@ -174,5 +174,5 @@
     "integrity": "sha512-0rZ8fAY3oJ4IwZBTel+a+Dym8+qeXssKuxfFWpp11Ed0/rswWKUkc5cVHB8qPw7Rp+WCwCSbUc+mbD9C9kbkZQ==",
     "provenance": true
   },
-  "evidenceDigest": "sha256:77e08e0f6761d7ed43d11adf04345c55bea8ba27d80f74db70594f6badbf101a"
+  "evidenceDigest": "sha256:3b29e890d954e7eb5d915b54a08a89eb43292a75848c33705ef455498edb0050"
 }
