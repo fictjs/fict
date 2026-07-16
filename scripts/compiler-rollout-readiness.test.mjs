@@ -7,8 +7,10 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
-import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
+import {
+  REQUIRED_ROLLOUT_JOBS,
+  validateCompilerRolloutReadiness,
+} from './compiler-rollout-readiness.mjs'
 import {
   REQUIRED_REAL_CONSUMER_CORE_PACKAGES,
   REQUIRED_REAL_CONSUMER_PACKAGES,
