@@ -292,15 +292,28 @@ test('Rust-default approval binds the complete native certification to its candi
   )
 })
 
-test('legacy-removal approval starts pending and must bind one release-evidence digest', () => {
-  assert.deepEqual(legacyRemovalEvidence, {
-    schemaVersion: 1,
-    status: 'pending',
-    evidenceDigest: null,
-  })
+test('legacy-removal approval binds the final release window and evidence digest', () => {
+  assert.equal(rolloutState.phase, 'legacy-removal')
+  assert.equal(rolloutState.rollbackBackend, 'rust')
+  assert.equal(legacyRemovalEvidence.schemaVersion, 1)
+  assert.equal(legacyRemovalEvidence.status, 'pass')
   assert.equal(legacyRemovalReview.schemaVersion, 2)
-  assert.equal(legacyRemovalReview.status, 'pending')
-  assert.equal(legacyRemovalReview.evidenceDigest, null)
+  assert.equal(legacyRemovalReview.status, 'approved')
+  assert.ok(legacyRemovalReview.reviewer)
+  assert.equal(legacyRemovalReview.evidenceDigest, legacyRemovalEvidence.evidenceDigest)
+  for (const field of [
+    'rustDefaultRelease',
+    'compatibilityRelease',
+    'finalLegacyRelease',
+    'legacyRemovalRelease',
+  ]) {
+    assert.equal(legacyRemovalEvidence[field], rolloutState[field])
+    assert.equal(legacyRemovalReview[field], rolloutState[field])
+  }
+  assert.ok(Object.values(legacyRemovalReview.areas).every(Boolean))
+  assert.equal(legacyRemovalEvidence.publishedReleases.rustDefault.version, '0.29.0')
+  assert.equal(legacyRemovalEvidence.publishedReleases.compatibility.version, '0.30.0')
+  assert.equal(legacyRemovalEvidence.publishedReleases.finalLegacy.version, '0.30.1')
   assert.equal(
     rootPackage.scripts['release:evidence:compiler'],
     'node scripts/compiler-release-evidence.mjs',
