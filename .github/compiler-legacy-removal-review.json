@@ -1,20 +1,20 @@
 {
   "schemaVersion": 2,
-  "status": "pending",
-  "reviewer": null,
-  "evidenceDigest": null,
-  "rustDefaultRelease": null,
-  "compatibilityRelease": null,
-  "finalLegacyRelease": null,
-  "legacyRemovalRelease": null,
+  "status": "approved",
+  "reviewer": "unadlib",
+  "evidenceDigest": "sha256:3b29e890d954e7eb5d915b54a08a89eb43292a75848c33705ef455498edb0050",
+  "rustDefaultRelease": "0.29.0",
+  "compatibilityRelease": "0.30.0",
+  "finalLegacyRelease": "0.30.1",
+  "legacyRemovalRelease": "0.31.0",
   "areas": {
-    "replacementAvailability": false,
-    "migrationGuidance": false,
-    "candidateAndRollbackEvidence": false,
-    "rustDefaultPublished": false,
-    "subsequentMinorCompleted": false,
-    "finalPresetPublished": false,
-    "coreScopeChanges": false,
-    "legacyDependencyRemoval": false
+    "replacementAvailability": true,
+    "migrationGuidance": true,
+    "candidateAndRollbackEvidence": true,
+    "rustDefaultPublished": true,
+    "subsequentMinorCompleted": true,
+    "finalPresetPublished": true,
+    "coreScopeChanges": true,
+    "legacyDependencyRemoval": true
   }
 }
