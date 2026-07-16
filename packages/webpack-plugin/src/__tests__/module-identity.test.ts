@@ -24,7 +24,7 @@ function readStoredModules(stats: Stats, resource: string): StoredModuleMetadata
     .filter(candidate => (candidate as { resource?: unknown }).resource === resource)
     .map(candidate => {
       const module = candidate as NormalModule
-      const stored = module.buildInfo?.fictWebpackMetadata as
+      const stored = module.buildInfo?.fictWebpackMetadataV7 as
         | {
             identifier?: unknown
             metadataJson?: unknown
@@ -33,7 +33,7 @@ function readStoredModules(stats: Stats, resource: string): StoredModuleMetadata
           }
         | undefined
       if (
-        stored?.version !== 6 ||
+        stored?.version !== 7 ||
         typeof stored.identifier !== 'string' ||
         typeof stored.metadataJson !== 'string' ||
         typeof stored.resource !== 'string'
@@ -56,7 +56,7 @@ function readStoredBuildMetadata(stats: Stats, resource: string): Record<string,
   const module = [...stats.compilation.modules].find(
     candidate => (candidate as { resource?: unknown }).resource === resource,
   ) as NormalModule | undefined
-  const stored = module?.buildInfo?.fictWebpackMetadata
+  const stored = module?.buildInfo?.fictWebpackMetadataV7
   if (!stored || typeof stored !== 'object') {
     throw new Error(`No persisted Fict metadata found for ${resource}.`)
   }
@@ -100,7 +100,7 @@ describe('@fictjs/webpack-plugin module identity', () => {
           (candidate as { resource?: unknown }).resource === path.join(root, 'entry.cts'),
       ) as NormalModule | undefined
       expect(
-        (entryModule?.buildInfo?.fictWebpackMetadata as { metadataSources?: unknown } | undefined)
+        (entryModule?.buildInfo?.fictWebpackMetadataV7 as { metadataSources?: unknown } | undefined)
           ?.metadataSources,
       ).toEqual(['./hook'])
       expect(runApp(root)).toBe(4)

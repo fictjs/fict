@@ -471,7 +471,7 @@ function readNormalizedDescriptionField(
   return value
 }
 
-function getLegacyRootTargetProof(
+function getMainFieldRootTargetProof(
   resolveOptions: {
     extensions?: unknown
     enforceExtension?: unknown
@@ -614,22 +614,22 @@ async function resolveWebpackPackageMetadata(
     return unresolved()
   }
   const hasRuntimeExports = Object.prototype.hasOwnProperty.call(packageData, 'exports')
-  const legacyRootProof: StaticFileProof = hasRuntimeExports
+  const mainFieldRootProof: StaticFileProof = hasRuntimeExports
     ? { dependencies: [] }
-    : getLegacyRootTargetProof(staticResolveOptions, packageData, actualPackageJsonPath)
-  const legacyMetadataProofs = new Map<PackagePublicSubpath, StaticFileProof>()
+    : getMainFieldRootTargetProof(staticResolveOptions, packageData, actualPackageJsonPath)
+  const nonExportsMetadataProofs = new Map<PackagePublicSubpath, StaticFileProof>()
   if (!hasRuntimeExports) {
     for (const subpath of metadataSubpaths) {
       if (subpath === '.') continue
-      legacyMetadataProofs.set(
+      nonExportsMetadataProofs.set(
         subpath,
         getStaticFileProof(actualPackageJsonPath, subpath, staticResolveOptions),
       )
     }
   }
   for (const target of [
-    ...legacyRootProof.dependencies,
-    ...[...legacyMetadataProofs.values()].flatMap(proof => proof.dependencies),
+    ...mainFieldRootProof.dependencies,
+    ...[...nonExportsMetadataProofs.values()].flatMap(proof => proof.dependencies),
   ]) {
     registerProofTargetDependency(compilation, target)
   }
@@ -663,14 +663,18 @@ async function resolveWebpackPackageMetadata(
   for (const candidate of [...candidates].sort()) {
     let matchesContainedTarget =
       candidate === '.' &&
-      !!legacyRootProof.resource &&
-      packageResourcePathsMatch(actualPackageJsonPath, legacyRootProof.resource, actualResourcePath)
-    const legacyMetadataProof = legacyMetadataProofs.get(candidate)
-    if (
-      legacyMetadataProof?.resource &&
+      !!mainFieldRootProof.resource &&
       packageResourcePathsMatch(
         actualPackageJsonPath,
-        legacyMetadataProof.resource,
+        mainFieldRootProof.resource,
+        actualResourcePath,
+      )
+    const nonExportsMetadataProof = nonExportsMetadataProofs.get(candidate)
+    if (
+      nonExportsMetadataProof?.resource &&
+      packageResourcePathsMatch(
+        actualPackageJsonPath,
+        nonExportsMetadataProof.resource,
         actualResourcePath,
       )
     ) {
@@ -811,7 +815,7 @@ async function buildMetadataGraph(
       // Select Webpack's edge by the request emitted after TypeScript lowering, while preserving
       // the compiler's original source request as the metadata-resolution key. Prefer the
       // canonical Harmony edge when ESM and ordinary require() share a request; fall back to cjs
-      // require solely for TypeScript import-equals lowered by the official preset.
+      // require solely for TypeScript import-equals lowered by the native compiler.
       const selected = harmonyCandidates.length > 0 ? harmonyCandidates : candidates
       if (selected.length === 0) {
         recordPackageResolution(
@@ -966,11 +970,6 @@ function hydrateCachedModuleMetadata(
       identifier,
       new Map(restored.metadataRequestMappings),
     )
-    if (restored.metadataRequestMappingsComplete) {
-      state.staleMetadataRequestMappings.delete(identifier)
-    } else {
-      state.staleMetadataRequestMappings.add(identifier)
-    }
   }
 }
 
@@ -1055,17 +1054,6 @@ async function convergeMetadataGraph(
   state: FictWebpackCompilationState,
   maxMetadataPasses: number | undefined,
 ): Promise<void> {
-  // v1-v5 cache records predate the original-to-emitted request mapping. Refresh those modules
-  // before constructing the graph so migration completes in this compilation rather than
-  // requiring a second build.
-  for (const identifier of [...state.staleMetadataRequestMappings].sort()) {
-    const module = state.modulesByIdentifier.get(identifier)
-    if (!module) continue
-    await rebuildModule(compilation, module)
-    const rebuildError = module.getErrors()?.[Symbol.iterator]().next().value
-    if (rebuildError) throw rebuildError
-    state.staleMetadataRequestMappings.delete(identifier)
-  }
   const graph = await buildMetadataGraph(compiler, compilation, state)
 
   for (const component of getStronglyConnectedComponents(graph)) {

@@ -5,11 +5,11 @@ import type { NormalModule } from 'webpack'
 
 import type { FictWebpackPackageResolutionState } from './package-metadata'
 
-export const FICT_WEBPACK_LOADER_CONTEXT = Symbol.for('@fictjs/webpack-plugin/loader-context/v2')
-const FICT_WEBPACK_BUILD_INFO_KEY = 'fictWebpackMetadata'
+export const FICT_WEBPACK_LOADER_CONTEXT = Symbol.for('@fictjs/webpack-plugin/loader-context/v3')
+const FICT_WEBPACK_BUILD_INFO_KEY = 'fictWebpackMetadataV7'
 
 interface StoredFictWebpackMetadata {
-  version: 6
+  version: 7
   identifier: string
   resource: string
   metadataJson: string
@@ -29,7 +29,6 @@ export interface RestoredFictWebpackMetadata {
   metadataDependencies: string[]
   metadataSources: string[]
   metadataRequestMappings: [string, string][]
-  metadataRequestMappingsComplete: boolean
 }
 
 export interface FictWebpackCompilationState {
@@ -43,7 +42,6 @@ export interface FictWebpackCompilationState {
   metadataDependenciesByIdentifier: Map<string, Set<string>>
   metadataSourcesByIdentifier: Map<string, Set<string>>
   metadataRequestMappingsByIdentifier: Map<string, Map<string, string>>
-  staleMetadataRequestMappings: Set<string>
   metadataGraphPrepared: boolean
   packageResolutionsByIdentifier: Map<string, Map<string, FictWebpackPackageResolutionState>>
 }
@@ -65,7 +63,6 @@ export function createCompilationState(): FictWebpackCompilationState {
     metadataDependenciesByIdentifier: new Map(),
     metadataSourcesByIdentifier: new Map(),
     metadataRequestMappingsByIdentifier: new Map(),
-    staleMetadataRequestMappings: new Set(),
     metadataGraphPrepared: false,
     packageResolutionsByIdentifier: new Map(),
   }
@@ -150,7 +147,7 @@ export function storeFictModuleMetadata(
     throw new Error(`[fict] Webpack did not expose buildInfo for ${identifier}.`)
   }
   const stored: StoredFictWebpackMetadata = {
-    version: 6,
+    version: 7,
     identifier,
     resource: getWebpackModuleResource(module),
     metadataJson: JSON.stringify(metadata),
@@ -176,9 +173,9 @@ export function restoreFictModuleMetadata(
   if (!stored || typeof stored !== 'object') {
     throw new Error('[fict] Cached Webpack module metadata is malformed.')
   }
+
   const candidate = stored as {
     version?: unknown
-    filename?: unknown
     identifier?: unknown
     resource?: unknown
     metadataJson?: unknown
@@ -188,54 +185,36 @@ export function restoreFictModuleMetadata(
     metadataSources?: unknown
     metadataRequestMappings?: unknown
   }
-  const isLegacyV1 = candidate.version === 1
-  const isLegacyV2 = candidate.version === 2
-  const isLegacyV3 = candidate.version === 3
-  const isLegacyV4 = candidate.version === 4
-  const isLegacyV5 = candidate.version === 5
-  const isCurrent = candidate.version === 6
-  const isResourceKeyedLegacy = isLegacyV1 || isLegacyV2 || isLegacyV3
-  const isIdentityKeyed = isLegacyV4 || isLegacyV5 || isCurrent
   if (
-    (!isResourceKeyedLegacy && !isIdentityKeyed) ||
-    (isResourceKeyedLegacy && typeof candidate.filename !== 'string') ||
-    (isIdentityKeyed &&
-      (typeof candidate.identifier !== 'string' ||
-        !candidate.identifier ||
-        typeof candidate.resource !== 'string' ||
-        !candidate.resource)) ||
+    candidate.version !== 7 ||
+    typeof candidate.identifier !== 'string' ||
+    !candidate.identifier ||
+    typeof candidate.resource !== 'string' ||
+    !candidate.resource ||
     typeof candidate.metadataJson !== 'string' ||
+    typeof candidate.incomplete !== 'boolean' ||
     (candidate.dependencyFingerprint !== null &&
       typeof candidate.dependencyFingerprint !== 'string') ||
-    ((isLegacyV3 || isIdentityKeyed) && typeof candidate.incomplete !== 'boolean') ||
-    ((isLegacyV2 || isLegacyV3 || isIdentityKeyed) &&
-      !Array.isArray(candidate.metadataDependencies)) ||
-    (candidate.metadataDependencies !== undefined &&
-      (!Array.isArray(candidate.metadataDependencies) ||
-        candidate.metadataDependencies.some(dependency => typeof dependency !== 'string'))) ||
-    ((isLegacyV5 || isCurrent) &&
-      (!Array.isArray(candidate.metadataSources) ||
-        candidate.metadataSources.some(source => typeof source !== 'string'))) ||
-    (isCurrent &&
-      (!Array.isArray(candidate.metadataRequestMappings) ||
-        candidate.metadataRequestMappings.some(
-          mapping =>
-            !Array.isArray(mapping) ||
-            mapping.length !== 2 ||
-            mapping.some(request => typeof request !== 'string'),
-        )))
+    !Array.isArray(candidate.metadataDependencies) ||
+    candidate.metadataDependencies.some(dependency => typeof dependency !== 'string') ||
+    !Array.isArray(candidate.metadataSources) ||
+    candidate.metadataSources.some(source => typeof source !== 'string') ||
+    !Array.isArray(candidate.metadataRequestMappings) ||
+    candidate.metadataRequestMappings.some(
+      mapping =>
+        !Array.isArray(mapping) ||
+        mapping.length !== 2 ||
+        mapping.some(request => typeof request !== 'string'),
+    )
   ) {
     throw new Error('[fict] Cached Webpack module metadata is malformed.')
   }
-  const storedDisplayIdentifier = isIdentityKeyed ? candidate.identifier : candidate.filename
 
   let metadata: unknown
   try {
     metadata = JSON.parse(candidate.metadataJson)
   } catch {
-    throw new Error(
-      `[fict] Cached Webpack module metadata for ${String(storedDisplayIdentifier)} is invalid.`,
-    )
+    throw new Error(`[fict] Cached Webpack module metadata for ${candidate.identifier} is invalid.`)
   }
   if (
     !metadata ||
@@ -245,33 +224,24 @@ export function restoreFictModuleMetadata(
     typeof (metadata as { exports?: unknown }).exports !== 'object' ||
     Array.isArray((metadata as { exports?: unknown }).exports)
   ) {
-    throw new Error(
-      `[fict] Cached Webpack module metadata for ${String(storedDisplayIdentifier)} is invalid.`,
-    )
+    throw new Error(`[fict] Cached Webpack module metadata for ${candidate.identifier} is invalid.`)
   }
 
   const identifier = getWebpackModuleIdentifier(module)
   const resource = getWebpackModuleResource(module)
-  const storedIdentifier = isIdentityKeyed
-    ? candidate.identifier
-    : normalizeFileName(candidate.filename as string)
-  const storedResource = isIdentityKeyed
-    ? normalizeWebpackResource(candidate.resource as string)
-    : normalizeFileName(candidate.filename as string)
-  const identityChanged = identifier !== storedIdentifier || resource !== storedResource
+  const storedResource = normalizeWebpackResource(candidate.resource)
+  const identityChanged = identifier !== candidate.identifier || resource !== storedResource
   const metadataRequestMappings = new Map<string, string>()
-  if (isCurrent) {
-    for (const [source, emitted] of candidate.metadataRequestMappings as [string, string][]) {
-      const previous = metadataRequestMappings.get(source)
-      if (previous !== undefined && previous !== emitted) {
-        throw new Error('[fict] Cached Webpack module metadata is malformed.')
-      }
-      metadataRequestMappings.set(source, emitted)
+  for (const [source, emitted] of candidate.metadataRequestMappings as [string, string][]) {
+    const previous = metadataRequestMappings.get(source)
+    if (previous !== undefined && previous !== emitted) {
+      throw new Error('[fict] Cached Webpack module metadata is malformed.')
     }
-    for (const source of candidate.metadataSources as string[]) {
-      if (!metadataRequestMappings.has(source)) {
-        throw new Error('[fict] Cached Webpack module metadata is malformed.')
-      }
+    metadataRequestMappings.set(source, emitted)
+  }
+  for (const source of candidate.metadataSources as string[]) {
+    if (!metadataRequestMappings.has(source)) {
+      throw new Error('[fict] Cached Webpack module metadata is malformed.')
     }
   }
 
@@ -279,19 +249,15 @@ export function restoreFictModuleMetadata(
     identifier,
     resource,
     metadata: metadata as ModuleReactiveMetadata,
-    // Versions before v4 cannot prove loader identity; v4-v5 cannot prove the final requests
-    // emitted by TypeScript lowering. Force one rebuild for either cache migration.
-    incomplete: !isCurrent || identityChanged || candidate.incomplete === true,
-    dependencyFingerprint: isCurrent && !identityChanged ? candidate.dependencyFingerprint : null,
+    incomplete: identityChanged || candidate.incomplete,
+    dependencyFingerprint: identityChanged ? null : candidate.dependencyFingerprint,
     metadataDependencies: [
-      ...new Set((candidate.metadataDependencies ?? []).map(normalizeFileName)),
+      ...new Set((candidate.metadataDependencies as string[]).map(normalizeFileName)),
     ].sort(),
-    metadataSources:
-      isLegacyV5 || isCurrent ? [...new Set(candidate.metadataSources as string[])].sort() : [],
+    metadataSources: [...new Set(candidate.metadataSources as string[])].sort(),
     metadataRequestMappings: [...metadataRequestMappings].sort(([left], [right]) =>
       left.localeCompare(right),
     ),
-    metadataRequestMappingsComplete: isCurrent,
   }
 }
 

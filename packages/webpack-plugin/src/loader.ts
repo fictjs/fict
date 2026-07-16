@@ -4,9 +4,6 @@ import path from 'node:path'
 
 import type {
   CompileRequest,
-  CompilerExplainArtifact,
-  CompilerWarning,
-  FictCompilerOptions,
   FictDiagnostic,
   ModuleReactiveMetadata,
   NativeCompilerExplainArtifact,
@@ -17,7 +14,6 @@ import type {
   ScanResult,
   SourceLanguage,
 } from '@fictjs/compiler'
-import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
 import { loadNativeCompilerBinding, type NativeCompilerBinding } from '@fictjs/compiler/native'
 
 import { isUnresolvedPackageResolution, readPackageMetadataAtBoundary } from './package-metadata'
@@ -30,38 +26,20 @@ import {
   storeFictModuleMetadata,
 } from './shared'
 
-export interface FictWebpackTypeScriptOptions extends NativeTypeScriptOptions {
-  /** Compatibility-only; native parsing mode is inferred from the resource extension. */
-  isTSX?: boolean
-  /** Compatibility-only; native parsing mode is inferred from the resource extension. */
-  allExtensions?: boolean
-  /** Native TypeScript lowering always accepts legal declare fields. */
-  allowDeclareFields?: boolean
-  /** Compatibility-only JSX import retention hint. */
-  jsxPragma?: string
-  /** Compatibility-only JSX fragment import retention hint. */
-  jsxPragmaFrag?: string
-  /** Compatibility-only; `.mts`/`.cts` ambiguity is enforced by the native parser. */
-  disallowAmbiguousJSXLike?: boolean
-}
+export type FictWebpackTypeScriptOptions = NativeTypeScriptOptions
 
-export type FictWebpackLoaderOptions = Omit<
-  FictCompilerOptions,
-  | 'emitModuleMetadata'
-  | 'filename'
-  | 'integrationDiagnostics'
-  | 'moduleMetadata'
-  | 'onModuleMetadataDependency'
-  | 'publicModuleId'
-  | 'resumable'
-  | 'resolveModuleMetadata'
-  | 'sourcemap'
-  | 'validateIntegrationMetadata'
-> & {
+export interface FictWebpackLoaderOptions extends Omit<
+  NativeCompilerOptions,
+  'explain' | 'preview' | 'sourcemap' | 'typescript'
+> {
   /** Enable TypeScript syntax lowering. Native mode infers the grammar from the filename. */
   typescript?: boolean
   /** Serializable OXC TypeScript lowering controls. */
   typescriptOptions?: FictWebpackTypeScriptOptions
+  /** Receive native compiler diagnostics after Webpack-owned graph preparation. */
+  onDiagnostic?: (diagnostic: FictDiagnostic) => void
+  /** Request or consume the native structured explain artifact. */
+  explain?: boolean | ((artifact: NativeCompilerExplainArtifact) => void)
   /** Webpack resumability is not supported until the integration owns chunks and a manifest. */
   resumable?: false | undefined
   /** Public module identities are integration-owned and unavailable in the Webpack loader. */
@@ -183,7 +161,6 @@ function missingMetadataSnapshot(request: string): ResolvedMetadataInput {
 
 function resolveMetadataSnapshot(
   sourceRequest: string,
-  importer: string,
   moduleIdentifier: string,
   binding: NonNullable<ReturnType<typeof getLoaderBinding>>,
   registerMetadataDependency: (dependency: string) => void,
@@ -233,19 +210,6 @@ function resolveMetadataSnapshot(
     return opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
   }
 
-  const fallback = resolvePackageModuleMetadata(sourceRequest, importer, {
-    emitModuleMetadata: false,
-    moduleMetadata: binding.state.moduleMetadata,
-    onModuleMetadataDependency: registerMetadataDependency,
-  })
-  if (fallback) {
-    return metadataSnapshot(
-      sourceRequest,
-      `webpack:fallback:${moduleIdentifier}:${sourceRequest}`,
-      'resolved',
-      fallback,
-    )
-  }
   return binding.state.metadataGraphPrepared
     ? missingMetadataSnapshot(sourceRequest)
     : opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
@@ -270,63 +234,6 @@ function sourcePositionForByteOffset(
   return {
     line: lines.length,
     column: (lines[lines.length - 1]?.replace(/\r$/, '').length ?? 0) + 1,
-  }
-}
-
-function sourceByteOffsetForPosition(source: string, line: number, column: number): number | null {
-  if (line <= 0 || column <= 0) return null
-  let index = 0
-  for (let currentLine = 1; currentLine < line; currentLine += 1) {
-    const newline = source.indexOf('\n', index)
-    if (newline === -1) return null
-    index = newline + 1
-  }
-  const lineEnd = source.indexOf('\n', index)
-  const end = lineEnd === -1 ? source.length : lineEnd
-  return Buffer.byteLength(source.slice(0, Math.min(index + column - 1, end)))
-}
-
-function nativeDiagnosticToWarning(
-  diagnostic: FictDiagnostic,
-  source: string,
-  filename: string,
-): CompilerWarning {
-  const position = diagnostic.primarySpan
-    ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
-    : { line: 0, column: 0 }
-  return {
-    code: diagnostic.code,
-    message: diagnostic.message,
-    fileName: filename,
-    line: position.line,
-    column: position.column,
-  }
-}
-
-function nativeExplainToLegacy(
-  artifact: NativeCompilerExplainArtifact,
-  source: string,
-  filename: string,
-): CompilerExplainArtifact {
-  return {
-    version: 1,
-    fileName: artifact.fileName,
-    helpers: artifact.helpers,
-    diagnostics: artifact.diagnostics.map(diagnostic =>
-      nativeDiagnosticToWarning(diagnostic, source, filename),
-    ),
-    events: artifact.events.map(event => {
-      const position = event.span
-        ? sourcePositionForByteOffset(source, event.span.start)
-        : undefined
-      return {
-        kind: event.kind,
-        message: event.message,
-        ...(event.name ? { name: event.name } : {}),
-        ...(event.code ? { code: event.code } : {}),
-        ...(position ? { line: position.line, column: position.column } : {}),
-      }
-    }),
   }
 }
 
@@ -364,25 +271,6 @@ function nativeCompilerOptions(
   }
 }
 
-function nativeIntegrationDiagnostics(
-  source: string,
-  warnings: readonly CompilerWarning[] | undefined,
-): FictDiagnostic[] {
-  return (warnings ?? []).map(warning => {
-    const offset = sourceByteOffsetForPosition(source, warning.line, warning.column)
-    return {
-      code: warning.code,
-      severity: 'warning',
-      message: warning.message,
-      primarySpan: offset === null ? null : { start: offset, end: offset },
-      secondaryLabels: [],
-      help: null,
-      notes: [],
-      guaranteeClass: 'advisory',
-    }
-  })
-}
-
 function nativeDiagnosticsError(
   diagnostics: readonly FictDiagnostic[],
   source: string,
@@ -391,8 +279,10 @@ function nativeDiagnosticsError(
   const errors = diagnostics.filter(diagnostic => diagnostic.severity === 'error')
   if (errors.length === 0) return null
   const format = (diagnostic: FictDiagnostic): string => {
-    const warning = nativeDiagnosticToWarning(diagnostic, source, filename)
-    const location = warning.line > 0 ? `\n  at ${filename}:${warning.line}:${warning.column}` : ''
+    const position = diagnostic.primarySpan
+      ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
+      : undefined
+    const location = position ? `\n  at ${filename}:${position.line}:${position.column}` : ''
     const help = diagnostic.help ? `\n  help: ${diagnostic.help}` : ''
     return `[${diagnostic.code}] ${diagnostic.message}${location}${help}`
   }
@@ -418,9 +308,6 @@ function configuredSourceLanguage(
   filename: string,
   options: FictWebpackLoaderOptions,
 ): SourceLanguage | undefined {
-  if (options.typescriptOptions?.allExtensions) {
-    return options.typescriptOptions.isTSX === false ? 'ts' : 'tsx'
-  }
   if (options.typescript !== false) return undefined
   return filename.toLowerCase().endsWith('.jsx') || filename.toLowerCase().endsWith('.tsx')
     ? 'jsx'
@@ -513,7 +400,6 @@ export default function fictWebpackLoader(
         )
         return resolveMetadataSnapshot(
           sourceRequest,
-          compilerFilename,
           moduleIdentifier,
           binding,
           registerMetadataDependency,
@@ -527,24 +413,22 @@ export default function fictWebpackLoader(
         ...(normalizedInputSourceMap ? { inputSourceMap: normalizedInputSourceMap } : {}),
         options: nativeCompilerOptions(compilerOptions, this.sourceMap),
         metadata,
-        integrationDiagnostics: nativeIntegrationDiagnostics(source, []),
       }
       return nativeCompiler.transform(request)
     })
     .then(result => {
       for (const diagnostic of result.diagnostics) {
         if (diagnostic.severity !== 'warning') continue
-        const warning = nativeDiagnosticToWarning(diagnostic, source, compilerFilename)
-        if (compilerOptions.onWarn) {
-          compilerOptions.onWarn(warning)
+        if (compilerOptions.onDiagnostic) {
+          compilerOptions.onDiagnostic(diagnostic)
         } else if (this.emitWarning) {
-          const emitted = new Error(`[${warning.code}] ${warning.message}`)
-          emitted.name = 'FictCompilerWarning'
+          const emitted = new Error(`[${diagnostic.code}] ${diagnostic.message}`)
+          emitted.name = 'FictCompilerDiagnostic'
           this.emitWarning(emitted)
         }
       }
       if (result.explain && typeof compilerOptions.explain === 'function') {
-        compilerOptions.explain(nativeExplainToLegacy(result.explain, source, compilerFilename))
+        compilerOptions.explain(result.explain)
       }
       const transformError = nativeDiagnosticsError(result.diagnostics, source, compilerFilename)
       if (transformError) throw transformError

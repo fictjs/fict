@@ -671,12 +671,6 @@ importers:
         specifier: workspace:*
         version: link:../compiler
     devDependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@fictjs/babel-preset':
-        specifier: workspace:*
-        version: link:../babel-preset
       '@jridgewell/trace-mapping':
         specifier: ^0.3.31
         version: 0.3.31

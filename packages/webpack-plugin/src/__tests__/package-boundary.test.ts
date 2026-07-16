@@ -52,7 +52,7 @@ function readResolvedMetadata(
 }
 
 describe('Webpack package metadata boundaries', () => {
-  it('persists metadata completeness and distrusts previous cache records', () => {
+  it('persists V7 completeness, rejects malformed V7 records, and ignores old keys', () => {
     const state = createCompilationState()
     const filename = path.resolve('/virtual/incomplete-hook.ts')
     const identifier = `fict-loader!${filename}`
@@ -78,16 +78,16 @@ describe('Webpack package metadata boundaries', () => {
     })
 
     const stored = (module.buildInfo as unknown as Record<string, unknown>)
-      .fictWebpackMetadata as Record<string, unknown>
-    stored.version = 2
-    stored.filename = filename
-    delete stored.identifier
-    delete stored.resource
-    delete stored.incomplete
-    expect(restoreFictModuleMetadata(module)).toMatchObject({
-      incomplete: true,
-      dependencyFingerprint: null,
-    })
+      .fictWebpackMetadataV7 as Record<string, unknown>
+    stored.version = 6
+    expect(() => restoreFictModuleMetadata(module)).toThrow(
+      '[fict] Cached Webpack module metadata is malformed.',
+    )
+
+    const buildInfo = module.buildInfo as unknown as Record<string, unknown>
+    delete buildInfo.fictWebpackMetadataV7
+    buildInfo.fictWebpackMetadata = stored
+    expect(restoreFictModuleMetadata(module)).toBeUndefined()
   })
 
   it('reads fresh manifests and sidecars and reports missing dependencies', () => {
