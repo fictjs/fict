@@ -6359,15 +6359,17 @@ mod tests {
     #[cfg(feature = "preview")]
     #[test]
     fn rejects_suspending_preview_factory_expressions() {
+        // Keep the JSX owner ordinary: async and generator Components are rejected by the
+        // synchronous render ABI before the Preview suspension policy runs.
         for (name, source, expected) in [
             (
                 "await",
-                "const make = () => () => 1; export async function App() { return <button onClick$={await Promise.resolve(make())}>Click</button>; }",
+                "const make = () => () => 1; export async function renderButton() { return <button onClick$={await Promise.resolve(make())}>Click</button>; }",
                 "await",
             ),
             (
                 "yield",
-                "const make = () => () => 1; export function* App() { return <button onClick$={yield make()}>Click</button>; }",
+                "const make = () => () => 1; export function* renderButton() { return <button onClick$={yield make()}>Click</button>; }",
                 "yield",
             ),
         ] {
@@ -6395,16 +6397,18 @@ mod tests {
     #[cfg(feature = "preview")]
     #[test]
     fn keeps_auto_suspending_factory_expressions_eager() {
+        // Lowercase JSX helpers may suspend; this exercises Preview fallback without creating
+        // an invalid async or generator Component.
         for (name, source, expected, binding) in [
             (
                 "await",
-                "const make = () => () => 1; export async function App() { return <button onClick={await Promise.resolve(make())}>Click</button>; }",
+                "const make = () => () => 1; export async function renderButton() { return <button onClick={await Promise.resolve(make())}>Click</button>; }",
                 "await Promise.resolve",
                 "addEventListener",
             ),
             (
                 "yield",
-                "const make = () => () => 1; export function* App() { return <button onClick={yield make()}>Click</button>; }",
+                "const make = () => () => 1; export function* renderButton() { return <button onClick={yield make()}>Click</button>; }",
                 "yield make()",
                 "onClick",
             ),
