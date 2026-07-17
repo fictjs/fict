@@ -528,6 +528,121 @@ test('runtime reactive creators preserve calls and enforce configurable R004', a
   assert.ok(lifecycleWarnings.every(({ severity }) => severity === 'warning'))
 })
 
+test('semantic EmitIR identities preserve destructuring and authored export names', async () => {
+  const destructured = await compileAndImport(
+    `
+      declare const ambient: number
+      import { $state, render } from 'fict'
+
+      let update = () => {}
+
+      function App() {
+        let state = $state({ count: 1, nested: { value: 2 } })
+        let fallback = $state(0)
+        const { count, nested: { value } } = state
+        const source = {}
+        const { snapshot = fallback } = source
+        update = () => {
+          state = { count: 3, nested: { value: 4 } }
+          fallback = 5
+        }
+        return <p data-id="semantic-identity">{count}:{value}:{snapshot}</p>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function refresh() {
+        update()
+      }
+    `,
+    'semantic-identity-destructuring',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = destructured.mount(container)
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="semantic-identity"]')?.textContent, '1:2:0')
+
+  destructured.refresh()
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="semantic-identity"]')?.textContent, '3:4:0')
+  dispose()
+  container.remove()
+
+  const exported = await compileAndImport(
+    `
+      import { createMemo } from '@fictjs/runtime'
+      import { createSignal } from 'fict/advanced'
+      const zero = createSignal(1)
+      const decimal = createMemo(() => 2)
+      export { zero as "0", decimal as "1.5", decimal as "00", decimal as named }
+    `,
+    'semantic-identity-exports',
+    { diagnosticCodes: ['FICT-M001'] },
+  )
+  assert.equal(exported['0'](), 1)
+  assert.equal(exported['1.5'](), 2)
+  assert.equal(exported['00'](), 2)
+  assert.equal(exported.named(), 2)
+
+  for (const [name, source] of [
+    [
+      'conditional-store-destructuring',
+      `
+        import { $state, $store } from 'fict'
+        export function App() {
+          const show = $state(true)
+          const store = $store({ n: 0 })
+          if (show) {
+            const { n } = store
+            return <div>{n}</div>
+          }
+          return <div>OFF</div>
+        }
+      `,
+    ],
+    [
+      'local-props-destructuring',
+      `
+        import { $effect } from 'fict'
+        export function App(props) {
+          const { count } = props
+          $effect(() => console.log(props.count, count))
+          return <div />
+        }
+      `,
+    ],
+    [
+      'dangerous-export-aliases',
+      `
+        type Erased = { value: number }
+        import { createMemo } from 'fict'
+        const value = createMemo(() => 1)
+        export { value as "__proto__", value as "constructor", value as "toString" }
+      `,
+    ],
+  ]) {
+    const result = binding.transformSync({
+      code: source,
+      filename: `/fixtures/${name}.tsx`,
+      options: { strictGuarantee: false },
+    })
+    assert.notEqual(result.code, '', name)
+    assert.deepEqual(
+      result.diagnostics.filter(({ severity }) => severity === 'error'),
+      [],
+      name,
+    )
+    assert.equal(
+      result.diagnostics.some(({ code }) => code.startsWith('FICT-OXC-EMIT-')),
+      false,
+      name,
+    )
+  }
+})
+
 test('native binding reports the Rust-only compiler protocol', () => {
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')

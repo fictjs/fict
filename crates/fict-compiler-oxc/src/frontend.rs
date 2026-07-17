@@ -780,13 +780,16 @@ fn build_bindings(
                 display_name: scoping.symbol_name(symbol).into(),
                 declaration_span: source_span(scoping.symbol_span(symbol)),
                 import,
-                is_runtime: flags.is_value()
-                    && !flags.contains(SymbolFlags::Ambient | SymbolFlags::TypeImport),
+                is_runtime: symbol_is_runtime(flags),
                 reference_count: count_u32(scoping.get_resolved_reference_ids(symbol).len()),
                 mutated: scoping.symbol_is_mutated(symbol),
             }
         })
         .collect()
+}
+
+pub(crate) fn symbol_is_runtime(flags: SymbolFlags) -> bool {
+    flags.is_value() && !flags.contains(SymbolFlags::Ambient | SymbolFlags::TypeImport)
 }
 
 fn scope_kind(flags: ScopeFlags) -> FrontendScopeKind {

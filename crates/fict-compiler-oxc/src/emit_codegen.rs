@@ -16,7 +16,8 @@ use fict_emit::{
     PropsOperation, RuntimeHelper,
 };
 use fict_hir::{
-    CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId, UpdateOperator,
+    BindingId, CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId,
+    UpdateOperator,
 };
 use oxc::{
     allocator::{Allocator, Box as ArenaBox, CloneIn, TakeIn, Vec as ArenaVec},
@@ -25,14 +26,14 @@ use oxc::{
         ast::{
             Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AwaitExpression,
-            BindingPattern, BindingRestElement, CallExpression, ChainElement, Expression,
-            FormalParameter, FormalParameterKind, FormalParameterRest, FormalParameters, Function,
-            FunctionBody, FunctionType, IdentifierName, IdentifierReference,
-            ImportDeclarationSpecifier, ImportOrExportKind, JSXAttributeItem, JSXAttributeName,
-            JSXAttributeValue, JSXChild, JSXElement, JSXElementName, JSXFragment,
-            JSXMemberExpression, JSXMemberExpressionObject, ObjectPropertyKind, Program,
-            PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement, VariableDeclarationKind,
-            VariableDeclarator,
+            BindingPattern, BindingRestElement, CallExpression, ChainElement, ExportSpecifier,
+            Expression, FormalParameter, FormalParameterKind, FormalParameterRest,
+            FormalParameters, Function, FunctionBody, FunctionType, IdentifierName,
+            IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind, JSXAttributeItem,
+            JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName, JSXFragment,
+            JSXMemberExpression, JSXMemberExpressionObject, ModuleExportName, ObjectPropertyKind,
+            Program, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
+            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
@@ -56,8 +57,10 @@ use std::path::{Path, PathBuf};
 mod conditional_return;
 mod operation_support;
 mod reactive_mutations;
+mod semantic_identity;
 
 use operation_support::{operation_origin, unsupported_operations};
+use semantic_identity::SemanticIdentities;
 /// Lower the currently supported EmitIR subset into the original OXC program, run TypeScript
 /// lowering and OXC code generation, and parse the generated JavaScript again as a hard backend
 /// invariant.
@@ -104,6 +107,10 @@ pub fn emit_program(
         return failed_output(convert_diagnostics(parsed.diagnostics, "FICT-PARSE"));
     }
     let mut program = parsed.program;
+    let identities = match SemanticIdentities::build(&program) {
+        Ok(identities) => identities,
+        Err(findings) => return failed_output(findings),
+    };
     let context_declarations = match parse_context_declarations(&allocator, &context_sources) {
         Ok(declarations) => declarations,
         Err(findings) => return failed_output(findings),
@@ -148,7 +155,9 @@ pub fn emit_program(
     };
     let mut rewriter = AstRewriter {
         allocator: &allocator,
-        creations: &creations,
+        creations: &creations.expressions,
+        derived_creations: &creations.derived_bindings,
+        semantic_identities: &identities,
         props: &props_rewrites.parameters,
         prop_reads: &props_rewrites.reads,
         reads: &reads,
@@ -162,6 +171,7 @@ pub fn emit_program(
         prepared_preview_handlers: BTreeMap::new(),
         context_declarations,
         matched_creations: BTreeSet::new(),
+        matched_derived_creations: BTreeSet::new(),
         matched_props: BTreeSet::new(),
         matched_prop_reads: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
@@ -184,7 +194,7 @@ pub fn emit_program(
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
-    for location in creations.keys() {
+    for location in creations.expressions.keys() {
         if !rewriter.matched_creations.contains(location) {
             diagnostics.push(
                 emit_error(
@@ -196,6 +206,18 @@ pub fn emit_program(
                     SourceSpan::new(location.0, location.1)
                         .expect("ordered EmitIR creation location"),
                 ),
+            );
+        }
+    }
+    for (binding, rewrite) in &creations.derived_bindings {
+        if !rewriter.matched_derived_creations.contains(binding) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-IDENTITY",
+                    "EmitIR derived creation binding does not identify a source declaration",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(rewrite.origin),
             );
         }
     }
@@ -664,7 +686,16 @@ struct CreationRewrite {
     local: Option<String>,
     context: Option<String>,
     signal_name: Option<String>,
-    derived: bool,
+}
+#[derive(Debug, Clone)]
+struct DerivedCreationRewrite {
+    rewrite: CreationRewrite,
+    origin: SourceSpan,
+}
+#[derive(Debug, Default)]
+struct CreationRewrites {
+    expressions: BTreeMap<(u32, u32), CreationRewrite>,
+    derived_bindings: BTreeMap<BindingId, DerivedCreationRewrite>,
 }
 #[derive(Debug, Clone)]
 struct PropBindingRewrite {
@@ -937,23 +968,21 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
         diagnostics,
     }
 }
-fn creation_rewrites(
-    emit: &EmitProgram,
-) -> (BTreeMap<(u32, u32), CreationRewrite>, Vec<Diagnostic>) {
+fn creation_rewrites(emit: &EmitProgram) -> (CreationRewrites, Vec<Diagnostic>) {
     let helper_names: BTreeMap<_, _> = emit
         .imports
         .iter()
         .map(|intent| (intent.helper, intent.local.as_str()))
         .collect();
-    let mut rewrites = BTreeMap::new();
+    let mut rewrites = CreationRewrites::default();
     let mut diagnostics = Vec::new();
     for function in &emit.functions {
         for operation in &function.operations {
-            let (helper, is_derived) = match operation {
-                EmitOperation::CreateDerived { helper, .. } => (*helper, true),
+            let (helper, derived_slot) = match operation {
+                EmitOperation::CreateDerived { slot, helper, .. } => (*helper, Some(*slot)),
                 EmitOperation::CreateReactive { helper, .. }
                 | EmitOperation::RegisterEffect { helper, .. }
-                | EmitOperation::KeyedList { helper, .. } => (Some(*helper), false),
+                | EmitOperation::KeyedList { helper, .. } => (Some(*helper), None),
                 _ => continue,
             };
             let Some(span) = operation_origin(operation).primary_span else {
@@ -1008,16 +1037,53 @@ fn creation_rewrites(
                 local: local.map(str::to_owned),
                 context,
                 signal_name,
-                derived: is_derived,
             };
-            if rewrites
+            if let Some(slot) = derived_slot {
+                let Some(binding) = function
+                    .slots
+                    .iter()
+                    .find(|candidate| candidate.id == slot)
+                    .and_then(|slot| slot.binding)
+                else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IDENTITY",
+                            "derived creation slot has no semantic binding identity",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                if rewrites
+                    .derived_bindings
+                    .insert(
+                        binding,
+                        DerivedCreationRewrite {
+                            rewrite,
+                            origin: span,
+                        },
+                    )
+                    .is_some()
+                {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IDENTITY",
+                            "one semantic binding cannot own multiple derived creation operations",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                }
+            } else if rewrites
+                .expressions
                 .insert((span.start(), span.end()), rewrite)
                 .is_some()
             {
                 diagnostics.push(
                     emit_error(
                         "FICT-OXC-EMIT-ORIGIN",
-                        "multiple creation operations share the same source origin",
+                        "multiple expression creation operations share the same source origin",
                         GuaranteeClass::Internal,
                     )
                     .with_primary_span(span),
@@ -1029,6 +1095,7 @@ fn creation_rewrites(
 }
 #[derive(Debug, Clone, Copy)]
 struct ReadRewrite {
+    binding: Option<BindingId>,
     projected: bool,
     accessor_depth: u16,
     projection_count: usize,
@@ -1044,62 +1111,66 @@ fn projection_is_optional(projection: &fict_hir::Projection) -> bool {
 fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<Diagnostic>) {
     let mut reads = BTreeMap::new();
     let mut diagnostics = Vec::new();
-    for operation in emit
-        .functions
-        .iter()
-        .flat_map(|function| &function.operations)
-    {
-        let EmitOperation::ReadReactive {
-            projections,
-            accessor_depth,
-            origin,
-            ..
-        } = operation
-        else {
-            continue;
-        };
-        let Some(span) = origin.primary_span else {
-            diagnostics.push(emit_error(
-                "FICT-OXC-EMIT-ORIGIN",
-                "reactive-read EmitIR operation requires a source origin",
-                GuaranteeClass::Internal,
-            ));
-            continue;
-        };
-        if usize::from(*accessor_depth) > projections.len() {
-            diagnostics.push(
-                emit_error(
-                    "FICT-OXC-EMIT-READ",
-                    "reactive-read accessor depth exceeds its projected place",
-                    GuaranteeClass::Internal,
-                )
-                .with_primary_span(span),
-            );
-            continue;
-        }
-        if reads
-            .insert(
-                (span.start(), span.end()),
-                ReadRewrite {
-                    projected: !projections.is_empty(),
-                    accessor_depth: *accessor_depth,
-                    projection_count: projections.len(),
-                    optional_accessor: usize::from(*accessor_depth)
-                        .checked_sub(1)
-                        .and_then(|index| projections.get(index))
-                        .is_some_and(projection_is_optional),
-                },
-            )
-            .is_some()
-        {
-            diagnostics.push(
-                emit_error(
+    for function in &emit.functions {
+        for operation in &function.operations {
+            let EmitOperation::ReadReactive {
+                slot,
+                projections,
+                accessor_depth,
+                origin,
+                ..
+            } = operation
+            else {
+                continue;
+            };
+            let Some(span) = origin.primary_span else {
+                diagnostics.push(emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
-                    "multiple reactive-read operations share the same source origin",
+                    "reactive-read EmitIR operation requires a source origin",
                     GuaranteeClass::Internal,
+                ));
+                continue;
+            };
+            if usize::from(*accessor_depth) > projections.len() {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-READ",
+                        "reactive-read accessor depth exceeds its projected place",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+                continue;
+            }
+            if reads
+                .insert(
+                    (span.start(), span.end()),
+                    ReadRewrite {
+                        binding: function
+                            .slots
+                            .iter()
+                            .find(|candidate| candidate.id == *slot)
+                            .and_then(|slot| slot.binding),
+                        projected: !projections.is_empty(),
+                        accessor_depth: *accessor_depth,
+                        projection_count: projections.len(),
+                        optional_accessor: usize::from(*accessor_depth)
+                            .checked_sub(1)
+                            .and_then(|index| projections.get(index))
+                            .is_some_and(projection_is_optional),
+                    },
                 )
-                .with_primary_span(span),
-            );
+                .is_some()
+            {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-ORIGIN",
+                        "multiple reactive-read operations share the same source origin",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+            }
         }
     }
     (reads, diagnostics)
@@ -2915,6 +2986,8 @@ fn render_preview_module_statements(
 struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
     creations: &'emit BTreeMap<(u32, u32), CreationRewrite>,
+    derived_creations: &'emit BTreeMap<BindingId, DerivedCreationRewrite>,
+    semantic_identities: &'emit SemanticIdentities,
     props: &'emit BTreeMap<(u32, u32), PropsRewrite>,
     prop_reads: &'emit BTreeSet<(u32, u32)>,
     reads: &'emit BTreeMap<(u32, u32), ReadRewrite>,
@@ -2928,6 +3001,7 @@ struct AstRewriter<'a, 'emit> {
     prepared_preview_handlers: BTreeMap<(u32, u32), PreparedHandler<'a>>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
     matched_creations: BTreeSet<(u32, u32)>,
+    matched_derived_creations: BTreeSet<BindingId>,
     matched_props: BTreeSet<(u32, u32)>,
     matched_prop_reads: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
@@ -3203,6 +3277,12 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             if let Some(declaration) = self.context_declarations.remove(&location) {
                 body.statements.insert(0, declaration);
             }
+        }
+        let previous_await_allowed = self.await_allowed;
+        self.await_allowed = function.r#async;
+        walk_mut::walk_function(self, function, flags);
+        self.await_allowed = previous_await_allowed;
+        if let Some(body) = &mut function.body {
             conditional_return::lower_statements(
                 self.allocator,
                 &mut body.statements,
@@ -3211,10 +3291,6 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
                 function.r#async,
             );
         }
-        let previous_await_allowed = self.await_allowed;
-        self.await_allowed = function.r#async;
-        walk_mut::walk_function(self, function, flags);
-        self.await_allowed = previous_await_allowed;
     }
     fn visit_arrow_function_expression(&mut self, function: &mut ArrowFunctionExpression<'a>) {
         let location = (function.span.start, function.span.end);
@@ -3246,6 +3322,10 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         if let Some(declaration) = self.context_declarations.remove(&location) {
             function.body.statements.insert(0, declaration);
         }
+        let previous_await_allowed = self.await_allowed;
+        self.await_allowed = function.r#async;
+        walk_mut::walk_arrow_function_expression(self, function);
+        self.await_allowed = previous_await_allowed;
         conditional_return::lower_statements(
             self.allocator,
             &mut function.body.statements,
@@ -3253,32 +3333,47 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             &mut self.matched_conditional_returns,
             function.r#async,
         );
-        let previous_await_allowed = self.await_allowed;
-        self.await_allowed = function.r#async;
-        walk_mut::walk_arrow_function_expression(self, function);
-        self.await_allowed = previous_await_allowed;
+    }
+    fn visit_variable_declaration(&mut self, declaration: &mut VariableDeclaration<'a>) {
+        walk_mut::walk_variable_declaration(self, declaration);
+        if self.derived_creations.is_empty() {
+            return;
+        }
+        let authored = declaration.declarations.take_in(&self.allocator);
+        let mut rewritten = ArenaVec::new_in(&self.allocator);
+        for declarator in authored {
+            rewritten.extend(semantic_identity::rewrite_derived_declarator(
+                self.allocator,
+                declarator,
+                self.derived_creations,
+                self.semantic_identities,
+                &mut self.matched_derived_creations,
+                &mut self.diagnostics,
+            ));
+        }
+        declaration.declarations = rewritten;
+    }
+    fn visit_export_specifier(&mut self, specifier: &mut ExportSpecifier<'a>) {
+        if let ModuleExportName::IdentifierReference(local) = &specifier.local
+            && let Some(binding) = self.semantic_identities.binding_for_reference(local)
+        {
+            let local_span = (local.span.start, local.span.end);
+            let specifier_span = (specifier.span.start, specifier.span.end);
+            for (location, rewrite) in self.reads {
+                let inside_specifier =
+                    specifier_span.0 <= location.0 && location.1 <= specifier_span.1;
+                if !self.matched_reads.contains(location)
+                    && (local_span == *location || inside_specifier)
+                    && rewrite.binding.is_none_or(|candidate| candidate == binding)
+                {
+                    self.matched_reads.insert(*location);
+                }
+            }
+        }
+        walk_mut::walk_export_specifier(self, specifier);
     }
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
-        if let Some(rewrite) = self
-            .creations
-            .get(&location)
-            .cloned()
-            .filter(|rewrite| rewrite.derived && !self.matched_creations.contains(&location))
-        {
-            self.matched_creations.insert(location);
-            let span = expression.span();
-            let mut initializer = expression.take_in(&self.allocator);
-            self.visit_expression(&mut initializer);
-            *expression = derived_accessor_expression(
-                self.allocator,
-                initializer,
-                rewrite.local,
-                rewrite.context,
-                span,
-            );
-            return;
-        }
         if self.active_list_key_initializer == Some(location)
             && let Some(local) = &self.active_list_key_local
         {
@@ -3373,8 +3468,12 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         let location = (identifier.span.start, identifier.span.end);
         let list_read = self.active_list_reads.contains(&location);
         let prop_read = self.prop_reads.contains(&location);
-        let reactive_read =
-            self.reads.contains_key(&location) && !self.matched_reads.contains(&location);
+        let reactive_read = self.reads.get(&location).is_some_and(|rewrite| {
+            !self.matched_reads.contains(&location)
+                && rewrite.binding.is_none_or(|binding| {
+                    self.semantic_identities.binding_for_reference(identifier) == Some(binding)
+                })
+        });
         if !list_read && !prop_read && !reactive_read {
             walk_mut::walk_expression(self, expression);
             return;
@@ -3404,11 +3503,10 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         let location = (call.span.start, call.span.end);
         if let Some((local, context, signal_name)) =
             self.creations.get(&location).and_then(|rewrite| {
-                (!rewrite.derived).then_some((
-                    rewrite.local.as_deref()?,
-                    &rewrite.context,
-                    rewrite.signal_name.as_deref(),
-                ))
+                rewrite
+                    .local
+                    .as_deref()
+                    .map(|local| (local, &rewrite.context, rewrite.signal_name.as_deref()))
             })
             && rename_callee(&mut call.callee, self.allocator.alloc_str(local))
         {
@@ -6153,27 +6251,6 @@ fn zero_parameter_expression_arrow<'a>(
     Expression::new_arrow_function_expression(
         span, true, false, NONE, parameters, NONE, body, &builder,
     )
-}
-fn derived_accessor_expression<'a>(
-    allocator: &'a Allocator,
-    initializer: Expression<'a>,
-    helper: Option<String>,
-    context: Option<String>,
-    span: Span,
-) -> Expression<'a> {
-    let getter = zero_parameter_expression_arrow(allocator, initializer, span);
-    let Some(helper) = helper else {
-        return getter;
-    };
-    let builder = AstBuilder::new(allocator);
-    let callee = Expression::new_identifier(span, allocator.alloc_str(&helper), &builder);
-    let context = context
-        .map(|context| Expression::new_identifier(span, allocator.alloc_str(&context), &builder));
-    let arguments = ArenaVec::from_iter_in(
-        context.into_iter().chain([getter]).map(Argument::from),
-        &allocator,
-    );
-    Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
 }
 fn ignore_inline_event_handler_return<'a>(
     allocator: &'a Allocator,

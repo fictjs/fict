@@ -371,6 +371,7 @@ fn declaration_initializer(
     }
 }
 fn derived_declarations(
+    hir: &HirFile,
     function: &HirFunction,
     scopes: Option<&ReactiveScopeAnalysis>,
     captured_write_bindings: &BTreeSet<BindingId>,
@@ -388,7 +389,7 @@ fn derived_declarations(
     }
     let reassigned = reassigned_locals(function);
     let mut declarations = BTreeMap::new();
-    for (span, site) in scopes.bindings.iter().filter_map(|fact| {
+    for (local, site) in scopes.bindings.iter().filter_map(|fact| {
         let local = &function.locals[fact.name.local.as_usize()];
         if !matches!(fact.kind, Alias | Derived)
             || reassigned.contains(&fact.name.local)
@@ -415,16 +416,24 @@ fn derived_declarations(
                         | K::Delete { .. }
                         | K::Await { .. }
                         | K::Yield { .. }
+                ) || matches!(
+                    instruction.kind,
+                    K::SyntaxFragment { fragment, .. }
+                        if hir.syntax_fragments
+                            .get(fragment.as_usize())
+                            .and_then(|fragment| fragment.summary.pattern.as_ref())
+                            .is_some_and(|pattern| pattern.has_defaults)
                 )
             })
         {
             return None;
         }
         let origin = function.values[result.as_usize()].origin;
-        (local == fact.name.local).then_some((origin.primary_span?, (result, local, origin)))
+        (local == fact.name.local && origin.primary_span.is_some())
+            .then_some((local, (result, local, origin)))
     }) {
         declarations
-            .entry(span)
+            .entry(local)
             .and_modify(|site| *site = None)
             .or_insert(Some(site));
     }
@@ -498,6 +507,7 @@ fn collect_reactive_binding_sites(
         }
         if let Some(scopes) = scopes {
             for (_, local, origin) in derived_declarations(
+                hir,
                 function,
                 Some(&scopes[function_index]),
                 captured_write_bindings,
@@ -930,7 +940,7 @@ fn lower_function(
     let derived_start = sites.len();
     let owned_reactive_locals: BTreeSet<_> = sites.iter().filter_map(|site| site.local).collect();
     sites.extend(
-        derived_declarations(function, scopes, captured_write_bindings)
+        derived_declarations(hir, function, scopes, captured_write_bindings)
             .into_iter()
             .filter(|(_, local, _)| !owned_reactive_locals.contains(local))
             .map(|(result, local, _)| ReactiveSite {
