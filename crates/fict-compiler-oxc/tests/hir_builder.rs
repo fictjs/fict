@@ -1446,7 +1446,14 @@ fn materializes_binding_resolved_macro_reads_in_hir() {
         options(OxcSourceLanguage::JavaScript),
         &HirBuildOptions::default(),
     );
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        ["FICT-M001"]
+    );
     let hir = output.hir.expect("verified reactive-read HIR");
     let module = &hir.functions[hir.root_function.as_usize()];
     let doubled = module
@@ -6429,7 +6436,14 @@ fn models_direct_unkeyed_map_callbacks_with_index_identity() {
         options(OxcSourceLanguage::JavaScriptJsx),
         &HirBuildOptions::default(),
     );
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        ["FICT-J002"]
+    );
     let hir = output.hir.expect("verified HIR");
     let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
         panic!("intrinsic list root")
@@ -6460,7 +6474,7 @@ fn models_direct_unkeyed_map_callbacks_with_index_identity() {
             .iter()
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        ["FICT-J003"]
+        ["FICT-J002", "FICT-J003"]
     );
     let spread = spread.hir.expect("verified fallback HIR");
     let fict_hir::JsxNode::Element(root) = &spread.templates[0].root else {
@@ -7141,16 +7155,29 @@ fn enforces_effect_and_memo_control_flow_placement() {
             output.diagnostics
         );
     }
-    for source in [
-        "import { $effect } from 'fict'; $effect(() => {});",
-        "import { $memo } from 'fict'; { $memo(() => value); }",
+    for (source, advisory) in [
+        (
+            "import { $effect } from 'fict'; $effect(() => {});",
+            "FICT-E001",
+        ),
+        (
+            "import { $memo } from 'fict'; { $memo(() => value); }",
+            "FICT-M001",
+        ),
     ] {
         let output = build_hir(
             source,
             options(OxcSourceLanguage::JavaScript),
             &HirBuildOptions::default(),
         );
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            [advisory]
+        );
         assert!(output.hir.is_some());
     }
 }

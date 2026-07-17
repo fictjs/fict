@@ -566,8 +566,8 @@ performance/RSS and output-size evidence; the retired TypeScript optimizer
 benchmarks and HIR snapshot baselines are not 1.0 gates.
 Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
 `warningLevels` let you turn warnings into errors or suppress specific codes.
-Set `strictReactivity: true` to escalate control-flow fallback diagnostics
-(`FICT-R003`, `FICT-R006`) into hard build errors by default.
+Set `strictReactivity: true` to escalate the `FICT-R006` control-flow fallback diagnostic into a
+hard build error by default.
 `strictGuarantee` is enabled by default for fail-closed compilation: non-guaranteed
 reactivity diagnostics are treated as hard errors and cannot be suppressed/downgraded.
 This includes unknown call boundaries (`FICT-R002`), reactive callback/closure escapes

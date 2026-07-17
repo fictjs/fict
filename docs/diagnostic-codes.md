@@ -365,20 +365,6 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 **Impact:** Similar to FICT-S002. Updates may not propagate correctly.
 
-### FICT-R003: Control-flow fallback lowering
-
-**Severity:** Error (default)
-
-**Why:** Reactive `if`/`switch` return lowering was skipped for a branch shape the compiler
-cannot safely lower into fine-grained branch bindings.
-
-**Impact:** Branch structure may rely on a fallback path instead of strict fine-grained lowering.
-Reactivity is preserved, but updates can be coarser than expected. If active branch reads must be
-tracked, the runtime remounts that branch output rather than partially patching it.
-
-**Fix:** Refactor to supported return-branch control flow, or keep fallback behavior and
-monitor/update performance with tests.
-
 ### FICT-R004: Reactive primitive in control flow
 
 **Severity:** Error (default)
@@ -431,8 +417,8 @@ story block that assigns locals consumed by JSX, or expression-only branching in
 (`cond ? <A/> : <B/>`, logical expressions). Keep arbitrary calls out of control-flow predicates
 unless you intentionally compile that boundary with non-production `strictGuarantee: false`.
 
-**Strict mode:** Set compiler `strictReactivity: true` to treat `FICT-R003` and
-`FICT-R006` as build errors by default. You can still override per code with `warningLevels`.
+**Strict mode:** Set compiler `strictReactivity: true` to treat `FICT-R006` as a build error by
+default. You can still override it with `warningLevels`.
 `strictGuarantee` is enabled by default for fail-closed behavior where non-guaranteed reactivity
 diagnostics cannot be suppressed or downgraded. Production compilation (`NODE_ENV=production`)
 force-enables it even when an integration passes `strictGuarantee: false`. Set

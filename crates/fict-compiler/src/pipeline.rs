@@ -4312,7 +4312,7 @@ mod tests {
 
     #[test]
     fn enforces_dynamic_reactive_property_guarantees() {
-        let source = "import { $state, $memo, $store } from 'fict'; export function App(props) { const key = 'value'; const state = $state({ value: 1, nested: { value: 2 } }); const memo = $memo(() => ({ value: 4 })); const alias = state; const nested = state.nested; const bag = { ...state }; const store = $store({ value: 3 }); return <main>{state[key]}:{state?.[key]}:{memo[key]}:{alias[key]}:{nested[key]}:{bag[key]}:{store[key]}:{props[key]}</main>; }";
+        let source = "import { $state, $memo, $store } from 'fict'; export function App(props) { const key = 'value'; const state = $state({ value: 1, nested: { value: 2 } }); const memo = $memo(() => ({ value: state.value + 3 })); const alias = state; const nested = state.nested; const bag = { ...state }; const store = $store({ value: 3 }); return <main>{state[key]}:{state?.[key]}:{memo[key]}:{alias[key]}:{nested[key]}:{bag[key]}:{store[key]}:{props[key]}</main>; }";
         let strict = compile(request(source, "dynamic-properties.tsx"));
         assert!(strict.has_errors());
         assert!(strict.code.is_empty());

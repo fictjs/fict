@@ -36,7 +36,7 @@ dev/test migration experiments may opt out only outside production.
 | Fallback     | JSX built imperatively inside loop bodies                                                  | Blocked by default; opt-out builds render the loop once as a static fallback (no reactive updates) and warn | `FICT-R006`                  |
 | Fallback     | Reactive value escape to unknown call boundary                                             | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-R002`                  |
 | Fallback     | Reactive closure/callback escape to unknown or async host                                  | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-R002`, `FICT-R005`     |
-| Fallback     | Call-based or unsupported control-flow fallback / widened re-execution                     | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-R003`, `FICT-R006`     |
+| Fallback     | Call-based or unsupported control-flow fallback / widened re-execution                     | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-R006`                  |
 | Fallback     | Native element spread with unknown shape                                                   | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-J003`                  |
 | Fallback     | Escaped state lifetime risk                                                                | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-S002`                  |
 | Unsupported  | `$state` / `$effect` inside loops or conditionals                                          | Compile-time error                                                                                          | Placement validation error   |
@@ -48,7 +48,7 @@ dev/test migration experiments may opt out only outside production.
 
 ## Notes
 
-- `strictReactivity` is narrower than `strictGuarantee`; it focuses on control-flow fallbacks (`FICT-R003`, `FICT-R006`).
+- `strictReactivity` is narrower than `strictGuarantee`; it focuses on the `FICT-R006` control-flow fallback.
 - `strictGuarantee` blocks suppression and downgrade for covered guarantee diagnostics.
 - Set `strictGuarantee: false` only when intentionally opting out of fail-closed guarantees outside production.
 - Control-flow fallback remains semantic-first when explicitly allowed: tracked active branch reads remount branch output instead of attempting partial DOM patching. DOM identity inside that branch is not guaranteed.

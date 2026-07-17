@@ -611,7 +611,7 @@ Install `@fictjs/eslint-plugin` and extend `plugin:fict/recommended`:
 Key rules: nested component definitions (FICT-C003), missing list keys (FICT-J002), memo side effects (FICT-M003), empty `$effect` (FICT-E001), component return checks (FICT-C004), plus `$state` placement/alias footguns.
 
 - Recommended config mirrors compiler warnings so IDE diagnostics stay aligned with build output.
-- For strict CI gates, enable compiler `strictReactivity: true` to escalate control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) to build errors.
+- For strict CI gates, enable compiler `strictReactivity: true` to escalate the `FICT-R006` control-flow fallback diagnostic to a build error.
 - `strictGuarantee` is enabled by default for fail-closed guarantees.
 - Production compilation (`NODE_ENV=production`) force-enables `strictGuarantee` even when an integration opts out.
 - Set `strictGuarantee: false` only for non-production migration or benchmark builds.

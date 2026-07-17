@@ -17,12 +17,11 @@ const STRICT_GUARANTEE_CODES: &[&str] = &[
     "FICT-H",
     "FICT-H002",
     "FICT-R002",
-    "FICT-R003",
     "FICT-R005",
     "FICT-R006",
     "FICT-R007",
 ];
-const STRICT_REACTIVITY_CODES: &[&str] = &["FICT-R003", "FICT-R006"];
+const STRICT_REACTIVITY_CODES: &[&str] = &["FICT-R006"];
 const CONFIGURABLE_DIAGNOSTIC_CODES: &[&str] = &[
     "FICT-P001",
     "FICT-P002",
@@ -39,7 +38,6 @@ const CONFIGURABLE_DIAGNOSTIC_CODES: &[&str] = &[
     "FICT-J002",
     "FICT-J003",
     "FICT-R002",
-    "FICT-R003",
     "FICT-R004",
     "FICT-R005",
     "FICT-R006",

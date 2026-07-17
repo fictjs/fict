@@ -77,6 +77,7 @@ use crate::{
 
 use super::compile::{convert_diagnostics, sorted, source_type};
 
+mod advisory_diagnostics;
 mod class_components;
 mod dangerous_html;
 mod function_abi;
@@ -2016,6 +2017,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.classify_component_roles(&calls.calls, &jsx.roots);
         self.validate_class_components(&class_bindings, &jsx.tags);
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
+        self.validate_advisory_diagnostics(program, &calls.calls, &reactive_symbols.reactive);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
         self.validate_native_jsx_spreads(program);
