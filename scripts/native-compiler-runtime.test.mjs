@@ -219,6 +219,47 @@ test('Rust compiler output preserves Core reactive runtime behavior', async () =
   })
 })
 
+test('captured reactive aliases remain mutable after an event', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let readAlias = () => -1
+
+    function App() {
+      let count = $state(0)
+      let alias = count
+
+      function update() {
+        alias = 2
+      }
+
+      readAlias = () => alias
+      return <button data-id="captured-alias" onClick={update}>{count}</button>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+
+    export function read() {
+      return readAlias()
+    }
+  `
+  const compiled = await compileAndImport(source, 'captured-alias-write')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(compiled.read(), 0)
+  container.querySelector('[data-id="captured-alias"]')?.click()
+  await flushRuntime()
+  assert.equal(compiled.read(), 2)
+
+  dispose()
+  container.remove()
+})
+
 test('native binding reports the Rust-only compiler protocol', () => {
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')

@@ -14,9 +14,9 @@ use fict_hir::{
     ArrayElement, BindingId, BlockId, CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile,
     HirFunction, HirInstruction, HirInstructionKind, ImportedHookPropertyMatch, ImportedHookReturn,
     ImportedName, ImportedReactiveKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName,
-    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, ObjectEntry,
-    ObjectPropertyKind, Origin, PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId,
-    ValueKind,
+    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, LocalKind,
+    ObjectEntry, ObjectPropertyKind, Origin, PlaceBase, ReactiveCallKind, TemplateId,
+    TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{
     ReactiveBindingKind, ReactiveCycleAnalysis, ReactiveScopeAnalysis, RegionAnalysis,
@@ -102,6 +102,7 @@ struct ReactiveBindingSite {
 }
 #[derive(Debug, Clone, Copy)]
 struct CrossFunctionFacts<'a> {
+    captured_write_bindings: &'a BTreeSet<BindingId>,
     reactive_bindings: &'a BTreeMap<BindingId, ReactiveBindingSite>,
     structured_hook_roots: &'a BTreeMap<BindingId, StructuredHookRootSite>,
     structured_hook_members: &'a BTreeMap<(BindingId, ImportedHookPropertyMatch), Origin>,
@@ -163,7 +164,8 @@ fn lower_program(
             GuaranteeClass::Fallback,
         )]));
     }
-    let reactive_bindings = collect_reactive_binding_sites(hir, scopes)?;
+    let captured_write_bindings = collect_captured_write_bindings(hir);
+    let reactive_bindings = collect_reactive_binding_sites(hir, scopes, &captured_write_bindings)?;
     let structured_hook_roots = collect_structured_hook_root_sites(hir)?;
     let structured_hook_members = collect_structured_hook_member_uses(hir, &structured_hook_roots);
     let list_item_bindings = hir.jsx_list_item_bindings();
@@ -178,6 +180,7 @@ fn lower_program(
         );
     }
     let facts = CrossFunctionFacts {
+        captured_write_bindings: &captured_write_bindings,
         reactive_bindings: &reactive_bindings,
         structured_hook_roots: &structured_hook_roots,
         structured_hook_members: &structured_hook_members,
@@ -369,6 +372,7 @@ fn declaration_initializer(
 fn derived_declarations(
     function: &HirFunction,
     scopes: Option<&ReactiveScopeAnalysis>,
+    captured_write_bindings: &BTreeSet<BindingId>,
 ) -> Vec<(ValueId, LocalId, Origin)> {
     use HirInstructionKind as K;
     use ReactiveBindingKind::{Alias, Derived};
@@ -384,7 +388,13 @@ fn derived_declarations(
     let reassigned = reassigned_locals(function);
     let mut declarations = BTreeMap::new();
     for (span, site) in scopes.bindings.iter().filter_map(|fact| {
-        if !matches!(fact.kind, Alias | Derived) || reassigned.contains(&fact.name.local) {
+        let local = &function.locals[fact.name.local.as_usize()];
+        if !matches!(fact.kind, Alias | Derived)
+            || reassigned.contains(&fact.name.local)
+            || local
+                .binding
+                .is_some_and(|binding| captured_write_bindings.contains(&binding))
+        {
             return None;
         }
         let SsaDefinitionLocation::Instruction { block, instruction } = fact.location else {
@@ -435,6 +445,7 @@ fn insert_reactive_binding_site(
 fn collect_reactive_binding_sites(
     hir: &HirFile,
     scopes: Option<&[ReactiveScopeAnalysis]>,
+    captured_write_bindings: &BTreeSet<BindingId>,
 ) -> Result<BTreeMap<BindingId, ReactiveBindingSite>, DiagnosticBundle> {
     let mut sites = BTreeMap::new();
     for (function_index, function) in hir.functions.iter().enumerate() {
@@ -484,8 +495,11 @@ fn collect_reactive_binding_sites(
             )?;
         }
         if let Some(scopes) = scopes {
-            for (_, local, origin) in derived_declarations(function, Some(&scopes[function_index]))
-            {
+            for (_, local, origin) in derived_declarations(
+                function,
+                Some(&scopes[function_index]),
+                captured_write_bindings,
+            ) {
                 let Some(binding) = function.locals[local.as_usize()].binding else {
                     continue;
                 };
@@ -605,6 +619,7 @@ fn lower_function(
     fine_grained_dom: bool,
 ) -> Result<EmitFunction, DiagnosticBundle> {
     let CrossFunctionFacts {
+        captured_write_bindings,
         reactive_bindings,
         structured_hook_roots,
         structured_hook_members,
@@ -913,7 +928,7 @@ fn lower_function(
     let derived_start = sites.len();
     let owned_reactive_locals: BTreeSet<_> = sites.iter().filter_map(|site| site.local).collect();
     sites.extend(
-        derived_declarations(function, scopes)
+        derived_declarations(function, scopes, captured_write_bindings)
             .into_iter()
             .filter(|(_, local, _)| !owned_reactive_locals.contains(local))
             .map(|(result, local, _)| ReactiveSite {
@@ -3575,6 +3590,19 @@ fn reassigned_locals(function: &HirFunction) -> BTreeSet<LocalId> {
                 writes.iter().map(|write| write.local).collect()
             }
             _ => Vec::new(),
+        })
+        .collect()
+}
+fn collect_captured_write_bindings(hir: &HirFile) -> BTreeSet<BindingId> {
+    hir.functions
+        .iter()
+        .flat_map(|function| {
+            let reassigned = reassigned_locals(function);
+            function.locals.iter().filter_map(move |local| {
+                (local.kind == LocalKind::Capture && reassigned.contains(&local.id))
+                    .then_some(local.binding)
+                    .flatten()
+            })
         })
         .collect()
 }
