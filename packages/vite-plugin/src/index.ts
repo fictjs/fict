@@ -14,6 +14,7 @@ import type {
   ModuleReactiveMetadata,
   NativeCompilerExplainArtifact,
   NativeCompilerOptions,
+  NativeTypeScriptOptions,
   RawSourceMap,
   ResolvedMetadataInput,
   ScanResult,
@@ -68,6 +69,8 @@ export interface FictPluginExplainArtifact {
   events: FictPluginExplainEvent[]
 }
 
+export type FictPluginTypeScriptOptions = NativeTypeScriptOptions
+
 interface FictPluginCompilerOptions extends Omit<
   NativeCompilerOptions,
   'explain' | 'preview' | 'typescript'
@@ -100,6 +103,8 @@ interface FictPluginCompilerOptions extends Omit<
     projectVersion?: number
     configPath?: string
   }
+  /** Serializable OXC TypeScript lowering controls passed to the native compiler. */
+  typescriptOptions?: FictPluginTypeScriptOptions
 }
 
 export interface FictPluginOptions extends FictPluginCompilerOptions {
@@ -4193,6 +4198,7 @@ function nativeCompilerOptions(
   tsImportElision: TypeScriptImportElision,
 ): NativeCompilerOptions {
   const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
+  const typescript = options.typescriptOptions
   return {
     dev: options.dev ?? false,
     sourcemap: options.sourcemap ?? true,
@@ -4212,8 +4218,12 @@ function nativeCompilerOptions(
     warningLevels: options.warningLevels ?? {},
     reactiveScopes: options.reactiveScopes ?? [],
     typescript: {
-      allowNamespaces: true,
-      onlyRemoveTypeImports: tsImportElision !== 'remove',
+      allowNamespaces: typescript?.allowNamespaces ?? true,
+      onlyRemoveTypeImports: typescript?.onlyRemoveTypeImports ?? tsImportElision !== 'remove',
+      optimizeConstEnums: typescript?.optimizeConstEnums ?? false,
+      optimizeEnums: typescript?.optimizeEnums ?? false,
+      rewriteImportExtensions: typescript?.rewriteImportExtensions ?? false,
+      removeClassFieldsWithoutInitializer: typescript?.removeClassFieldsWithoutInitializer ?? false,
     },
     ...(options.resumable === true
       ? {

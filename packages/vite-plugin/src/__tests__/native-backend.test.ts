@@ -163,6 +163,41 @@ describe('Rust compiler backend', () => {
     expect(native.transform).toHaveBeenCalledOnce()
   })
 
+  it('forwards every native TypeScript lowering option', async () => {
+    native.transform.mockResolvedValue(compileResult())
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+      typescriptOptions: {
+        allowNamespaces: false,
+        onlyRemoveTypeImports: true,
+        optimizeConstEnums: true,
+        optimizeEnums: true,
+        rewriteImportExtensions: true,
+        removeClassFieldsWithoutInitializer: true,
+      },
+    })
+    plugin.configResolved?.(config as never)
+
+    await plugin.transform?.call(
+      context() as never,
+      'export const value: number = 1',
+      '/project/src/options.ts',
+    )
+
+    const request = native.transform.mock.calls[0]![0] as CompileRequest
+    expect(request.options?.typescript).toEqual({
+      allowNamespaces: false,
+      onlyRemoveTypeImports: true,
+      optimizeConstEnums: true,
+      optimizeEnums: true,
+      rewriteImportExtensions: true,
+      removeClassFieldsWithoutInitializer: true,
+    })
+  })
+
   it('passes a serializable metadata snapshot to the native compile stage', async () => {
     native.transform.mockResolvedValue(
       compileResult({
