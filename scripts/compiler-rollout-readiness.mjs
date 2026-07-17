@@ -887,8 +887,17 @@ function assertReleaseWindow(state) {
       'finalLegacyRelease must be at or after the compatibility minor and before removal',
     )
   }
-  if (removal.major <= rustDefault.major || removal.minor !== 0 || removal.patch !== 0) {
-    throw new Error('Legacy removal must occur in a later stable semver major release at x.0.0')
+  const isPreOneMinorRemoval =
+    rustDefault.major === 0 &&
+    removal.major === 0 &&
+    removal.minor === finalLegacy.minor + 1 &&
+    removal.patch === 0
+  const isLaterMajorRemoval =
+    removal.major > rustDefault.major && removal.minor === 0 && removal.patch === 0
+  if (!isPreOneMinorRemoval && !isLaterMajorRemoval) {
+    throw new Error(
+      'Legacy removal must occur in the next stable pre-1.0 minor at 0.y.0 or a later stable semver major release at x.0.0',
+    )
   }
   if (compareRelease(removal, compatibility) <= 0) {
     throw new Error('Legacy removal release must follow the completed compatibility release')

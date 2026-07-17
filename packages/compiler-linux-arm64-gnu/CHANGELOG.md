@@ -1,6 +1,6 @@
 # @fictjs/compiler-linux-arm64-gnu
 
-## 1.0.0
+## 0.31.0
 
 ## 0.30.1
 

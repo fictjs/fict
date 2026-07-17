@@ -8,4 +8,4 @@
   atomic stable-release gate.
 - [ADR-0003 — Retire the Babel preset after a bounded compatibility window](0003-retire-babel-preset.md) -
   Record the completed 0.29.0 → 0.30.0 → 0.30.1 compatibility line and the
-  coordinated Rust-only 1.0 Core removal.
+  coordinated Rust-only 0.31 Core removal.

@@ -12,7 +12,7 @@ tags: [compiler, rust, oxc, napi, migration]
 
 ## Purpose
 
-Fict 1.0 uses an OXC-native Rust compiler for the language, runtime diagnostic,
+Fict 0.31 uses an OXC-native Rust compiler for the language, runtime diagnostic,
 metadata, and strict-guarantee contracts owned by the repository. The completed
 migration made compiler state explicit, removed Babel AST coupling, improved
 deterministic performance, and gave every compiler pass a verifiable typed
@@ -193,7 +193,7 @@ the native fuzz target exercises the same request pipeline.
 
 The compatibility sequence is complete: `0.29.0` introduced the published Rust
 default, `0.30.0` completed the subsequent stable minor, `0.30.1` was the final
-legacy/preset release, and `1.0.0` removes the second implementation. The 1.0
+legacy/preset release, and `0.31.0` removes the second implementation. The 0.31
 facade has no backend selector, shadow path, Babel dependency, or `./legacy`
 export.
 
@@ -201,7 +201,7 @@ The coordinated scope change is defined by
 [ADR-0003](../adr/0003-retire-babel-preset.md). Preview graduation remains a
 separate decision.
 
-After 1.0, rollback means restoring a complete 0.30.1 application release and
+After 0.31, rollback means restoring a complete 0.30.1 application release and
 its lockfile. Compiler/runtime packages, generated output, package metadata,
 bundler caches, and Preview artifacts MUST NOT be mixed across that boundary.
 

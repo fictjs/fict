@@ -1,6 +1,6 @@
 # @fictjs/compiler
 
-OXC/Rust compiler facade for Fict. Fict 1.0 has no TypeScript/Babel compiler,
+OXC/Rust compiler facade for Fict. Fict 0.31 has no TypeScript/Babel compiler,
 `./legacy` export, or per-file fallback path.
 
 Most applications should use `@fictjs/vite-plugin` or
@@ -103,9 +103,9 @@ publishing contract.
 ## Operational recovery
 
 `0.30.1` is the final release containing `@fictjs/compiler/legacy` and
-`@fictjs/babel-preset`. In 1.0, recovery means restoring the complete 0.30.1
+`@fictjs/babel-preset`. In 0.31, recovery means restoring the complete 0.30.1
 application dependency set, generated output, metadata, and caches. Mixing
-legacy output with the 1.0 compiler/runtime graph is unsupported.
+legacy output with the 0.31 compiler/runtime graph is unsupported.
 
 Platform support is defined by
 [ADR-0002](../../docs/adr/0002-native-compiler-support-matrix.md). The final

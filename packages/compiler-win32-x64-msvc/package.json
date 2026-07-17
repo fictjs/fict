@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/compiler-win32-x64-msvc",
-  "version": "1.0.0",
+  "version": "0.31.0",
   "description": "Fict Rust compiler native binding for Windows x64",
   "license": "MIT",
   "repository": {

@@ -39,10 +39,10 @@ The lifecycle has four phases.
 
 The approved sequence completed as `0.29.0` (Rust default), `0.30.0`
 (subsequent compatibility minor), `0.30.1` (final legacy/preset release), and
-`1.0.0` (breaking removal). In the 1.0 tree the preset, old compiler, `./legacy`
+`0.31.0` (pre-1.0 breaking removal). In the 0.31 tree the preset, old compiler, `./legacy`
 export, backend selectors, production Babel edges, and compatibility harnesses
 are absent. Registry deprecation of the historical preset is performed only
-after 1.0 publication, with a message that points to the migration guide.
+after 0.31 publication, with a message that points to the migration guide.
 
 ### Phase A — Supported legacy adapter
 
@@ -77,13 +77,14 @@ subsequent stable Core minor release after the Rust-default release. Release
 candidates do not count as that subsequent minor.
 
 Removal cannot occur in the same minor release that changes the default. For
-the current pre-1.0 line, `1.0.0` is the earliest removal release. If the Rust
-default changes after Fict 1.0, removal is earliest in the next semver major,
-consistent with the public deprecation policy.
+the current pre-1.0 line, the removal is a declared breaking change in the next
+stable minor after the final legacy release: `0.31.0`. If the Rust default
+changes after Fict 1.0, removal is earliest in the next semver major, consistent
+with the public deprecation policy.
 
 The approved pre-1.0 sequence is `0.29.0` (published Rust default), `0.30.0`
 (complete subsequent stable compatibility minor), `0.30.1` (final legacy and
-preset release), then `1.0.0` (breaking removal). These are release roles, not
+preset release), then `0.31.0` (breaking removal). These are release roles, not
 permission to pre-record publication: each version enters rollout evidence only
 after its tag workflow, npm publication, and GitHub Release have succeeded.
 

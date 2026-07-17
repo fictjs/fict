@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/compiler",
-  "version": "1.0.0",
+  "version": "0.31.0",
   "description": "OXC/Rust compiler for Fict",
   "publishConfig": {
     "access": "public",

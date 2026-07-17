@@ -2,11 +2,11 @@
   "schemaVersion": 2,
   "status": "approved",
   "reviewer": "unadlib",
-  "evidenceDigest": "sha256:77e08e0f6761d7ed43d11adf04345c55bea8ba27d80f74db70594f6badbf101a",
+  "evidenceDigest": "sha256:3b29e890d954e7eb5d915b54a08a89eb43292a75848c33705ef455498edb0050",
   "rustDefaultRelease": "0.29.0",
   "compatibilityRelease": "0.30.0",
   "finalLegacyRelease": "0.30.1",
-  "legacyRemovalRelease": "1.0.0",
+  "legacyRemovalRelease": "0.31.0",
   "areas": {
     "replacementAvailability": true,
     "migrationGuidance": true,

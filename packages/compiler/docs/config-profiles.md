@@ -64,4 +64,4 @@ transformSync({
 ```
 
 The host owns graph resolution and passes a serializable metadata snapshot.
-There is no 1.0 option for Babel sidecar emission or a legacy backend.
+There is no 0.31 option for Babel sidecar emission or a legacy backend.

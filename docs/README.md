@@ -30,7 +30,7 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 - `architecture/oxc-feasibility.md` — Executable M0 findings for TypeScript,
   CTS, decorators, comments, CommonJS, and source-map compatibility
 - `features/rust-compiler-rollout/rollout.md` — Completed native activation and
-  digest-bound Rust-only 1.0 removal rules
+  digest-bound Rust-only 0.31 removal rules
 - `adr/0001-adopt-oxc-rust-compiler.md` — Decision and trade-offs for replacing
   the Babel compiler with an OXC-native Rust compiler
 - `architecture/security-boundaries.md` — Security threat model, findings,

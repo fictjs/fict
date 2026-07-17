@@ -35,7 +35,7 @@ To release packages to NPM:
 #### Step 2: Run Release Verification
 
 ```bash
-# Verify the full v1 release gate locally before tagging.
+# Verify the full release gate locally before tagging.
 # BENCH_OUTPUT captures the raw optimizer benchmark JSON used as release evidence.
 export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
 pnpm release:verify:clean
@@ -162,8 +162,10 @@ certification, real-consumer validation, rollback/source-map/performance
 artifacts, migration-guide digest, and final preset publication. The schema-v2
 removal review must approve that exact evidence digest and the same four release
 versions. The readiness check requires a completed subsequent `x.y.0`
-compatibility release, a final legacy release, and a later breaking `x.0.0`
-removal release. Each embedded publication record must exactly match its
+compatibility release and a final legacy release. A pre-1.0 migration may
+remove legacy only in the immediately following stable minor at patch zero;
+after 1.0, removal requires a later breaking major at `x.0.0`. Each embedded
+publication record must exactly match its
 previously committed per-release evidence file. It also rejects retained
 preset/legacy-IR paths, `./legacy`
 exports, production Babel or legacy-subpath imports, Vite shadow and dual-backend

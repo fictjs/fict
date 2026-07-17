@@ -10,6 +10,11 @@ Fict is currently `0.x` alpha. Until `1.0.0`, minor releases may include
 breaking changes, but every breaking change must be called out in the package
 changelog and release notes.
 
+The Rust-only compiler removal ships as the explicitly breaking `0.31.0`
+minor after the completed `0.30.0` compatibility minor and final legacy
+`0.30.1` patch. This does not declare the v1 API freeze; the future `1.0.0`
+release remains governed by the API freeze and SemVer rules below.
+
 Starting with `1.0.0`, Fict follows SemVer:
 
 - Patch: bug fixes, docs, diagnostics wording, non-breaking internal changes.

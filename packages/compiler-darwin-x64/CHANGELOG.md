@@ -1,6 +1,6 @@
 # @fictjs/compiler-darwin-x64
 
-## 1.0.0
+## 0.31.0
 
 ## 0.30.1
 
