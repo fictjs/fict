@@ -1558,7 +1558,7 @@ struct Builder<'source, 'semantic> {
     adapter_fragments: Vec<OxcSyntaxFragment>,
     diagnostics: Vec<Diagnostic>,
     macro_bindings: BTreeMap<BindingId, FictMacroKind>,
-    reactive_bindings: BTreeMap<BindingId, ReactiveCallKind>,
+    reactive_bindings: BTreeMap<BindingId, RuntimeReactiveClassification>,
     reactive_namespace_sources: BTreeMap<BindingId, String>,
     unavailable_metadata_sources: BTreeSet<String>,
     configured_bindings: BTreeSet<BindingId>,
@@ -1746,8 +1746,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             };
             match &import.imported {
                 fict_hir::ImportedName::Named(name) => {
-                    if let Some(kind) = runtime_reactive_call_kind(&import.source, name) {
-                        reactive_bindings.insert(mapped, kind);
+                    if let Some(classification) =
+                        runtime_reactive_call_classification(&import.source, name)
+                    {
+                        reactive_bindings.insert(mapped, classification);
                     }
                 }
                 fict_hir::ImportedName::Namespace | fict_hir::ImportedName::ImportEquals
@@ -2450,6 +2452,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 call.binding
                     .and_then(|binding| self.macro_bindings.get(&binding))
                     == Some(&FictMacroKind::Memo)
+                    || call.runtime_creation_kind == Some(RuntimeReactiveCreationKind::Memo)
             })
             .map(|call| (call.span.start(), call.span.end()))
             .collect();
@@ -4655,22 +4658,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             });
         }
         let host = if let Some(binding) = call.binding {
-            let reactive_kind = if self.configured_bindings.contains(&binding) {
-                Some(ReactiveScopeKind::Configured)
-            } else {
-                match self.macro_bindings.get(&binding) {
-                    Some(FictMacroKind::Effect) => Some(ReactiveScopeKind::EffectCallback),
-                    Some(FictMacroKind::Memo) => Some(ReactiveScopeKind::MemoCallback),
-                    Some(FictMacroKind::State) | None => None,
-                }
-            };
-            reactive_kind.map_or(CallHost::Binding(binding), |kind| {
-                CallHost::ReactiveScope(ReactiveScopeHost {
-                    callee: binding,
-                    callback_index: 0,
-                    kind,
+            self.call_reactive_scope_kind(call)
+                .map_or(CallHost::Binding(binding), |kind| {
+                    CallHost::ReactiveScope(ReactiveScopeHost {
+                        callee: binding,
+                        callback_index: 0,
+                        kind,
+                    })
                 })
-            })
         } else {
             CallHost::Unknown
         };
@@ -7028,6 +7023,7 @@ struct CallFact {
     callee_reference: Option<PlannedPlace>,
     binding: Option<BindingId>,
     reactive_kind: Option<ReactiveCallKind>,
+    runtime_creation_kind: Option<RuntimeReactiveCreationKind>,
     arguments: Vec<ArgumentFact>,
     callback: Option<FunctionId>,
     direct_variable: Option<bool>,
@@ -7041,6 +7037,29 @@ struct CallFact {
     arguments_conditional: bool,
     optional: bool,
     pure: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RuntimeReactiveClassification {
+    reactive_kind: Option<ReactiveCallKind>,
+    creation_kind: Option<RuntimeReactiveCreationKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeReactiveCreationKind {
+    Effect,
+    Memo,
+    Selector,
+}
+
+impl RuntimeReactiveCreationKind {
+    const fn scope_kind(self) -> Option<ReactiveScopeKind> {
+        match self {
+            Self::Effect => Some(ReactiveScopeKind::EffectCallback),
+            Self::Memo => Some(ReactiveScopeKind::MemoCallback),
+            Self::Selector => None,
+        }
+    }
 }
 
 fn call_arguments_are_conditional(call: &CallExpression<'_>) -> bool {
@@ -7707,7 +7726,7 @@ struct CallCollector<'facts, 'semantic> {
     hook_bindings: &'facts BTreeSet<BindingId>,
     namespace_imports: &'facts BTreeSet<BindingId>,
     imported_hook_member_paths: &'facts BTreeMap<BindingId, BTreeSet<Vec<String>>>,
-    reactive_bindings: &'facts BTreeMap<BindingId, ReactiveCallKind>,
+    reactive_bindings: &'facts BTreeMap<BindingId, RuntimeReactiveClassification>,
     reactive_namespace_sources: &'facts BTreeMap<BindingId, String>,
     immediate_invocations: &'facts BTreeSet<FunctionId>,
     context: PlacementContext,
@@ -7786,7 +7805,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
         let direct_binding = resolved_callee_symbol(self.scoping, &call.callee)
             .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
         let callee_reference = planned_invocation_reference(self.scoping, &call.callee);
-        let namespace_reactive = namespace_reactive_call_kind(
+        let namespace_reactive = namespace_reactive_call_classification(
             self.scoping,
             &call.callee,
             self.symbol_to_binding,
@@ -7802,9 +7821,13 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
         let binding = direct_binding
             .or(namespace_reactive.map(|(binding, _)| binding))
             .or(imported_hook_member_binding);
-        let reactive_kind = direct_binding
+        let runtime_reactive = direct_binding
             .and_then(|binding| self.reactive_bindings.get(&binding).copied())
-            .or(namespace_reactive.map(|(_, kind)| kind));
+            .or(namespace_reactive.map(|(_, classification)| classification));
+        let reactive_kind =
+            runtime_reactive.and_then(|classification| classification.reactive_kind);
+        let runtime_creation_kind =
+            runtime_reactive.and_then(|classification| classification.creation_kind);
         let hook = classify_hook_call(
             self.scoping,
             &call.callee,
@@ -7855,6 +7878,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             callee_reference,
             binding,
             reactive_kind,
+            runtime_creation_kind,
             callback: arguments.first().and_then(|argument| argument.function),
             direct_variable,
             direct_variable_binding,
@@ -9801,12 +9825,12 @@ fn resolved_callee_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Opt
     reference.symbol_id()
 }
 
-fn namespace_reactive_call_kind(
+fn namespace_reactive_call_classification(
     scoping: &Scoping,
     expression: &Expression<'_>,
     symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
     namespace_sources: &BTreeMap<BindingId, String>,
-) -> Option<(BindingId, ReactiveCallKind)> {
+) -> Option<(BindingId, RuntimeReactiveClassification)> {
     let expression = unwrap_transparent_call_expression(expression);
     let (object, property) = match expression {
         Expression::StaticMemberExpression(member) => {
@@ -9829,8 +9853,8 @@ fn namespace_reactive_call_kind(
         .get_reference(object.reference_id.get()?)
         .symbol_id()?;
     let binding = symbol_to_binding.get(&symbol)?;
-    runtime_reactive_call_kind(namespace_sources.get(binding)?, property)
-        .map(|kind| (*binding, kind))
+    runtime_reactive_call_classification(namespace_sources.get(binding)?, property)
+        .map(|classification| (*binding, classification))
 }
 
 fn unwrap_transparent_call_expression<'expression>(
@@ -9863,6 +9887,7 @@ fn runtime_reactive_namespace_source(source: &str) -> bool {
             | "fict/plus"
             | "fict/advanced"
             | "fict/internal"
+            | "@fictjs/runtime"
             | "@fictjs/runtime/advanced"
             | "@fictjs/runtime/internal"
     )
@@ -9906,10 +9931,40 @@ fn is_fict_runtime_source(source: &str) -> bool {
     )
 }
 
-fn runtime_reactive_call_kind(source: &str, imported: &str) -> Option<ReactiveCallKind> {
+fn runtime_reactive_call_classification(
+    source: &str,
+    imported: &str,
+) -> Option<RuntimeReactiveClassification> {
+    let classified = |reactive_kind, creation_kind| RuntimeReactiveClassification {
+        reactive_kind,
+        creation_kind,
+    };
     match imported {
-        "$store" if matches!(source, "fict" | "fict/plus") => Some(ReactiveCallKind::Store),
-        "resource" if matches!(source, "fict" | "fict/plus") => Some(ReactiveCallKind::Resource),
+        "$store" if matches!(source, "fict" | "fict/plus") => {
+            Some(classified(Some(ReactiveCallKind::Store), None))
+        }
+        "resource" if matches!(source, "fict" | "fict/plus") => {
+            Some(classified(Some(ReactiveCallKind::Resource), None))
+        }
+        "createMemo"
+            if matches!(
+                source,
+                "fict" | "fict/internal" | "@fictjs/runtime" | "@fictjs/runtime/internal"
+            ) =>
+        {
+            Some(classified(
+                Some(ReactiveCallKind::Memo),
+                Some(RuntimeReactiveCreationKind::Memo),
+            ))
+        }
+        "createEffect"
+            if matches!(
+                source,
+                "fict" | "fict/internal" | "@fictjs/runtime" | "@fictjs/runtime/internal"
+            ) =>
+        {
+            Some(classified(None, Some(RuntimeReactiveCreationKind::Effect)))
+        }
         "createSelector"
             if matches!(
                 source,
@@ -9920,7 +9975,10 @@ fn runtime_reactive_call_kind(source: &str, imported: &str) -> Option<ReactiveCa
                     | "@fictjs/runtime/internal"
             ) =>
         {
-            Some(ReactiveCallKind::Selector)
+            Some(classified(
+                Some(ReactiveCallKind::Selector),
+                Some(RuntimeReactiveCreationKind::Selector),
+            ))
         }
         _ => None,
     }

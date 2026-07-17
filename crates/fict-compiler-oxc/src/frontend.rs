@@ -40,24 +40,6 @@ use super::facts::{FrontendSourceFacts, collect_source_facts};
 
 const FICT_MACRO_MODULES: &[&str] = &["fict", "fict/slim"];
 const MEMO_MACRO_MODULES: &[&str] = &["fict", "fict/slim", "fict/plus"];
-const RUNTIME_MODULES: &[&str] = &[
-    "fict",
-    "fict/advanced",
-    "fict/internal",
-    "fict/internal/list",
-    "fict/jsx-runtime",
-    "fict/jsx-dev-runtime",
-    "fict/experimental/loader",
-    "fict/plus",
-    "fict/slim",
-    "@fictjs/runtime",
-    "@fictjs/runtime/advanced",
-    "@fictjs/runtime/internal",
-    "@fictjs/runtime/internal/list",
-    "@fictjs/runtime/jsx-runtime",
-    "@fictjs/runtime/jsx-dev-runtime",
-    "@fictjs/runtime/experimental/loader",
-];
 
 /// Owned source and semantic counts produced by the OXC frontend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1009,7 +991,6 @@ pub(crate) fn macro_kind(source: &str, imported_name: &str) -> Option<FictMacroK
         "$state" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::State),
         "$effect" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Effect),
         "$memo" if MEMO_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Memo),
-        "createMemo" if RUNTIME_MODULES.contains(&source) => Some(FictMacroKind::Memo),
         _ => None,
     }
 }

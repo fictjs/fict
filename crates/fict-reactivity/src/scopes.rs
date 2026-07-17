@@ -139,6 +139,7 @@ pub fn analyze_reactive_scopes(
         let kind = match shape.source {
             ShapeSource::ReactiveMacro(FictMacroKind::State) => Some(ReactiveBindingKind::State),
             ShapeSource::ReactiveMacro(FictMacroKind::Memo) => Some(ReactiveBindingKind::Memo),
+            ShapeSource::RuntimeReactive(ReactiveCallKind::Memo) => Some(ReactiveBindingKind::Memo),
             ShapeSource::RuntimeReactive(ReactiveCallKind::Store) => {
                 Some(ReactiveBindingKind::Store)
             }

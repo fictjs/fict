@@ -77,14 +77,15 @@ impl Builder<'_, '_> {
     ) {
         let memo_calls: BTreeSet<_> = calls
             .iter()
-            .filter(|call| self.macro_kind(call) == Some(FictMacroKind::Memo))
+            .filter(|call| self.reactive_callback_kind(call) == Some(FictMacroKind::Memo))
             .map(|call| (call.span.start(), call.span.end()))
             .collect();
         let side_effectful_memos =
             memo_side_effects::collect(program, self.semantic.scoping(), &memo_calls);
 
         for call in calls {
-            let Some(kind @ (FictMacroKind::Effect | FictMacroKind::Memo)) = self.macro_kind(call)
+            let Some(kind @ (FictMacroKind::Effect | FictMacroKind::Memo)) =
+                self.reactive_callback_kind(call)
             else {
                 continue;
             };
@@ -122,9 +123,14 @@ impl Builder<'_, '_> {
         }
     }
 
-    fn macro_kind(&self, call: &CallFact) -> Option<FictMacroKind> {
+    fn reactive_callback_kind(&self, call: &CallFact) -> Option<FictMacroKind> {
         call.binding
             .and_then(|binding| self.macro_bindings.get(&binding).copied())
+            .or_else(|| match call.runtime_creation_kind? {
+                super::RuntimeReactiveCreationKind::Effect => Some(FictMacroKind::Effect),
+                super::RuntimeReactiveCreationKind::Memo => Some(FictMacroKind::Memo),
+                super::RuntimeReactiveCreationKind::Selector => None,
+            })
     }
 
     fn callback_has_reactive_read(

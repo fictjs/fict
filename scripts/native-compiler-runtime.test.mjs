@@ -485,6 +485,49 @@ test('named function expression hooks use their public binding role', async () =
   container.remove()
 })
 
+test('runtime reactive creators preserve calls and enforce configurable R004', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { createMemo } from '@fictjs/runtime'
+      export const memo = createMemo?.(() => 41)
+      export const value = memo() + 1
+    `,
+    'runtime-optional-memo',
+    { diagnosticCodes: ['FICT-M001'] },
+  )
+  assert.equal(compiled.value, 42)
+
+  const source = `
+    import { createEffect, createMemo } from '@fictjs/runtime'
+    import { createSelector } from 'fict'
+    export function setup(ready) {
+      if (ready) createEffect(() => ready)
+      if (ready) createMemo?.(() => ready)
+      if (ready) createSelector(() => ready)
+    }
+  `
+  const strict = binding.transformSync({
+    code: source,
+    filename: '/fixtures/runtime-reactive-control.ts',
+    options: {},
+  })
+  assert.equal(strict.code, '')
+  assert.equal(strict.diagnostics.filter(({ code }) => code === 'FICT-R004').length, 3)
+
+  const fallback = binding.transformSync({
+    code: source,
+    filename: '/fixtures/runtime-reactive-control.ts',
+    options: {
+      strictGuarantee: false,
+      warningLevels: { 'FICT-R004': 'warn' },
+    },
+  })
+  assert.notEqual(fallback.code, '')
+  const lifecycleWarnings = fallback.diagnostics.filter(({ code }) => code === 'FICT-R004')
+  assert.equal(lifecycleWarnings.length, 3)
+  assert.ok(lifecycleWarnings.every(({ severity }) => severity === 'warning'))
+})
+
 test('native binding reports the Rust-only compiler protocol', () => {
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')

@@ -384,7 +384,7 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 **Severity:** Error (default)
 
-**Why:** A reactive primitive (`$state`, `$effect`, `createMemo`, `createSelector`) is created inside non-JSX control flow without a scope boundary.
+**Why:** A runtime reactive primitive (`createEffect`, `createMemo`, `createSelector`) is created inside non-JSX control flow without a scope boundary.
 
 **Impact:** May cause memory leaks or unexpected lifecycle behavior.
 

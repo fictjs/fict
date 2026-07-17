@@ -7,8 +7,8 @@ use fict_hir::{
     ImportPhase, ImportedHookReturn, ImportedReactiveKind, ImportedReactiveProperty, IterationKind,
     JavaScriptString, LiteralValue, ModuleExport, ModuleLocalExport, MutationEffect, ObjectEntry,
     ObjectPropertyKind, PlaceBase, Projection, PropertyKey, Purity, ReactiveCallKind,
-    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator,
-    ValueKind, verify_module_plan,
+    ReactiveScopeKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator,
+    UpdateOperator, ValueKind, verify_module_plan,
 };
 use fict_metadata::{
     MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
@@ -1381,16 +1381,24 @@ fn classifies_runtime_reactive_calls_by_import_identity() {
         import { $store as store } from 'fict';
         import { resource } from 'fict/plus';
         import { createSelector as selector } from '@fictjs/runtime/advanced';
+        import { createEffect as effect, createMemo as memo } from '@fictjs/runtime';
         import * as F from 'fict';
         import { $store as fakeStore } from 'third-party';
+        import { createMemo as fakeMemo } from 'third-party';
         const one = store({ value: 1 });
         const two = resource(() => 2);
         const three = selector(() => 3);
         const four = F.$store({ value: 4 });
         const five = F['resource'](() => 5);
         const six = F.createSelector(() => 6);
+        const seven = memo?.(() => one.value);
+        effect(() => one.value);
+        const eight = F.createMemo(() => one.value);
+        F.createEffect(() => one.value);
         const ignored = fakeStore({ value: 0 });
+        const ignoredMemo = fakeMemo?.(() => 1);
         function shadow(store) { return store({ value: 0 }); }
+        function shadowMemo(memo) { return memo?.(() => 1); }
     "#;
     let output = build_hir(
         source,
@@ -1418,19 +1426,52 @@ fn classifies_runtime_reactive_calls_by_import_identity() {
             ReactiveCallKind::Store,
             ReactiveCallKind::Resource,
             ReactiveCallKind::Selector,
+            ReactiveCallKind::Memo,
+            ReactiveCallKind::Memo,
         ]
     );
-    for call in calls.iter().filter(|call| call.reactive_kind.is_some()) {
-        assert!(matches!(call.host, CallHost::Binding(_)));
+    for call in calls.iter().filter(|call| {
+        matches!(
+            call.reactive_kind,
+            Some(ReactiveCallKind::Store | ReactiveCallKind::Resource | ReactiveCallKind::Selector)
+        )
+    }) {
+        assert!(matches!(call.host, CallHost::Binding(_)), "{call:?}");
         assert!(call.macro_kind.is_none());
     }
+    let runtime_scopes: Vec<_> = calls
+        .iter()
+        .filter_map(|call| match call.host {
+            CallHost::ReactiveScope(host) => Some((call.reactive_kind, host.kind, call.optional)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        runtime_scopes,
+        [
+            (
+                Some(ReactiveCallKind::Memo),
+                ReactiveScopeKind::MemoCallback,
+                true
+            ),
+            (None, ReactiveScopeKind::EffectCallback, false),
+            (
+                Some(ReactiveCallKind::Memo),
+                ReactiveScopeKind::MemoCallback,
+                false
+            ),
+            (None, ReactiveScopeKind::EffectCallback, false),
+        ]
+    );
     assert_eq!(
         calls
             .iter()
-            .filter(|call| call.reactive_kind.is_none())
+            .filter(|call| {
+                call.reactive_kind.is_none() && matches!(call.host, CallHost::Binding(_))
+            })
             .count(),
-        2,
-        "wrong-module and shadowed same-name calls remain ordinary"
+        4,
+        "wrong-module and shadowed calls remain ordinary bindings"
     );
 }
 #[test]
@@ -7335,17 +7376,20 @@ fn enforces_direct_hook_owner_and_control_flow_placement_by_binding() {
     }
 }
 #[test]
-fn enforces_binding_aware_selector_control_flow_placement() {
+fn enforces_binding_aware_runtime_reactive_control_flow_placement() {
     let source = r#"
         import { createSelector as select } from 'fict';
+        import { createEffect as effect, createMemo as memo } from '@fictjs/runtime';
         import * as Advanced from 'fict/advanced';
         function Demo({ ready, items, value }) {
             if (ready) select(() => value);
             for (const item of items) Advanced.createSelector(() => item);
             ready && select(() => value);
             if (ready) select?.(() => value);
+            if (ready) memo?.(() => value);
+            if (ready) effect(() => console.log(value));
             select(() => value) && ready;
-            return <div>{ready && select(() => value)(value)}</div>;
+            return <div>{ready && select(() => value)(value)}{ready && memo(() => value)()}{ready && (effect(() => void value), '')}</div>;
         }
         function Nested({ ready, value }) {
             if (ready) {
@@ -7374,7 +7418,7 @@ fn enforces_binding_aware_selector_control_flow_placement() {
         .iter()
         .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R004")
         .collect::<Vec<_>>();
-    assert_eq!(findings.len(), 5, "{:?}", strict.diagnostics);
+    assert_eq!(findings.len(), 7, "{:?}", strict.diagnostics);
     assert!(findings.iter().all(|diagnostic| {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
             && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
@@ -7393,6 +7437,8 @@ fn enforces_binding_aware_selector_control_flow_placement() {
             "Advanced.createSelector(() => item)",
             "select(() => value)",
             "select?.(() => value)",
+            "memo?.(() => value)",
+            "effect(() => console.log(value))",
             "select(() => value)"
         ]
     );
@@ -7412,7 +7458,7 @@ fn enforces_binding_aware_selector_control_flow_placement() {
             .iter()
             .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R004")
             .count(),
-        5
+        7
     );
     assert!(fallback.diagnostics.iter().all(|diagnostic| {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning

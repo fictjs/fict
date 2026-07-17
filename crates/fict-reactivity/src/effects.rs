@@ -1166,6 +1166,7 @@ fn callback_disposition(
             match (call.macro_kind, call.reactive_kind, argument_index) {
                 (Some(FictMacroKind::Effect), _, 0) => CallbackDisposition::Effect,
                 (Some(FictMacroKind::Memo), _, 0) => CallbackDisposition::Memo,
+                (_, Some(ReactiveCallKind::Memo), 0) => CallbackDisposition::Memo,
                 (_, Some(ReactiveCallKind::Resource), _) => CallbackDisposition::Resource,
                 (_, Some(ReactiveCallKind::Selector), _) => CallbackDisposition::Selector,
                 _ => CallbackDisposition::EscapesUnknown,

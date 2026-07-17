@@ -995,9 +995,10 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
 }
 
 #[test]
-fn tracks_preserved_store_resource_and_selector_calls() {
+fn tracks_preserved_memo_store_resource_and_selector_calls() {
     let mut hir = fixture(FunctionKind::Module);
     hir.bindings = [
+        ("createMemo", "@fictjs/runtime", ReactiveCallKind::Memo),
         ("$store", "fict", ReactiveCallKind::Store),
         ("resource", "fict/plus", ReactiveCallKind::Resource),
         (
@@ -1025,7 +1026,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
         origin: origin(),
     })
     .collect();
-    hir.functions[0].locals = ["store", "resource", "selector"]
+    hir.functions[0].locals = ["memo", "store", "resource", "selector"]
         .into_iter()
         .enumerate()
         .map(|(index, name)| HirLocal {
@@ -1048,6 +1049,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
         value(3, ValueKind::InstructionResult),
         value(4, ValueKind::InstructionResult),
         value(5, ValueKind::InstructionResult),
+        value(6, ValueKind::InstructionResult),
     ];
     let runtime_call = |result: u32, binding: u32, kind: ReactiveCallKind| HirInstruction {
         result: Some(ValueId::new(result)),
@@ -1085,21 +1087,23 @@ fn tracks_preserved_store_resource_and_selector_calls() {
             Some(1),
             HirInstructionKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(1.0))),
         ),
-        runtime_call(2, 0, ReactiveCallKind::Store),
+        runtime_call(2, 0, ReactiveCallKind::Memo),
         declaration(0, 2),
-        runtime_call(3, 1, ReactiveCallKind::Resource),
+        runtime_call(3, 1, ReactiveCallKind::Store),
         declaration(1, 3),
-        runtime_call(4, 2, ReactiveCallKind::Selector),
+        runtime_call(4, 2, ReactiveCallKind::Resource),
         declaration(2, 4),
+        runtime_call(5, 3, ReactiveCallKind::Selector),
+        declaration(3, 5),
         instruction(
-            Some(5),
+            Some(6),
             HirInstructionKind::Read {
-                place: Place::local(LocalId::new(0)),
+                place: Place::local(LocalId::new(1)),
             },
         ),
     ];
     hir.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
-        value: Some(ValueId::new(5)),
+        value: Some(ValueId::new(6)),
     };
     verify_hir(&hir).expect("valid runtime reactive fixture");
     let (regions, cycles) = analyses(&hir);
@@ -1112,6 +1116,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
             .map(|slot| slot.kind)
             .collect::<Vec<_>>(),
         [
+            ReactiveSlotKind::Memo,
             ReactiveSlotKind::Store,
             ReactiveSlotKind::Resource,
             ReactiveSlotKind::Selector,
@@ -1125,7 +1130,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
             _ => None,
         })
         .collect();
-    assert_eq!(tracked.len(), 3);
+    assert_eq!(tracked.len(), 4);
     assert!(
         tracked
             .iter()

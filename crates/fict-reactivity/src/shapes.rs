@@ -61,7 +61,7 @@ pub enum ShapeSource {
     UnknownOperation,
     /// Fict state or memo macro.
     ReactiveMacro(FictMacroKind),
-    /// Binding-resolved runtime store/resource/selector call.
+    /// Binding-resolved runtime memo/store/resource/selector call.
     RuntimeReactive(ReactiveCallKind),
     /// Reactive value imported through authoritative module metadata.
     ImportedReactive(ImportedReactiveKind),

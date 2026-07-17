@@ -803,9 +803,11 @@ mod tests {
         let result = compile(request(
             r#"
                 import { $memo, $store } from 'fict';
+                import { createMemo } from '@fictjs/runtime';
                 import { createSignal } from 'fict/advanced';
                 const count = createSignal(0);
                 export const doubled = $memo(() => count * 2);
+                export const runtimeDoubled = createMemo(() => count() * 3);
                 export const state = $store({ count: 0 });
                 export const alias = count;
                 export { count as "__proto__" };
@@ -822,6 +824,7 @@ mod tests {
                 ("alias".into(), ReactiveExportKind::Memo),
                 ("default".into(), ReactiveExportKind::Signal),
                 ("doubled".into(), ReactiveExportKind::Memo),
+                ("runtimeDoubled".into(), ReactiveExportKind::Memo),
                 ("state".into(), ReactiveExportKind::Store),
             ])
         );

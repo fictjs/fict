@@ -879,6 +879,8 @@ pub enum FictMacroKind {
 /// preserved. Unlike [`FictMacroKind`], these functions have real runtime implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReactiveCallKind {
+    /// Memo accessor returned by `createMemo`.
+    Memo,
     /// Deep proxy returned by `$store`.
     Store,
     /// Async resource factory returned by `resource`.

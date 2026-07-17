@@ -1,5 +1,5 @@
 use fict_diagnostics::{Diagnostic, DiagnosticCode, GuaranteeClass};
-use fict_hir::{FictMacroKind, FunctionKind, ReactiveCallKind, ReactiveScopeKind};
+use fict_hir::{FictMacroKind, FunctionKind, ReactiveScopeKind};
 
 use crate::FrontendSummary;
 
@@ -43,21 +43,26 @@ pub(super) fn unsupported_macro_diagnostics(frontend: &FrontendSummary) -> Vec<D
 }
 
 impl Builder<'_, '_> {
+    pub(super) fn call_reactive_scope_kind(&self, call: &CallFact) -> Option<ReactiveScopeKind> {
+        let binding = call.binding?;
+        if self.configured_bindings.contains(&binding) {
+            return Some(ReactiveScopeKind::Configured);
+        }
+        match self.macro_bindings.get(&binding) {
+            Some(FictMacroKind::Effect) => Some(ReactiveScopeKind::EffectCallback),
+            Some(FictMacroKind::Memo) => Some(ReactiveScopeKind::MemoCallback),
+            Some(FictMacroKind::State) => None,
+            None => call
+                .runtime_creation_kind
+                .and_then(|kind| kind.scope_kind()),
+        }
+    }
+
     pub(super) fn apply_call_classification(&mut self, calls: &[CallFact]) {
         for call in calls {
-            let Some(binding) = call.binding else {
-                continue;
-            };
-            let callback_kind = if self.configured_bindings.contains(&binding) {
-                Some(ReactiveScopeKind::Configured)
-            } else {
-                match self.macro_bindings.get(&binding) {
-                    Some(FictMacroKind::Effect) => Some(ReactiveScopeKind::EffectCallback),
-                    Some(FictMacroKind::Memo) => Some(ReactiveScopeKind::MemoCallback),
-                    Some(FictMacroKind::State) | None => None,
-                }
-            };
-            if let (Some(kind), Some(callback)) = (callback_kind, call.callback) {
+            if let (Some(kind), Some(callback)) =
+                (self.call_reactive_scope_kind(call), call.callback)
+            {
                 self.functions[callback.as_usize()].kind = FunctionKind::ReactiveScope;
                 self.reactive_functions.insert(callback, kind);
             }
@@ -187,9 +192,7 @@ impl Builder<'_, '_> {
 
     pub(super) fn validate_runtime_reactive_placement(&mut self, calls: &[CallFact]) {
         for call in calls {
-            if call.reactive_kind != Some(ReactiveCallKind::Selector)
-                || !call.conditional_or_loop
-                || call.inside_jsx
+            if call.runtime_creation_kind.is_none() || !call.conditional_or_loop || call.inside_jsx
             {
                 continue;
             }
@@ -201,7 +204,7 @@ impl Builder<'_, '_> {
                 )
                 .with_primary_span(call.span)
                 .with_help(
-                    "move createSelector outside the control-flow branch or wrap it in createScope/runInScope",
+                    "move the reactive creation outside the control-flow branch or wrap it in createScope/runInScope",
                 )
                 .with_guarantee_class(GuaranteeClass::Fallback),
             );

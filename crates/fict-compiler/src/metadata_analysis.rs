@@ -454,6 +454,7 @@ fn classify_call(call: &fict_hir::CallInstruction) -> Option<ReactiveExportKind>
     match (call.macro_kind, call.reactive_kind) {
         (Some(FictMacroKind::State), _) => Some(ReactiveExportKind::Signal),
         (Some(FictMacroKind::Memo), _) => Some(ReactiveExportKind::Memo),
+        (_, Some(ReactiveCallKind::Memo)) => Some(ReactiveExportKind::Memo),
         (_, Some(ReactiveCallKind::Store)) => Some(ReactiveExportKind::Store),
         _ => None,
     }

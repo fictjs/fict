@@ -251,8 +251,8 @@ pub enum EmitOperation {
         helper: Option<RuntimeHelper>,
         origin: Origin,
     },
-    /// Associate a preserved runtime call (`$store`, `resource`, `createSelector`) with a stable
-    /// compiler slot without replacing the executable call.
+    /// Associate a preserved runtime reactive call with a stable compiler slot without replacing
+    /// the executable call.
     TrackRuntimeReactive {
         slot: EmitSlotId,
         source_result: ValueId,

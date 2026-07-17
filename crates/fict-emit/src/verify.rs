@@ -1682,6 +1682,7 @@ fn verify_runtime_reactive_site(
         })
         .flatten();
     let expected = match source_kind {
+        Some(fict_hir::ReactiveCallKind::Memo) => crate::ReactiveSlotKind::Memo,
         Some(fict_hir::ReactiveCallKind::Store) => crate::ReactiveSlotKind::Store,
         Some(fict_hir::ReactiveCallKind::Resource) => crate::ReactiveSlotKind::Resource,
         Some(fict_hir::ReactiveCallKind::Selector) => crate::ReactiveSlotKind::Selector,

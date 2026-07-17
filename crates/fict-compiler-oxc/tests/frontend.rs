@@ -134,14 +134,10 @@ fn recognizes_supported_effect_and_memo_sources() {
     );
 
     let kinds: Vec<_> = frontend.macro_calls.iter().map(|call| call.kind).collect();
-    assert_eq!(
-        kinds,
-        vec![
-            FictMacroKind::Effect,
-            FictMacroKind::Memo,
-            FictMacroKind::Memo
-        ]
-    );
+    assert_eq!(kinds, vec![FictMacroKind::Effect, FictMacroKind::Memo]);
+    assert!(frontend.macro_imports.iter().all(|import| {
+        frontend.bindings[import.binding.as_usize()].display_name != "runtimeMemo"
+    }));
 }
 
 #[test]

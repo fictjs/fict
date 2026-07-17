@@ -1080,7 +1080,9 @@ impl Verifier<'_> {
                         Some(instruction.origin),
                     );
                 }
-                if call.reactive_kind.is_some() && !matches!(call.host, CallHost::Binding(_)) {
+                if call.reactive_kind.is_some()
+                    && !matches!(call.host, CallHost::Binding(_) | CallHost::ReactiveScope(_))
+                {
                     self.error(
                         "FICT-HIR-CALL-KIND",
                         "runtime reactive creators must retain their resolved import binding",
