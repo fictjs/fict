@@ -1,11 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fict_compiler_oxc::{FictReturnShape, FrontendSummary, ReactiveValueKind};
+use fict_diagnostics::{
+    Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
+};
 use fict_hir::{
-    ArrayElement, BindingId, CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile,
-    HirFunction, HirInstructionKind, ImportedName, ImportedReactiveKind, ModuleExport,
-    ModuleLocalExport, ModulePlan, ObjectEntry, ObjectPropertyKind, PlaceBase, Projection,
-    PropertyKey, ReactiveCallKind, TerminatorKind, ValueId,
+    ArrayElement, BinaryOperator, BindingId, CallHost, DeclarationKind, FictMacroKind, FunctionId,
+    FunctionKind, HirFile, HirFunction, HirInstructionKind, ImportedHookReturn, ImportedName,
+    ImportedReactiveKind, LiteralValue, ModuleExport, ModuleLocalExport, ModulePlan, ObjectEntry,
+    ObjectPropertyKind, PlaceBase, Projection, PropertyKey, ReactiveCallKind, TerminatorKind,
+    ValueId,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -21,6 +25,7 @@ pub(crate) struct MetadataGeneration {
     pub dependencies: Vec<String>,
     pub unresolved_requests: Vec<String>,
     pub incomplete: bool,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Default)]
@@ -28,6 +33,7 @@ struct LocalMetadataFacts {
     exports: BTreeMap<BindingId, ReactiveExportKind>,
     hooks: BTreeMap<BindingId, HookReturnInfo>,
     namespaces: BTreeMap<BindingId, ModuleReactiveMetadata>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 struct MetadataBuilder<'snapshot> {
@@ -62,6 +68,7 @@ impl<'snapshot> MetadataBuilder<'snapshot> {
             dependencies: self.dependencies.into_iter().collect(),
             unresolved_requests: self.unresolved_requests.into_iter().collect(),
             incomplete: self.incomplete,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -248,7 +255,9 @@ pub(crate) fn generate_module_metadata(
         }
     }
 
-    builder.finish()
+    let mut generation = builder.finish();
+    generation.diagnostics = local.diagnostics;
+    generation
 }
 
 fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> LocalMetadataFacts {
@@ -286,28 +295,55 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
         }
     }
 
+    let annotated_hooks: BTreeMap<_, _> = core
+        .hir
+        .functions
+        .iter()
+        .filter_map(|function| Some((function.binding?, hook_annotation(frontend, function)?)))
+        .collect();
+    let mut hooks = annotated_hooks.clone();
+    for _ in 0..=core.hir.functions.len() {
+        let mut next = annotated_hooks.clone();
+        for function in &core.hir.functions {
+            let Some(binding) = function.binding else {
+                continue;
+            };
+            if annotated_hooks.contains_key(&binding) {
+                continue;
+            }
+            let Some(analysis) = function_analysis(core, function.id) else {
+                continue;
+            };
+            let inference =
+                infer_hook_return(&core.hir, function, analysis, &facts.exports, &hooks);
+            if let Some(info) = inference.safe_info()
+                && !hook_info_is_empty(info)
+            {
+                next.insert(binding, info.clone());
+            }
+        }
+        if next == hooks {
+            break;
+        }
+        hooks = next;
+    }
+    facts.hooks = hooks;
     for function in &core.hir.functions {
         let Some(binding) = function.binding else {
             continue;
         };
-        let annotation = function
-            .origin
-            .primary_span
-            .and_then(|span| {
-                frontend
-                    .source_facts
-                    .fict_returns
-                    .iter()
-                    .find(|annotation| annotation.attached_to == span.start())
-            })
-            .and_then(|annotation| annotation.shape.as_ref())
-            .map(hook_info_from_annotation);
-        let inferred = function_analysis(core, function.id)
-            .and_then(|analysis| infer_hook_return(&core.hir, function, analysis, &facts.exports));
-        if let Some(info) = annotation.or(inferred)
-            && !hook_info_is_empty(&info)
+        if annotated_hooks.contains_key(&binding) {
+            continue;
+        }
+        let Some(analysis) = function_analysis(core, function.id) else {
+            continue;
+        };
+        if let HookReturnInference::Conflict { slots, span, .. } =
+            infer_hook_return(&core.hir, function, analysis, &facts.exports, &facts.hooks)
         {
-            facts.hooks.insert(binding, info);
+            facts.diagnostics.push(hook_conflict_diagnostic(
+                &core.hir, function, binding, &slots, span,
+            ));
         }
     }
     facts.namespaces = collect_local_namespaces(frontend, &facts.exports, &facts.hooks);
@@ -560,41 +596,179 @@ fn runtime_creator_kind(source: &str, imported: &str) -> Option<ReactiveExportKi
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HookSlotShape {
+    Plain,
+    Accessor(ReactiveExportKind),
+    Conflict,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HookBranchShape {
+    Direct(HookSlotShape),
+    Object(BTreeMap<String, HookSlotShape>),
+    Array(BTreeMap<String, HookSlotShape>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HookReturnInference {
+    None,
+    Consistent(HookReturnInfo),
+    Conflict {
+        safe: HookReturnInfo,
+        slots: Vec<String>,
+        span: Option<SourceSpan>,
+    },
+}
+
+impl HookReturnInference {
+    fn safe_info(&self) -> Option<&HookReturnInfo> {
+        let info = match self {
+            Self::None => return None,
+            Self::Consistent(info) | Self::Conflict { safe: info, .. } => info,
+        };
+        (!hook_info_is_empty(info)).then_some(info)
+    }
+}
+
 fn infer_hook_return(
     file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     known_bindings: &BTreeMap<BindingId, ReactiveExportKind>,
-) -> Option<HookReturnInfo> {
+    known_hooks: &BTreeMap<BindingId, HookReturnInfo>,
+) -> HookReturnInference {
     if function.kind != FunctionKind::Hook {
-        return None;
+        return HookReturnInference::None;
     }
-    let mut returns = function.blocks.iter().filter_map(|block| {
-        let TerminatorKind::Return { value: Some(value) } = block.terminator.kind else {
-            return None;
+    let mut branches = Vec::new();
+    let mut first_return_span = None;
+    for block in &function.blocks {
+        if !analysis
+            .ssa
+            .cfg
+            .reachable
+            .get(block.id.as_usize())
+            .copied()
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let TerminatorKind::Return { value } = block.terminator.kind else {
+            continue;
         };
-        Some(value)
-    });
-    let first = hook_info_for_value(file, function, analysis, known_bindings, returns.next()?)?;
-    returns
-        .all(|value| {
-            hook_info_for_value(file, function, analysis, known_bindings, value).as_ref()
-                == Some(&first)
-        })
-        .then_some(first)
+        first_return_span = first_return_span.or(block.terminator.origin.primary_span);
+        match value {
+            Some(value) => collect_hook_branch_shapes(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                value,
+                &mut BTreeSet::new(),
+                &mut branches,
+            ),
+            None => branches.push(HookBranchShape::Direct(HookSlotShape::Plain)),
+        }
+    }
+    summarize_hook_branches(&branches, first_return_span)
 }
 
-fn hook_info_for_value(
+#[allow(clippy::too_many_arguments)]
+fn collect_hook_branch_shapes(
     file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     known_bindings: &BTreeMap<BindingId, ReactiveExportKind>,
+    known_hooks: &BTreeMap<BindingId, HookReturnInfo>,
     value: ValueId,
-) -> Option<HookReturnInfo> {
-    let instruction = defining_instruction(function, value)?;
+    visiting: &mut BTreeSet<ValueId>,
+    branches: &mut Vec<HookBranchShape>,
+) {
+    if !visiting.insert(value) {
+        branches.push(HookBranchShape::Direct(HookSlotShape::Plain));
+        return;
+    }
+    if let Some(initializer) = stable_read_initializer(function, value) {
+        collect_hook_branch_shapes(
+            file,
+            function,
+            analysis,
+            known_bindings,
+            known_hooks,
+            initializer,
+            visiting,
+            branches,
+        );
+        visiting.remove(&value);
+        return;
+    }
+    let Some(instruction) = defining_instruction(function, value) else {
+        branches.push(HookBranchShape::Direct(HookSlotShape::Plain));
+        visiting.remove(&value);
+        return;
+    };
     match &instruction.kind {
+        HirInstructionKind::Conditional {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_hook_branch_shapes(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                *consequent,
+                visiting,
+                branches,
+            );
+            collect_hook_branch_shapes(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                *alternate,
+                visiting,
+                branches,
+            );
+        }
+        HirInstructionKind::Sequence { values } => {
+            if let Some(value) = values.last() {
+                collect_hook_branch_shapes(
+                    file,
+                    function,
+                    analysis,
+                    known_bindings,
+                    known_hooks,
+                    *value,
+                    visiting,
+                    branches,
+                );
+            } else {
+                branches.push(HookBranchShape::Direct(HookSlotShape::Plain));
+            }
+        }
+        HirInstructionKind::Call(call) => {
+            if let Some(info) = hook_info_for_call(file, function, call, known_hooks) {
+                branches.push(hook_branch_from_info(&info));
+            } else {
+                branches.push(HookBranchShape::Direct(hook_slot_for_value(
+                    file,
+                    function,
+                    analysis,
+                    known_bindings,
+                    known_hooks,
+                    value,
+                    &mut BTreeSet::new(),
+                )));
+            }
+        }
         HirInstructionKind::Object { entries } => {
-            let mut object_props = BTreeMap::new();
+            let mut properties = BTreeMap::new();
             for entry in entries {
                 let ObjectEntry::Property {
                     key,
@@ -611,43 +785,180 @@ fn hook_info_for_value(
                     PropertyKey::Index(index) => index.to_string(),
                     PropertyKey::Computed(_) => continue,
                 };
-                if let Some(kind) = classify_value(
-                    file,
-                    function,
-                    analysis,
-                    known_bindings,
-                    *value,
-                    &mut BTreeSet::new(),
-                ) {
-                    object_props.insert(key, kind);
-                }
+                properties.insert(
+                    key,
+                    hook_slot_for_value(
+                        file,
+                        function,
+                        analysis,
+                        known_bindings,
+                        known_hooks,
+                        *value,
+                        &mut BTreeSet::new(),
+                    ),
+                );
             }
-            (!object_props.is_empty()).then_some(HookReturnInfo {
-                object_props,
-                ..HookReturnInfo::default()
-            })
+            branches.push(HookBranchShape::Object(properties));
         }
         HirInstructionKind::Array { elements } => {
-            let mut array_props = BTreeMap::new();
+            let mut properties = BTreeMap::new();
             for (index, element) in elements.iter().enumerate() {
                 let ArrayElement::Value(value) = element else {
                     continue;
                 };
-                if let Some(kind) = classify_value(
+                properties.insert(
+                    index.to_string(),
+                    hook_slot_for_value(
+                        file,
+                        function,
+                        analysis,
+                        known_bindings,
+                        known_hooks,
+                        *value,
+                        &mut BTreeSet::new(),
+                    ),
+                );
+            }
+            branches.push(HookBranchShape::Array(properties));
+        }
+        _ => branches.push(HookBranchShape::Direct(hook_slot_for_value(
+            file,
+            function,
+            analysis,
+            known_bindings,
+            known_hooks,
+            value,
+            &mut BTreeSet::new(),
+        ))),
+    }
+    visiting.remove(&value);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn hook_slot_for_value(
+    file: &HirFile,
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    known_bindings: &BTreeMap<BindingId, ReactiveExportKind>,
+    known_hooks: &BTreeMap<BindingId, HookReturnInfo>,
+    value: ValueId,
+    visiting: &mut BTreeSet<ValueId>,
+) -> HookSlotShape {
+    if !visiting.insert(value) {
+        return HookSlotShape::Plain;
+    }
+    if let Some(initializer) = stable_read_initializer(function, value) {
+        let shape = hook_slot_for_value(
+            file,
+            function,
+            analysis,
+            known_bindings,
+            known_hooks,
+            initializer,
+            visiting,
+        );
+        visiting.remove(&value);
+        return shape;
+    }
+    let shape = match defining_instruction(function, value).map(|instruction| &instruction.kind) {
+        Some(HirInstructionKind::Conditional {
+            consequent,
+            alternate,
+            ..
+        }) => merge_hook_slots(
+            hook_slot_for_value(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                *consequent,
+                visiting,
+            ),
+            hook_slot_for_value(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                *alternate,
+                visiting,
+            ),
+        ),
+        Some(HirInstructionKind::Sequence { values }) => {
+            values.last().map_or(HookSlotShape::Plain, |value| {
+                hook_slot_for_value(
                     file,
                     function,
                     analysis,
                     known_bindings,
+                    known_hooks,
                     *value,
-                    &mut BTreeSet::new(),
-                ) {
-                    array_props.insert(index.to_string(), kind);
-                }
-            }
-            (!array_props.is_empty()).then_some(HookReturnInfo {
-                array_props,
-                ..HookReturnInfo::default()
+                    visiting,
+                )
             })
+        }
+        Some(HirInstructionKind::Binary {
+            operator:
+                operator @ (BinaryOperator::LogicalAnd
+                | BinaryOperator::LogicalOr
+                | BinaryOperator::NullishCoalescing),
+            left,
+            right,
+        }) => {
+            let left_slot = hook_slot_for_value(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                *left,
+                visiting,
+            );
+            let right_slot = hook_slot_for_value(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                known_hooks,
+                *right,
+                visiting,
+            );
+            match operator {
+                BinaryOperator::LogicalAnd => match known_truthiness(function, *left, left_slot) {
+                    Some(true) => right_slot,
+                    Some(false) => left_slot,
+                    None => merge_hook_slots(left_slot, right_slot),
+                },
+                BinaryOperator::LogicalOr => match known_truthiness(function, *left, left_slot) {
+                    Some(true) => left_slot,
+                    Some(false) => right_slot,
+                    None => merge_hook_slots(left_slot, right_slot),
+                },
+                BinaryOperator::NullishCoalescing => {
+                    match known_nullish(function, *left, left_slot) {
+                        Some(true) => right_slot,
+                        Some(false) => left_slot,
+                        None => merge_hook_slots(left_slot, right_slot),
+                    }
+                }
+                _ => unreachable!("matched logical operator"),
+            }
+        }
+        Some(HirInstructionKind::Call(call)) => {
+            hook_info_for_call(file, function, call, known_hooks)
+                .and_then(|info| info.direct_accessor)
+                .or_else(|| {
+                    classify_value(
+                        file,
+                        function,
+                        analysis,
+                        known_bindings,
+                        value,
+                        &mut BTreeSet::new(),
+                    )
+                })
+                .map_or(HookSlotShape::Plain, HookSlotShape::Accessor)
         }
         _ => classify_value(
             file,
@@ -657,10 +968,348 @@ fn hook_info_for_value(
             value,
             &mut BTreeSet::new(),
         )
-        .map(|kind| HookReturnInfo {
-            direct_accessor: Some(kind),
-            ..HookReturnInfo::default()
-        }),
+        .map_or(HookSlotShape::Plain, HookSlotShape::Accessor),
+    };
+    visiting.remove(&value);
+    shape
+}
+
+fn merge_hook_slots(left: HookSlotShape, right: HookSlotShape) -> HookSlotShape {
+    if left == right {
+        left
+    } else {
+        HookSlotShape::Conflict
+    }
+}
+
+fn known_truthiness(function: &HirFunction, value: ValueId, slot: HookSlotShape) -> Option<bool> {
+    if matches!(slot, HookSlotShape::Accessor(_)) {
+        return Some(true);
+    }
+    static_truthiness(function, value, &mut BTreeSet::new())
+}
+
+fn static_truthiness(
+    function: &HirFunction,
+    value: ValueId,
+    visiting: &mut BTreeSet<ValueId>,
+) -> Option<bool> {
+    if !visiting.insert(value) {
+        return None;
+    }
+    if let Some(initializer) = stable_read_initializer(function, value) {
+        let result = static_truthiness(function, initializer, visiting);
+        visiting.remove(&value);
+        return result;
+    }
+    let result = match &defining_instruction(function, value)?.kind {
+        HirInstructionKind::Literal(literal) => match literal {
+            LiteralValue::Null | LiteralValue::Undefined => Some(false),
+            LiteralValue::Boolean(value) => Some(*value),
+            LiteralValue::Number(value) => {
+                let value = value.to_f64();
+                Some(value != 0.0 && !value.is_nan())
+            }
+            LiteralValue::BigInt(value) => {
+                Some(!value.trim_start_matches(['-', '+', '0']).is_empty())
+            }
+            LiteralValue::String(value) => Some(!value.is_empty()),
+            LiteralValue::RegExp { .. } => Some(true),
+        },
+        HirInstructionKind::Array { .. }
+        | HirInstructionKind::Object { .. }
+        | HirInstructionKind::Function { .. } => Some(true),
+        HirInstructionKind::Sequence { values } => values
+            .last()
+            .and_then(|value| static_truthiness(function, *value, visiting)),
+        HirInstructionKind::Conditional {
+            consequent,
+            alternate,
+            ..
+        } => {
+            let consequent = static_truthiness(function, *consequent, visiting)?;
+            let alternate = static_truthiness(function, *alternate, visiting)?;
+            (consequent == alternate).then_some(consequent)
+        }
+        _ => None,
+    };
+    visiting.remove(&value);
+    result
+}
+
+fn known_nullish(function: &HirFunction, value: ValueId, slot: HookSlotShape) -> Option<bool> {
+    if matches!(slot, HookSlotShape::Accessor(_)) {
+        return Some(false);
+    }
+    static_nullish(function, value, &mut BTreeSet::new())
+}
+
+fn static_nullish(
+    function: &HirFunction,
+    value: ValueId,
+    visiting: &mut BTreeSet<ValueId>,
+) -> Option<bool> {
+    if !visiting.insert(value) {
+        return None;
+    }
+    if let Some(initializer) = stable_read_initializer(function, value) {
+        let result = static_nullish(function, initializer, visiting);
+        visiting.remove(&value);
+        return result;
+    }
+    let result = match &defining_instruction(function, value)?.kind {
+        HirInstructionKind::Literal(LiteralValue::Null | LiteralValue::Undefined) => Some(true),
+        HirInstructionKind::Literal(_)
+        | HirInstructionKind::Array { .. }
+        | HirInstructionKind::Object { .. }
+        | HirInstructionKind::Function { .. } => Some(false),
+        HirInstructionKind::Sequence { values } => values
+            .last()
+            .and_then(|value| static_nullish(function, *value, visiting)),
+        HirInstructionKind::Conditional {
+            consequent,
+            alternate,
+            ..
+        } => {
+            let consequent = static_nullish(function, *consequent, visiting)?;
+            let alternate = static_nullish(function, *alternate, visiting)?;
+            (consequent == alternate).then_some(consequent)
+        }
+        _ => None,
+    };
+    visiting.remove(&value);
+    result
+}
+
+fn stable_read_initializer(function: &HirFunction, value: ValueId) -> Option<ValueId> {
+    let HirInstructionKind::Read { place } = &defining_instruction(function, value)?.kind else {
+        return None;
+    };
+    if !place.projections.is_empty() {
+        return None;
+    }
+    if let PlaceBase::Value(value) = place.base {
+        return Some(value);
+    }
+    let local = match place.base {
+        PlaceBase::Local(local) => local,
+        PlaceBase::Ssa(name) => name.local,
+        PlaceBase::Global(_) | PlaceBase::Value(_) => return None,
+    };
+    if function.locals.get(local.as_usize())?.declaration_kind != DeclarationKind::Const {
+        return None;
+    }
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            HirInstructionKind::Declare {
+                local: declared,
+                initializer,
+                ..
+            } if declared == local => initializer,
+            _ => None,
+        })
+}
+
+fn hook_branch_from_info(info: &HookReturnInfo) -> HookBranchShape {
+    if let Some(kind) = info.direct_accessor {
+        return HookBranchShape::Direct(HookSlotShape::Accessor(kind));
+    }
+    if !info.object_props.is_empty() {
+        return HookBranchShape::Object(
+            info.object_props
+                .iter()
+                .map(|(key, kind)| (key.clone(), HookSlotShape::Accessor(*kind)))
+                .collect(),
+        );
+    }
+    if !info.array_props.is_empty() {
+        return HookBranchShape::Array(
+            info.array_props
+                .iter()
+                .map(|(key, kind)| (key.clone(), HookSlotShape::Accessor(*kind)))
+                .collect(),
+        );
+    }
+    HookBranchShape::Direct(HookSlotShape::Plain)
+}
+
+fn summarize_hook_branches(
+    branches: &[HookBranchShape],
+    span: Option<SourceSpan>,
+) -> HookReturnInference {
+    if branches.is_empty() {
+        return HookReturnInference::None;
+    }
+    let mut info = HookReturnInfo::default();
+    let mut conflicts = Vec::new();
+
+    let direct_relevant = branches.iter().any(|branch| {
+        matches!(
+            branch,
+            HookBranchShape::Direct(HookSlotShape::Accessor(_) | HookSlotShape::Conflict)
+        )
+    });
+    if direct_relevant {
+        match consistent_hook_slot(branches.iter().map(|branch| match branch {
+            HookBranchShape::Direct(slot) => *slot,
+            HookBranchShape::Object(_) | HookBranchShape::Array(_) => HookSlotShape::Plain,
+        })) {
+            Ok(Some(kind)) => info.direct_accessor = Some(kind),
+            Ok(None) => {}
+            Err(()) => conflicts.push("the return value".to_owned()),
+        }
+    }
+
+    let object_keys: BTreeSet<_> = branches
+        .iter()
+        .filter_map(|branch| match branch {
+            HookBranchShape::Object(properties) => Some(properties),
+            HookBranchShape::Direct(_) | HookBranchShape::Array(_) => None,
+        })
+        .flat_map(|properties| properties.iter())
+        .filter_map(|(key, slot)| {
+            matches!(slot, HookSlotShape::Accessor(_) | HookSlotShape::Conflict)
+                .then_some(key.clone())
+        })
+        .collect();
+    for key in object_keys {
+        match consistent_hook_slot(branches.iter().map(|branch| {
+            match branch {
+                HookBranchShape::Object(properties) => properties
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(HookSlotShape::Plain),
+                HookBranchShape::Direct(_) | HookBranchShape::Array(_) => HookSlotShape::Plain,
+            }
+        })) {
+            Ok(Some(kind)) => {
+                info.object_props.insert(key, kind);
+            }
+            Ok(None) => {}
+            Err(()) => conflicts.push(format!("{key:?}")),
+        }
+    }
+
+    let array_keys: BTreeSet<_> = branches
+        .iter()
+        .filter_map(|branch| match branch {
+            HookBranchShape::Array(properties) => Some(properties),
+            HookBranchShape::Direct(_) | HookBranchShape::Object(_) => None,
+        })
+        .flat_map(|properties| properties.iter())
+        .filter_map(|(key, slot)| {
+            matches!(slot, HookSlotShape::Accessor(_) | HookSlotShape::Conflict)
+                .then_some(key.clone())
+        })
+        .collect();
+    for key in array_keys {
+        match consistent_hook_slot(branches.iter().map(|branch| {
+            match branch {
+                HookBranchShape::Array(properties) => properties
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(HookSlotShape::Plain),
+                HookBranchShape::Direct(_) | HookBranchShape::Object(_) => HookSlotShape::Plain,
+            }
+        })) {
+            Ok(Some(kind)) => {
+                info.array_props.insert(key, kind);
+            }
+            Ok(None) => {}
+            Err(()) => conflicts.push(format!("[{key}]")),
+        }
+    }
+
+    if conflicts.is_empty() {
+        if hook_info_is_empty(&info) {
+            HookReturnInference::None
+        } else {
+            HookReturnInference::Consistent(info)
+        }
+    } else {
+        HookReturnInference::Conflict {
+            safe: info,
+            slots: conflicts,
+            span,
+        }
+    }
+}
+
+fn consistent_hook_slot(
+    slots: impl IntoIterator<Item = HookSlotShape>,
+) -> Result<Option<ReactiveExportKind>, ()> {
+    let mut accessor = None;
+    let mut saw_plain = false;
+    for slot in slots {
+        match slot {
+            HookSlotShape::Plain => saw_plain = true,
+            HookSlotShape::Accessor(kind) => {
+                if accessor.is_some_and(|current| current != kind) {
+                    return Err(());
+                }
+                accessor = Some(kind);
+            }
+            HookSlotShape::Conflict => return Err(()),
+        }
+    }
+    if accessor.is_some() && saw_plain {
+        Err(())
+    } else {
+        Ok(accessor)
+    }
+}
+
+fn hook_info_for_call(
+    file: &HirFile,
+    _function: &HirFunction,
+    call: &fict_hir::CallInstruction,
+    known_hooks: &BTreeMap<BindingId, HookReturnInfo>,
+) -> Option<HookReturnInfo> {
+    let binding = match call.host {
+        CallHost::Function(function) => file.functions.get(function.as_usize())?.binding?,
+        CallHost::Binding(binding) => binding,
+        CallHost::ReactiveScope(host) => host.callee,
+        CallHost::Unknown => return None,
+    };
+    if let Some(info) = known_hooks.get(&binding) {
+        return Some(info.clone());
+    }
+    let import = file.bindings.get(binding.as_usize())?.import.as_ref()?;
+    let hook = match call.callee_reference.as_ref() {
+        Some(reference) if !reference.projections.is_empty() => {
+            import.resolve_hook_member(&reference.projections)
+        }
+        Some(_) | None => import.hook_return.as_ref(),
+    }?;
+    Some(hook_info_from_imported(hook))
+}
+
+fn hook_info_from_imported(hook: &ImportedHookReturn) -> HookReturnInfo {
+    HookReturnInfo {
+        direct_accessor: hook.direct_accessor.map(imported_reactive_export_kind),
+        object_props: hook
+            .object_properties
+            .iter()
+            .map(|property| {
+                (
+                    property.key.clone(),
+                    imported_reactive_export_kind(property.kind),
+                )
+            })
+            .collect(),
+        array_props: hook
+            .array_properties
+            .iter()
+            .map(|property| {
+                (
+                    property.key.clone(),
+                    imported_reactive_export_kind(property.kind),
+                )
+            })
+            .collect(),
     }
 }
 
@@ -766,6 +1415,55 @@ fn function_analysis(core: &CorePassOutput, function: FunctionId) -> Option<&Fun
     core.functions
         .iter()
         .find(|analysis| analysis.function == function)
+}
+
+fn hook_annotation(frontend: &FrontendSummary, function: &HirFunction) -> Option<HookReturnInfo> {
+    function
+        .origin
+        .primary_span
+        .and_then(|span| {
+            frontend
+                .source_facts
+                .fict_returns
+                .iter()
+                .find(|annotation| annotation.attached_to == span.start())
+        })
+        .and_then(|annotation| annotation.shape.as_ref())
+        .map(hook_info_from_annotation)
+}
+
+fn hook_conflict_diagnostic(
+    file: &HirFile,
+    function: &HirFunction,
+    binding: BindingId,
+    slots: &[String],
+    span: Option<SourceSpan>,
+) -> Diagnostic {
+    let hook_name = file
+        .bindings
+        .get(binding.as_usize())
+        .map_or("<anonymous hook>", |binding| binding.display_name.as_str());
+    let mut diagnostic = Diagnostic::new(
+        DiagnosticCode::new("FICT-H002").expect("hook conflict diagnostic literal"),
+        DiagnosticSeverity::Warning,
+        format!(
+            "Hook {hook_name:?} returns {} with an inconsistent shape across branches; each slot must consistently be a plain value or the same reactive accessor kind",
+            slots.join(", ")
+        ),
+    )
+    .with_help(
+        "return a plain value from every branch or return the same signal, memo, or store shape from every branch",
+    )
+    .with_guarantee_class(GuaranteeClass::Fallback);
+    if let Some(primary) = span.or(function.origin.primary_span) {
+        diagnostic = diagnostic.with_primary_span(primary);
+    }
+    if let Some(declaration) = function.origin.primary_span
+        && Some(declaration) != span
+    {
+        diagnostic = diagnostic.with_secondary_label(declaration, "hook declared here");
+    }
+    diagnostic
 }
 
 fn hook_info_from_annotation(shape: &FictReturnShape) -> HookReturnInfo {

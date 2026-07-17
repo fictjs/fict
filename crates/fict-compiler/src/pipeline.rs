@@ -199,6 +199,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result.unresolved_metadata_requests.sort();
     result.unresolved_metadata_requests.dedup();
     result.metadata_incomplete |= metadata.incomplete;
+    result.diagnostics.extend(metadata.diagnostics);
     result
         .diagnostics
         .extend(reactive_control_flow_diagnostics(&core));
@@ -937,11 +938,6 @@ mod tests {
                     const count = $state(0);
                     return count + 1;
                 }
-                export function useMixed(flag) {
-                    const count = $state(0);
-                    if (flag) return count;
-                    return count + 1;
-                }
             "#,
             "hook-return-accessors.ts",
         ));
@@ -972,7 +968,6 @@ mod tests {
             })
         );
         assert!(!result.module_metadata.hooks.contains_key("useDerived"));
-        assert!(!result.module_metadata.hooks.contains_key("useMixed"));
 
         assert!(result.code.contains("return count;"), "{}", result.code);
         assert!(result.code.contains("direct: count"), "{}", result.code);

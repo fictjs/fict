@@ -15,6 +15,7 @@ const STRICT_GUARANTEE_CODES: &[&str] = &[
     "FICT-M003",
     "FICT-S002",
     "FICT-H",
+    "FICT-H002",
     "FICT-R002",
     "FICT-R003",
     "FICT-R005",
