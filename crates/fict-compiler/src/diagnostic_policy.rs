@@ -148,15 +148,15 @@ pub(crate) fn diagnostic_code_matches(code: &str, pattern: &str) -> bool {
         || code
             .strip_prefix(pattern)
             .and_then(|suffix| suffix.chars().next())
-            .is_some_and(|character| character.is_ascii_digit())
+            .is_some_and(|character| character.is_ascii_digit() || character == '-')
 }
 
 #[cfg(test)]
 mod tests {
     use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
 
-    use super::apply_diagnostic_policy;
-    use crate::CompilerOptions;
+    use super::{apply_diagnostic_policy, diagnostic_code_matches};
+    use crate::{CompilerOptions, WarningLevel, WarningsAsErrors};
 
     fn warning(code: &str) -> Diagnostic {
         Diagnostic::new(
@@ -174,5 +174,40 @@ mod tests {
 
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
         assert_eq!(diagnostics[1].severity, DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn matches_numeric_and_hyphenated_families_at_code_boundaries() {
+        assert!(diagnostic_code_matches("FICT-P001", "FICT-P"));
+        assert!(diagnostic_code_matches(
+            "FICT-PLACEMENT-HOOK-CONTROL",
+            "FICT-PLACEMENT"
+        ));
+        assert!(diagnostic_code_matches(
+            "FICT-PLACEMENT-HOOK-CONTROL",
+            "FICT-PLACEMENT-HOOK"
+        ));
+        assert!(!diagnostic_code_matches("FICT-HIR-MACRO", "FICT-H"));
+        assert!(!diagnostic_code_matches("FICT-METADATA", "FICT-M"));
+    }
+
+    #[test]
+    fn hyphenated_family_patterns_apply_to_all_warning_policies() {
+        let mut options = CompilerOptions {
+            strict_guarantee: false,
+            warnings_as_errors: WarningsAsErrors::Codes(vec!["FICT-PLACEMENT".into()]),
+            ..CompilerOptions::default()
+        };
+        let mut diagnostics = vec![warning("FICT-PLACEMENT-HOOK-CONTROL")];
+        apply_diagnostic_policy(&options, &mut diagnostics);
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+
+        options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+        options
+            .warning_levels
+            .insert("FICT-PLACEMENT".into(), WarningLevel::Off);
+        let mut diagnostics = vec![warning("FICT-PLACEMENT-HOOK-CONTROL")];
+        apply_diagnostic_policy(&options, &mut diagnostics);
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Info);
     }
 }
