@@ -114,14 +114,19 @@ export interface NativeTypeScriptOptions {
 
 /** Serializable options accepted by the native core; callbacks and host I/O are excluded. */
 export interface NativeCompilerOptions {
+  /** Reserved compatibility field. Only `false` is currently implemented. */
   dev?: boolean
   sourcemap?: boolean
   explain?: boolean
+  /** Reserved compatibility field. Only `true` is currently implemented. */
   lazyConditional?: boolean
+  /** Reserved compatibility field. Only `true` is currently implemented. */
   getterCache?: boolean
   fineGrainedDom?: boolean
   optimize?: boolean
+  /** Reserved compatibility field. Only `'safe'` is currently implemented. */
   optimizeLevel?: NativeOptimizeLevel
+  /** Reserved compatibility field. Only `true` is currently implemented. */
   inlineDerivedMemos?: boolean
   strictReactivity?: boolean
   strictGuarantee?: boolean

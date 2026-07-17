@@ -47,10 +47,11 @@ Integration defaults:
   diagnostics.
 
 Native lowering options such as `strictReactivity`, `warningLevels`,
-`warningsAsErrors`, `lazyConditional`, `getterCache`, `fineGrainedDom`,
-`optimize`, `optimizeLevel`, `inlineDerivedMemos`, and `reactiveScopes` are
+`warningsAsErrors`, `fineGrainedDom`, `optimize`, and `reactiveScopes` are
 accepted directly. `onWarn` and `explain` adapt structured native diagnostics
-for the Vite host.
+for the Vite host. The compatibility fields `dev`, `lazyConditional`,
+`getterCache`, `optimizeLevel`, and `inlineDerivedMemos` accept only their
+documented defaults; non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
 
 `publicIdentityNamespace` provides a stable namespace for Preview resumable
 output when no named package boundary owns the Vite root. Normal Core builds do

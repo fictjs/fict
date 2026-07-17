@@ -554,7 +554,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let transformFilter = createTransformFilter()
 
   let config: ResolvedConfig | undefined
-  let isDev = false
   let cache: TransformCache | null = null
   let addTypeScriptConfigWatchFiles: ((files: string[]) => void) | null = null
   const transformStates = new Set<MetadataTransformState>()
@@ -1322,7 +1321,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
     const fictOptions: FictPluginCompilerOptions = {
       ...compilerOptions,
-      dev: compilerOptions.dev ?? isDev,
+      dev: compilerOptions.dev ?? false,
       sourcemap: compilerOptions.sourcemap ?? true,
       filename: normalizedFilename,
       // Build identities resolve through the manifest. Dev identities are directly serviceable
@@ -1853,7 +1852,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           path.join(config.root, '__fict_project_entry__.js'),
           packageBoundaryCache,
         )?.root ?? normalizeFileName(config.root)
-      isDev = config.command === 'serve' || config.mode === 'development'
       addTypeScriptConfigWatchFiles = null
       // Rebuild cache with resolved config so cacheDir is available
       resetCache()

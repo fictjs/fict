@@ -18,7 +18,11 @@ Current `@fictjs/compiler` defaults:
 - `strictGuarantee: true`
 - `NODE_ENV=production` force-enables `strictGuarantee` even when options request opt-out
 - `strictReactivity: false`
-- `dev: NODE_ENV !== 'production' && NODE_ENV !== 'test'`
+- `dev: false`
+
+`dev`, `lazyConditional`, `getterCache`, `optimizeLevel`, and
+`inlineDerivedMemos` are compatibility fields that currently accept only the
+defaults above. Non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
 
 Official bundler integrations keep module metadata in their graph and consume
 versioned metadata published by third-party packages. The 0.31 compiler does not
@@ -30,7 +34,6 @@ write source-adjacent or `.fict-cache/metadata` sidecars.
 
 ```ts
 {
-  dev: true,
   sourcemap: true,
   strictGuarantee: true,
   strictReactivity: false,
@@ -41,7 +44,6 @@ write source-adjacent or `.fict-cache/metadata` sidecars.
 
 ```ts
 {
-  dev: true,
   sourcemap: true,
   strictGuarantee: true,
   strictReactivity: true,

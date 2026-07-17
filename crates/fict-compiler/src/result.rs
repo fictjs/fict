@@ -1,10 +1,14 @@
 use std::collections::BTreeMap;
 
-use fict_diagnostics::{Diagnostic, DiagnosticSeverity, SourceSpan};
+use fict_diagnostics::{
+    Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
+};
 use fict_metadata::ModuleReactiveMetadata;
 use serde::{Deserialize, Serialize};
 
-use crate::{COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, RawSourceMap};
+use crate::{COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, CompileRequestError, RawSourceMap};
+
+const REQUEST_HELP: &str = "fix the request shape before invoking the native compiler";
 
 /// Kind of additional module emitted by the compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +140,52 @@ pub struct CompileResult {
     pub stats: Option<CompilerStats>,
     /// Immutable compiler/OXC/schema identity used by caches and rollback checks.
     pub compiler_build_id: String,
+}
+
+pub(crate) fn request_error_result(error: CompileRequestError) -> CompileResult {
+    let code = error.diagnostic_code();
+    let help = if code == "FICT-OPTION-UNIMPLEMENTED" {
+        "use the documented default until the Rust compiler implements this option"
+    } else {
+        REQUEST_HELP
+    };
+    failed_result(
+        code,
+        error.to_string(),
+        GuaranteeClass::Unsupported,
+        Some(help),
+    )
+}
+
+/// Construct a structured result for malformed public input.
+#[must_use]
+pub fn invalid_request_result(message: impl Into<String>) -> CompileResult {
+    failed_result(
+        "FICT-REQUEST",
+        message,
+        GuaranteeClass::Unsupported,
+        Some(REQUEST_HELP),
+    )
+}
+
+pub(crate) fn failed_result(
+    code: &'static str,
+    message: impl Into<String>,
+    guarantee_class: GuaranteeClass,
+    help: Option<&'static str>,
+) -> CompileResult {
+    let mut result = CompileResult::empty();
+    let mut finding = Diagnostic::new(
+        DiagnosticCode::new(code).expect("compiler diagnostic literals must be valid"),
+        DiagnosticSeverity::Error,
+        message,
+    )
+    .with_guarantee_class(guarantee_class);
+    if let Some(help) = help {
+        finding = finding.with_help(help);
+    }
+    result.diagnostics.push(finding);
+    result
 }
 
 impl CompileResult {

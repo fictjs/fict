@@ -9,8 +9,6 @@ native Webpack loader. Direct hosts place the equivalent values in
 ```ts
 fict({
   strictGuarantee: true,
-  lazyConditional: true,
-  optimizeLevel: 'safe',
 })
 ```
 
@@ -38,7 +36,6 @@ FICT_STRICT_GUARANTEE=1
 ```ts
 fict({
   strictGuarantee: false,
-  dev: true,
   onWarn(warning) {
     console.warn(warning)
   },
@@ -47,6 +44,11 @@ fict({
 
 Use this only to inventory diagnostics in a migration branch. Production builds
 restore fail-closed behavior.
+
+`dev`, `lazyConditional`, `getterCache`, `optimizeLevel`, and
+`inlineDerivedMemos` remain in the request schema for compatibility but accept
+only their defaults. Non-default values fail with
+`FICT-OPTION-UNIMPLEMENTED`.
 
 ## Direct host
 

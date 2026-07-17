@@ -23,7 +23,7 @@ export function compileDocumentSource(
     moduleId: document.uri?.toString() || document.fileName,
     language: sourceLanguageForDocument(document),
     options: {
-      dev: true,
+      dev: false,
       sourcemap: false,
       strictGuarantee: true,
     },

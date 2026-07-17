@@ -392,3 +392,23 @@ test('native binding reports the Rust-only compiler protocol', () => {
   assert.equal(info.metadataSchemaVersion, 1)
   assert.equal(info.oxcVersion, '0.139.0')
 })
+
+test('native binding rejects unimplemented non-default compiler options', () => {
+  for (const [name, value] of [
+    ['dev', true],
+    ['lazyConditional', false],
+    ['getterCache', false],
+    ['optimizeLevel', 'full'],
+    ['inlineDerivedMemos', false],
+  ]) {
+    const result = binding.transformSync({
+      code: 'export const value = 1',
+      filename: `/fixtures/unimplemented-${name}.ts`,
+      options: { [name]: value },
+    })
+    assert.equal(result.code, '', name)
+    assert.equal(result.diagnostics.length, 1, name)
+    assert.equal(result.diagnostics[0].code, 'FICT-OPTION-UNIMPLEMENTED', name)
+    assert.match(result.diagnostics[0].message, new RegExp(name), name)
+  }
+})

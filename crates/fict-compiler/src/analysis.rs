@@ -12,8 +12,8 @@ use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::pipeline::{oxc_language, oxc_module_kind};
 use crate::{
-    AnalyzeRequest, AnalyzeVerbosity, CompilerOptions, CorePassOptions, FunctionPassAnalysis,
-    NormalizedAnalyzeRequest, run_core_passes,
+    AnalyzeRequest, AnalyzeVerbosity, CompileRequestError, CompilerOptions, CorePassOptions,
+    FunctionPassAnalysis, NormalizedAnalyzeRequest, run_core_passes,
 };
 
 /// Severity shape preserved by the existing TypeScript tooling API.
@@ -166,14 +166,21 @@ pub fn analyze(request: AnalyzeRequest) -> AnalyzeResult {
     let fallback_name = request.filename.clone();
     match request.normalize() {
         Ok(request) => analyze_normalized(request),
-        Err(error) => invalid_analyze_request_result_for(fallback_name, error.to_string()),
+        Err(error) => analyze_request_error_result(fallback_name, error),
     }
 }
 
 /// Construct a compatible result for malformed public input whose filename could not be read.
 #[must_use]
 pub fn invalid_analyze_request_result(message: impl Into<String>) -> AnalyzeResult {
-    invalid_analyze_request_result_for("<unknown>", message)
+    invalid_analyze_request_result_for("<unknown>", "FICT-REQUEST", message)
+}
+
+fn analyze_request_error_result(
+    file_name: impl Into<String>,
+    error: CompileRequestError,
+) -> AnalyzeResult {
+    invalid_analyze_request_result_for(file_name, error.diagnostic_code(), error.to_string())
 }
 
 /// Construct the result returned when the N-API panic boundary contains a native panic.
@@ -194,11 +201,12 @@ pub fn internal_analyze_error_result() -> AnalyzeResult {
 
 fn invalid_analyze_request_result_for(
     file_name: impl Into<String>,
+    code: &'static str,
     message: impl Into<String>,
 ) -> AnalyzeResult {
     let mut result = AnalyzeResult::empty(file_name);
     result.diagnostics.push(AnalyzeDiagnostic {
-        code: "FICT-REQUEST".to_owned(),
+        code: code.to_owned(),
         message: message.into(),
         severity: AnalyzeDiagnosticSeverity::Error,
         line: 1,
@@ -862,5 +870,15 @@ mod tests {
         let hidden = analyze(hidden);
         assert!(hidden.components.is_empty());
         assert!(hidden.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn reports_unimplemented_options_through_the_analysis_protocol() {
+        let mut unimplemented = request("export const value = 1", "options.ts");
+        unimplemented.options.compiler_options.dev = true;
+        let result = analyze(unimplemented);
+        assert!(result.components.is_empty());
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].code, "FICT-OPTION-UNIMPLEMENTED");
     }
 }

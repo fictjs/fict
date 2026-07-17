@@ -1,6 +1,7 @@
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::metadata_analysis::generate_module_metadata;
+use crate::result::{failed_result, request_error_result};
 use crate::source_map::compose_source_maps;
 use crate::{
     CompileRequest, CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
@@ -24,19 +25,10 @@ use std::mem;
 pub fn compile(request: CompileRequest) -> CompileResult {
     match request.normalize() {
         Ok(request) => compile_normalized(request),
-        Err(error) => invalid_request_result(error.to_string()),
+        Err(error) => request_error_result(error),
     }
 }
-/// Construct a structured result for malformed public input.
-#[must_use]
-pub fn invalid_request_result(message: impl Into<String>) -> CompileResult {
-    failed_result(
-        "FICT-REQUEST",
-        message,
-        GuaranteeClass::Unsupported,
-        Some("fix the request shape before invoking the native compiler"),
-    )
-}
+
 /// Construct the generic result returned when the N-API panic boundary fires.
 #[must_use]
 pub fn internal_error_result() -> CompileResult {
@@ -429,21 +421,6 @@ pub(crate) fn oxc_module_kind(module_kind: ModuleKind) -> OxcModuleKind {
         ModuleKind::CommonJs => OxcModuleKind::CommonJs,
         ModuleKind::Unambiguous => OxcModuleKind::Unambiguous,
     }
-}
-
-fn failed_result(
-    code: &'static str,
-    message: impl Into<String>,
-    guarantee_class: GuaranteeClass,
-    help: Option<&'static str>,
-) -> CompileResult {
-    let mut result = CompileResult::empty();
-    let mut finding = diagnostic(code, DiagnosticSeverity::Error, message, guarantee_class);
-    if let Some(help) = help {
-        finding = finding.with_help(help);
-    }
-    result.diagnostics.push(finding);
-    result
 }
 
 fn diagnostic(

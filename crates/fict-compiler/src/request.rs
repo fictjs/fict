@@ -53,7 +53,7 @@ pub enum OptimizeLevel {
     /// Preserve conservative JavaScript semantics.
     #[default]
     Safe,
-    /// Permit explicitly approved algebraic rewrites.
+    /// Reserved compatibility value; currently rejected as unimplemented.
     Full,
 }
 
@@ -142,23 +142,23 @@ impl Default for CompilerPreviewOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct CompilerOptions {
-    /// Enable development diagnostics/output.
+    /// Reserved compatibility field; only `false` is currently implemented.
     pub dev: bool,
     /// Emit a source map.
     pub sourcemap: bool,
     /// Return a structured explanation artifact.
     pub explain: bool,
-    /// Enable lazy conditional-derived evaluation.
+    /// Reserved compatibility field; only `true` is currently implemented.
     pub lazy_conditional: bool,
-    /// Cache repeated getter reads within a synchronous region.
+    /// Reserved compatibility field; only `true` is currently implemented.
     pub getter_cache: bool,
     /// Emit fine-grained DOM operations.
     pub fine_grained_dom: bool,
     /// Run the Fict optimizer.
     pub optimize: bool,
-    /// Optimizer safety policy.
+    /// Optimizer safety policy; only `safe` is currently implemented.
     pub optimize_level: OptimizeLevel,
-    /// Inline safe single-use derived values.
+    /// Reserved compatibility field; only `true` is currently implemented.
     pub inline_derived_memos: bool,
     /// Escalate documented control-flow fallback diagnostics.
     pub strict_reactivity: bool,
@@ -197,6 +197,29 @@ impl Default for CompilerOptions {
             preview: None,
         }
     }
+}
+
+fn validate_implemented_options(options: &CompilerOptions) -> Result<(), CompileRequestError> {
+    let unsupported = if options.dev {
+        Some(("dev", "false"))
+    } else if !options.lazy_conditional {
+        Some(("lazyConditional", "true"))
+    } else if !options.getter_cache {
+        Some(("getterCache", "true"))
+    } else if options.optimize_level != OptimizeLevel::Safe {
+        Some(("optimizeLevel", "\"safe\""))
+    } else if !options.inline_derived_memos {
+        Some(("inlineDerivedMemos", "true"))
+    } else {
+        None
+    };
+    if let Some((option, supported_value)) = unsupported {
+        return Err(CompileRequestError::UnimplementedOption {
+            option,
+            supported_value,
+        });
+    }
+    Ok(())
 }
 
 /// Public serializable request accepted by sync and async compiler entrypoints.
@@ -365,6 +388,8 @@ impl CompileRequest {
         {
             return Err(CompileRequestError::InvalidPreviewThreshold);
         }
+
+        validate_implemented_options(&self.options)?;
 
         if self.options.strict_guarantee
             && let Some((pattern, level)) =
@@ -567,6 +592,13 @@ pub enum CompileRequestError {
     DuplicateMetadataRequest(String),
     /// Automatic Preview extraction cannot use a zero-node threshold.
     InvalidPreviewThreshold,
+    /// A compatibility field requested behavior that the Rust compiler does not implement.
+    UnimplementedOption {
+        /// Public camelCase option name.
+        option: &'static str,
+        /// Only accepted value until the option is implemented.
+        supported_value: &'static str,
+    },
     /// Fail-closed diagnostics cannot be disabled or downgraded.
     StrictGuaranteeWarningDowngrade {
         /// Exact code or numeric-prefix pattern.
@@ -603,11 +635,27 @@ impl std::fmt::Display for CompileRequestError {
             Self::InvalidPreviewThreshold => {
                 formatter.write_str("Preview auto-extract threshold must be greater than zero")
             }
+            Self::UnimplementedOption {
+                option,
+                supported_value,
+            } => write!(
+                formatter,
+                "compiler option {option:?} is not implemented for non-default values; use {supported_value}"
+            ),
             Self::StrictGuaranteeWarningDowngrade { pattern, level } => write!(
                 formatter,
                 "strictGuarantee does not allow downgrading {pattern} to \"{}\"",
                 warning_level_name(*level)
             ),
+        }
+    }
+}
+
+impl CompileRequestError {
+    pub(crate) const fn diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::UnimplementedOption { .. } => "FICT-OPTION-UNIMPLEMENTED",
+            _ => "FICT-REQUEST",
         }
     }
 }
@@ -684,7 +732,7 @@ mod tests {
         CompileRequest, CompileRequestError, CompilerOptions, ModuleKind, ScanRequest,
         SourceLanguage,
     };
-    use crate::COMPILER_PROTOCOL_VERSION;
+    use crate::{COMPILER_PROTOCOL_VERSION, compile};
 
     fn request(filename: &str) -> CompileRequest {
         CompileRequest {
@@ -761,6 +809,33 @@ mod tests {
             input.normalize(),
             Err(CompileRequestError::CannotInferLanguage(_))
         ));
+    }
+
+    #[test]
+    fn non_default_unimplemented_options_produce_a_stable_diagnostic() {
+        for (name, value) in [
+            ("dev", json!(true)),
+            ("lazyConditional", json!(false)),
+            ("getterCache", json!(false)),
+            ("optimizeLevel", json!("full")),
+            ("inlineDerivedMemos", json!(false)),
+        ] {
+            let mut payload = json!({
+                "code": "export const value = 1",
+                "filename": "options.ts",
+                "options": {}
+            });
+            payload["options"][name] = value;
+            let request = serde_json::from_value(payload).expect("deserialize option request");
+            let result = compile(request);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert_eq!(result.diagnostics.len(), 1, "{name}: {result:?}");
+            assert_eq!(
+                result.diagnostics[0].code.as_str(),
+                "FICT-OPTION-UNIMPLEMENTED"
+            );
+            assert!(result.diagnostics[0].message.contains(name));
+        }
     }
 
     #[test]

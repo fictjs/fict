@@ -117,7 +117,7 @@ function toCompileRequest(
     filename: absolutePath,
     moduleId: absolutePath,
     options: {
-      dev: true,
+      dev: false,
       strictGuarantee: config.strictGuarantee,
       strictReactivity: config.strictReactivity,
       lazyConditional: config.lazyConditional,

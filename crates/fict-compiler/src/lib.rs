@@ -29,7 +29,7 @@ pub use pass_manager::{
     CompilerPass, CorePassBudgets, CorePassOptions, CorePassOutput, CorePassStats,
     FunctionPassAnalysis, PassContext, run_core_passes,
 };
-pub use pipeline::{compile, internal_error_result, invalid_request_result};
+pub use pipeline::{compile, internal_error_result};
 pub use request::{
     AnalyzeOptions, AnalyzeRequest, AnalyzeVerbosity, CompileRequest, CompileRequestError,
     CompilerOptions, CompilerPreviewOptions, CompilerTypeScriptOptions, ModuleKind,
@@ -39,6 +39,7 @@ pub use request::{
 pub use result::{
     CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
     CompilerExplainEvent, CompilerExplainEventKind, CompilerStats, HandlerArtifactMetadata,
+    invalid_request_result,
 };
 pub use scan::{
     ScanModuleRequest, ScanModuleRequestKind, ScanResult, internal_scan_error_result,

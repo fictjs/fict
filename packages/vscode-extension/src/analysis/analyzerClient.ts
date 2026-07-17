@@ -105,7 +105,7 @@ export async function analyzeDocument(
         includeDiagnostics: settings.includeDiagnostics,
         verbosity: settings.verbosity,
         compilerOptions: {
-          dev: true,
+          dev: false,
           strictGuarantee: true,
         },
       },

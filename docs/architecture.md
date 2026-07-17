@@ -379,7 +379,7 @@ At runtime level:
 - When `$price` / `$quantity` changes, recompute `memo(total)`
 - Notify binding to update DOM
 
-> Note: When a derived value is used only once, the compiler may inline the memo as an optimization. The conceptual model remains memoized; use `$memo` or `inlineDerivedMemos: false` to force a memo node.
+> Note: When a derived value is used only once, the compiler may inline the memo as an optimization. The conceptual model remains memoized; use `$memo` to force a memo node.
 
 ### 4.3 Example: Used Only in Event → memo
 

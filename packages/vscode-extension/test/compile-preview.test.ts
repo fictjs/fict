@@ -77,7 +77,7 @@ describe('compile preview', () => {
         filename: '/tmp/App.tsx',
         moduleId: 'file:///tmp/App.tsx',
         language: 'tsx',
-        options: expect.objectContaining({ dev: true, strictGuarantee: true }),
+        options: expect.objectContaining({ dev: false, strictGuarantee: true }),
       }),
     )
   })

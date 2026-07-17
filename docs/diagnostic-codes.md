@@ -11,6 +11,21 @@ Some diagnostics are compiler-only, some are lint-only, and a few are reserved f
 
 ---
 
+## Request options
+
+### FICT-OPTION-UNIMPLEMENTED: Reserved compiler option value
+
+**Severity:** Error
+
+**Why:** A compatibility field requested behavior that the Rust compiler does not yet implement.
+
+**Impact:** Compilation stops without emitting code instead of silently ignoring the option.
+
+**Fix:** Use the currently supported default: `dev: false`, `lazyConditional: true`,
+`getterCache: true`, `optimizeLevel: 'safe'`, or `inlineDerivedMemos: true`.
+
+---
+
 ## Props (FICT-P\*)
 
 ### FICT-P001: Props destructuring fallback

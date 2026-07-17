@@ -202,8 +202,8 @@ const total = subtotal + tax // auto-derived
 ```
 
 The compiler builds a dependency graph and only recomputes what's needed.
-Single-use derived values may be inlined as an optimization; use `$memo` or set
-`inlineDerivedMemos: false` to force explicit memo nodes.
+Single-use derived values may be inlined as an optimization; use `$memo` to
+force an explicit memo node.
 
 ### `$effect` — Side effects
 
