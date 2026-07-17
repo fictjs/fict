@@ -140,4 +140,10 @@ Runtime behavior of the hook is provided by the compiled library code. Consumer-
 
 `@fictjs/vite-plugin` excludes `node_modules` from transformation by default, but it resolves `fict.metadata` / `fict.exports` for bare package imports. Applications usually do not need to include the package in the transform list.
 
-If a package uses a non-standard metadata location or virtual module system, provide a custom `resolveModuleMetadata(source, importer)` compiler option and return the corresponding metadata object.
+If a package uses a non-standard metadata location or virtual module system,
+the integration must still provide authoritative versioned metadata. Vite
+integrations can provide the Vite plugin's integration-level
+`resolveModuleMetadata(source, importer)` hook. A direct compiler host instead
+resolves `scan` results into `ResolvedMetadataInput[]` and passes that snapshot
+as `CompileRequest.metadata`; the 0.31 compiler package root has no global
+metadata resolver or cache.

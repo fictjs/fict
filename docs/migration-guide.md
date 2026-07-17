@@ -101,6 +101,31 @@ rollback release. It is not part of the 0.31 workspace, publish plan, or support
 surface. Custom Babel plugins may still run as a separate downstream transform,
 but they must not attempt to compile Fict reactivity.
 
+### Legacy compiler API replacements
+
+The 0.31 package root is a request/response API, not a compatibility alias for
+the Babel plugin. Replace direct 0.30-and-earlier compiler imports explicitly:
+
+| Removed or relocated API                                                                            | 0.31 replacement                                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default export or `createFictPlugin`                                                                | Use `@fictjs/vite-plugin`, `@fictjs/webpack-plugin`, or call `transformSync` / `transform` from `@fictjs/compiler` in a custom host.                                                                                                        |
+| `FictCompilerOptions`                                                                               | Use serializable `NativeCompilerOptions` in `CompileRequest.options`. Keep callbacks, filesystem access, and graph state in the Vite, Webpack, or custom host layer.                                                                        |
+| `CompilerWarning` and `DiagnosticCode`                                                              | Read `CompileResult.diagnostics` as `FictDiagnostic[]`. Match the documented string `code`; configure severity with `warningLevels` or `warningsAsErrors`.                                                                                  |
+| `getCompilerCacheFingerprint()`                                                                     | Use `nativeCompilerInfo().compilerBuildId` before a request, or the `compilerBuildId` returned by transform and scan results.                                                                                                               |
+| Root `parseModuleReactiveMetadata` and `resolvePackageModuleMetadata` exports                       | Import them from `@fictjs/compiler/graph-host`. They validate and resolve only the versioned native metadata schema.                                                                                                                        |
+| `resolveModuleMetadata`, `setModuleMetadata`, `clearModuleMetadata`, and `invalidateModuleMetadata` | There is no process-global compiler metadata cache. Official integrations own graph resolution and invalidation. A direct host resolves scanned edges into `ResolvedMetadataInput[]` and passes that snapshot as `CompileRequest.metadata`. |
+| `emitModuleMetadata`, `moduleMetadataCacheDir`, and `moduleMetadataExtension`                       | Use Vite library mode to emit publishable metadata, then declare it through `package.json#fict.metadata` or `package.json#fict.exports`. Source-adjacent and `.fict-cache` sidecars are retired.                                            |
+| `analyzeFictFile` and `inferTraceMarkersForComponent`                                               | Use `analyzeSync` or `analyze` with an `AnalyzeRequest`; component traces, regions, and structured diagnostics are returned in `AnalyzeResult`.                                                                                             |
+| `minimizeSourceByLines`                                                                             | There is no native compiler equivalent. Run an external reducer that repeatedly calls `transformSync` / `transform` or `analyzeSync` / `analyze` with the failure predicate you need to preserve.                                           |
+
+The metadata replacement intentionally has no mutating singleton. A custom
+host should use `scanSync` or `scan` to discover static edges, resolve those
+edges using its own module graph, and fingerprint each `ResolvedMetadataInput`
+so its cache invalidation follows the same inputs passed to compilation. Vite
+virtual-module integrations may instead provide the Vite plugin's
+integration-level `resolveModuleMetadata` hook; that hook is not an export from
+the compiler package root.
+
 Preview `resumable: true` is available with the Rust compiler through compiler-owned
 structured handler artifacts. It remains explicit and Preview; native support
 does not graduate it or make it a Core default.

@@ -49,6 +49,11 @@ facade loads and validates the platform optional package on the first request,
 then reuses that binding for the process. A missing or incompatible native
 package is a hard error.
 
+Code importing the former Babel plugin, global metadata cache, fingerprint, or
+tooling helpers should follow the
+[legacy API replacement table](../../docs/migration-guide.md#legacy-compiler-api-replacements);
+those APIs were removed or relocated rather than silently aliased.
+
 `FICT_COMPILER_NATIVE_PATH` and the lower-level
 `@fictjs/compiler/native` loader are for local compiler development and release
 verification. Normal consumers must let the facade select one of the eight
@@ -96,6 +101,11 @@ declarations under `package.json#fict.metadata` or `package.json#fict.exports`.
 Unversioned payloads, unknown schema fields, paths outside the package, and the
 retired root `fictMetadata` declaration fail closed. It does not read or write
 source-adjacent Babel sidecars or `.fict-cache/metadata`.
+
+Direct hosts own scan, resolution, fingerprints, and invalidation, then pass a
+`ResolvedMetadataInput[]` snapshot in `CompileRequest.metadata`. The compiler
+does not expose the former process-global `setModuleMetadata`,
+`clearModuleMetadata`, or `invalidateModuleMetadata` state.
 
 See [Third-party Fict libraries](../../docs/third-party-libraries.md) for the
 publishing contract.

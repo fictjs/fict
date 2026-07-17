@@ -417,6 +417,19 @@ for (const requiredPhrase of [
   }
 }
 
+const migrationGuide = readText('docs/migration-guide.md')
+for (const requiredPhrase of [
+  'Legacy compiler API replacements',
+  '`nativeCompilerInfo().compilerBuildId`',
+  '`ResolvedMetadataInput[]`',
+  '`CompileRequest.metadata`',
+  'There is no native compiler equivalent',
+]) {
+  if (!migrationGuide.includes(requiredPhrase)) {
+    fail(`docs/migration-guide.md missing legacy API replacement: ${requiredPhrase}`)
+  }
+}
+
 if (failures.length) {
   console.error('API boundary check failed:')
   for (const failure of failures) {

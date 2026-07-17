@@ -614,13 +614,16 @@ accessor as plain could instead produce invalid arithmetic or stale UI.
 **Impact:** Strict builds stop rather than emit code with guessed hook semantics. Opt-out builds
 retain the opaque value behavior and emit a warning.
 
-**Fix:** Make the metadata source authoritative and current: publish package metadata, configure an
-explicit `moduleMetadata` / `resolveModuleMetadata` integration, use the Vite or Webpack graph
-integration, or break the metadata cycle. A hook that intentionally returns only plain values may
-publish empty current metadata to prove that shape.
+**Fix:** Make the metadata source authoritative and current: publish package metadata, use the Vite
+or Webpack graph integration, or break the metadata cycle. A custom direct host must resolve
+`scan` results into `ResolvedMetadataInput[]` and pass them through `CompileRequest.metadata`;
+Vite-only virtual module integrations may use the plugin's integration-level
+`resolveModuleMetadata` hook. A hook that intentionally returns only plain values may publish
+empty current metadata to prove that shape.
 
-**Verification:** The importer-first, transitive stale graph, unresolved alias/package, and cycle
-cases are covered by `packages/compiler/test/babel-typescript-integration.test.ts`.
+**Verification:** Native missing/opaque metadata and cycle behavior is covered by
+`crates/fict-compiler/src/pipeline.rs`, `packages/vite-plugin/src/__tests__/native-backend.test.ts`,
+and `packages/webpack-plugin/src/__tests__/resolver-boundary.test.ts`.
 
 ### FICT-HIR-UNSUPPORTED: Unsupported syntax in HIR conversion
 

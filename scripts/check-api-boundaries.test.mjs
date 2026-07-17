@@ -10,6 +10,7 @@ import { discoverRepositoryFiles } from './api-boundary-file-discovery.mjs'
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureFiles = [
   'docs/api-freeze-v1.md',
+  'docs/migration-guide.md',
   'packages/compiler/package.json',
   'packages/compiler/src/graph-host.ts',
   'packages/devtools/package.json',
