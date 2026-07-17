@@ -21,6 +21,12 @@ tester.run('no-state-outside-component', rule as any, {
     {
       code: `import { $state } from 'fict'; function useCounter() { const count = $state(0); return { count }; }`,
     },
+    {
+      code: `import { $state } from 'fict'; function use_counter() { const count = $state(0); return { count }; }`,
+    },
+    {
+      code: `import { $state } from 'fict'; function use2FA() { const count = $state(0); return { count }; }`,
+    },
   ],
   invalid: [
     {
@@ -29,6 +35,14 @@ tester.run('no-state-outside-component', rule as any, {
     },
     {
       code: `import { $state } from 'fict'; function helper() { const count = $state(0); }`,
+      errors: [{ messageId: 'componentOnly' }],
+    },
+    {
+      code: `import { $state } from 'fict'; function useful() { const count = $state(0); }`,
+      errors: [{ messageId: 'componentOnly' }],
+    },
+    {
+      code: `import { $state } from 'fict'; function useÉclair() { const count = $state(0); }`,
       errors: [{ messageId: 'componentOnly' }],
     },
     {

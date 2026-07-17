@@ -2,7 +2,7 @@ import type { Rule } from 'eslint'
 import type { ArrowFunctionExpression, FunctionDeclaration, FunctionExpression, Node } from 'estree'
 
 const isUpperCaseName = (name?: string | null): boolean => !!name && /^[A-Z]/.test(name)
-const isHookName = (name?: string | null): boolean => !!name && /^use[A-Z]/.test(name)
+const isHookName = (name?: string | null): boolean => !!name && /^use[A-Z0-9_]/.test(name)
 
 const getFunctionName = (
   node: FunctionDeclaration | FunctionExpression | ArrowFunctionExpression,

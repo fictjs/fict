@@ -33,7 +33,7 @@ This specification uses a set of "Rules A–L" to describe the entire process.
 - **Region**: A group of Derived expressions closely related in terms of control flow/scope.
 - **IR (Intermediate Representation)**: Abstract structure used internally by the compiler, not directly exposed to user code.
 - **Error Boundary**: Runtime component that captures errors in render/effect/event/cleanup for its subtree and renders a fallback.
-- **Hook**: Any function whose name **starts with `use`**. The compiler treats such functions as hooks when they are defined or invoked: their slot ordering is preserved, and object/array/direct returns are analyzed so that members like `{ count } = useCounter()` remain reactive accessors. Functions without the `use` prefix are compiled as plain functions, so reactive returns are not inferred.
+- **Hook**: Any function whose name matches **`^use[A-Z0-9_]`**, such as `useCounter`, `use2FA`, or `use_counter`. The compiler treats such functions as hooks when they are defined or invoked: their slot ordering is preserved, and object/array/direct returns are analyzed so that members like `{ count } = useCounter()` remain reactive accessors. Lowercase continuations such as `useful` are plain functions, so reactive returns are not inferred.
 - **Reactive getter marker**: Runtime `isReactive` recognizes signal/computed accessors, prop getters, compiler-marked getters, and manual `reactive(fn)` getters. Plain zero-argument functions remain function values/callbacks.
 
 ---

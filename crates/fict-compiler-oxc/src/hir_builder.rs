@@ -10393,9 +10393,9 @@ fn is_hook_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("use") else {
         return false;
     };
-    rest.chars()
-        .next()
-        .is_some_and(|character| character.is_uppercase() || character.is_ascii_digit())
+    rest.as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_')
 }
 
 fn coercive_expression_semantics() -> InstructionSemantics {

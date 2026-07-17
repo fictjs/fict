@@ -21,7 +21,7 @@ function Counter() {
 
 ## Placement rules
 
-Declare `$state` at the immediate top level of a component or a hook-style helper whose name starts with `use`.
+Declare `$state` at the immediate top level of a component or a hook-style helper whose name matches `^use[A-Z0-9_]` (for example, `useToggle`, `use2FA`, or `use_toggle`). Names such as `useful` are ordinary helpers, not hooks.
 
 ```tsx
 function useToggle(initial: boolean) {

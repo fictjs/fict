@@ -6183,6 +6183,9 @@ fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
     let source = r#"
         import { run as render } from './host';
         function useCounter() { return 1; }
+        function use_counter() { return 2; }
+        function useful() { return 3; }
+        function useÉclair() { return 4; }
         render(() => useCounter());
     "#;
     let output = build_hir(
@@ -6195,11 +6198,20 @@ fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
     );
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let hir = output.hir.expect("verified HIR");
-    assert!(
+    let kind = |name| {
         hir.functions
             .iter()
-            .any(|function| function.kind == FunctionKind::Hook)
-    );
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .map(|function| function.kind)
+    };
+    assert_eq!(kind("useCounter"), Some(FunctionKind::Hook));
+    assert_eq!(kind("use_counter"), Some(FunctionKind::Hook));
+    assert_eq!(kind("useful"), Some(FunctionKind::Plain));
+    assert_eq!(kind("useÉclair"), Some(FunctionKind::Plain));
     assert!(
         hir.functions
             .iter()
@@ -7206,7 +7218,7 @@ fn configured_reactive_scope_is_a_binding_resolved_state_owner() {
 fn enforces_direct_hook_owner_and_control_flow_placement_by_binding() {
     let cases = [
         (
-            "import { useCounter } from './hooks'; useCounter();",
+            "import { use_counter } from './hooks'; use_counter();",
             "FICT-PLACEMENT-HOOK-OWNER",
         ),
         (
@@ -7349,7 +7361,7 @@ fn enforces_namespace_and_member_hook_placement() {
             "FICT-PLACEMENT-HOOK-CONTROL",
         ),
         (
-            "const api = { useCounter() {} }; function App() { if (ready) api['useCounter'](); return null; }",
+            "const api = { use_counter() {} }; function App() { if (ready) api['use_counter'](); return null; }",
             "FICT-PLACEMENT-HOOK-CONTROL",
         ),
     ];
