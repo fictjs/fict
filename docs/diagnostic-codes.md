@@ -8,6 +8,9 @@ This document provides detailed explanations for Fict compiler diagnostics. Each
 
 Codes surface at compile time and via `@fictjs/eslint-plugin` where applicable.
 Some diagnostics are compiler-only, some are lint-only, and a few are reserved for future checks.
+The machine-readable status and integration rules live in
+[`diagnostics/registry.json`](../diagnostics/registry.json); CI requires every heading below to be
+active and producer-backed, and prevents retired codes from returning to official integrations.
 
 ---
 
@@ -108,28 +111,28 @@ const name = prop(() => props.user.name)
 
 ---
 
-## State (FICT-S\*)
+## State and placement
 
-### FICT-S001: State variable mutation outside component scope
+### FICT-PLACEMENT-STATE-TARGET: Invalid state binding target
 
 **Severity:** Error
 
-**Why:** A `$state` variable is mutated outside the component/hook scope where it was declared.
+**Why:** The result of `$state` is assigned to a target that cannot own reactive state, such as a
+module binding or a non-local assignment target.
 
-**Impact:** Can cause lifecycle leaks or updates after unmount; reactive tracking may be invalid.
+**Impact:** The compiler cannot attach the state lifecycle to a component or hook local binding.
 
-**Fix:** Keep mutations inside the declaring component/hook scope, or expose a setter:
+**Fix:** Declare the state as a local binding inside the owning component or hook:
 
 ```js
 // Wrong — mutation outside component scope
 let count
 function Counter() {
-  count = $state(0)
+  count = $state(0) // FICT-PLACEMENT-STATE-TARGET
   return <button onClick={() => count++}>Inc</button>
 }
-export const inc = () => count++ // FICT-S001
 
-// Better — keep mutation inside the component
+// Better — the local binding has an unambiguous owner
 function CounterSafe() {
   let count = $state(0)
   const inc = () => count++
@@ -225,22 +228,22 @@ $effect(() => console.log(`data changed: ${data}`))
 
 ---
 
-## Control Flow (FICT-C\*)
+## Reactive placement
 
-### FICT-C001: Conditional hooks
+### FICT-PLACEMENT-STATE-CONTROL: State creation in control flow
 
 **Severity:** Error
 
-**Why:** `$state`, `$effect`, or `$memo` appears inside a conditional block.
+**Why:** `$state` appears inside a conditional block or loop.
 
-**Impact:** Reactive primitives must be created unconditionally to maintain consistent hook ordering.
+**Impact:** State slots must be created unconditionally to retain stable lifecycle identity.
 
 **Fix:** Move declarations to top level:
 
 ```js
 // Wrong
 if (condition) {
-  let x = $state(0) // FICT-C001
+  let x = $state(0) // FICT-PLACEMENT-STATE-CONTROL
 }
 
 // Correct
@@ -250,25 +253,41 @@ if (condition) {
 }
 ```
 
-### FICT-C002: Hooks in loop
+The same code is used for a state declaration inside a loop. Move the declaration outside the
+conditional or loop and only branch on reads of the state.
+
+### FICT-PLACEMENT-EFFECT-CONTROL: Effect creation in control flow
 
 **Severity:** Error
 
-**Why:** `$state`, `$effect`, or `$memo` appears inside a loop.
+**Why:** `$effect` appears inside a conditional block or loop. `$memo` uses the corresponding
+`FICT-PLACEMENT-MEMO-CONTROL` code.
 
-**Impact:** Creates multiple reactive primitives with unpredictable lifecycle.
+**Impact:** Effect and memo owners would change with the branch or iteration count.
 
-**Fix:** Declare outside the loop or use a data structure:
+**Fix:** Create the primitive unconditionally, then put the conditional logic inside its callback:
 
 ```js
 // Wrong
-for (let i = 0; i < n; i++) {
-  let item = $state(i) // FICT-C002
+if (enabled) {
+  $effect(() => sync(value)) // FICT-PLACEMENT-EFFECT-CONTROL
 }
 
 // Correct
-let items = $state(Array.from({ length: n }, (_, i) => i))
+$effect(() => {
+  if (enabled) sync(value)
+})
 ```
+
+### FICT-PLACEMENT-HOOK-CONTROL: Hook call in control flow
+
+**Severity:** Error
+
+**Why:** A hook-like function is called inside a conditional block or loop.
+
+**Impact:** The hook's state and effect slots would not have stable ordering.
+
+**Fix:** Call the hook unconditionally and branch on its returned values.
 
 ### FICT-C003: Nested component definitions
 
@@ -640,46 +659,44 @@ empty current metadata to prove that shape.
 `crates/fict-compiler/src/pipeline.rs`, `packages/vite-plugin/src/__tests__/native-backend.test.ts`,
 and `packages/webpack-plugin/src/__tests__/resolver-boundary.test.ts`.
 
-### FICT-HIR-UNSUPPORTED: Unsupported syntax in HIR conversion
+### FICT-HIR-MACRO-OPTIONAL: Optional compiler macro call
 
 **Severity:** Error
 
-**Why:** The HIR conversion encountered syntax that it cannot faithfully represent.
+**Why:** A compile-time macro such as `$state`, `$effect`, or `$memo` is called through optional
+chaining. Runtime creators such as `createMemo?.(...)` are ordinary JavaScript and are not covered
+by this diagnostic.
 
-**Impact:** Compilation fails to avoid silently changing runtime behavior.
+**Impact:** The compiler cannot give an optional macro call stable slot semantics.
 
-**Common triggers:**
+**Fix:** Call compiler macros directly after handling optionality outside the macro call.
 
-- Array literal holes: `[ , 1 ]`
-- JSX spread children: `<div>{...items}</div>`
-- Unsupported destructuring patterns in variable declarations/assignments (e.g. computed keys, nested patterns, or rest elements that are not simple identifiers)
+Other `FICT-HIR-*` and `FICT-OXC-EMIT-*` diagnostics are internal verifier/emitter failures rather
+than a generic unsupported-syntax bucket. Preserve their exact code and report the smallest source
+fixture; do not rewrite supported JavaScript merely to avoid an internal code.
 
-**Fix:** Rewrite to supported forms:
-
-```js
-// Array holes: use explicit undefined values
-const arr = [undefined, 1]
-
-// JSX spread children: render explicitly
-<div>{items}</div>
-
-// Destructuring: use simple identifiers
-const { value } = obj
-```
-
-### FICT-COMPILE: Tooling compiler failure
+### FICT-NATIVE-LOAD: Native compiler could not be loaded
 
 **Severity:** Error
 
-**Why:** Compiler tooling caught a thrown compiler error and normalized it into
-an editor/playground diagnostic.
+**Why:** Editor tooling could not load the platform-specific native compiler package.
 
-**Impact:** The source could not be transformed. The diagnostic message is the
-first line of the original compiler error with the best location the tooling can
-infer.
+**Impact:** The editor falls back to static analysis and cannot provide native compiler traces.
 
-**Fix:** Follow the underlying message. If the message contains another
-`FICT-*` code, use that code's documentation for the specific remediation.
+**Fix:** Reinstall dependencies for the current platform and verify the matching
+`@fictjs/compiler-*` package is present.
+
+### FICT-NATIVE-HOST: Native compiler host failure
+
+**Severity:** Error
+
+**Why:** Editor tooling caught an unexpected exception while invoking the native compiler host.
+
+**Impact:** The editor falls back to static analysis for that request.
+
+**Fix:** Follow the underlying message and report the fixture if the failure is reproducible. Normal
+compile failures are returned as their exact structured diagnostic codes and do not use a generic
+tooling alias.
 
 ---
 

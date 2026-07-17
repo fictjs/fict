@@ -1,4 +1,5 @@
 import type * as vscode from 'vscode'
+import diagnosticRegistry from '../../../../diagnostics/registry.json'
 
 import {
   getEditorNativeCompiler,
@@ -53,8 +54,11 @@ function shouldFallbackToStaticAnalysis(result: {
   components: FictDocumentAnalysis['components']
   diagnostics: FictDocumentAnalysis['diagnostics']
 }): boolean {
-  const hasHIRFailure = result.diagnostics.some(diagnostic =>
-    diagnostic.code.startsWith('FICT-HIR'),
+  const fallback = diagnosticRegistry.integrations.vscodeStaticAnalysisFallback
+  const hasHIRFailure = result.diagnostics.some(
+    diagnostic =>
+      fallback.includePrefixes.some(prefix => diagnostic.code.startsWith(prefix)) &&
+      !fallback.excludePrefixes.some(prefix => diagnostic.code.startsWith(prefix)),
   )
 
   return result.components.length === 0 && hasHIRFailure

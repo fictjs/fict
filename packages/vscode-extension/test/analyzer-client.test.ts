@@ -132,9 +132,9 @@ describe('analyzer client', () => {
       components: [],
       diagnostics: [
         {
-          code: 'FICT-HIR-UNSUPPORTED',
+          code: 'FICT-HIR-JSX',
           severity: 'error',
-          message: 'unsupported HIR fixture',
+          message: 'invalid HIR JSX fixture',
           line: 5,
           column: 10,
         },
@@ -149,7 +149,7 @@ describe('analyzer client', () => {
 
     expect(result?.mode).toBe('compiler')
     expect(result?.components[0]?.name).toBe('App')
-    expect(result?.diagnostics[0]?.code).toBe('FICT-HIR-UNSUPPORTED')
+    expect(result?.diagnostics[0]?.code).toBe('FICT-HIR-JSX')
   })
 
   it('does not fabricate static components for structured placement diagnostics', async () => {
@@ -182,6 +182,31 @@ describe('analyzer client', () => {
         column: 13,
       }),
     ])
+  })
+
+  it('does not fabricate static components for actionable HIR macro diagnostics', async () => {
+    const native = analyzer({
+      fileName: '/tmp/optional-macro.tsx',
+      components: [],
+      diagnostics: [
+        {
+          code: 'FICT-HIR-MACRO-OPTIONAL',
+          message: 'compiler macros cannot use optional calls',
+          severity: 'error',
+          line: 5,
+          column: 10,
+        },
+      ],
+    })
+    const result = await analyzeDocument(
+      document(UNSUPPORTED_HIR_SOURCE, '/tmp/optional-macro.tsx') as never,
+      settings,
+      undefined,
+      native.compiler,
+    )
+
+    expect(result?.components).toEqual([])
+    expect(result?.diagnostics[0]?.code).toBe('FICT-HIR-MACRO-OPTIONAL')
   })
 
   it('uses structured parser locations without parsing compiler error strings', async () => {

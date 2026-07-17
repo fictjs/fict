@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "active": {
+    "rust": {
+      "documented": [
+        "FICT-OPTION-UNIMPLEMENTED",
+        "FICT-P001",
+        "FICT-P002",
+        "FICT-P003",
+        "FICT-P004",
+        "FICT-P005",
+        "FICT-PLACEMENT-STATE-TARGET",
+        "FICT-S002",
+        "FICT-E001",
+        "FICT-M001",
+        "FICT-M003",
+        "FICT-PLACEMENT-STATE-CONTROL",
+        "FICT-PLACEMENT-EFFECT-CONTROL",
+        "FICT-PLACEMENT-HOOK-CONTROL",
+        "FICT-C003",
+        "FICT-C004",
+        "FICT-J001",
+        "FICT-J002",
+        "FICT-J003",
+        "FICT-J004",
+        "FICT-R002",
+        "FICT-R004",
+        "FICT-R005",
+        "FICT-R006",
+        "FICT-R007",
+        "FICT-X003",
+        "FICT-FUNCTION-ASYNC-COMPONENT",
+        "FICT-FUNCTION-GENERATOR-COMPONENT",
+        "FICT-FUNCTION-ASYNC-HOOK-AFTER-AWAIT",
+        "FICT-COMPONENT-CLASS",
+        "FICT-TS-NAMESPACE-REFERENCE",
+        "FICT-USING-UNSUPPORTED",
+        "FICT-M",
+        "FICT-H",
+        "FICT-H002",
+        "FICT-H003",
+        "FICT-HIR-MACRO-OPTIONAL"
+      ],
+      "additional": [
+        "FICT-FUNCTION-GENERATOR-HOOK",
+        "FICT-HIR-JSX",
+        "FICT-PARSE",
+        "FICT-PLACEMENT-MEMO-CONTROL",
+        "FICT-PLACEMENT-STATE-OWNER",
+        "FICT-REQUEST"
+      ]
+    },
+    "vscode": {
+      "documented": ["FICT-NATIVE-LOAD", "FICT-NATIVE-HOST"],
+      "additional": []
+    }
+  },
+  "aliases": {},
+  "retired": {
+    "FICT-S001": {
+      "replacements": ["FICT-PLACEMENT-STATE-TARGET"]
+    },
+    "FICT-C001": {
+      "replacements": [
+        "FICT-PLACEMENT-STATE-CONTROL",
+        "FICT-PLACEMENT-EFFECT-CONTROL",
+        "FICT-PLACEMENT-MEMO-CONTROL",
+        "FICT-PLACEMENT-HOOK-CONTROL"
+      ]
+    },
+    "FICT-C002": {
+      "replacements": [
+        "FICT-PLACEMENT-STATE-CONTROL",
+        "FICT-PLACEMENT-EFFECT-CONTROL",
+        "FICT-PLACEMENT-MEMO-CONTROL",
+        "FICT-PLACEMENT-HOOK-CONTROL"
+      ]
+    },
+    "FICT-HIR-UNSUPPORTED": {
+      "replacements": ["FICT-HIR-MACRO-OPTIONAL", "FICT-HIR-JSX"]
+    },
+    "FICT-COMPILE": {
+      "replacements": ["FICT-NATIVE-LOAD", "FICT-NATIVE-HOST"]
+    }
+  },
+  "integrations": {
+    "vscodeStaticAnalysisFallback": {
+      "includePrefixes": ["FICT-HIR-"],
+      "excludePrefixes": ["FICT-HIR-MACRO-"]
+    }
+  }
+}
