@@ -52,6 +52,8 @@ source revision, native build ID, 8-platform by 2-Node certification, semantic
 comparison, performance/RSS measurements, package-size budgets, and human
 review. Those artifacts are retained as historical evidence; the 0.31 tree does
 not keep the differential, shadow, candidate, or rollback execution harnesses.
+It does retain the frozen 0.28 source/golden compatibility corpus, which runs
+only through the Rust compiler and therefore does not restore a second backend.
 
 M7 approval cannot be reused as M9 approval.
 
@@ -102,7 +104,8 @@ publish control. The 0.31 candidate must have:
 - no Vite backend/shadow option or environment fallback;
 - a mandatory native Webpack loader with fail-closed V7 cache records;
 - versioned Rust package metadata and no source-adjacent Babel sidecars;
-- no differential/shadow/rollback/candidate CI harness;
+- no dual-backend differential/shadow/rollback/candidate CI harness; the
+  implementation-independent compatibility corpus remains release-blocking;
 - `SCOPE.md`, `maturity.json`, Changesets, API boundaries, and npm publish
   allowlist that describe the Rust-only Core set.
 

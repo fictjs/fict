@@ -144,8 +144,9 @@ review and an ADR update or superseding ADR.
 - Architecture boundary: Cargo dependency checks and
   `pnpm test:api-boundaries`.
 - Preview isolation: `pnpm test:preview-boundaries`.
-- Semantic compatibility: compiler differential and runtime suites before the
-  default switch.
+- Semantic compatibility: dual-backend differential and runtime suites before
+  the default switch, followed by the frozen implementation-independent corpus
+  after legacy removal.
 - Native distribution: clean-install platform tarball tests before release.
 - Completion: the definition and release gates in
   [Fict Rust Compiler Architecture](../architecture/rust-compiler.md) must all

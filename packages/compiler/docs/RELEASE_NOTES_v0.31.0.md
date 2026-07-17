@@ -39,6 +39,7 @@ unit.
 
 ```bash
 pnpm test:compiler:rollout-state
+pnpm test:compiler:compatibility-corpus
 pnpm test:api-boundaries
 pnpm guardrails:compiler-complexity
 pnpm guardrails:rust-crates

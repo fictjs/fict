@@ -201,6 +201,30 @@ The coordinated scope change is defined by
 [ADR-0003](../adr/0003-retire-babel-preset.md). Preview graduation remains a
 separate decision.
 
+### Frozen compatibility oracle
+
+Removing the executable Babel backend does not remove its reviewed behavior
+evidence. The repository retains an implementation-independent 0.28 corpus:
+
+- 1,892 unique source-and-option inputs extracted from 107 legacy test files,
+  with legacy status, diagnostic codes, and output hashes;
+- current Rust status, structured diagnostic class, and output hashes, plus an
+  explicit policy for every reviewed status deviation;
+- 13 frontend outcome fixtures and seven normalized analysis snapshots;
+- native runtime behavior and the five non-default option rejection contracts.
+
+The Rust integration test compiles every input twice, strips timing noise, and
+checks deterministic results against the frozen goldens. It does not import
+Babel, a legacy compiler, or a second backend. The Rust guardrail also verifies
+the corpus size, provenance, deviation counts, test wiring, and retained native
+runtime cases so deleting the oracle cannot silently leave CI green.
+
+Run the focused gate with:
+
+```bash
+pnpm test:compiler:compatibility-corpus
+```
+
 After 0.31, rollback means restoring a complete 0.30.1 application release and
 its lockfile. Compiler/runtime packages, generated output, package metadata,
 bundler caches, and Preview artifacts MUST NOT be mixed across that boundary.

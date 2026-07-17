@@ -86,8 +86,9 @@ for the migration. The namespace gaps are material but have a bounded Rust
 compatibility design and therefore do not trigger the M0 feasibility veto.
 
 This conclusion applies only to the executable probes and current compiler
-contracts. It does not prove full language parity; the legacy/Rust
-differential suite remains the switch gate.
+contracts. It does not prove full language parity. After the completed switch,
+the frozen 0.28 source/golden corpus is the permanent compatibility gate and
+runs without an executable legacy backend.
 
 ## Human review requirements
 
@@ -114,12 +115,13 @@ Run the complete native baseline:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
+pnpm test:compiler:compatibility-corpus
 ```
 
 The executable source for every row is
 `crates/fict-compiler-oxc/tests/feasibility.rs`. Existing TypeScript
 namespace/CTS/compiler suites remain the final behavior authority until they
-run through the backend-neutral differential harness.
+run through the implementation-independent compatibility corpus.
 
 # Citations
 
