@@ -77,12 +77,15 @@ use crate::{
 
 use super::compile::{convert_diagnostics, sorted, source_type};
 
+mod class_components;
 mod function_abi;
 mod inline_jsx_functions;
 mod memo_side_effects;
 mod native_jsx_spreads;
 mod reactive_jsx_writes;
 mod structured_control_flow;
+
+use class_components::ClassBindingCollector;
 
 /// Binding-aware frontend controls that affect HIR classification.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1959,8 +1962,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             scan_owners: Vec::new(),
             function_by_span: &function_by_span,
             roots: Vec::new(),
+            tags: Vec::new(),
         };
         jsx.visit_program(program);
+        let mut class_bindings = ClassBindingCollector::new(self.semantic.scoping());
+        class_bindings.visit_program(program);
         let mut mutations = MutationCollector {
             scoping: self.semantic.scoping(),
             facts: Vec::new(),
@@ -1989,6 +1995,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         };
         member_accesses.visit_program(program);
         self.classify_component_roles(&calls.calls, &jsx.roots);
+        self.validate_class_components(&class_bindings, &jsx.tags);
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
@@ -2000,6 +2007,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &calls.calls,
             &known_arrays.symbols,
             &reactive_symbols,
+            &class_bindings,
         );
         self.validate_component_props_patterns();
         self.apply_call_classification(&calls.calls);
@@ -2502,6 +2510,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         calls: &[CallFact],
         known_arrays: &BTreeSet<SymbolId>,
         reactive: &ReactiveSymbolAnalysis,
+        classes: &ClassBindingCollector<'_>,
     ) {
         let binding_owners: BTreeMap<_, _> = self
             .frontend
@@ -2555,9 +2564,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .extend(captured);
             }
         }
-        let mut classes = ClassBindingCollector::default();
-        classes.visit_program(program);
-        for (binding, span) in classes.classes {
+        for (&binding, &span) in &classes.bindings {
             let mut captured: BTreeSet<SymbolId> = BTreeSet::new();
             for (function_span, symbols) in &capturing_functions {
                 if span_contains(span, *function_span) {
@@ -6311,6 +6318,7 @@ struct JsxCollector<'facts> {
     scan_owners: Vec<FunctionId>,
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
     roots: Vec<JsxFact>,
+    tags: Vec<(RawJsxName, SourceSpan)>,
 }
 
 #[derive(Default)]
@@ -6342,6 +6350,10 @@ impl<'a> Visit<'a> for KnownArrayCollector {
 
 impl JsxCollector<'_> {
     fn scan_jsx_element(&mut self, element: &JSXElement<'_>) {
+        self.tags.push((
+            raw_jsx_name(self.scoping, &element.opening_element.name),
+            source_span(element.span),
+        ));
         for attribute in &element.opening_element.attributes {
             match attribute {
                 JSXAttributeItem::SpreadAttribute(spread) => {
@@ -8586,35 +8598,6 @@ impl<'a> Visit<'a> for FunctionCaptureCollector<'_, '_, '_> {
             return;
         }
         self.captures.entry(owner).or_default().insert(symbol);
-    }
-}
-
-#[derive(Default)]
-struct ClassBindingCollector {
-    classes: BTreeMap<SymbolId, SourceSpan>,
-}
-
-impl<'a> Visit<'a> for ClassBindingCollector {
-    fn visit_class(&mut self, class: &Class<'a>) {
-        if let Some(symbol) = class
-            .id
-            .as_ref()
-            .and_then(|identifier| identifier.symbol_id.get())
-        {
-            self.classes.insert(symbol, source_span(class.span));
-        }
-        oxc::ast_visit::walk::walk_class(self, class);
-    }
-
-    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
-        if let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
-            (&declarator.id, &declarator.init)
-            && let Expression::ClassExpression(class) = initializer.get_inner_expression()
-            && let Some(symbol) = binding.symbol_id.get()
-        {
-            self.classes.insert(symbol, source_span(class.span));
-        }
-        walk_variable_declarator(self, declarator);
     }
 }
 

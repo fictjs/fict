@@ -69,3 +69,44 @@ fn render_owners_fail_closed_when_the_sync_abi_cannot_run_them() {
     ));
     assert!(!allowed.has_errors(), "{:?}", allowed.diagnostics);
 }
+
+#[test]
+fn rejects_class_bindings_used_as_jsx_components() {
+    for (source, name) in [
+        (
+            "class App {} export function Parent() { return <App />; }",
+            "App",
+        ),
+        (
+            "const App = class {}; export function Parent() { return <App />; }",
+            "App",
+        ),
+        (
+            "export class App {} export function Parent() { return <App />; }",
+            "App",
+        ),
+        (
+            "const UI = { App: class {} }; export function Parent() { return <UI.App />; }",
+            "UI.App",
+        ),
+        (
+            "const UI = {}; UI.Panel = class {}; export function Parent() { return <UI.Panel />; }",
+            "UI.Panel",
+        ),
+    ] {
+        let result = compile(request(source, "class-component.tsx"));
+        let diagnostic = result
+            .diagnostics
+            .iter()
+            .find(|item| item.code.as_str() == "FICT-COMPONENT-CLASS")
+            .unwrap_or_else(|| panic!("missing class diagnostic for {name}: {result:?}"));
+        assert!(result.code.is_empty());
+        assert!(diagnostic.notes.iter().any(|note| note.contains(name)));
+    }
+
+    let allowed = compile(request(
+        "class ViewModel { value = 1 } function App() { return <span>ok</span>; } export function Parent() { const model = new ViewModel(); return <App value={model.value} />; }",
+        "class-helper.tsx",
+    ));
+    assert!(!allowed.has_errors(), "{:?}", allowed.diagnostics);
+}

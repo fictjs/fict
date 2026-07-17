@@ -506,6 +506,16 @@ An async hook may read an accessor created before its first suspension, but it
 must not create JSX, call another hook, or create reactive render state after an
 `await`. Move all hook and JSX setup before the first suspension.
 
+### FICT-COMPONENT-CLASS: Class binding used as a JSX component
+
+**Severity:** Error
+
+Fict components use a synchronous function invocation ABI. A local class,
+class-expression binding, or statically known class-valued member cannot be used
+as a JSX component because invoking it without `new` would fail at runtime.
+Replace the class component with a function component; ordinary non-JSX class
+helpers remain supported.
+
 ---
 
 ## Misc (Legacy / Generic)
