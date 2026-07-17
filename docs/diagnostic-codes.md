@@ -527,6 +527,15 @@ that cannot be synchronized through the namespace object safely. Export the
 shared binding, or keep its declaration and all uses in the same namespace
 segment.
 
+### FICT-USING-UNSUPPORTED: Explicit resource management is not modeled
+
+**Severity:** Error
+
+`using` and `await using` declarations require disposal on every normal and
+abrupt scope exit. Fict rejects them until those lifetime edges are represented
+in HIR; otherwise reactive rewriting could silently omit or reorder disposal.
+Use explicit `try`/`finally` cleanup outside compiler-owned reactive lowering.
+
 ---
 
 ## Misc (Legacy / Generic)

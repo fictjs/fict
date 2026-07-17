@@ -83,6 +83,7 @@ mod inline_jsx_functions;
 mod memo_side_effects;
 mod native_jsx_spreads;
 mod reactive_jsx_writes;
+mod resource_declarations;
 mod structured_control_flow;
 
 use class_components::ClassBindingCollector;
@@ -1836,6 +1837,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     }
 
     fn build(&mut self, program: &Program<'_>) {
+        self.diagnostics
+            .extend(resource_declarations::diagnostics(program));
         let mut collector = FunctionCollector::new(source_span(program.span));
         collector.visit_program(program);
         self.function_by_span = collector
