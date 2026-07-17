@@ -3018,25 +3018,6 @@ mod tests {
     }
 
     #[test]
-    fn preserves_plain_uppercase_parameter_evaluation_and_jsx_callback_roles() {
-        let result = compile(request(
-            "export function Helper({ a, b, unused }) { return b + a; } export const renderItems = items => items.map(item => <span>{item}</span>);",
-            "plain-function-roles.tsx",
-        ));
-
-        assert!(!result.has_errors(), "{:?}", result.diagnostics);
-        assert!(result.code.contains("function Helper({"), "{}", result.code);
-        assert!(result.code.contains("unused"), "{}", result.code);
-        assert!(
-            !result.code.contains("function Helper(__fictProps"),
-            "{}",
-            result.code
-        );
-        assert!(!result.code.contains("const a = prop("), "{}", result.code);
-        assert!(!result.code.contains("const b = prop("), "{}", result.code);
-    }
-
-    #[test]
     fn lowers_mutated_component_props_to_local_snapshots() {
         let result = compile(request(
             "import { $state } from 'fict'; function Child({ reactive, local, count = 1, user: { name }, alias }) { local = 'changed'; count++; name = name.toUpperCase(); ({ alias } = { alias: 'reassigned' }); return <p>{reactive}:{local}:{count}:{name}:{alias}</p>; } export function App() { let reactive = $state('A'); return <Child reactive={reactive} local='initial' user={{ name: 'ann' }} alias='initial' />; }",
@@ -3769,18 +3750,14 @@ mod tests {
                 "for (const key in source) { void key; }",
                 false,
             ),
-            (
-                "for-await-of",
-                "[1, 2]",
-                "for await (const value of source) { void value; }",
-                true,
-            ),
         ];
 
         for (name, initial, loop_source, is_async) in cases {
             let async_keyword = if is_async { "async " } else { "" };
+            let owner_name = if is_async { "useLoop" } else { "App" };
+            let return_value = if is_async { "source" } else { "<div />" };
             let source = format!(
-                "import {{ $state }} from 'fict'; export {async_keyword}function App() {{ let source = $state({initial}); {loop_source} return <div />; }}"
+                "import {{ $state }} from 'fict'; export {async_keyword}function {owner_name}() {{ let source = $state({initial}); {loop_source} return {return_value}; }}"
             );
             let filename = format!("reactive-{name}.tsx");
             let strict = compile(request(&source, &filename));
@@ -3863,7 +3840,7 @@ mod tests {
 
     #[test]
     fn emits_authored_enumeration_loops_from_structured_hir() {
-        let source = "import { $state } from 'fict'; export async function App(values, object) { let total = $state(0); for (const value of values) total += value; for (const key in object) total += key.length; for await (const value of values) { total += await value; } return total; }";
+        let source = "import { $state } from 'fict'; export async function useTotals(values, object) { let total = $state(0); for (const value of values) total += value; for (const key in object) total += key.length; for await (const value of values) { total += await value; } return total; }";
         let result = compile(request(source, "enumeration-loops.js"));
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);

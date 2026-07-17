@@ -77,6 +77,7 @@ use crate::{
 
 use super::compile::{convert_diagnostics, sorted, source_type};
 
+mod function_abi;
 mod inline_jsx_functions;
 mod memo_side_effects;
 mod native_jsx_spreads;
@@ -1987,23 +1988,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             facts: Vec::new(),
         };
         member_accesses.visit_program(program);
-        let jsx_owners: BTreeSet<_> = jsx.roots.iter().map(|root| root.owner).collect();
-        let component_context_owners: BTreeSet<_> = calls
-            .calls
-            .iter()
-            .filter(|call| self.call_uses_component_context_primitive(call))
-            .map(|call| call.owner)
-            .collect();
-        for function in &self.function_facts {
-            if function.id != FunctionId::new(0)
-                && self.functions[function.id.as_usize()].kind == FunctionKind::Plain
-                && is_component_name(function.display_name.as_deref())
-                && (jsx_owners.contains(&function.id)
-                    || component_context_owners.contains(&function.id))
-            {
-                self.functions[function.id.as_usize()].kind = FunctionKind::Component;
-            }
-        }
+        self.classify_component_roles(&calls.calls, &jsx.roots);
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
@@ -2030,6 +2015,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &member_accesses.facts,
             &jsx.roots,
         );
+        self.validate_synchronous_function_abi(&calls.calls, &jsx.roots);
     }
 
     fn validate_component_props_patterns(&mut self) {
@@ -3173,40 +3159,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.reactive_functions.insert(callback, kind);
             }
         }
-    }
-
-    fn call_uses_component_context_primitive(&self, call: &CallFact) -> bool {
-        if call.hook.is_some() {
-            return true;
-        }
-        let Some(binding) = call.binding else {
-            return false;
-        };
-        if self.macro_bindings.contains_key(&binding) {
-            return true;
-        }
-        let Some(import) = self
-            .frontend
-            .bindings
-            .iter()
-            .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
-            .and_then(|binding| binding.import.as_ref())
-        else {
-            return false;
-        };
-        let fict_hir::ImportedName::Named(imported) = &import.imported else {
-            return false;
-        };
-        is_fict_runtime_source(&import.source)
-            && matches!(
-                imported.as_str(),
-                "$store"
-                    | "createEffect"
-                    | "createMemo"
-                    | "createRenderEffect"
-                    | "createSignal"
-                    | "createStore"
-            )
     }
 
     fn validate_macro_placement(&mut self, calls: &[CallFact]) {
@@ -10414,11 +10366,6 @@ fn classify_named_function(name: Option<&str>) -> FunctionKind {
     } else {
         FunctionKind::Plain
     }
-}
-
-fn is_component_name(name: Option<&str>) -> bool {
-    name.and_then(|name| name.as_bytes().first())
-        .is_some_and(u8::is_ascii_uppercase)
 }
 
 fn declaration_kind(kind: FrontendBindingKind) -> DeclarationKind {

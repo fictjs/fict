@@ -482,6 +482,32 @@ const renderLabel = () => label
 
 ---
 
+### FICT-FUNCTION-ASYNC-COMPONENT: Async component under the synchronous render ABI
+
+**Severity:** Error
+
+Async components return promises, but the component invocation ABI requires a
+synchronous Fict node. Move asynchronous work into an ordinary helper and keep
+the component itself synchronous.
+
+### FICT-FUNCTION-GENERATOR-COMPONENT / FICT-FUNCTION-GENERATOR-HOOK: Generator render owner
+
+**Severity:** Error
+
+Generator components and hooks return iterators instead of the synchronous node
+or hook value required by the runtime ABI. Move iterator work into an ordinary
+helper.
+
+### FICT-FUNCTION-ASYNC-HOOK-AFTER-AWAIT: Render setup after suspension
+
+**Severity:** Error
+
+An async hook may read an accessor created before its first suspension, but it
+must not create JSX, call another hook, or create reactive render state after an
+`await`. Move all hook and JSX setup before the first suspension.
+
+---
+
 ## Misc (Legacy / Generic)
 
 These warnings are emitted by the compiler but are not part of the numbered FICT-\* catalog.

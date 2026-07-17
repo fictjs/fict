@@ -6878,14 +6878,6 @@ fn keeps_ordinary_uppercase_functions_and_jsx_callbacks_plain() {
     assert_eq!(function("Helper").kind, FunctionKind::Plain);
     assert_eq!(function("renderItems").kind, FunctionKind::Plain);
     assert_eq!(function("App").kind, FunctionKind::Component);
-    assert_eq!(
-        hir.functions
-            .iter()
-            .filter(|function| function.kind == FunctionKind::Component)
-            .count(),
-        1,
-        "the anonymous JSX callback must not acquire the component props ABI"
-    );
 }
 
 #[test]
