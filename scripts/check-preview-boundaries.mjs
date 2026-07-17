@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +8,7 @@ import {
   findUndocumentedExperimentalExports,
   hasLegacyLoaderReference,
 } from './preview-boundary-helpers.mjs'
+import { discoverRepositoryFiles } from './api-boundary-file-discovery.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const failures = []
@@ -154,13 +154,23 @@ if ((renderCore.match(/options\.includeSnapshot === true/g) ?? []).length !== 2)
   fail('string and streaming SSR must both require includeSnapshot=true')
 }
 
-const trackedFiles = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
-  .split('\n')
-  .filter(Boolean)
+let repositoryFiles = []
+try {
+  repositoryFiles = discoverRepositoryFiles(root).files
+} catch (error) {
+  fail(
+    `repository file discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+  )
+}
+if (repositoryFiles.length === 0) {
+  fail('repository file discovery returned no files')
+}
+
+const filesToScan = repositoryFiles
   .filter(path => !path.endsWith('CHANGELOG.md'))
   .filter(path => path !== 'scripts/check-preview-boundaries.mjs')
   .filter(path => /\.(?:[cm]?[jt]sx?|mdx?|json|ya?ml)$/.test(path))
-for (const path of trackedFiles) {
+for (const path of filesToScan) {
   const source = readText(path)
   if (hasLegacyLoaderReference(source)) {
     fail(`${path} references a stable-looking legacy resumability entrypoint`)
