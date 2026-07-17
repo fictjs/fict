@@ -5,7 +5,7 @@
   "crates": {
     "fict-compiler": 15200,
     "fict-compiler-napi": 500,
-    "fict-compiler-oxc": 36100,
+    "fict-compiler-oxc": 36200,
     "fict-compiler-preview": 2400,
     "fict-diagnostics": 600,
     "fict-emit": 9300,
