@@ -78,6 +78,7 @@ use crate::{
 use super::compile::{convert_diagnostics, sorted, source_type};
 
 mod class_components;
+mod dangerous_html;
 mod function_abi;
 mod inline_jsx_functions;
 mod memo_side_effects;
@@ -1839,6 +1840,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     fn build(&mut self, program: &Program<'_>) {
         self.diagnostics
             .extend(resource_declarations::diagnostics(program));
+        self.diagnostics.extend(dangerous_html::diagnostics(
+            program,
+            self.semantic.scoping(),
+        ));
         let mut collector = FunctionCollector::new(source_span(program.span));
         collector.visit_program(program);
         self.function_by_span = collector

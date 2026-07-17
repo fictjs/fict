@@ -343,6 +343,16 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 <div id={props.id} title={props.title} />
 ```
 
+### FICT-J004: `dangerouslySetInnerHTML` with JSX children
+
+**Severity:** Error
+
+**Why:** A native element declares both `dangerouslySetInnerHTML` and renderable JSX children.
+
+**Impact:** DOM lowering would write `innerHTML` and then append child nodes, producing ambiguous and unsafe output.
+
+**Fix:** Use either `dangerouslySetInnerHTML` or JSX children on a native element, never both. Formatting-only multiline whitespace and JSX comments do not count as children; component props are unaffected.
+
 ---
 
 ## Regions/Scopes (FICT-R\*)
