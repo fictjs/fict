@@ -15,7 +15,7 @@ use oxc::{
     },
     ast_visit::{Visit, walk::*},
     parser::{ParseOptions, Parser},
-    semantic::SemanticBuilder,
+    semantic::{Scoping, SemanticBuilder},
     span::Span,
     syntax::{scope::ScopeFlags, symbol::SymbolId},
     transformer::{DecoratorOptions, RewriteExtensionsMode, TransformOptions},
@@ -147,6 +147,72 @@ pub struct TypeScriptCompatibilityPlan {
     pub has_mixed_decorator_profiles: bool,
     /// AST mutation requires semantic/scoping regeneration before HIR or codegen.
     pub requires_semantic_rebuild: bool,
+    /// Explicit runtime namespace declaration segments and member ownership.
+    pub namespaces: TypeScriptNamespacePlan,
+}
+
+/// Owned namespace compatibility plan in authored source order.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TypeScriptNamespacePlan {
+    /// Runtime namespace declaration segments, including merged declarations.
+    pub segments: Vec<TypeScriptNamespaceSegment>,
+    /// Runtime references that require cross-segment or mutable synchronization.
+    pub references: Vec<TypeScriptNamespaceReference>,
+}
+
+/// One authored runtime namespace declaration segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeScriptNamespaceSegment {
+    /// Namespace path from the file root.
+    pub path: Vec<String>,
+    /// Declaration origin.
+    pub declaration_span: SourceSpan,
+    /// Stable authored order among all namespace segments.
+    pub source_order: u32,
+    /// Whether another runtime segment owns the same namespace binding.
+    pub merged: bool,
+    /// Exported and internal members owned by this declaration segment.
+    pub members: Vec<TypeScriptNamespaceMember>,
+}
+
+/// Binding owned by a TypeScript namespace declaration segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeScriptNamespaceMember {
+    /// Runtime member spelling.
+    pub name: String,
+    /// Declaration origin.
+    pub declaration_span: SourceSpan,
+    /// Whether the binding is exported onto the namespace object.
+    pub exported: bool,
+    /// Whether reads and writes must synchronize through the namespace object.
+    pub mutable: bool,
+    /// Whether this member is a nested namespace binding.
+    pub namespace: bool,
+}
+
+/// Namespace member reference owned by the compatibility plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeScriptNamespaceReference {
+    /// Namespace path that owns the referenced member.
+    pub namespace_path: Vec<String>,
+    /// Referenced member spelling.
+    pub member: String,
+    /// Member declaration origin.
+    pub declaration_span: SourceSpan,
+    /// Authored reference origin.
+    pub reference_span: SourceSpan,
+    /// Source segment index in [`TypeScriptNamespacePlan::segments`].
+    pub source_segment: u32,
+    /// Owning segment index in [`TypeScriptNamespacePlan::segments`].
+    pub target_segment: u32,
+    /// Whether the reference crosses authored declaration segments.
+    pub cross_segment: bool,
+    /// Whether the referenced binding is exported by its namespace.
+    pub exported: bool,
+    /// Whether the namespace object is the canonical mutable storage.
+    pub mutable: bool,
+    /// Whether this reference writes the member.
+    pub write: bool,
 }
 
 /// Owned compatibility analysis result.
@@ -189,7 +255,12 @@ pub fn analyze_typescript_compatibility(
         };
     }
 
-    let plan = plan_typescript_program(&program, options.module_kind, &options.typescript);
+    let plan = plan_typescript_program(
+        &program,
+        semantic.semantic.scoping(),
+        options.module_kind,
+        &options.typescript,
+    );
     let diagnostics = unsupported_diagnostics(&plan);
     TypeScriptCompatibilityOutput {
         plan: Some(plan),
@@ -199,6 +270,7 @@ pub fn analyze_typescript_compatibility(
 
 pub(crate) fn plan_typescript_program(
     program: &Program<'_>,
+    scoping: &Scoping,
     module_kind: OxcModuleKind,
     typescript: &OxcTypeScriptOptions,
 ) -> TypeScriptCompatibilityPlan {
@@ -208,32 +280,13 @@ pub(crate) fn plan_typescript_program(
         ..CompatibilityCollector::default()
     };
     collector.visit_program(program);
-    collector.finish()
+    let mut plan = collector.finish();
+    plan.namespaces = crate::typescript_namespace::collect_namespace_plan(program, scoping);
+    plan
 }
 
 pub(crate) fn passthrough_blockers(plan: &TypeScriptCompatibilityPlan) -> Vec<Diagnostic> {
-    let mut diagnostics = unsupported_diagnostics(plan);
-    for feature in &plan.features {
-        if feature.owner != TypeScriptLoweringOwner::FictCompatibility {
-            continue;
-        }
-        let (code, message) = match &feature.kind {
-            TypeScriptFeatureKind::Namespace {
-                mutable_export: true,
-                ..
-            } => (
-                "FICT-TS-NAMESPACE-MUTABLE",
-                "mutable namespace exports require the Fict TypeScript compatibility lowerer",
-            ),
-            TypeScriptFeatureKind::Namespace { merged: true, .. } => (
-                "FICT-TS-NAMESPACE-MERGED",
-                "merged runtime namespaces require the Fict TypeScript compatibility lowerer",
-            ),
-            _ => continue,
-        };
-        diagnostics.push(unsupported(code, message, feature.span));
-    }
-    sorted(diagnostics)
+    unsupported_diagnostics(plan)
 }
 
 pub(crate) fn configure_transform(
@@ -428,6 +481,7 @@ impl CompatibilityCollector {
             has_mixed_decorator_profiles: self.has_legacy_parameter_decorators
                 && self.has_standard_decorators,
             requires_semantic_rebuild: true,
+            namespaces: TypeScriptNamespacePlan::default(),
         }
     }
 }
@@ -658,7 +712,7 @@ fn namespace_has_mutable_export(declaration: &TSModuleDeclaration<'_>) -> bool {
     })
 }
 
-fn namespace_has_runtime_body(declaration: &TSModuleDeclaration<'_>) -> bool {
+pub(crate) fn namespace_has_runtime_body(declaration: &TSModuleDeclaration<'_>) -> bool {
     if declaration.declare {
         return false;
     }

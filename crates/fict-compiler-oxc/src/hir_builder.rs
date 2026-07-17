@@ -1737,6 +1737,17 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             old_to_new.insert(binding.id.index(), new);
             symbol_to_binding.insert(SymbolId::from_usize(binding.id.as_usize()), new);
         }
+        frontend.namespace_exports.retain_mut(|export| {
+            let (Some(namespace), Some(target)) = (
+                old_to_new.get(&export.namespace.index()).copied(),
+                old_to_new.get(&export.target.index()).copied(),
+            ) else {
+                return false;
+            };
+            export.namespace = namespace;
+            export.target = target;
+            true
+        });
         apply_resolved_import_metadata(&mut frontend, &options.resolved_metadata);
         let macro_bindings = frontend
             .macro_imports

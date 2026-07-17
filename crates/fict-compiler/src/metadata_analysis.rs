@@ -27,6 +27,7 @@ pub(crate) struct MetadataGeneration {
 struct LocalMetadataFacts {
     exports: BTreeMap<BindingId, ReactiveExportKind>,
     hooks: BTreeMap<BindingId, HookReturnInfo>,
+    namespaces: BTreeMap<BindingId, ModuleReactiveMetadata>,
 }
 
 struct MetadataBuilder<'snapshot> {
@@ -211,13 +212,18 @@ pub(crate) fn generate_module_metadata(
                 origin,
             } => match target {
                 ModuleLocalExport::Binding(binding) => {
-                    let namespace = core
+                    let imported_namespace = core
                         .hir
                         .bindings
                         .get(binding.as_usize())
                         .and_then(|binding| binding.import.as_ref())
                         .filter(|import| import.imported == ImportedName::Namespace)
                         .and_then(|import| builder.resolve(&import.source));
+                    let namespace = local
+                        .namespaces
+                        .get(binding)
+                        .cloned()
+                        .or(imported_namespace);
                     builder.add_local(
                         exported,
                         local.exports.get(binding).copied(),
@@ -297,14 +303,69 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
             .and_then(|annotation| annotation.shape.as_ref())
             .map(hook_info_from_annotation);
         let inferred = function_analysis(core, function.id)
-            .and_then(|analysis| infer_hook_return(&core.hir, function, analysis));
+            .and_then(|analysis| infer_hook_return(&core.hir, function, analysis, &facts.exports));
         if let Some(info) = annotation.or(inferred)
             && !hook_info_is_empty(&info)
         {
             facts.hooks.insert(binding, info);
         }
     }
+    facts.namespaces = collect_local_namespaces(frontend, &facts.exports, &facts.hooks);
     facts
+}
+
+fn collect_local_namespaces(
+    frontend: &FrontendSummary,
+    exports: &BTreeMap<BindingId, ReactiveExportKind>,
+    hooks: &BTreeMap<BindingId, HookReturnInfo>,
+) -> BTreeMap<BindingId, ModuleReactiveMetadata> {
+    let mut members: BTreeMap<BindingId, Vec<_>> = BTreeMap::new();
+    for member in &frontend.namespace_exports {
+        members.entry(member.namespace).or_default().push(member);
+    }
+    let mut namespaces = BTreeMap::new();
+    for namespace in members.keys().copied() {
+        let metadata =
+            build_local_namespace(namespace, &members, exports, hooks, &mut BTreeSet::new());
+        if metadata_has_content(&metadata) {
+            namespaces.insert(namespace, metadata);
+        }
+    }
+    namespaces
+}
+
+fn build_local_namespace(
+    namespace: BindingId,
+    members: &BTreeMap<BindingId, Vec<&fict_compiler_oxc::FrontendNamespaceExport>>,
+    exports: &BTreeMap<BindingId, ReactiveExportKind>,
+    hooks: &BTreeMap<BindingId, HookReturnInfo>,
+    visiting: &mut BTreeSet<BindingId>,
+) -> ModuleReactiveMetadata {
+    if !visiting.insert(namespace) {
+        return ModuleReactiveMetadata::new();
+    }
+    let mut metadata = ModuleReactiveMetadata::new();
+    for member in members.get(&namespace).into_iter().flatten() {
+        if members.contains_key(&member.target) {
+            let nested = build_local_namespace(member.target, members, exports, hooks, visiting);
+            if metadata_has_content(&nested) {
+                metadata.namespaces.insert(member.exported.clone(), nested);
+            }
+            continue;
+        }
+        if let Some(kind) = exports.get(&member.target).copied() {
+            metadata.exports.insert(member.exported.clone(), kind);
+        }
+        if let Some(hook) = hooks.get(&member.target).cloned() {
+            metadata.hooks.insert(member.exported.clone(), hook);
+        }
+    }
+    visiting.remove(&namespace);
+    metadata
+}
+
+fn metadata_has_content(metadata: &ModuleReactiveMetadata) -> bool {
+    !metadata.exports.is_empty() || !metadata.hooks.is_empty() || !metadata.namespaces.is_empty()
 }
 
 fn classify_local(
@@ -503,6 +564,7 @@ fn infer_hook_return(
     file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
+    known_bindings: &BTreeMap<BindingId, ReactiveExportKind>,
 ) -> Option<HookReturnInfo> {
     if function.kind != FunctionKind::Hook {
         return None;
@@ -513,9 +575,12 @@ fn infer_hook_return(
         };
         Some(value)
     });
-    let first = hook_info_for_value(file, function, analysis, returns.next()?)?;
+    let first = hook_info_for_value(file, function, analysis, known_bindings, returns.next()?)?;
     returns
-        .all(|value| hook_info_for_value(file, function, analysis, value).as_ref() == Some(&first))
+        .all(|value| {
+            hook_info_for_value(file, function, analysis, known_bindings, value).as_ref()
+                == Some(&first)
+        })
         .then_some(first)
 }
 
@@ -523,6 +588,7 @@ fn hook_info_for_value(
     file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
+    known_bindings: &BTreeMap<BindingId, ReactiveExportKind>,
     value: ValueId,
 ) -> Option<HookReturnInfo> {
     let instruction = defining_instruction(function, value)?;
@@ -545,9 +611,14 @@ fn hook_info_for_value(
                     PropertyKey::Index(index) => index.to_string(),
                     PropertyKey::Computed(_) => continue,
                 };
-                if let Some(kind) =
-                    classify_value(file, function, analysis, *value, &mut BTreeSet::new())
-                {
+                if let Some(kind) = classify_value(
+                    file,
+                    function,
+                    analysis,
+                    known_bindings,
+                    *value,
+                    &mut BTreeSet::new(),
+                ) {
                     object_props.insert(key, kind);
                 }
             }
@@ -562,9 +633,14 @@ fn hook_info_for_value(
                 let ArrayElement::Value(value) = element else {
                     continue;
                 };
-                if let Some(kind) =
-                    classify_value(file, function, analysis, *value, &mut BTreeSet::new())
-                {
+                if let Some(kind) = classify_value(
+                    file,
+                    function,
+                    analysis,
+                    known_bindings,
+                    *value,
+                    &mut BTreeSet::new(),
+                ) {
                     array_props.insert(index.to_string(), kind);
                 }
             }
@@ -573,11 +649,17 @@ fn hook_info_for_value(
                 ..HookReturnInfo::default()
             })
         }
-        _ => classify_value(file, function, analysis, value, &mut BTreeSet::new()).map(|kind| {
-            HookReturnInfo {
-                direct_accessor: Some(kind),
-                ..HookReturnInfo::default()
-            }
+        _ => classify_value(
+            file,
+            function,
+            analysis,
+            known_bindings,
+            value,
+            &mut BTreeSet::new(),
+        )
+        .map(|kind| HookReturnInfo {
+            direct_accessor: Some(kind),
+            ..HookReturnInfo::default()
         }),
     }
 }
@@ -586,6 +668,7 @@ fn classify_value(
     file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
+    known_bindings: &BTreeMap<BindingId, ReactiveExportKind>,
     value: ValueId,
     visited: &mut BTreeSet<ValueId>,
 ) -> Option<ReactiveExportKind> {
@@ -593,6 +676,21 @@ fn classify_value(
         return None;
     }
     let instruction = defining_instruction(function, value)?;
+    if let HirInstructionKind::Read { place } = &instruction.kind
+        && place.projections.is_empty()
+        && let Some(local) = match place.base {
+            PlaceBase::Local(local) => Some(local),
+            PlaceBase::Ssa(name) => Some(name.local),
+            PlaceBase::Global(_) | PlaceBase::Value(_) => None,
+        }
+        && let Some(kind) = function
+            .locals
+            .get(local.as_usize())
+            .and_then(|local| local.binding)
+            .and_then(|binding| known_bindings.get(&binding).copied())
+    {
+        return Some(kind);
+    }
     if let Some([path]) = analysis
         .dependencies
         .value_dependencies
@@ -612,16 +710,30 @@ fn classify_value(
     }
     match &instruction.kind {
         HirInstructionKind::Call(call) => classify_call_with_import(file, function, call),
-        HirInstructionKind::Sequence { values } => values
-            .last()
-            .and_then(|value| classify_value(file, function, analysis, *value, visited)),
+        HirInstructionKind::Sequence { values } => values.last().and_then(|value| {
+            classify_value(file, function, analysis, known_bindings, *value, visited)
+        }),
         HirInstructionKind::Conditional {
             consequent,
             alternate,
             ..
         } => {
-            let consequent = classify_value(file, function, analysis, *consequent, visited)?;
-            let alternate = classify_value(file, function, analysis, *alternate, visited)?;
+            let consequent = classify_value(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                *consequent,
+                visited,
+            )?;
+            let alternate = classify_value(
+                file,
+                function,
+                analysis,
+                known_bindings,
+                *alternate,
+                visited,
+            )?;
             (consequent == alternate).then_some(consequent)
         }
         _ => None,

@@ -4,6 +4,7 @@ use super::typescript::{
     configure_transform, passthrough_blockers, plan_typescript_program,
     rewrite_import_equals_extensions,
 };
+use super::typescript_namespace::lower_namespace_compatibility;
 use crate::commonjs::lower_standard_esm_to_commonjs;
 use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
 use fict_diagnostics::{
@@ -475,14 +476,43 @@ pub fn emit_program(
     if semantic_has_errors {
         return failed_output(diagnostics);
     }
-    let typescript_plan = input_source_type
-        .is_typescript()
-        .then(|| plan_typescript_program(&program, options.module_kind, &options.typescript));
+    let typescript_plan = input_source_type.is_typescript().then(|| {
+        plan_typescript_program(
+            &program,
+            semantic.semantic.scoping(),
+            options.module_kind,
+            &options.typescript,
+        )
+    });
     if let Some(plan) = &typescript_plan {
         let blockers = passthrough_blockers(plan);
         if !blockers.is_empty() {
             diagnostics.extend(blockers);
             return failed_output(diagnostics);
+        }
+    }
+    let mut scoping = semantic.semantic.into_scoping();
+    if let Some(plan) = &typescript_plan {
+        let compatibility = lower_namespace_compatibility(&allocator, &mut program, &scoping, plan);
+        let compatibility_failed = !compatibility.diagnostics.is_empty();
+        diagnostics.extend(compatibility.diagnostics);
+        if compatibility_failed {
+            return failed_output(diagnostics);
+        }
+        if compatibility.changed {
+            let rebuilt = SemanticBuilder::new()
+                .with_check_syntax_error(true)
+                .with_enum_eval(true)
+                .build(&program);
+            let rebuild_failed = rebuilt.diagnostics.has_errors();
+            diagnostics.extend(convert_diagnostics(
+                rebuilt.diagnostics,
+                "FICT-SEMANTIC-POST-COMPAT-EMIT",
+            ));
+            if rebuild_failed {
+                return failed_output(diagnostics);
+            }
+            scoping = rebuilt.semantic.into_scoping();
         }
     }
     let mut transform_options = TransformOptions {
@@ -521,7 +551,6 @@ pub fn emit_program(
             return failed_output(diagnostics);
         }
     }
-    let scoping = semantic.semantic.into_scoping();
     if options.typescript.rewrite_import_extensions {
         rewrite_import_equals_extensions(&allocator, &mut program);
     }

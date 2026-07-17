@@ -18,6 +18,7 @@ use crate::typescript::{
     configure_transform, passthrough_blockers, plan_typescript_program,
     rewrite_import_equals_extensions,
 };
+use crate::typescript_namespace::lower_namespace_compatibility;
 
 /// Source grammar supplied by the Fict orchestration layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,15 +132,45 @@ pub fn compile_passthrough(
         return failed_output(diagnostics);
     }
 
-    let typescript_plan = source_type
-        .is_typescript()
-        .then(|| plan_typescript_program(&program, options.module_kind, &options.typescript));
+    let typescript_plan = source_type.is_typescript().then(|| {
+        plan_typescript_program(
+            &program,
+            semantic.semantic.scoping(),
+            options.module_kind,
+            &options.typescript,
+        )
+    });
     if let Some(plan) = &typescript_plan {
         let blockers = passthrough_blockers(plan);
         if !blockers.is_empty() {
             let mut diagnostics = semantic_diagnostics;
             diagnostics.extend(blockers);
             return failed_output(diagnostics);
+        }
+    }
+    let mut diagnostics = semantic_diagnostics;
+    let mut scoping = semantic.semantic.into_scoping();
+    if let Some(plan) = &typescript_plan {
+        let compatibility = lower_namespace_compatibility(&allocator, &mut program, &scoping, plan);
+        let compatibility_failed = !compatibility.diagnostics.is_empty();
+        diagnostics.extend(compatibility.diagnostics);
+        if compatibility_failed {
+            return failed_output(diagnostics);
+        }
+        if compatibility.changed {
+            let rebuilt = SemanticBuilder::new()
+                .with_check_syntax_error(true)
+                .with_enum_eval(true)
+                .build(&program);
+            let rebuild_failed = rebuilt.diagnostics.has_errors();
+            diagnostics.extend(convert_diagnostics(
+                rebuilt.diagnostics,
+                "FICT-SEMANTIC-POST-COMPAT",
+            ));
+            if rebuild_failed {
+                return failed_output(diagnostics);
+            }
+            scoping = rebuilt.semantic.into_scoping();
         }
     }
 
@@ -154,7 +185,6 @@ pub fn compile_passthrough(
     if let Some(plan) = &typescript_plan {
         configure_transform(plan, &options.typescript, &mut transform_options);
     }
-    let scoping = semantic.semantic.into_scoping();
     if options.typescript.rewrite_import_extensions {
         rewrite_import_equals_extensions(&allocator, &mut program);
     }
@@ -162,7 +192,6 @@ pub fn compile_passthrough(
         .build_with_scoping(scoping, &mut program);
     let transform_has_errors = transformed.diagnostics.has_errors();
     let transformed_scoping = transformed.scoping;
-    let mut diagnostics = semantic_diagnostics;
     diagnostics.extend(convert_diagnostics(
         transformed.diagnostics,
         "FICT-TRANSFORM",

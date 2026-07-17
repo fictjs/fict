@@ -17,6 +17,7 @@ mod preview_codegen;
 mod scan;
 mod source_map;
 mod typescript;
+mod typescript_namespace;
 
 pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcHandlerArtifact, OxcModuleKind, OxcSourceLanguage,
@@ -30,8 +31,9 @@ pub use facts::{
 };
 pub use frontend::{
     FrontendBinding, FrontendBindingKind, FrontendMacroCall, FrontendMacroImport,
-    FrontendMacroValueUse, FrontendOutput, FrontendScope, FrontendScopeKind, FrontendSourceSummary,
-    FrontendSummary, NamespaceMacroCall, analyze_frontend,
+    FrontendMacroValueUse, FrontendNamespaceExport, FrontendOutput, FrontendScope,
+    FrontendScopeKind, FrontendSourceSummary, FrontendSummary, NamespaceMacroCall,
+    analyze_frontend,
 };
 pub use hir_builder::{HirBuildOptions, HirBuildOutput, OxcSyntaxFragment, build_hir};
 pub use scan::{
@@ -40,7 +42,8 @@ pub use scan::{
 pub use source_map::{compose_source_map_json, validate_source_map_json};
 pub use typescript::{
     OxcTypeScriptOptions, TypeScriptCompatibilityOutput, TypeScriptCompatibilityPlan,
-    TypeScriptFeature, TypeScriptFeatureKind, TypeScriptLoweringOwner,
+    TypeScriptFeature, TypeScriptFeatureKind, TypeScriptLoweringOwner, TypeScriptNamespaceMember,
+    TypeScriptNamespacePlan, TypeScriptNamespaceReference, TypeScriptNamespaceSegment,
     analyze_typescript_compatibility,
 };
 

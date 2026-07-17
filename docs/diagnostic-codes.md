@@ -516,6 +516,17 @@ as a JSX component because invoking it without `new` would fail at runtime.
 Replace the class component with a function component; ordinary non-JSX class
 helpers remain supported.
 
+### FICT-TS-NAMESPACE-REFERENCE: Unsafe TypeScript namespace reference
+
+**Severity:** Error
+
+The TypeScript namespace compatibility pass could not preserve a namespace
+member reference or write. This includes references from one merged declaration
+segment to a non-exported binding owned by another segment and syntax positions
+that cannot be synchronized through the namespace object safely. Export the
+shared binding, or keep its declaration and all uses in the same namespace
+segment.
+
 ---
 
 ## Misc (Legacy / Generic)

@@ -12,11 +12,14 @@ use oxc::{
     ast::ast::{
         CallExpression, Expression, ImportDeclaration, ImportDeclarationSpecifier,
         ImportOrExportKind, Statement, TSExportAssignment, TSImportEqualsDeclaration,
-        TSModuleReference,
+        TSModuleDeclaration, TSModuleDeclarationBody, TSModuleDeclarationName, TSModuleReference,
     },
     ast_visit::{
         Visit,
-        walk::{walk_call_expression, walk_ts_import_equals_declaration},
+        walk::{
+            walk_call_expression, walk_export_named_declaration, walk_ts_import_equals_declaration,
+            walk_ts_module_declaration,
+        },
     },
     parser::{ParseOptions, Parser},
     semantic::{Scoping, Semantic, SemanticBuilder},
@@ -229,6 +232,19 @@ pub struct NamespaceMacroCall {
     pub optional: bool,
 }
 
+/// Runtime binding exported from a local TypeScript namespace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrontendNamespaceExport {
+    /// Namespace object binding that owns the exported property.
+    pub namespace: BindingId,
+    /// Exported property spelling.
+    pub exported: String,
+    /// Runtime binding assigned to the namespace property.
+    pub target: BindingId,
+    /// Authored member declaration origin.
+    pub origin: SourceSpan,
+}
+
 /// Complete owned frontend summary. No arena-backed AST or OXC ID escapes this value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontendSummary {
@@ -244,6 +260,8 @@ pub struct FrontendSummary {
     pub has_module_syntax: bool,
     /// Runtime module exports in deterministic source order using frontend binding identities.
     pub module_exports: Vec<ModuleExport>,
+    /// Local TypeScript namespace exports in deterministic source order.
+    pub namespace_exports: Vec<FrontendNamespaceExport>,
     /// Binding-confirmed macro imports.
     pub macro_imports: Vec<FrontendMacroImport>,
     /// Binding-confirmed macro calls in source order.
@@ -360,6 +378,15 @@ fn build_summary(
         &symbol_to_binding,
         &bindings,
     );
+    let mut namespace_collector = NamespaceExportCollector {
+        symbol_to_binding: &symbol_to_binding,
+        stack: Vec::new(),
+        exports: Vec::new(),
+    };
+    namespace_collector.visit_program(program);
+    namespace_collector
+        .exports
+        .sort_by_key(|export| (export.origin.start(), export.origin.end()));
     let has_typescript_export_assignment = program
         .body
         .iter()
@@ -454,10 +481,125 @@ fn build_summary(
         bindings,
         has_module_syntax: module_record.has_module_syntax || has_typescript_export_assignment,
         module_exports,
+        namespace_exports: namespace_collector.exports,
         macro_imports,
         macro_calls: macro_collector.calls,
         macro_value_uses,
         namespace_macro_calls: macro_collector.namespace_calls,
+    }
+}
+
+struct NamespaceExportCollector<'facts> {
+    symbol_to_binding: &'facts BTreeMap<SymbolId, BindingId>,
+    stack: Vec<SymbolId>,
+    exports: Vec<FrontendNamespaceExport>,
+}
+
+impl NamespaceExportCollector<'_> {
+    fn push(&mut self, binding: &oxc::ast::ast::BindingIdentifier<'_>) {
+        let Some(symbol) = binding.symbol_id.get() else {
+            return;
+        };
+        self.push_parts(symbol, binding.name.to_string(), binding.span);
+    }
+
+    fn push_parts(&mut self, symbol: SymbolId, exported: String, span: Span) {
+        let (Some(namespace), Some(target)) = (
+            self.stack
+                .last()
+                .and_then(|symbol| self.symbol_to_binding.get(symbol)),
+            self.symbol_to_binding.get(&symbol),
+        ) else {
+            return;
+        };
+        self.exports.push(FrontendNamespaceExport {
+            namespace: *namespace,
+            exported,
+            target: *target,
+            origin: source_span(span),
+        });
+    }
+
+    fn collect_declaration(&mut self, declaration: &oxc::ast::ast::Declaration<'_>) {
+        use oxc::ast::ast::Declaration;
+        match declaration {
+            Declaration::VariableDeclaration(variable) => {
+                let mut names = NamespaceBindingCollector::default();
+                for declarator in &variable.declarations {
+                    names.visit_binding_pattern(&declarator.id);
+                }
+                for (symbol, name, span) in names.bindings {
+                    self.push_parts(symbol, name, span);
+                }
+            }
+            Declaration::FunctionDeclaration(function) => {
+                if let Some(binding) = &function.id {
+                    self.push(binding);
+                }
+            }
+            Declaration::ClassDeclaration(class) => {
+                if let Some(binding) = &class.id {
+                    self.push(binding);
+                }
+            }
+            Declaration::TSEnumDeclaration(enumeration) => self.push(&enumeration.id),
+            Declaration::TSImportEqualsDeclaration(import) => self.push(&import.id),
+            Declaration::TSModuleDeclaration(namespace) => {
+                if let TSModuleDeclarationName::Identifier(binding) = &namespace.id {
+                    self.push(binding);
+                }
+            }
+            Declaration::TSTypeAliasDeclaration(_)
+            | Declaration::TSInterfaceDeclaration(_)
+            | Declaration::TSGlobalDeclaration(_) => {}
+        }
+    }
+}
+
+impl<'a> Visit<'a> for NamespaceExportCollector<'_> {
+    fn visit_export_named_declaration(
+        &mut self,
+        declaration: &oxc::ast::ast::ExportNamedDeclaration<'a>,
+    ) {
+        if !self.stack.is_empty()
+            && let Some(runtime) = &declaration.declaration
+        {
+            self.collect_declaration(runtime);
+        }
+        walk_export_named_declaration(self, declaration);
+    }
+
+    fn visit_ts_module_declaration(&mut self, namespace: &TSModuleDeclaration<'a>) {
+        let TSModuleDeclarationName::Identifier(identifier) = &namespace.id else {
+            walk_ts_module_declaration(self, namespace);
+            return;
+        };
+        let Some(symbol) = identifier.symbol_id.get() else {
+            walk_ts_module_declaration(self, namespace);
+            return;
+        };
+        self.stack.push(symbol);
+        if let Some(TSModuleDeclarationBody::TSModuleDeclaration(nested)) = &namespace.body
+            && let TSModuleDeclarationName::Identifier(binding) = &nested.id
+        {
+            self.push(binding);
+        }
+        walk_ts_module_declaration(self, namespace);
+        self.stack.pop();
+    }
+}
+
+#[derive(Default)]
+struct NamespaceBindingCollector {
+    bindings: Vec<(SymbolId, String, Span)>,
+}
+
+impl<'a> Visit<'a> for NamespaceBindingCollector {
+    fn visit_binding_identifier(&mut self, binding: &oxc::ast::ast::BindingIdentifier<'a>) {
+        if let Some(symbol) = binding.symbol_id.get() {
+            self.bindings
+                .push((symbol, binding.name.to_string(), binding.span));
+        }
     }
 }
 
