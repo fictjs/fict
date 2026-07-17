@@ -16,7 +16,7 @@ use fict_compiler_oxc::{
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
-use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
+use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core_with_hook_returns};
 use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
 use fict_metadata::MetadataResolutionStatus;
 use std::mem;
@@ -183,6 +183,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         }
     };
     let metadata = generate_module_metadata(&core, &module_plan, &frontend, &request.metadata);
+    let local_hook_returns = metadata.local_hook_returns;
     result.module_metadata = metadata.metadata;
     result.metadata_dependencies = metadata.dependencies;
     result
@@ -228,11 +229,12 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     } else {
         RuntimeFamily::Fict
     };
-    let emit = match lower_core(
+    let emit = match lower_core_with_hook_returns(
         &core.hir,
         &regions,
         &cycles,
         Some(&scopes),
+        &local_hook_returns,
         NoJsxLoweringOptions {
             runtime_family,
             strict_guarantee: request.options.strict_guarantee,
@@ -1180,7 +1182,7 @@ mod tests {
         assert!(readonly.code.is_empty());
         assert!(readonly.diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "FICT-METADATA-READONLY"
-                && diagnostic.message.contains("imported hook")
+                && diagnostic.message.contains("returned by a hook")
         }));
     }
 
@@ -1525,7 +1527,7 @@ mod tests {
         assert!(memo_write.code.is_empty());
         assert!(memo_write.diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "FICT-METADATA-READONLY"
-                && diagnostic.message.contains("imported hook")
+                && diagnostic.message.contains("returned by a hook")
         }));
 
         let mut store_write = request(

@@ -19,7 +19,10 @@ pub use ir::{
     EmitValueRef, EventOptions, PropsOperation, ReactivePatternTarget, ReactiveSlot,
     ReactiveSlotKind, ReactiveSlotStorage, RuntimeImportIntent,
 };
-pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx, parse_event_attribute};
+pub use lower::{
+    NoJsxLoweringOptions, lower_core, lower_core_with_hook_returns, lower_no_jsx,
+    parse_event_attribute,
+};
 
 pub use runtime_abi::{
     ALL_RUNTIME_HELPERS, DELEGATED_EVENTS, FICT_INTERNAL_MODULE, FICT_LIST_MODULE,

@@ -1,8 +1,9 @@
 use fict_hir::{
     BindingId, BlockId, CompoundAssignmentOperator, FunctionId, ImportedHookPropertyMatch,
-    LiteralValue, LocalId, Origin, Projection, RegionId, SsaName, SyntaxFragmentId, TemplateId,
-    UpdateOperator, ValueId,
+    ImportedHookReturn, LiteralValue, LocalId, Origin, Projection, RegionId, SsaName,
+    SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
 };
+use std::collections::BTreeMap;
 
 use crate::{RuntimeFamily, RuntimeHelper};
 use fict_reactivity::StructurizeAnalysis;
@@ -90,20 +91,20 @@ pub enum ReactiveSlotStorage {
     Owned,
     /// The function closes over a reactive binding created by another HIR function.
     Captured { owner: FunctionId },
-    /// The function closes over a structured accessor returned by an imported hook.
+    /// The function closes over a structured accessor returned by a hook.
     CapturedHookReturn {
         owner: FunctionId,
         call: ValueId,
-        import: BindingId,
+        hook: BindingId,
         property: ImportedHookPropertyMatch,
     },
     /// The slot refers to an accessor or store owned by another module.
     /// `member` identifies a static namespace path; `None` denotes a direct import.
     Imported { member: Option<u32> },
-    /// The slot refers to an accessor returned by an imported hook call.
+    /// The slot refers to an accessor returned by a hook call.
     HookReturn {
         call: ValueId,
-        import: BindingId,
+        hook: BindingId,
         property: Option<ImportedHookPropertyMatch>,
     },
 }
@@ -930,6 +931,8 @@ pub struct EmitProgram {
     pub preview: bool,
     pub preview_plan: Option<EmitPreviewPlan>,
     pub strict_rejected: bool,
+    /// Same-module hook return shapes consumed while building this plan.
+    pub local_hook_returns: BTreeMap<BindingId, ImportedHookReturn>,
     pub module: EmitModulePlan,
     pub imports: Vec<RuntimeImportIntent>,
     pub functions: Vec<EmitFunction>,

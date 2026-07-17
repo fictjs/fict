@@ -48,6 +48,7 @@ fn effect_program(source: &str) -> EmitProgram {
         preview: false,
         preview_plan: None,
         strict_rejected: false,
+        local_hook_returns: Default::default(),
         module: EmitModulePlan {
             source_fragment: None,
             reserved_names: vec!["createEffect_1".into()],

@@ -7,9 +7,9 @@ use fict_diagnostics::{
 use fict_hir::{
     ArrayElement, BinaryOperator, BindingId, CallHost, DeclarationKind, FictMacroKind, FunctionId,
     FunctionKind, HirFile, HirFunction, HirInstructionKind, ImportedHookReturn, ImportedName,
-    ImportedReactiveKind, LiteralValue, ModuleExport, ModuleLocalExport, ModulePlan, ObjectEntry,
-    ObjectPropertyKind, PlaceBase, Projection, PropertyKey, ReactiveCallKind, TerminatorKind,
-    ValueId,
+    ImportedReactiveKind, ImportedReactiveProperty, LiteralValue, ModuleExport, ModuleLocalExport,
+    ModulePlan, ObjectEntry, ObjectPropertyKind, PlaceBase, Projection, PropertyKey,
+    ReactiveCallKind, TerminatorKind, ValueId,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -22,6 +22,7 @@ use crate::{CorePassOutput, FunctionPassAnalysis};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MetadataGeneration {
     pub metadata: ModuleReactiveMetadata,
+    pub local_hook_returns: BTreeMap<BindingId, ImportedHookReturn>,
     pub dependencies: Vec<String>,
     pub unresolved_requests: Vec<String>,
     pub incomplete: bool,
@@ -65,6 +66,7 @@ impl<'snapshot> MetadataBuilder<'snapshot> {
     fn finish(self) -> MetadataGeneration {
         MetadataGeneration {
             metadata: self.metadata,
+            local_hook_returns: BTreeMap::new(),
             dependencies: self.dependencies.into_iter().collect(),
             unresolved_requests: self.unresolved_requests.into_iter().collect(),
             incomplete: self.incomplete,
@@ -256,8 +258,43 @@ pub(crate) fn generate_module_metadata(
     }
 
     let mut generation = builder.finish();
+    generation.local_hook_returns = local
+        .hooks
+        .iter()
+        .map(|(binding, hook)| (*binding, imported_hook_return(hook)))
+        .collect();
     generation.diagnostics = local.diagnostics;
     generation
+}
+
+fn imported_hook_return(info: &HookReturnInfo) -> ImportedHookReturn {
+    ImportedHookReturn {
+        direct_accessor: info.direct_accessor.as_ref().map(imported_reactive_kind),
+        object_properties: info
+            .object_props
+            .iter()
+            .map(|(key, kind)| ImportedReactiveProperty {
+                key: key.clone(),
+                kind: imported_reactive_kind(kind),
+            })
+            .collect(),
+        array_properties: info
+            .array_props
+            .iter()
+            .map(|(key, kind)| ImportedReactiveProperty {
+                key: key.clone(),
+                kind: imported_reactive_kind(kind),
+            })
+            .collect(),
+    }
+}
+
+const fn imported_reactive_kind(kind: &ReactiveExportKind) -> ImportedReactiveKind {
+    match kind {
+        ReactiveExportKind::Signal => ImportedReactiveKind::Signal,
+        ReactiveExportKind::Memo => ImportedReactiveKind::Memo,
+        ReactiveExportKind::Store => ImportedReactiveKind::Store,
+    }
 }
 
 fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> LocalMetadataFacts {

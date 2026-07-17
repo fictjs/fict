@@ -8,7 +8,7 @@ use fict_diagnostics::{
 use fict_hir::HirFile;
 use fict_reactivity::RegionAnalysis;
 use fict_reactivity::{analyze_cfg, verify_structurized_cfg};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 /// Verify EmitIR helper, slot/temp, region/template, cleanup, and rejection invariants.
 pub fn verify_emit_program(
     hir: &HirFile,
@@ -48,6 +48,7 @@ pub fn verify_emit_program(
         ));
     }
     verify_module_plan(hir, program, &mut diagnostics);
+    verify_local_hook_returns(hir, program, &mut diagnostics);
     verify_imports(program, &mut diagnostics);
     verify_preview_plan(hir, program, &mut diagnostics);
     let import_names: BTreeSet<_> = program
@@ -112,7 +113,7 @@ pub fn verify_emit_program(
             if let crate::ReactiveSlotStorage::CapturedHookReturn {
                 owner,
                 call,
-                import,
+                hook,
                 property,
             } = slot.storage
             {
@@ -127,10 +128,10 @@ pub fn verify_emit_program(
                                     candidate.storage,
                                     crate::ReactiveSlotStorage::HookReturn {
                                         call: candidate_call,
-                                        import: candidate_import,
+                                        hook: candidate_hook,
                                         property: Some(candidate_property),
                                     } if candidate_call == call
-                                        && candidate_import == import
+                                        && candidate_hook == hook
                                         && candidate_property == property
                                 ) && candidate.binding == slot.binding
                                     && candidate.kind == slot.kind
@@ -182,22 +183,23 @@ pub fn verify_emit_program(
             }
             if let crate::ReactiveSlotStorage::HookReturn {
                 call,
-                import,
+                hook: hook_binding,
                 property,
             } = slot.storage
             {
                 let source_call = hook_call_instruction(hir_function, call);
-                let hook =
-                    source_call.and_then(|call| imported_hook_return_shape(hir, call, import));
-                let imported_kind = match property {
-                    None => hook.and_then(|hook| hook.direct_accessor),
-                    Some(property) => hook.and_then(|hook| {
+                let shape = source_call.and_then(|call| {
+                    hook_return_shape(hir, &program.local_hook_returns, call, hook_binding)
+                });
+                let reactive_kind = match property {
+                    None => shape.and_then(|shape| shape.direct_accessor),
+                    Some(property) => shape.and_then(|shape| {
                         let properties = match property.collection {
                             fict_hir::ImportedHookPropertyCollection::Object => {
-                                &hook.object_properties
+                                &shape.object_properties
                             }
                             fict_hir::ImportedHookPropertyCollection::Array => {
-                                &hook.array_properties
+                                &shape.array_properties
                             }
                         };
                         properties
@@ -206,9 +208,9 @@ pub fn verify_emit_program(
                             .map(|candidate| candidate.kind)
                     }),
                 };
-                let call_matches = source_call.is_some() && hook.is_some();
+                let call_matches = source_call.is_some() && shape.is_some();
                 let kind_matches = matches!(
-                    (imported_kind, slot.kind),
+                    (reactive_kind, slot.kind),
                     (
                         Some(fict_hir::ImportedReactiveKind::Signal),
                         crate::ReactiveSlotKind::Signal
@@ -236,12 +238,12 @@ pub fn verify_emit_program(
                                 })
                     })
                 });
-                let shape_matches =
-                    hook.is_some_and(|hook| property.is_none() == hook.direct_accessor.is_some());
+                let shape_matches = shape
+                    .is_some_and(|shape| property.is_none() == shape.direct_accessor.is_some());
                 if !call_matches || !kind_matches || !binding_matches || !shape_matches {
                     diagnostics.push(emit_error(
                         "FICT-EMIT-HOOK-RETURN-SLOT",
-                        "hook return slots must match imported accessor return metadata",
+                        "hook return slots must match accessor return metadata",
                     ));
                 }
             }
@@ -455,12 +457,43 @@ pub fn verify_emit_program(
                 }
             }
         }
-        verify_operations(hir, hir_function, function, analysis, &mut diagnostics);
+        verify_operations(
+            hir,
+            &program.local_hook_returns,
+            hir_function,
+            function,
+            analysis,
+            &mut diagnostics,
+        );
     }
     if diagnostics.is_empty() {
         Ok(())
     } else {
         Err(diagnostics)
+    }
+}
+fn verify_local_hook_returns(
+    hir: &HirFile,
+    program: &EmitProgram,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    for (binding, shape) in &program.local_hook_returns {
+        let function_exists = hir
+            .functions
+            .iter()
+            .any(|function| function.binding == Some(*binding));
+        let has_shape = shape.direct_accessor.is_some()
+            || !shape.object_properties.is_empty()
+            || !shape.array_properties.is_empty();
+        let canonical = [&shape.object_properties, &shape.array_properties]
+            .into_iter()
+            .all(|properties| properties.windows(2).all(|pair| pair[0].key < pair[1].key));
+        if !function_exists || !has_shape || !canonical {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-LOCAL-HOOK",
+                "same-module hook metadata must identify one function and use a canonical non-empty shape",
+            ));
+        }
     }
 }
 fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
@@ -787,6 +820,7 @@ fn is_scoped_helper(helper: RuntimeHelper) -> bool {
 }
 fn verify_operations(
     hir: &HirFile,
+    local_hook_returns: &BTreeMap<fict_hir::BindingId, fict_hir::ImportedHookReturn>,
     hir_function: &fict_hir::HirFunction,
     function: &crate::EmitFunction,
     analysis: Option<&RegionAnalysis>,
@@ -880,6 +914,7 @@ fn verify_operations(
                 ..
             } => verify_reactive_read(
                 hir,
+                local_hook_returns,
                 hir_function,
                 function,
                 *slot,
@@ -1191,22 +1226,27 @@ fn hook_call_instruction(
             _ => None,
         })
 }
-fn imported_hook_return_shape<'a>(
+fn hook_return_shape<'a>(
     hir: &'a HirFile,
+    local_hook_returns: &'a BTreeMap<fict_hir::BindingId, fict_hir::ImportedHookReturn>,
     call: &fict_hir::CallInstruction,
-    expected_import: fict_hir::BindingId,
+    expected_hook: fict_hir::BindingId,
 ) -> Option<&'a fict_hir::ImportedHookReturn> {
-    let fict_hir::CallHost::Binding(import_binding) = call.host else {
+    let fict_hir::CallHost::Binding(hook_binding) = call.host else {
         return None;
     };
-    if import_binding != expected_import {
+    if hook_binding != expected_hook {
         return None;
     }
-    let import = hir
-        .bindings
-        .get(import_binding.as_usize())?
-        .import
-        .as_ref()?;
+    if call
+        .callee_reference
+        .as_ref()
+        .is_none_or(|place| place.projections.is_empty())
+        && let Some(shape) = local_hook_returns.get(&hook_binding)
+    {
+        return Some(shape);
+    }
+    let import = hir.bindings.get(hook_binding.as_usize())?.import.as_ref()?;
     match call.callee_reference.as_ref() {
         Some(place) if !place.projections.is_empty() => {
             import.resolve_hook_member(&place.projections)
@@ -1218,6 +1258,7 @@ fn imported_hook_return_shape<'a>(
 #[allow(clippy::too_many_arguments)]
 fn verify_reactive_read(
     hir: &HirFile,
+    local_hook_returns: &BTreeMap<fict_hir::BindingId, fict_hir::ImportedHookReturn>,
     hir_function: &fict_hir::HirFunction,
     function: &crate::EmitFunction,
     slot_id: crate::EmitSlotId,
@@ -1266,7 +1307,7 @@ fn verify_reactive_read(
         Some(crate::ReactiveSlotStorage::CapturedHookReturn {
             owner,
             call,
-            import,
+            hook: hook_binding,
             property,
         }) => {
             let local = source_place.and_then(|place| match place.base {
@@ -1283,14 +1324,14 @@ fn verify_reactive_read(
                             && slot.is_some_and(|slot| slot.binding == local.binding)
                     })
             });
-            let hook = hir
+            let shape = hir
                 .functions
                 .get(owner.as_usize())
                 .and_then(|owner| hook_call_instruction(owner, call))
-                .and_then(|call| imported_hook_return_shape(hir, call, import));
+                .and_then(|call| hook_return_shape(hir, local_hook_returns, call, hook_binding));
             let resolved_property = source_place
                 .and_then(|place| place.projections.first())
-                .and_then(|projection| hook?.resolve_property(projection));
+                .and_then(|projection| shape?.resolve_property(projection));
             let kind_matches = slot.is_some_and(|slot| {
                 matches!(
                     (property.kind, slot.kind),
@@ -1309,7 +1350,7 @@ fn verify_reactive_read(
                     && accessor_depth == 1,
                 binding_matches
                     && kind_matches
-                    && hook.is_some_and(|hook| hook.direct_accessor.is_none())
+                    && shape.is_some_and(|shape| shape.direct_accessor.is_none())
                     && resolved_property == Some(property),
             )
         }
@@ -1322,7 +1363,7 @@ fn verify_reactive_read(
         ),
         Some(crate::ReactiveSlotStorage::HookReturn {
             call,
-            import,
+            hook: hook_binding,
             property,
         }) => {
             let local = source_place.and_then(|place| match place.base {
@@ -1354,15 +1395,15 @@ fn verify_reactive_read(
                             .and_then(|local| local.binding)
                 })
             });
-            let hook = hook_call_instruction(hir_function, call)
-                .and_then(|call| imported_hook_return_shape(hir, call, import));
-            let imported_kind = match property {
-                None => hook.and_then(|hook| hook.direct_accessor),
+            let shape = hook_call_instruction(hir_function, call)
+                .and_then(|call| hook_return_shape(hir, local_hook_returns, call, hook_binding));
+            let reactive_kind = match property {
+                None => shape.and_then(|shape| shape.direct_accessor),
                 Some(property) => Some(property.kind),
             };
             let kind_matches = slot.is_some_and(|slot| {
                 matches!(
-                    (imported_kind, slot.kind),
+                    (reactive_kind, slot.kind),
                     (
                         Some(fict_hir::ImportedReactiveKind::Signal),
                         crate::ReactiveSlotKind::Signal
@@ -1399,7 +1440,7 @@ fn verify_reactive_read(
                     };
                     let resolved_property = source_place
                         .and_then(|place| place.projections.first())
-                        .and_then(|projection| hook?.resolve_property(projection));
+                        .and_then(|projection| shape?.resolve_property(projection));
                     (
                         source_place.is_some_and(|place| place.projections == projections)
                             && !projections.is_empty()
@@ -1407,7 +1448,7 @@ fn verify_reactive_read(
                             && (direct_call || local_call),
                         kind_matches
                             && binding_matches
-                            && hook.is_some_and(|hook| hook.direct_accessor.is_none())
+                            && shape.is_some_and(|shape| shape.direct_accessor.is_none())
                             && resolved_property == Some(property),
                     )
                 }

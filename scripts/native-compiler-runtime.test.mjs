@@ -627,6 +627,67 @@ test('reserved compiler macros fail closed without direct Fict imports', () => {
   }
 })
 
+test('same-module hook metadata protects structured reactive members', () => {
+  const valid = binding.transformSync({
+    code: `
+      import { $memo, $state, $store } from 'fict'
+      function useThing() {
+        const count = $state(1)
+        const doubled = $memo(() => count * 2)
+        const state = $store({ value: 1 })
+        return { count, doubled, state, plain: 1 }
+      }
+      export function App() {
+        const thing = useThing()
+        thing.count(2)
+        thing.state.value = 2
+        return [thing.count, thing.doubled, thing.state.value, thing.plain]
+      }
+    `,
+    filename: '/fixtures/local-structured-hook-valid.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.deepEqual(valid.diagnostics, [])
+  assert.match(valid.code, /thing\.count\(2\)/)
+  assert.doesNotMatch(valid.code, /thing\.count\(\)\(2\)/)
+  assert.match(valid.code, /thing\.count\(\)/)
+  assert.match(valid.code, /thing\.doubled\(\)/)
+  assert.match(valid.code, /thing\.state\.value = 2/)
+
+  for (const [name, mutation, expectedCode] of [
+    ['memo-write', 'thing.doubled = 5', 'FICT-METADATA-READONLY'],
+    ['memo-delete', 'delete thing.doubled', 'FICT-METADATA-READONLY'],
+    ['signal-write', 'thing.count = 2', 'FICT-M'],
+    ['store-replace', 'thing.state = { value: 2 }', 'FICT-METADATA-READONLY'],
+  ]) {
+    const result = binding.transformSync({
+      code: `
+        import { $memo, $state, $store } from 'fict'
+        function useThing() {
+          const count = $state(1)
+          const doubled = $memo(() => count * 2)
+          const state = $store({ value: 1 })
+          return { count, doubled, state }
+        }
+        export function App() {
+          const thing = useThing()
+          ${mutation}
+          return thing
+        }
+      `,
+      filename: `/fixtures/local-structured-hook-${name}.tsx`,
+      options: { strictGuarantee: false },
+    })
+    assert.equal(result.code, '', name)
+    assert.ok(
+      result.diagnostics.some(
+        ({ code, severity }) => code === expectedCode && severity === 'error',
+      ),
+      `${name}: ${JSON.stringify(result.diagnostics)}`,
+    )
+  }
+})
+
 test('semantic EmitIR identities preserve destructuring and authored export names', async () => {
   const destructured = await compileAndImport(
     `
