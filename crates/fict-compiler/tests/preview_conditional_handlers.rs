@@ -41,5 +41,5 @@ fn emits_preview_handlers_inside_conditional_jsx_branches() {
 
     assert!(!result.has_errors(), "{:?}", result.diagnostics);
     assert_eq!(result.artifacts.len(), 2, "{}", result.code);
-    assert_eq!(result.code.matches("fict:compiler-artifact:").count(), 2);
+    assert_eq!(result.code.matches("fict:compiler-artifact:").count(), 4);
 }

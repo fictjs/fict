@@ -1387,7 +1387,10 @@ fn handler_captured_bindings(
         EmitValueRef::Binding(binding) => {
             collector.bindings.insert(*binding);
         }
-        EmitValueRef::Slot(_) | EmitValueRef::Temporary(_) | EmitValueRef::Literal(_) => {}
+        EmitValueRef::Slot(_)
+        | EmitValueRef::Temporary(_)
+        | EmitValueRef::Literal(_)
+        | EmitValueRef::Text(_) => {}
     }
     if let Some(function) = handler_function {
         collector.function(function);
@@ -1981,7 +1984,8 @@ fn emit_value_contains_function(
         | EmitValueRef::Slot(_)
         | EmitValueRef::Temporary(_)
         | EmitValueRef::Literal(_)
-        | EmitValueRef::Binding(_) => false,
+        | EmitValueRef::Binding(_)
+        | EmitValueRef::Text(_) => false,
     }
 }
 

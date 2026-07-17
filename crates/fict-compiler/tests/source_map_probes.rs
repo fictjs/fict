@@ -175,8 +175,8 @@ fn maps_nested_keyed_table_lists_across_outer_and_inner_callbacks() {
     output.assert_maps("group().items", 0, "group.items", 0);
     output.assert_maps("item.id", 0, "item.id", 0);
     output.assert_maps("item().label", 0, "item.label", 0);
-    output.assert_maps("\"html\"", 0, "<tr", 0);
-    output.assert_maps("\"html\"", 1, "<table>", 0);
+    output.assert_maps("\"html\"", 3, "<tr", 0);
+    output.assert_maps("\"html\"", 5, "<table>", 0);
 }
 
 #[test]

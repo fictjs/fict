@@ -1,10 +1,10 @@
 use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
-    DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
-    EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault,
-    EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
-    EventOptions, PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind,
-    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
+    DELEGATED_EVENTS, DomBindingKind, DomNamespace, DomTextSegment, EmitContext, EmitFunction,
+    EmitModulePlan, EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode,
+    EmitPropsDefault, EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId,
+    EmitValueRef, EventOptions, PropsOperation, ReactivePatternTarget, ReactiveSlot,
+    ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
     name_allocator::NameAllocator, verify_emit_program,
 };
 use fict_diagnostics::{
@@ -1732,11 +1732,17 @@ enum TemplateBinding {
         contains_fragment: bool,
         namespace: DomNamespace,
     },
-    ComponentChild {
+    NodeChild {
         parent_path: Vec<u32>,
         marker_path: Vec<u32>,
         origin: Origin,
+        component: bool,
+        contains_fragment: bool,
         namespace: DomNamespace,
+    },
+    TextContent {
+        path: Vec<u32>,
+        segments: Vec<TemplateTextSegment>,
     },
     Conditional {
         parent_path: Vec<u32>,
@@ -1766,6 +1772,12 @@ enum TemplateBinding {
         path: Vec<u32>,
         reference: ValueId,
     },
+}
+#[derive(Debug)]
+enum TemplateTextSegment {
+    Literal(String),
+    Value(ValueId),
+    Node(Origin),
 }
 #[derive(Debug)]
 struct SerializedTemplate {
@@ -1858,6 +1870,13 @@ fn lower_jsx_instruction(
         template: template_id,
         source_result: result,
         target: root,
+        namespace_helper: matches!(&template.root, JsxNode::Element(_))
+            .then_some(RuntimeHelper::ElementNamespaceMatches),
+        reactive_helper: matches!(&template.root, JsxNode::Element(_))
+            .then_some(RuntimeHelper::ReactiveGetter),
+        fragment_helper: template
+            .contains_fragment
+            .then_some(RuntimeHelper::Fragment),
         origin: instruction.origin,
     });
     let mut resolved = BTreeMap::new();
@@ -1922,6 +1941,54 @@ fn lower_jsx_instruction(
                     origin,
                 });
             }
+            TemplateBinding::TextContent { path, segments } => {
+                let reactive = segments
+                    .iter()
+                    .any(|segment| !matches!(segment, TemplateTextSegment::Literal(_)));
+                let origin = segments
+                    .iter()
+                    .find_map(|segment| match segment {
+                        TemplateTextSegment::Literal(_) => None,
+                        TemplateTextSegment::Value(value) => Some(
+                            hir.functions[function_id.as_usize()].values[value.as_usize()].origin,
+                        ),
+                        TemplateTextSegment::Node(origin) => Some(*origin),
+                    })
+                    .unwrap_or(template.origin);
+                let element = resolved_element(
+                    root,
+                    path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let segments = segments
+                    .into_iter()
+                    .map(|segment| match segment {
+                        TemplateTextSegment::Literal(value) => DomTextSegment::Literal(value),
+                        TemplateTextSegment::Value(value) => DomTextSegment::Source {
+                            value: Some(value),
+                            origin: hir.functions[function_id.as_usize()].values[value.as_usize()]
+                                .origin,
+                        },
+                        TemplateTextSegment::Node(origin) => DomTextSegment::Source {
+                            value: None,
+                            origin,
+                        },
+                    })
+                    .collect();
+                let kind = DomBindingKind::TextContent;
+                operations.push(EmitOperation::BindDom {
+                    element,
+                    helper: dom_binding_helper(&kind, reactive),
+                    kind,
+                    value: EmitValueRef::Text(segments),
+                    reactive,
+                    origin,
+                });
+            }
             TemplateBinding::Spread {
                 path,
                 value,
@@ -1978,7 +2045,7 @@ fn lower_jsx_instruction(
                 );
                 operations.push(EmitOperation::Insert {
                     parent,
-                    value: lower_value(value, value_temporaries),
+                    value: Some(lower_value(value, value_temporaries)),
                     before: Some(marker),
                     namespace,
                     helper: RuntimeHelper::Insert,
@@ -1987,10 +2054,12 @@ fn lower_jsx_instruction(
                     origin,
                 });
             }
-            TemplateBinding::ComponentChild {
+            TemplateBinding::NodeChild {
                 parent_path,
                 marker_path,
                 origin,
+                component,
+                contains_fragment,
                 namespace,
             } => {
                 let Some(span) = origin.primary_span else {
@@ -2000,13 +2069,21 @@ fn lower_jsx_instruction(
                         GuaranteeClass::Internal,
                     )]));
                 };
-                let Some(target) = component_targets.get(&(span.start(), span.end())).copied()
-                else {
-                    return Err(DiagnosticBundle::new(vec![lower_error(
-                        "FICT-EMIT-COMPONENT-PLAN",
-                        "nested component JSX has no recursive component plan",
-                        GuaranteeClass::Internal,
-                    )]));
+                let target = if component {
+                    Some(
+                        component_targets
+                            .get(&(span.start(), span.end()))
+                            .copied()
+                            .ok_or_else(|| {
+                                DiagnosticBundle::new(vec![lower_error(
+                                    "FICT-EMIT-COMPONENT-PLAN",
+                                    "nested component JSX has no recursive component plan",
+                                    GuaranteeClass::Internal,
+                                )])
+                            })?,
+                    )
+                } else {
+                    None
                 };
                 let parent = resolved_element(
                     root,
@@ -2028,12 +2105,13 @@ fn lower_jsx_instruction(
                 );
                 operations.push(EmitOperation::Insert {
                     parent,
-                    value: EmitValueRef::Temporary(target),
+                    value: target.map(EmitValueRef::Temporary),
                     before: Some(marker),
                     namespace,
                     helper: RuntimeHelper::Insert,
                     create_helper: create_element_helper(namespace),
-                    fragment_helper: None,
+                    fragment_helper: (target.is_none() && contains_fragment)
+                        .then_some(RuntimeHelper::Fragment),
                     origin,
                 });
             }
@@ -2701,6 +2779,26 @@ fn serialize_node(
                 resolve_element_namespace(tag, parent_namespace, allow_standalone);
             let child_namespace =
                 resolve_child_namespace(tag, element_namespace, &element.attributes);
+            let has_authored_children = element.children.iter().any(renderable_child);
+            let children_attribute = element.attributes.iter().rev().find_map(|attribute| {
+                let JsxAttribute::Named {
+                    name,
+                    value,
+                    origin,
+                } = attribute
+                else {
+                    return None;
+                };
+                (name == "children").then(|| (value.clone(), *origin))
+            });
+            let last_encoding = (element_namespace == DomNamespace::MathMl
+                && tag.eq_ignore_ascii_case("annotation-xml"))
+            .then(|| {
+                element.attributes.iter().rposition(|attribute| {
+                    matches!(attribute, JsxAttribute::Named { name, .. } if name.eq_ignore_ascii_case("encoding"))
+                })
+            })
+            .flatten();
             if !valid_markup_name(tag) {
                 return Err(DiagnosticBundle::new(vec![lower_error(
                     "FICT-EMIT-TAG",
@@ -2711,7 +2809,7 @@ fn serialize_node(
             html.push('<');
             html.push_str(tag);
             let mut seen_spread = false;
-            for attribute in &element.attributes {
+            for (attribute_index, attribute) in element.attributes.iter().enumerate() {
                 match attribute {
                     JsxAttribute::Named {
                         name,
@@ -2727,6 +2825,17 @@ fn serialize_node(
                             )]));
                         }
                         if name == "key" {
+                            if let JsxAttributeValue::Expression { value, .. } = value {
+                                bindings.push(TemplateBinding::Evaluate { value: *value });
+                            }
+                            continue;
+                        }
+                        if name == "children" {
+                            continue;
+                        }
+                        if name == "encoding"
+                            && last_encoding.is_some_and(|index| index != attribute_index)
+                        {
                             if let JsxAttributeValue::Expression { value, .. } = value {
                                 bindings.push(TemplateBinding::Evaluate { value: *value });
                             }
@@ -2801,14 +2910,22 @@ fn serialize_node(
                             path: path.clone(),
                             value: *value,
                             namespace: element_namespace,
-                            skip_children: element.children.iter().any(renderable_child),
+                            skip_children: has_authored_children || children_attribute.is_some(),
                         });
                     }
                 }
             }
             html.push('>');
+            let attribute_child = (!has_authored_children)
+                .then(|| children_attribute.as_ref().and_then(attribute_as_child))
+                .flatten();
+            let selected_children = if has_authored_children {
+                element.children.as_slice()
+            } else {
+                attribute_child.as_slice()
+            };
             if is_html_void_element(tag, element_namespace) {
-                if element.children.iter().any(renderable_child) {
+                if selected_children.iter().any(renderable_child) {
                     return Err(DiagnosticBundle::new(vec![lower_error(
                         "FICT-EMIT-VOID-CHILD",
                         "HTML void elements cannot contain JSX children",
@@ -2816,16 +2933,31 @@ fn serialize_node(
                     )]));
                 }
             } else {
-                serialize_children(
-                    &element.children,
-                    path,
-                    html,
-                    bindings,
-                    Some(tag),
-                    element_namespace,
-                    child_namespace,
-                    trusted_lists,
-                )?;
+                let bind_text_content = binds_element_text_content(tag, element_namespace)
+                    && (children_attribute.is_some()
+                        || selected_children
+                            .iter()
+                            .any(|child| !matches!(child, JsxChild::Text { .. })));
+                if bind_text_content {
+                    let segments = text_content_segments(selected_children);
+                    if !segments.is_empty() {
+                        bindings.push(TemplateBinding::TextContent {
+                            path: path.clone(),
+                            segments,
+                        });
+                    }
+                } else {
+                    serialize_children(
+                        selected_children,
+                        path,
+                        html,
+                        bindings,
+                        Some(tag),
+                        element_namespace,
+                        child_namespace,
+                        trusted_lists,
+                    )?;
+                }
                 html.push_str("</");
                 html.push_str(tag);
                 html.push('>');
@@ -2833,6 +2965,48 @@ fn serialize_node(
             Ok(1)
         }
     }
+}
+fn attribute_as_child((value, origin): &(JsxAttributeValue, Origin)) -> Option<JsxChild> {
+    match value {
+        JsxAttributeValue::ImplicitTrue => None,
+        JsxAttributeValue::Text(value) => Some(JsxChild::Text {
+            value: value.clone(),
+            origin: *origin,
+        }),
+        JsxAttributeValue::Expression {
+            value,
+            function_like,
+            contains_fragment,
+        } => Some(JsxChild::Expression {
+            value: *value,
+            kind: JsxExpressionKind::Value,
+            contains_fragment: *contains_fragment,
+            function_like: *function_like,
+            list: None,
+            embedded_nodes: Vec::new(),
+            origin: *origin,
+        }),
+        JsxAttributeValue::Node(node) => Some(JsxChild::Node(node.clone())),
+    }
+}
+fn binds_element_text_content(tag: &str, namespace: DomNamespace) -> bool {
+    namespace == DomNamespace::Html
+        && matches!(
+            tag.to_ascii_lowercase().as_str(),
+            "script" | "style" | "title"
+        )
+}
+fn text_content_segments(children: &[JsxChild]) -> Vec<TemplateTextSegment> {
+    children
+        .iter()
+        .map(|child| match child {
+            JsxChild::Text { value, .. } => TemplateTextSegment::Literal(value.clone()),
+            JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
+                TemplateTextSegment::Value(*value)
+            }
+            JsxChild::Node(node) => TemplateTextSegment::Node(node.origin()),
+        })
+        .collect()
 }
 #[allow(clippy::too_many_arguments)]
 fn serialize_children(
@@ -2853,7 +3027,7 @@ fn serialize_children(
         match child {
             JsxChild::Text { value, .. } => {
                 if !value.is_empty() {
-                    escape_text(value, html);
+                    push_static_child_text(parent_tag, parent_element_namespace, value, html)?;
                     if !previous_static_text {
                         child_index += 1;
                     }
@@ -2934,28 +3108,23 @@ fn serialize_children(
             }
             JsxChild::Node(node) => {
                 previous_static_text = false;
-                if let JsxNode::Element(element) = node.as_ref()
-                    && !matches!(element.name, JsxElementName::Intrinsic(_))
-                {
+                let component = matches!(node.as_ref(), JsxNode::Element(element) if !matches!(element.name, JsxElementName::Intrinsic(_)));
+                let runtime_node = child_namespace == DomNamespace::Parent || component;
+                if runtime_node {
                     html.push_str("<!---->");
                     let mut marker_path = parent_path.clone();
                     marker_path.push(child_index);
-                    bindings.push(TemplateBinding::ComponentChild {
+                    bindings.push(TemplateBinding::NodeChild {
                         parent_path: parent_path.clone(),
                         marker_path,
-                        origin: element.origin,
+                        origin: node.origin(),
+                        component,
+                        contains_fragment: node.contains_fragment(),
                         namespace: child_namespace,
                     });
                     child_index += 1;
                     source_index += 1;
                     continue;
-                }
-                if child_namespace == DomNamespace::Parent {
-                    return Err(DiagnosticBundle::new(vec![lower_error(
-                        "FICT-EMIT-NAMESPACE-DYNAMIC",
-                        "runtime annotation-xml encoding requires nested JSX to be lowered through a parent-derived slot",
-                        GuaranteeClass::Unsupported,
-                    )]));
                 }
                 if is_implicit_table_child(parent_tag, parent_element_namespace, child, "tr") {
                     parent_path.push(child_index);
@@ -3042,6 +3211,33 @@ fn serialize_children(
         source_index += 1;
     }
     Ok(child_index)
+}
+fn push_static_child_text(
+    parent_tag: Option<&str>,
+    namespace: DomNamespace,
+    value: &str,
+    html: &mut String,
+) -> Result<(), DiagnosticBundle> {
+    let raw_tag = parent_tag.filter(|tag| {
+        namespace == DomNamespace::Html
+            && matches!(tag.to_ascii_lowercase().as_str(), "script" | "style")
+    });
+    if let Some(tag) = raw_tag {
+        if value
+            .to_ascii_lowercase()
+            .contains(&format!("</{}", tag.to_ascii_lowercase()))
+        {
+            return Err(DiagnosticBundle::new(vec![lower_error(
+                "FICT-EMIT-RAWTEXT",
+                "static raw-text content cannot contain its closing tag",
+                GuaranteeClass::Unsupported,
+            )]));
+        }
+        html.push_str(value);
+    } else {
+        escape_text(value, html);
+    }
+    Ok(())
 }
 fn resolve_element_namespace(
     tag: &str,
@@ -3852,345 +4048,4 @@ fn count_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 #[cfg(test)]
-mod namespace_tests {
-    use super::*;
-    use fict_diagnostics::SourceSpan;
-    use fict_hir::{JsxElement, Origin};
-    fn test_origin() -> Origin {
-        Origin::source(SourceSpan::empty(0))
-    }
-    fn element(tag: &str, attributes: Vec<JsxAttribute>, children: Vec<JsxChild>) -> JsxNode {
-        JsxNode::Element(JsxElement {
-            name: JsxElementName::Intrinsic(tag.to_owned()),
-            attributes,
-            children,
-            origin: test_origin(),
-        })
-    }
-    fn node(node: JsxNode) -> JsxChild {
-        JsxChild::Node(Box::new(node))
-    }
-    fn spread(value: u32) -> JsxAttribute {
-        JsxAttribute::Spread {
-            value: ValueId::new(value),
-            getter: false,
-            origin: test_origin(),
-        }
-    }
-    fn expression(value: u32) -> JsxChild {
-        JsxChild::Expression {
-            value: ValueId::new(value),
-            kind: fict_hir::JsxExpressionKind::Value,
-            contains_fragment: false,
-            function_like: false,
-            list: None,
-            embedded_nodes: Vec::new(),
-            origin: test_origin(),
-        }
-    }
-    #[test]
-    fn resolves_svg_integration_points_and_normalizes_attributes() {
-        let root = element(
-            "svg",
-            Vec::new(),
-            vec![
-                node(element(
-                    "path",
-                    vec![
-                        JsxAttribute::Named {
-                            name: "strokeWidth".into(),
-                            value: JsxAttributeValue::Text("2".into()),
-                            origin: test_origin(),
-                        },
-                        JsxAttribute::Named {
-                            name: "xlinkHref".into(),
-                            value: JsxAttributeValue::Expression {
-                                value: ValueId::new(9),
-                                function_like: false,
-                                contains_fragment: false,
-                            },
-                            origin: test_origin(),
-                        },
-                        spread(0),
-                    ],
-                    Vec::new(),
-                )),
-                node(element(
-                    "foreignObject",
-                    Vec::new(),
-                    vec![node(element("div", vec![spread(1)], Vec::new()))],
-                )),
-                node(element(
-                    "title",
-                    Vec::new(),
-                    vec![node(element("span", vec![spread(2)], Vec::new()))],
-                )),
-                node(element("math", vec![spread(3)], Vec::new())),
-            ],
-        );
-        let serialized = serialize_template(&root).expect("SVG namespace serialization");
-        assert_eq!(serialized.namespace, DomNamespace::Svg);
-        assert!(serialized.html.contains("stroke-width=\"2\""));
-        assert!(serialized.bindings.iter().any(|binding| matches!(
-            binding,
-            TemplateBinding::Attribute { name, .. } if name == "xlink:href"
-        )));
-        let spread_namespaces: Vec<_> = serialized
-            .bindings
-            .iter()
-            .filter_map(|binding| match binding {
-                TemplateBinding::Spread { namespace, .. } => Some(*namespace),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            spread_namespaces,
-            [
-                DomNamespace::Svg,
-                DomNamespace::Html,
-                DomNamespace::Html,
-                DomNamespace::Svg,
-            ]
-        );
-    }
-    #[test]
-    fn resolves_mathml_text_annotation_and_runtime_parent_contexts() {
-        let root = element(
-            "math",
-            Vec::new(),
-            vec![
-                node(element(
-                    "mtext",
-                    Vec::new(),
-                    vec![
-                        node(element("span", vec![spread(0)], Vec::new())),
-                        node(element("mglyph", vec![spread(1)], Vec::new())),
-                        expression(10),
-                    ],
-                )),
-                node(element(
-                    "annotation-xml",
-                    vec![JsxAttribute::Named {
-                        name: "ENCODING".into(),
-                        value: JsxAttributeValue::Text("text/html".into()),
-                        origin: test_origin(),
-                    }],
-                    vec![node(element("div", vec![spread(2)], Vec::new()))],
-                )),
-                node(element(
-                    "annotation-xml",
-                    vec![JsxAttribute::Named {
-                        name: "encoding".into(),
-                        value: JsxAttributeValue::Text("application/xml".into()),
-                        origin: test_origin(),
-                    }],
-                    vec![node(element("mi", vec![spread(3)], Vec::new()))],
-                )),
-                node(element(
-                    "annotation-xml",
-                    vec![JsxAttribute::Named {
-                        name: "encoding".into(),
-                        value: JsxAttributeValue::Expression {
-                            value: ValueId::new(11),
-                            function_like: false,
-                            contains_fragment: false,
-                        },
-                        origin: test_origin(),
-                    }],
-                    vec![expression(12)],
-                )),
-            ],
-        );
-        let serialized = serialize_template(&root).expect("MathML namespace serialization");
-        assert_eq!(serialized.namespace, DomNamespace::MathMl);
-        let spread_namespaces: Vec<_> = serialized
-            .bindings
-            .iter()
-            .filter_map(|binding| match binding {
-                TemplateBinding::Spread { namespace, .. } => Some(*namespace),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            spread_namespaces,
-            [
-                DomNamespace::Html,
-                DomNamespace::MathMl,
-                DomNamespace::Html,
-                DomNamespace::MathMl,
-            ]
-        );
-        assert!(serialized.bindings.iter().any(|binding| matches!(
-            binding,
-            TemplateBinding::Child {
-                value,
-                namespace: DomNamespace::MathMlTextIntegration,
-                ..
-            } if *value == ValueId::new(10)
-        )));
-        assert!(serialized.bindings.iter().any(|binding| matches!(
-            binding,
-            TemplateBinding::Child {
-                value,
-                namespace: DomNamespace::Parent,
-                ..
-            } if *value == ValueId::new(12)
-        )));
-    }
-    #[test]
-    fn materializes_implicit_table_groups_and_browser_paths() {
-        let root = element(
-            "table",
-            Vec::new(),
-            vec![
-                node(element("col", vec![spread(0)], Vec::new())),
-                node(element("col", Vec::new(), Vec::new())),
-                node(element(
-                    "tr",
-                    Vec::new(),
-                    vec![node(element("td", vec![spread(1)], Vec::new()))],
-                )),
-                node(element(
-                    "tr",
-                    Vec::new(),
-                    vec![node(element("td", vec![spread(2)], Vec::new()))],
-                )),
-            ],
-        );
-        let serialized = serialize_template(&root).expect("table parser serialization");
-        assert_eq!(
-            serialized.html,
-            "<table><colgroup><col><col></colgroup><tbody><tr><td></td></tr><tr><td></td></tr></tbody></table>"
-        );
-        let paths: Vec<_> = serialized
-            .bindings
-            .iter()
-            .filter_map(|binding| match binding {
-                TemplateBinding::Spread { path, .. } => Some(path.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(paths, [vec![0, 0], vec![1, 0, 0], vec![1, 1, 0]]);
-    }
-    #[test]
-    fn rejects_static_children_when_annotation_namespace_is_runtime_selected() {
-        let root = element(
-            "math",
-            Vec::new(),
-            vec![node(element(
-                "annotation-xml",
-                vec![spread(0)],
-                vec![node(element("mi", Vec::new(), Vec::new()))],
-            ))],
-        );
-        let diagnostics = serialize_template(&root).expect_err("must fail closed");
-        assert!(
-            diagnostics
-                .as_slice()
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-NAMESPACE-DYNAMIC")
-        );
-    }
-    #[test]
-    fn classifies_standalone_foreign_roots_and_rejects_void_children() {
-        assert_eq!(
-            serialize_template(&element("circle", Vec::new(), Vec::new()))
-                .expect("standalone SVG")
-                .namespace,
-            DomNamespace::Svg
-        );
-        assert_eq!(
-            serialize_template(&element("mi", Vec::new(), Vec::new()))
-                .expect("standalone MathML")
-                .namespace,
-            DomNamespace::MathMl
-        );
-        let invalid = element(
-            "input",
-            Vec::new(),
-            vec![JsxChild::Text {
-                value: "child".into(),
-                origin: test_origin(),
-            }],
-        );
-        let diagnostics = serialize_template(&invalid).expect_err("void child is invalid");
-        assert!(
-            diagnostics
-                .as_slice()
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-VOID-CHILD")
-        );
-    }
-    #[test]
-    fn preserves_explicit_resumable_event_intent_without_polluting_the_dom_event_name() {
-        let root = element(
-            "button",
-            vec![
-                JsxAttribute::Named {
-                    name: "onClick$".into(),
-                    value: JsxAttributeValue::Expression {
-                        value: ValueId::new(1),
-                        function_like: true,
-                        contains_fragment: false,
-                    },
-                    origin: test_origin(),
-                },
-                JsxAttribute::Named {
-                    name: "on:Input$".into(),
-                    value: JsxAttributeValue::Expression {
-                        value: ValueId::new(2),
-                        function_like: true,
-                        contains_fragment: false,
-                    },
-                    origin: test_origin(),
-                },
-                JsxAttribute::Named {
-                    name: "onBlur".into(),
-                    value: JsxAttributeValue::Expression {
-                        value: ValueId::new(3),
-                        function_like: true,
-                        contains_fragment: false,
-                    },
-                    origin: test_origin(),
-                },
-            ],
-            Vec::new(),
-        );
-        let serialized = serialize_template(&root).expect("event serialization");
-        let events: Vec<_> = serialized
-            .bindings
-            .iter()
-            .filter_map(|binding| match binding {
-                TemplateBinding::Event {
-                    event,
-                    resumable_explicit,
-                    ..
-                } => Some((event.as_str(), *resumable_explicit)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(events, [("click", true), ("input", true), ("blur", false)]);
-    }
-    #[test]
-    fn normalizes_dom_event_options_and_pointer_capture_names() {
-        let (event, explicit, options) =
-            parse_event_attribute("onClickCapturePassiveOnce$").expect("combined event");
-        assert_eq!(event, "click");
-        assert!(explicit && options.capture && options.passive && options.once);
-        let (event, explicit, options) =
-            parse_event_attribute("onGotPointerCapture$").expect("pointer capture event");
-        assert_eq!(event, "gotpointercapture");
-        assert!(explicit);
-        assert!(options.is_empty());
-        let (event, explicit, options) =
-            parse_event_attribute("onGotPointerCaptureOnce").expect("pointer capture once event");
-        assert_eq!(event, "gotpointercapture");
-        assert!(!explicit);
-        assert!(options.once && !options.capture && !options.passive);
-        let (event, explicit, options) =
-            parse_event_attribute("oncapture:Input$").expect("namespaced capture event");
-        assert_eq!(event, "input");
-        assert!(explicit && options.capture);
-        assert!(parse_event_attribute("onclick").is_none());
-    }
-}
+mod namespace_tests;

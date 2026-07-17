@@ -807,6 +807,17 @@ fn verify_operations(
                     hir.functions.get(function.as_usize()).is_some()
                 }
                 EmitValueRef::Binding(binding) => hir.bindings.get(binding.as_usize()).is_some(),
+                EmitValueRef::Text(segments) => {
+                    !segments.is_empty()
+                        && segments.iter().all(|segment| match segment {
+                            crate::DomTextSegment::Literal(_) => true,
+                            crate::DomTextSegment::Source { value, .. } => {
+                                value.is_none_or(|value| {
+                                    hir_function.values.get(value.as_usize()).is_some()
+                                })
+                            }
+                        })
+                }
             };
             if !valid {
                 diagnostics.push(emit_error(
@@ -1453,24 +1464,41 @@ fn verify_helper_semantics(
         EmitOperation::DeclareTemplate { helper, .. } => *helper == RuntimeHelper::Template,
         EmitOperation::BindDom {
             kind,
+            value,
             reactive,
             helper,
             ..
-        } => match (kind, reactive) {
-            (crate::DomBindingKind::Text, true) => *helper == RuntimeHelper::BindText,
-            (crate::DomBindingKind::Text, false) => *helper == RuntimeHelper::SetText,
-            (crate::DomBindingKind::TextContent, true) => *helper == RuntimeHelper::BindTextContent,
-            (crate::DomBindingKind::TextContent, false) => *helper == RuntimeHelper::SetTextContent,
-            (crate::DomBindingKind::Attribute(_), true) => *helper == RuntimeHelper::BindAttribute,
-            (crate::DomBindingKind::Attribute(_), false) => *helper == RuntimeHelper::SetAttr,
-            (crate::DomBindingKind::Property(_), true) => *helper == RuntimeHelper::BindProperty,
-            (crate::DomBindingKind::Property(_), false) => *helper == RuntimeHelper::SetProp,
-            (crate::DomBindingKind::Class, true) => *helper == RuntimeHelper::BindClass,
-            (crate::DomBindingKind::Class, false) => *helper == RuntimeHelper::SetClass,
-            (crate::DomBindingKind::Style, true) => *helper == RuntimeHelper::BindStyle,
-            (crate::DomBindingKind::Style, false) => *helper == RuntimeHelper::SetStyle,
-            (crate::DomBindingKind::Spread, _) => *helper == RuntimeHelper::Spread,
-        },
+        } => {
+            (!matches!(value, crate::EmitValueRef::Text(_))
+                || matches!(kind, crate::DomBindingKind::TextContent))
+                && match (kind, reactive) {
+                    (crate::DomBindingKind::Text, true) => *helper == RuntimeHelper::BindText,
+                    (crate::DomBindingKind::Text, false) => *helper == RuntimeHelper::SetText,
+                    (crate::DomBindingKind::TextContent, true) => {
+                        *helper == RuntimeHelper::BindTextContent
+                    }
+                    (crate::DomBindingKind::TextContent, false) => {
+                        *helper == RuntimeHelper::SetTextContent
+                    }
+                    (crate::DomBindingKind::Attribute(_), true) => {
+                        *helper == RuntimeHelper::BindAttribute
+                    }
+                    (crate::DomBindingKind::Attribute(_), false) => {
+                        *helper == RuntimeHelper::SetAttr
+                    }
+                    (crate::DomBindingKind::Property(_), true) => {
+                        *helper == RuntimeHelper::BindProperty
+                    }
+                    (crate::DomBindingKind::Property(_), false) => {
+                        *helper == RuntimeHelper::SetProp
+                    }
+                    (crate::DomBindingKind::Class, true) => *helper == RuntimeHelper::BindClass,
+                    (crate::DomBindingKind::Class, false) => *helper == RuntimeHelper::SetClass,
+                    (crate::DomBindingKind::Style, true) => *helper == RuntimeHelper::BindStyle,
+                    (crate::DomBindingKind::Style, false) => *helper == RuntimeHelper::SetStyle,
+                    (crate::DomBindingKind::Spread, _) => *helper == RuntimeHelper::Spread,
+                }
+        }
         EmitOperation::ApplyProps { helper, .. } => *helper == RuntimeHelper::Spread,
         EmitOperation::BindEvent {
             event,
@@ -1560,6 +1588,16 @@ fn verify_helper_semantics(
         EmitOperation::CreateVNode {
             fragment_helper, ..
         } => fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment),
+        EmitOperation::CloneTemplate {
+            namespace_helper,
+            reactive_helper,
+            fragment_helper,
+            ..
+        } => {
+            namespace_helper.is_none_or(|helper| helper == RuntimeHelper::ElementNamespaceMatches)
+                && reactive_helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
+        }
         EmitOperation::ResolveElement { helper, path, .. } => {
             *helper == RuntimeHelper::ResolvePath && !path.is_empty()
         }
@@ -1651,7 +1689,6 @@ fn verify_helper_semantics(
         | EmitOperation::UpdateReactive { .. }
         | EmitOperation::DeleteReactive { .. }
         | EmitOperation::Evaluate { .. }
-        | EmitOperation::CloneTemplate { .. }
         | EmitOperation::Return { .. } => true,
     };
     if !valid {

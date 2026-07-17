@@ -2017,7 +2017,9 @@ mod tests {
         );
         assert!(
             !pattern_default.code.contains("view = <span>")
-                && pattern_default.code.contains("view = (() =>"),
+                && pattern_default
+                    .code
+                    .contains("view = __fictElementNamespaceMatches"),
             "{}",
             pattern_default.code
         );
@@ -2033,7 +2035,11 @@ mod tests {
             "{}",
             jsx.code
         );
-        assert!(jsx.code.contains("return __fict_tmpl0()"), "{}", jsx.code);
+        assert!(
+            jsx.code.contains("return __fictElementNamespaceMatches"),
+            "{}",
+            jsx.code
+        );
 
         let dynamic = compile(request(
             "export function Component(value) { return <button>{value}</button>; }",
@@ -2451,7 +2457,7 @@ mod tests {
         assert_eq!(result.code.matches("insert(").count(), 2, "{}", result.code);
         assert_eq!(
             result.code.matches("type: Card").count(),
-            2,
+            4,
             "{}",
             result.code
         );
@@ -2501,7 +2507,7 @@ mod tests {
         assert!(!result.code.contains("<b"), "{}", result.code);
         assert_eq!(
             result.code.matches("items.map(").count(),
-            2,
+            4,
             "{}",
             result.code
         );
@@ -2541,7 +2547,7 @@ mod tests {
         assert!(result.code.contains("createKeyedList("), "{}", result.code);
         assert_eq!(
             result.code.matches("makeKey(item)").count(),
-            1,
+            2,
             "{}",
             result.code
         );
@@ -2563,7 +2569,7 @@ mod tests {
         assert!(!result.code.contains("rows.map("), "{}", result.code);
         assert_eq!(
             result.code.matches("makeKey(row)").count(),
-            1,
+            2,
             "{}",
             result.code
         );
@@ -2590,7 +2596,7 @@ mod tests {
         );
         assert_eq!(
             result.code.matches("rows().map(").count(),
-            1,
+            3,
             "{}",
             result.code
         );
@@ -2614,7 +2620,7 @@ mod tests {
         );
         assert_eq!(
             result.code.matches("makeKey(row)").count(),
-            1,
+            2,
             "{}",
             result.code
         );
@@ -2627,7 +2633,7 @@ mod tests {
         assert!(result.code.contains("() => row().name"), "{}", result.code);
         assert_eq!(
             result.code.matches("rows().map(").count(),
-            1,
+            3,
             "{}",
             result.code
         );
@@ -2648,7 +2654,7 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(!result.code.contains("store.rows.map("), "{}", result.code);
+        assert!(result.code.contains("store.rows.map("), "{}", result.code);
         assert!(result.code.contains("() => store.rows"), "{}", result.code);
         assert!(result.code.contains("\"html\""), "{}", result.code);
         assert!(result.code.contains("\"svg\""), "{}", result.code);
@@ -2675,7 +2681,7 @@ mod tests {
         );
         assert_eq!(
             result.code.matches("rows.map(").count(),
-            1,
+            3,
             "{}",
             result.code
         );
@@ -2835,7 +2841,7 @@ mod tests {
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert_eq!(
             result.code.matches("createKeyedList(").count(),
-            3,
+            4,
             "{}",
             result.code
         );
@@ -3973,7 +3979,6 @@ mod tests {
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",
             "intrinsic-key.tsx",
         ));
-
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(
             result
@@ -3984,11 +3989,15 @@ mod tests {
         );
         assert!(!result.code.contains("row"), "{}", result.code);
         assert!(!result.code.contains("\"key\""), "{}", result.code);
-        assert_eq!(result.code.matches("side()").count(), 1, "{}", result.code);
-        let before = result.code.find("before()").expect("before expression");
-        let key = result.code.find("side()").expect("key expression");
-        let after = result.code.find("after()").expect("after expression");
-        assert!(before < key && key < after, "{}", result.code);
+        assert_eq!(result.code.matches("side()").count(), 2, "{}", result.code);
+        let before = (result.code.find("before()"), result.code.rfind("before()"));
+        let key = (result.code.find("side()"), result.code.rfind("side()"));
+        let after = (result.code.find("after()"), result.code.rfind("after()"));
+        assert!(
+            before.0 < key.0 && key.0 < after.0 && before.1 < key.1 && key.1 < after.1,
+            "{}",
+            result.code
+        );
     }
 
     #[test]
@@ -4939,7 +4948,7 @@ mod tests {
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert_eq!(result.artifacts.len(), 4);
-        assert_eq!(result.code.matches("\"default\", \"pd\"").count(), 1);
+        assert_eq!(result.code.matches("\"default\", \"pd\"").count(), 2);
         assert!(
             result
                 .code

@@ -11,9 +11,9 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_emit::{
-    ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, EmitOperation,
-    EmitPreviewHandler, EmitPreviewPlan, EmitProgram, EmitPropMode, EmitValueRef, EventOptions,
-    PropsOperation, RuntimeHelper,
+    ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, DomTextSegment,
+    EmitOperation, EmitPreviewHandler, EmitPreviewPlan, EmitProgram, EmitPropMode, EmitValueRef,
+    EventOptions, PropsOperation, RuntimeHelper,
 };
 use fict_hir::{
     BindingId, CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId,
@@ -56,6 +56,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 mod conditional_return;
 mod operation_support;
+mod polymorphic_root;
 mod reactive_mutations;
 mod semantic_identity;
 
@@ -190,6 +191,8 @@ pub fn emit_program(
         prefer_template_clones: 0,
         vnode_depth: 0,
         active_fragment_local: None,
+        active_vnode_reactive_local: None,
+        source_clone_depth: 0,
         await_allowed: options.module_kind == OxcModuleKind::Module,
         diagnostics: Vec::new(),
     };
@@ -1550,6 +1553,10 @@ struct TemplateSource {
 struct CloneRewrite {
     factory: String,
     root: String,
+    namespace: DomNamespace,
+    namespace_helper: Option<String>,
+    reactive_helper: Option<String>,
+    fragment_helper: Option<String>,
     steps: Vec<FineJsxStep>,
 }
 #[derive(Debug, Clone)]
@@ -1600,6 +1607,7 @@ enum FineJsxStep {
         fragment_local: Option<String>,
         namespace: DomNamespace,
         value_origin: SourceSpan,
+        source_node: bool,
     },
     Conditional {
         target: String,
@@ -1638,6 +1646,12 @@ enum FineJsxStep {
 enum FineJsxValue {
     Source(SourceSpan),
     Literal(LiteralValue),
+    Text(Vec<FineTextSegment>),
+}
+#[derive(Debug, Clone)]
+enum FineTextSegment {
+    Literal(String),
+    Source { origin: SourceSpan, node: bool },
 }
 struct TemplateRewrites {
     sources: Vec<TemplateSource>,
@@ -1651,7 +1665,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
         .iter()
         .map(|intent| (intent.helper, intent.local.as_str()))
         .collect();
-    let mut declarations: BTreeMap<TemplateId, String> = BTreeMap::new();
+    let mut declarations: BTreeMap<TemplateId, (String, DomNamespace)> = BTreeMap::new();
     let mut locals = BTreeSet::new();
     let mut sources = Vec::new();
     let mut diagnostics = Vec::new();
@@ -1682,7 +1696,10 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             diagnostics.push(diagnostic);
             continue;
         };
-        if declarations.insert(*template, local.clone()).is_some() || !locals.insert(local.clone())
+        if declarations
+            .insert(*template, (local.clone(), *namespace))
+            .is_some()
+            || !locals.insert(local.clone())
         {
             let mut diagnostic = emit_error(
                 "FICT-OXC-EMIT-TEMPLATE",
@@ -1733,6 +1750,9 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                 EmitOperation::CloneTemplate {
                     template,
                     target,
+                    namespace_helper,
+                    reactive_helper,
+                    fragment_helper,
                     origin,
                     ..
                 } => {
@@ -1745,7 +1765,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         current = None;
                         continue;
                     };
-                    let Some(factory) = declarations.get(template) else {
+                    let Some((factory, namespace)) = declarations.get(template) else {
                         diagnostics.push(
                             emit_error(
                                 "FICT-OXC-EMIT-TEMPLATE",
@@ -1757,6 +1777,25 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         current = None;
                         continue;
                     };
+                    let helpers = [
+                        resolve_optional_helper(&helper_names, *namespace_helper),
+                        resolve_optional_helper(&helper_names, *reactive_helper),
+                        resolve_optional_helper(&helper_names, *fragment_helper),
+                    ];
+                    if helpers.iter().any(Option::is_none) {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "template clone helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(span),
+                        );
+                        current = None;
+                        continue;
+                    }
+                    let [namespace_helper, reactive_helper, fragment_helper] =
+                        helpers.map(Option::unwrap);
                     let Some(root) = temporary_names.get(target) else {
                         diagnostics.push(
                             emit_error(
@@ -1776,6 +1815,10 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                             CloneRewrite {
                                 factory: factory.clone(),
                                 root: (*root).to_owned(),
+                                namespace: *namespace,
+                                namespace_helper,
+                                reactive_helper,
+                                fragment_helper,
                                 steps: Vec::new(),
                             },
                         )
@@ -1936,6 +1979,34 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                             FineJsxValue::Source(span)
                         }
                         EmitValueRef::Literal(value) => FineJsxValue::Literal(value.clone()),
+                        EmitValueRef::Text(segments) => {
+                            let segments = segments
+                                .iter()
+                                .map(|segment| match segment {
+                                    DomTextSegment::Literal(value) => {
+                                        Some(FineTextSegment::Literal(value.clone()))
+                                    }
+                                    DomTextSegment::Source { value, origin } => {
+                                        Some(FineTextSegment::Source {
+                                            origin: origin.primary_span?,
+                                            node: value.is_none(),
+                                        })
+                                    }
+                                })
+                                .collect::<Option<Vec<_>>>();
+                            let Some(segments) = segments else {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-ORIGIN",
+                                        "textContent segment requires a source origin",
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                continue;
+                            };
+                            FineJsxValue::Text(segments)
+                        }
                         EmitValueRef::Ssa(_)
                         | EmitValueRef::Slot(_)
                         | EmitValueRef::Temporary(_)
@@ -2281,14 +2352,20 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         }
                         None => None,
                     };
-                    let value_origin = match value {
-                        EmitValueRef::Hir(_) => origin.primary_span,
-                        EmitValueRef::Temporary(target) => component_origins.get(target).copied(),
-                        EmitValueRef::Ssa(_)
-                        | EmitValueRef::Slot(_)
-                        | EmitValueRef::Literal(_)
-                        | EmitValueRef::Function(_)
-                        | EmitValueRef::Binding(_) => None,
+                    let (value_origin, source_node) = match value {
+                        None => (origin.primary_span, true),
+                        Some(EmitValueRef::Hir(_)) => (origin.primary_span, false),
+                        Some(EmitValueRef::Temporary(target)) => {
+                            (component_origins.get(target).copied(), false)
+                        }
+                        Some(
+                            EmitValueRef::Ssa(_)
+                            | EmitValueRef::Slot(_)
+                            | EmitValueRef::Literal(_)
+                            | EmitValueRef::Function(_)
+                            | EmitValueRef::Binding(_)
+                            | EmitValueRef::Text(_),
+                        ) => (None, false),
                     };
                     let Some(value_origin) = value_origin else {
                         diagnostics.push(with_operation_span(
@@ -2348,6 +2425,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         fragment_local,
                         namespace: *namespace,
                         value_origin,
+                        source_node,
                     });
                 }
                 EmitOperation::Conditional {
@@ -2728,6 +2806,17 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
         diagnostics,
     }
 }
+fn resolve_optional_helper(
+    helper_names: &BTreeMap<RuntimeHelper, &str>,
+    helper: Option<RuntimeHelper>,
+) -> Option<Option<String>> {
+    match helper {
+        Some(helper) => helper_names
+            .get(&helper)
+            .map(|local| Some((*local).to_owned())),
+        None => Some(None),
+    }
+}
 fn render_template_call(
     helper: &str,
     html: &str,
@@ -3020,6 +3109,8 @@ struct AstRewriter<'a, 'emit> {
     prefer_template_clones: usize,
     vnode_depth: usize,
     active_fragment_local: Option<String>,
+    active_vnode_reactive_local: Option<String>,
+    source_clone_depth: usize,
     await_allowed: bool,
     diagnostics: Vec<Diagnostic>,
 }
@@ -3472,6 +3563,7 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             !self.matched_reads.contains(&location)
                 && rewrite.binding.is_none_or(|binding| {
                     self.semantic_identities.binding_for_reference(identifier) == Some(binding)
+                        || self.source_clone_depth > 0
                 })
         });
         if !list_read && !prop_read && !reactive_read {
@@ -3986,7 +4078,7 @@ impl<'a> AstRewriter<'a, '_> {
             &builder,
         ))
     }
-    fn lower_template_clone(
+    fn lower_template_clone_optimized(
         &mut self,
         clone: CloneRewrite,
         jsx: Expression<'a>,
@@ -4006,7 +4098,31 @@ impl<'a> AstRewriter<'a, '_> {
         if clone.steps.is_empty() {
             return clone_call;
         }
-        let mut values = jsx_dynamic_values(jsx, self.components);
+        let mut source_nodes = BTreeSet::new();
+        for step in &clone.steps {
+            match step {
+                FineJsxStep::Insert {
+                    value_origin,
+                    source_node: true,
+                    ..
+                } => {
+                    source_nodes.insert((value_origin.start(), value_origin.end()));
+                }
+                FineJsxStep::Bind {
+                    value: FineJsxValue::Text(segments),
+                    ..
+                } => source_nodes.extend(segments.iter().filter_map(|segment| match segment {
+                    FineTextSegment::Source { origin, node: true } => {
+                        Some((origin.start(), origin.end()))
+                    }
+                    FineTextSegment::Literal(_) | FineTextSegment::Source { node: false, .. } => {
+                        None
+                    }
+                })),
+                _ => {}
+            }
+        }
+        let mut values = jsx_dynamic_values(jsx, self.components, &source_nodes);
         let mut statements = ArenaVec::new_in(&self.allocator);
         statements.push(const_statement(
             self.allocator,
@@ -4087,8 +4203,18 @@ impl<'a> AstRewriter<'a, '_> {
                             };
                             (value, None)
                         }
+                        FineJsxValue::Text(segments) => {
+                            let Some(value) = self.raw_text_expression(segments, &mut values, span)
+                            else {
+                                continue;
+                            };
+                            (value, None)
+                        }
                     };
+                    let text_content = matches!(kind, DomBindingKind::TextContent);
+                    self.vnode_depth += usize::from(text_content);
                     self.visit_expression(&mut value);
+                    self.vnode_depth -= usize::from(text_content);
                     if reactive {
                         value = zero_parameter_expression_arrow(self.allocator, value, span);
                     }
@@ -4408,6 +4534,7 @@ impl<'a> AstRewriter<'a, '_> {
                     fragment_local,
                     namespace,
                     value_origin,
+                    source_node: _,
                 } => {
                     let location = (value_origin.start(), value_origin.end());
                     let Some(mut value) = values.remove(&location) else {
@@ -4692,6 +4819,58 @@ impl<'a> AstRewriter<'a, '_> {
             Expression::new_identifier(span, self.allocator.alloc_str(&clone.root), &builder);
         statements.push(Statement::new_return_statement(span, Some(root), &builder));
         block_iife(self.allocator, statements, span, self.await_allowed)
+    }
+    fn raw_text_expression(
+        &mut self,
+        segments: Vec<FineTextSegment>,
+        values: &mut BTreeMap<(u32, u32), Expression<'a>>,
+        span: Span,
+    ) -> Option<Expression<'a>> {
+        let mixed = segments.len() > 1;
+        let builder = AstBuilder::new(self.allocator);
+        let mut result = mixed.then(|| {
+            Expression::new_string_literal(span, self.allocator.alloc_str(""), None, &builder)
+        });
+        for segment in segments {
+            let dynamic = matches!(&segment, FineTextSegment::Source { .. });
+            let mut part = match segment {
+                FineTextSegment::Literal(value) => Expression::new_string_literal(
+                    span,
+                    self.allocator.alloc_str(&value),
+                    None,
+                    &builder,
+                ),
+                FineTextSegment::Source { origin, .. } => {
+                    let location = (origin.start(), origin.end());
+                    let Some(value) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "textContent segment origin does not identify a JSX value",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(origin),
+                        );
+                        return None;
+                    };
+                    value
+                }
+            };
+            if mixed && dynamic {
+                part = raw_text_part_expression(self.allocator, part, span);
+            }
+            result = Some(match result {
+                Some(left) => Expression::new_binary_expression(
+                    span,
+                    left,
+                    OxcBinaryOperator::Addition,
+                    part,
+                    &builder,
+                ),
+                None => part,
+            });
+        }
+        result
     }
     fn lower_conditional_branch(
         &mut self,
@@ -5232,7 +5411,9 @@ impl<'a> AstRewriter<'a, '_> {
                             self.allocator.alloc_str(&local),
                             &AstBuilder::new(self.allocator),
                         ),
-                        None => self.lower_jsx_attribute_value(attribute.value, attribute.span),
+                        None => {
+                            self.lower_jsx_attribute_value(attribute.value, attribute.span, false)
+                        }
                     };
                     if getter {
                         if let Some(helper) = &component.prop_helper {
@@ -5399,6 +5580,10 @@ impl<'a> AstRewriter<'a, '_> {
     fn lower_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {
         let span = element.span;
         let opening = element.opening_element.unbox();
+        let intrinsic = matches!(
+            &opening.name,
+            JSXElementName::Identifier(_) | JSXElementName::NamespacedName(_)
+        );
         let element_type = self.lower_jsx_element_name(opening.name);
         let mut properties = ArenaVec::new_in(&self.allocator);
         let mut key = None;
@@ -5417,13 +5602,47 @@ impl<'a> AstRewriter<'a, '_> {
                 JSXAttributeItem::Attribute(attribute) => {
                     let attribute = attribute.unbox();
                     let (name, name_span) = jsx_attribute_name(attribute.name);
+                    if name == "key" {
+                        if !intrinsic {
+                            key = Some(self.lower_jsx_attribute_value(
+                                attribute.value,
+                                attribute.span,
+                                false,
+                            ));
+                            continue;
+                        }
+                        if jsx_attribute_source_span(&attribute.value).is_some_and(|source| {
+                            self.active_list_key_origin == Some((source.start, source.end))
+                        }) {
+                            continue;
+                        }
+                        if !matches!(
+                            attribute.value,
+                            None | Some(JSXAttributeValue::StringLiteral(_))
+                        ) {
+                            let value = self.lower_jsx_attribute_value(
+                                attribute.value,
+                                attribute.span,
+                                false,
+                            );
+                            properties.push(discarded_vnode_key_spread(
+                                self.allocator,
+                                value,
+                                attribute.span,
+                            ));
+                        }
+                        continue;
+                    }
                     let preview = jsx_attribute_source_span(&attribute.value).and_then(|source| {
                         let location = (source.start, source.end);
                         self.preview_handlers
                             .get(&location)
                             .map(|handler| (location, handler.event.clone()))
                     });
-                    let value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
+                    let reactive =
+                        name != "ref" && fict_emit::parse_event_attribute(&name).is_none();
+                    let value =
+                        self.lower_jsx_attribute_value(attribute.value, attribute.span, reactive);
                     if let Some((location, event)) = preview {
                         let prevent_default = handler_may_prevent_default(&value);
                         let Some(qrl) = self.prepare_preview_qrl(
@@ -5441,11 +5660,7 @@ impl<'a> AstRewriter<'a, '_> {
                         ));
                         continue;
                     }
-                    if name == "key" {
-                        key = Some(value);
-                    } else {
-                        properties.push(self.object_property(name_span, &name, value));
-                    }
+                    properties.push(self.object_property(name_span, &name, value));
                 }
             }
         }
@@ -5552,6 +5767,7 @@ impl<'a> AstRewriter<'a, '_> {
         &mut self,
         value: Option<JSXAttributeValue<'a>>,
         span: Span,
+        reactive: bool,
     ) -> Expression<'a> {
         let builder = AstBuilder::new(self.allocator);
         match value {
@@ -5570,7 +5786,10 @@ impl<'a> AstRewriter<'a, '_> {
             Some(JSXAttributeValue::ExpressionContainer(container)) => {
                 let container = container.unbox();
                 if container.expression.is_expression() {
-                    self.lower_jsx_container_expression(container.expression.into_expression())
+                    self.lower_jsx_container_expression(
+                        container.expression.into_expression(),
+                        reactive,
+                    )
                 } else {
                     Expression::new_boolean_literal(span, true, &builder)
                 }
@@ -5621,8 +5840,10 @@ impl<'a> AstRewriter<'a, '_> {
                     let container = container.unbox();
                     if container.expression.is_expression() {
                         let plan = planned.as_mut().and_then(Iterator::next);
-                        let expression = self
-                            .lower_jsx_container_expression(container.expression.into_expression());
+                        let expression = self.lower_jsx_container_expression(
+                            container.expression.into_expression(),
+                            true,
+                        );
                         lowered.push(VNodeChild::Value(self.wrap_non_reactive_component_child(
                             expression,
                             plan,
@@ -5706,17 +5927,30 @@ impl<'a> AstRewriter<'a, '_> {
         arguments.push(Argument::from(value));
         Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
     }
-    fn lower_jsx_container_expression(&mut self, mut expression: Expression<'a>) -> Expression<'a> {
+    fn lower_jsx_container_expression(
+        &mut self,
+        mut expression: Expression<'a>,
+        reactive: bool,
+    ) -> Expression<'a> {
         if matches!(
             expression.get_inner_expression(),
             Expression::JSXElement(_) | Expression::JSXFragment(_)
         ) {
             self.lower_jsx_expression(expression.into_inner_expression())
         } else {
+            let source_span = expression.span();
+            let function_like = matches!(
+                expression.get_inner_expression(),
+                Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+            );
             self.vnode_depth += 1;
             self.visit_expression(&mut expression);
             self.vnode_depth -= 1;
-            expression
+            if reactive && !function_like {
+                self.wrap_vnode_reactive_value(expression, source_span)
+            } else {
+                expression
+            }
         }
     }
     fn object_property(
@@ -6024,14 +6258,20 @@ fn reactive_setter_assignment_target<'a>(
 fn jsx_dynamic_values<'a>(
     jsx: Expression<'a>,
     components: &BTreeMap<(u32, u32), ComponentRewrite>,
+    source_nodes: &BTreeSet<(u32, u32)>,
 ) -> BTreeMap<(u32, u32), Expression<'a>> {
     let mut values = BTreeMap::new();
     match jsx {
         Expression::JSXElement(element) => {
-            collect_jsx_element_values(element.unbox(), &mut values, components);
+            collect_jsx_element_values(element.unbox(), &mut values, components, source_nodes);
         }
         Expression::JSXFragment(fragment) => {
-            collect_jsx_children_values(fragment.unbox().children, &mut values, components);
+            collect_jsx_children_values(
+                fragment.unbox().children,
+                &mut values,
+                components,
+                source_nodes,
+            );
         }
         _ => unreachable!("template clone source must be JSX"),
     }
@@ -6041,6 +6281,7 @@ fn collect_jsx_element_values<'a>(
     element: JSXElement<'a>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
     components: &BTreeMap<(u32, u32), ComponentRewrite>,
+    source_nodes: &BTreeSet<(u32, u32)>,
 ) {
     for attribute in element.opening_element.unbox().attributes {
         match attribute {
@@ -6059,23 +6300,37 @@ fn collect_jsx_element_values<'a>(
                                     expression.into_expression(),
                                     values,
                                     components,
+                                    source_nodes,
                                 );
                             }
                         }
                         JSXAttributeValue::Element(element) => {
                             let location = (element.span.start, element.span.end);
-                            if components.contains_key(&location) {
+                            if source_nodes.contains(&location)
+                                || components.contains_key(&location)
+                            {
                                 values.insert(location, Expression::JSXElement(element));
                             } else {
-                                collect_jsx_element_values(element.unbox(), values, components);
+                                collect_jsx_element_values(
+                                    element.unbox(),
+                                    values,
+                                    components,
+                                    source_nodes,
+                                );
                             }
                         }
                         JSXAttributeValue::Fragment(fragment) => {
-                            collect_jsx_children_values(
-                                fragment.unbox().children,
-                                values,
-                                components,
-                            );
+                            let location = (fragment.span.start, fragment.span.end);
+                            if source_nodes.contains(&location) {
+                                values.insert(location, Expression::JSXFragment(fragment));
+                            } else {
+                                collect_jsx_children_values(
+                                    fragment.unbox().children,
+                                    values,
+                                    components,
+                                    source_nodes,
+                                );
+                            }
                         }
                         JSXAttributeValue::StringLiteral(_) => {}
                     }
@@ -6083,30 +6338,46 @@ fn collect_jsx_element_values<'a>(
             }
         }
     }
-    collect_jsx_children_values(element.children, values, components);
+    collect_jsx_children_values(element.children, values, components, source_nodes);
 }
 fn collect_jsx_children_values<'a>(
     children: ArenaVec<'a, JSXChild<'a>>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
     components: &BTreeMap<(u32, u32), ComponentRewrite>,
+    source_nodes: &BTreeSet<(u32, u32)>,
 ) {
     for child in children {
         match child {
             JSXChild::Element(element) => {
                 let location = (element.span.start, element.span.end);
-                if components.contains_key(&location) {
+                if source_nodes.contains(&location) || components.contains_key(&location) {
                     values.insert(location, Expression::JSXElement(element));
                 } else {
-                    collect_jsx_element_values(element.unbox(), values, components);
+                    collect_jsx_element_values(element.unbox(), values, components, source_nodes);
                 }
             }
             JSXChild::Fragment(fragment) => {
-                collect_jsx_children_values(fragment.unbox().children, values, components);
+                let location = (fragment.span.start, fragment.span.end);
+                if source_nodes.contains(&location) {
+                    values.insert(location, Expression::JSXFragment(fragment));
+                } else {
+                    collect_jsx_children_values(
+                        fragment.unbox().children,
+                        values,
+                        components,
+                        source_nodes,
+                    );
+                }
             }
             JSXChild::ExpressionContainer(container) => {
                 let expression = container.unbox().expression;
                 if expression.is_expression() {
-                    collect_jsx_expression_value(expression.into_expression(), values, components);
+                    collect_jsx_expression_value(
+                        expression.into_expression(),
+                        values,
+                        components,
+                        source_nodes,
+                    );
                 }
             }
             JSXChild::Spread(spread) => {
@@ -6122,6 +6393,7 @@ fn collect_jsx_expression_value<'a>(
     expression: Expression<'a>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
     components: &BTreeMap<(u32, u32), ComponentRewrite>,
+    source_nodes: &BTreeSet<(u32, u32)>,
 ) {
     if matches!(
         expression.get_inner_expression(),
@@ -6130,14 +6402,24 @@ fn collect_jsx_expression_value<'a>(
         match expression.into_inner_expression() {
             Expression::JSXElement(element) => {
                 let location = (element.span.start, element.span.end);
-                if components.contains_key(&location) {
+                if source_nodes.contains(&location) || components.contains_key(&location) {
                     values.insert(location, Expression::JSXElement(element));
                 } else {
-                    collect_jsx_element_values(element.unbox(), values, components);
+                    collect_jsx_element_values(element.unbox(), values, components, source_nodes);
                 }
             }
             Expression::JSXFragment(fragment) => {
-                collect_jsx_children_values(fragment.unbox().children, values, components);
+                let location = (fragment.span.start, fragment.span.end);
+                if source_nodes.contains(&location) {
+                    values.insert(location, Expression::JSXFragment(fragment));
+                } else {
+                    collect_jsx_children_values(
+                        fragment.unbox().children,
+                        values,
+                        components,
+                        source_nodes,
+                    );
+                }
             }
             _ => unreachable!("inner JSX expression kind was checked"),
         }
@@ -6486,6 +6768,58 @@ fn insertion_create_callback<'a>(
     }
     let body = Expression::new_call_expression(span, callee, NONE, arguments, false, &builder);
     expression_arrow(allocator, parameter, body, span)
+}
+fn raw_text_part_expression<'a>(
+    allocator: &'a Allocator,
+    value: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let parameter = allocator.alloc_str("__fict_text_part");
+    let reference = || Expression::new_identifier(span, parameter, &builder);
+    let nullish = Expression::new_binary_expression(
+        span,
+        reference(),
+        OxcBinaryOperator::Equality,
+        Expression::new_null_literal(span, &builder),
+        &builder,
+    );
+    let boolean = Expression::new_binary_expression(
+        span,
+        Expression::new_unary_expression(span, OxcUnaryOperator::Typeof, reference(), &builder),
+        OxcBinaryOperator::StrictEquality,
+        Expression::new_string_literal(span, "boolean", None, &builder),
+        &builder,
+    );
+    let empty = Expression::new_string_literal(span, "", None, &builder);
+    let normalized = Expression::new_conditional_expression(
+        span,
+        Expression::new_logical_expression(
+            span,
+            nullish,
+            OxcLogicalOperator::Or,
+            boolean,
+            &builder,
+        ),
+        empty,
+        reference(),
+        &builder,
+    );
+    let callee = expression_arrow(allocator, parameter, normalized, span);
+    let mut arguments = ArenaVec::new_in(&allocator);
+    arguments.push(Argument::from(value));
+    Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
+}
+fn discarded_vnode_key_spread<'a>(
+    allocator: &'a Allocator,
+    value: Expression<'a>,
+    span: Span,
+) -> ObjectPropertyKind<'a> {
+    let builder = AstBuilder::new(allocator);
+    let empty = Expression::new_null_literal(span, &builder);
+    let sequence = ArenaVec::from_array_in([value, empty], &allocator);
+    let value = Expression::new_sequence_expression(span, sequence, &builder);
+    ObjectPropertyKind::new_spread_property(span, value, &builder)
 }
 fn block_iife<'a>(
     allocator: &'a Allocator,
@@ -7251,413 +7585,4 @@ fn emit_error(
     .with_guarantee_class(guarantee)
 }
 #[cfg(test)]
-mod tests {
-    use super::{emit_program, encode_javascript_string_for_oxc};
-    use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions};
-    use fict_emit::{
-        CleanupOwner, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
-        EmitSlotId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
-        RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
-    };
-    use fict_hir::{
-        CompoundAssignmentOperator, FunctionId, JavaScriptString, LiteralValue, Origin, Projection,
-        SourceSpan, UpdateOperator, ValueId,
-    };
-    use fict_reactivity::{StructurizeAnalysis, StructurizeStats};
-    fn options(language: OxcSourceLanguage, sourcemap: bool) -> OxcCompileOptions {
-        OxcCompileOptions {
-            language,
-            module_kind: OxcModuleKind::Module,
-            typescript: OxcTypeScriptOptions::default(),
-            sourcemap,
-        }
-    }
-    #[test]
-    fn encodes_exact_utf16_strings_for_oxc_without_replacement_loss() {
-        let well_formed = JavaScriptString::from("value � 😀");
-        assert_eq!(
-            encode_javascript_string_for_oxc(&well_formed),
-            ("value � 😀".to_owned(), false)
-        );
-        let exact = JavaScriptString::from_code_units(vec![
-            u16::from(b'a'),
-            0xd800,
-            0xfffd,
-            0xd83d,
-            0xde00,
-            0xdc00,
-        ]);
-        assert_eq!(
-            encode_javascript_string_for_oxc(&exact),
-            ("a\u{fffd}d800\u{fffd}fffd😀\u{fffd}dc00".to_owned(), true,)
-        );
-    }
-    fn effect_program(source: &str) -> EmitProgram {
-        let call = "$effect(() => 1)";
-        let start = u32::try_from(source.find(call).expect("effect call")).expect("span");
-        let end = start + u32::try_from(call.len()).expect("span");
-        let origin = Origin::source(SourceSpan::new(start, end).expect("ordered span"));
-        EmitProgram {
-            runtime_family: RuntimeFamily::Runtime,
-            preview: false,
-            preview_plan: None,
-            strict_rejected: false,
-            module: EmitModulePlan {
-                source_fragment: None,
-                reserved_names: vec!["createEffect_1".into()],
-            },
-            imports: vec![RuntimeImportIntent {
-                helper: RuntimeHelper::Effect,
-                module_request: "@fictjs/runtime/internal".into(),
-                imported: "createEffect".into(),
-                local: "createEffect_1".into(),
-            }],
-            functions: vec![EmitFunction {
-                source: FunctionId::new(0),
-                context: None,
-                props: None,
-                slots: vec![ReactiveSlot {
-                    id: EmitSlotId::new(0),
-                    kind: ReactiveSlotKind::Effect,
-                    storage: ReactiveSlotStorage::Owned,
-                    binding: None,
-                    control_path: Vec::new(),
-                    origin,
-                }],
-                temporaries: Vec::new(),
-                regions: Vec::new(),
-                control_flow: StructurizeAnalysis {
-                    block_order: Vec::new(),
-                    constructs: Vec::new(),
-                    top_level_constructs: Vec::new(),
-                    fallback: None,
-                    stats: StructurizeStats::default(),
-                },
-                operations: vec![EmitOperation::RegisterEffect {
-                    slot: EmitSlotId::new(0),
-                    source_result: Some(ValueId::new(0)),
-                    callback: EmitValueRef::Literal(LiteralValue::Undefined),
-                    helper: RuntimeHelper::Effect,
-                    cleanup: CleanupOwner::Function,
-                    origin,
-                }],
-            }],
-        }
-    }
-    #[test]
-    fn rewrites_calls_in_oxc_ast_injects_imports_and_emits_maps() {
-        let source = "import { $effect } from 'fict';\nconst value: number = 1;\n$effect(() => 1);\nexport { value };";
-        let output = emit_program(
-            source,
-            "effect.ts",
-            options(OxcSourceLanguage::TypeScript, true),
-            &effect_program(source),
-        );
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert!(output.code.contains("@fictjs/runtime/internal"));
-        assert!(output.code.contains("createEffect as createEffect_1"));
-        assert!(output.code.contains("createEffect_1(() => 1)"));
-        assert!(!output.code.contains("$effect"));
-        assert!(!output.code.contains(": number"));
-        assert!(output.code.contains("export { value }"));
-        let map = output.source_map_json.expect("source map");
-        assert!(map.contains("effect.ts"));
-        assert!(map.contains("mappings"));
-    }
-    #[test]
-    fn erases_only_exact_compiler_macro_import_specifiers() {
-        let source = "import { $effect, batch } from 'fict';\n$effect(() => 1);\nexport { batch };";
-        let emit = effect_program(source);
-        let output = emit_program(
-            source,
-            "mixed-import.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &emit,
-        );
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert!(!output.code.contains("$effect"));
-        assert!(output.code.contains("import { batch } from \"fict\""));
-        assert!(output.code.contains("export { batch }"));
-    }
-    #[test]
-    fn fails_closed_for_bad_origins() {
-        let source = "import { $effect } from 'fict'; $effect(() => 1);";
-        let mut bad_origin = effect_program(source);
-        let EmitOperation::RegisterEffect { origin, .. } =
-            &mut bad_origin.functions[0].operations[0]
-        else {
-            unreachable!()
-        };
-        *origin = Origin::source(SourceSpan::new(0, 1).expect("span"));
-        let output = emit_program(
-            source,
-            "bad-origin.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &bad_origin,
-        );
-        assert!(output.code.is_empty());
-        assert!(
-            output
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-ORIGIN")
-        );
-    }
-    #[test]
-    fn materializes_unprojected_reactive_reads_as_accessor_calls() {
-        let source = "const memo = () => 1; export const value = memo + memo;";
-        let mut emit = effect_program("$effect(() => 1)");
-        emit.imports.clear();
-        emit.functions[0].slots.clear();
-        emit.functions[0].operations.clear();
-        for (index, (start, _)) in source.match_indices("memo").skip(1).enumerate() {
-            let start = u32::try_from(start).expect("span");
-            emit.functions[0]
-                .operations
-                .push(EmitOperation::ReadReactive {
-                    slot: EmitSlotId::new(0),
-                    source_result: ValueId::new(u32::try_from(index).expect("value")),
-                    projections: Vec::new(),
-                    accessor_depth: 0,
-                    target: fict_emit::EmitTemporaryId::new(
-                        u32::try_from(index).expect("temporary"),
-                    ),
-                    helper: None,
-                    origin: Origin::source(
-                        SourceSpan::new(start, start + 4).expect("ordered span"),
-                    ),
-                });
-        }
-        let output = emit_program(
-            source,
-            "read.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &emit,
-        );
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert!(output.code.contains("value = memo() + memo()"));
-    }
-    #[test]
-    fn materializes_projected_reactive_reads_at_the_root_only() {
-        let source = "const state = () => ({}); export const values = [state.user.name, state?.items?.[key()]];";
-        let mut emit = effect_program("$effect(() => 1)");
-        emit.imports.clear();
-        emit.functions[0].slots.clear();
-        emit.functions[0].operations.clear();
-        for (index, authored) in ["state.user.name", "state?.items?.[key()]"]
-            .into_iter()
-            .enumerate()
-        {
-            let start =
-                u32::try_from(source.find(authored).expect("projected read span")).expect("span");
-            emit.functions[0]
-                .operations
-                .push(EmitOperation::ReadReactive {
-                    slot: EmitSlotId::new(0),
-                    source_result: ValueId::new(u32::try_from(index).expect("value")),
-                    projections: vec![Projection::StaticProperty {
-                        name: "placeholder".into(),
-                        optional: false,
-                    }],
-                    accessor_depth: 0,
-                    target: fict_emit::EmitTemporaryId::new(
-                        u32::try_from(index).expect("temporary"),
-                    ),
-                    helper: None,
-                    origin: Origin::source(
-                        SourceSpan::new(
-                            start,
-                            start + u32::try_from(authored.len()).expect("span"),
-                        )
-                        .expect("ordered span"),
-                    ),
-                });
-        }
-
-        let output = emit_program(
-            source,
-            "projected-read.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &emit,
-        );
-
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert!(output.code.contains("state().user.name"), "{}", output.code);
-        assert!(
-            output.code.contains("state()?.items?.[key()]"),
-            "{}",
-            output.code
-        );
-        assert!(!output.code.contains("state()()"), "{}", output.code);
-    }
-
-    #[test]
-    fn materializes_value_preserving_reactive_writes_and_updates() {
-        let source = "let count = () => 0; export const values = [count = rhs(), count += 2, count++, --count, count &&= rhs(), count ||= rhs(), count ??= rhs()];";
-        let mut emit = effect_program("$effect(() => 1)");
-        emit.imports.clear();
-        emit.functions[0].slots.clear();
-        emit.functions[0].operations.clear();
-        let operations = [
-            ("count = rhs()", 0_u8),
-            ("count += 2", 1_u8),
-            ("count++", 2_u8),
-            ("--count", 3_u8),
-            ("count &&= rhs()", 4_u8),
-            ("count ||= rhs()", 5_u8),
-            ("count ??= rhs()", 6_u8),
-        ];
-        for (authored, kind) in operations {
-            let start = u32::try_from(source.find(authored).expect("mutation span")).expect("span");
-            let origin = Origin::source(
-                SourceSpan::new(start, start + u32::try_from(authored.len()).expect("span"))
-                    .expect("ordered span"),
-            );
-            let operation = match kind {
-                0 => EmitOperation::WriteReactive {
-                    slot: EmitSlotId::new(0),
-                    source_result: None,
-                    projections: Vec::new(),
-                    value: EmitValueRef::Literal(LiteralValue::Undefined),
-                    target: None,
-                    origin,
-                },
-                1 => EmitOperation::UpdateReactive {
-                    slot: EmitSlotId::new(0),
-                    source_result: Some(ValueId::new(0)),
-                    projections: Vec::new(),
-                    compound: Some(CompoundAssignmentOperator::Add),
-                    value: Some(EmitValueRef::Literal(LiteralValue::Undefined)),
-                    update: None,
-                    prefix: false,
-                    target: None,
-                    origin,
-                },
-                2 => EmitOperation::UpdateReactive {
-                    slot: EmitSlotId::new(0),
-                    source_result: Some(ValueId::new(1)),
-                    projections: Vec::new(),
-                    compound: None,
-                    value: None,
-                    update: Some(UpdateOperator::Increment),
-                    prefix: false,
-                    target: None,
-                    origin,
-                },
-                3 => EmitOperation::UpdateReactive {
-                    slot: EmitSlotId::new(0),
-                    source_result: Some(ValueId::new(2)),
-                    projections: Vec::new(),
-                    compound: None,
-                    value: None,
-                    update: Some(UpdateOperator::Decrement),
-                    prefix: true,
-                    target: None,
-                    origin,
-                },
-                4..=6 => EmitOperation::UpdateReactive {
-                    slot: EmitSlotId::new(0),
-                    source_result: Some(ValueId::new(u32::from(kind))),
-                    projections: Vec::new(),
-                    compound: Some(match kind {
-                        4 => CompoundAssignmentOperator::LogicalAnd,
-                        5 => CompoundAssignmentOperator::LogicalOr,
-                        6 => CompoundAssignmentOperator::NullishCoalescing,
-                        _ => unreachable!(),
-                    }),
-                    value: Some(EmitValueRef::Literal(LiteralValue::Undefined)),
-                    update: None,
-                    prefix: false,
-                    target: None,
-                    origin,
-                },
-                _ => unreachable!(),
-            };
-            emit.functions[0].operations.push(operation);
-        }
-
-        let output = emit_program(
-            source,
-            "writes.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &emit,
-        );
-
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert!(output.code.contains("count(__fict_value)"));
-        assert!(output.code.contains("count() + 2"));
-        assert!(output.code.contains("count(__fict_previous + 1)"));
-        assert!(output.code.contains("count() - 1"));
-        assert!(output.code.contains("__fict_previous &&"));
-        assert!(output.code.contains("__fict_previous ||"));
-        assert!(output.code.contains("__fict_previous ??"));
-    }
-
-    #[test]
-    fn fails_closed_for_scoped_helpers_without_context_materialization() {
-        let source = "import { $effect } from 'fict'; $effect(() => 1);";
-        let mut scoped = effect_program(source);
-        let EmitOperation::RegisterEffect { helper, .. } = &mut scoped.functions[0].operations[0]
-        else {
-            unreachable!()
-        };
-        *helper = RuntimeHelper::UseEffect;
-        scoped.imports[0].helper = RuntimeHelper::UseEffect;
-        scoped.imports[0].imported = "__fictUseEffect".into();
-        scoped.imports[0].local = "__fictUseEffect".into();
-
-        let output = emit_program(
-            source,
-            "scoped.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &scoped,
-        );
-
-        assert!(output.code.is_empty());
-        assert_eq!(output.diagnostics[0].code.as_str(), "FICT-OXC-EMIT-CONTEXT");
-    }
-
-    #[test]
-    fn injects_scoped_contexts_and_prepends_helper_arguments() {
-        let source = "function App() { $effect(() => 1); }";
-        let mut scoped = effect_program(source);
-        let function_origin = Origin::source(
-            SourceSpan::new(0, u32::try_from(source.len()).expect("span")).expect("ordered span"),
-        );
-        let EmitOperation::RegisterEffect { helper, .. } = &mut scoped.functions[0].operations[0]
-        else {
-            unreachable!()
-        };
-        *helper = RuntimeHelper::UseEffect;
-        scoped.functions[0].context = Some(EmitContext {
-            local: "__fictCtx".into(),
-            helper: RuntimeHelper::UseContext,
-            origin: function_origin,
-        });
-        scoped.imports = vec![
-            RuntimeImportIntent {
-                helper: RuntimeHelper::UseContext,
-                module_request: "@fictjs/runtime/internal".into(),
-                imported: "__fictUseContext".into(),
-                local: "__fictUseContext".into(),
-            },
-            RuntimeImportIntent {
-                helper: RuntimeHelper::UseEffect,
-                module_request: "@fictjs/runtime/internal".into(),
-                imported: "__fictUseEffect".into(),
-                local: "__fictUseEffect".into(),
-            },
-        ];
-
-        let output = emit_program(
-            source,
-            "scoped-valid.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &scoped,
-        );
-
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert!(output.code.contains("const __fictCtx = __fictUseContext()"));
-        assert!(output.code.contains("__fictUseEffect(__fictCtx, () => 1)"));
-    }
-}
+mod tests;

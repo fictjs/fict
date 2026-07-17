@@ -643,6 +643,272 @@ test('semantic EmitIR identities preserve destructuring and authored export name
   }
 })
 
+test('intrinsic children props become child content without leaking attributes', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export let api
+
+      function App() {
+        let text = $state('hello')
+        api = { set: value => (text = value) }
+        return (
+          <section>
+            <div data-id="static" children="static" />
+            <div data-id="reactive" children={text} />
+            <div data-id="array" children={['a', 'b']} />
+            <div data-id="node" children={<span>node</span>} />
+            <div data-id="conflict" children="ignored">explicit</div>
+          </section>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'intrinsic-children-props',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const staticElement = container.querySelector('[data-id="static"]')
+  const reactiveElement = container.querySelector('[data-id="reactive"]')
+  const arrayElement = container.querySelector('[data-id="array"]')
+  const nodeElement = container.querySelector('[data-id="node"]')
+  const conflictElement = container.querySelector('[data-id="conflict"]')
+
+  assert.equal(staticElement?.textContent, 'static')
+  assert.equal(reactiveElement?.textContent, 'hello')
+  assert.equal(arrayElement?.textContent, 'ab')
+  assert.equal(nodeElement?.querySelector('span')?.textContent, 'node')
+  assert.equal(conflictElement?.textContent, 'explicit')
+  for (const element of [
+    staticElement,
+    reactiveElement,
+    arrayElement,
+    nodeElement,
+    conflictElement,
+  ]) {
+    assert.equal(element?.hasAttribute('children'), false)
+  }
+
+  compiled.api.set('updated')
+  await flushRuntime()
+  assert.equal(reactiveElement?.textContent, 'updated')
+
+  dispose()
+  container.remove()
+})
+
+test('raw-text and RCDATA expressions bind literal textContent', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export let api
+
+      function App() {
+        let show = $state(true)
+        let css = $state('body { color: red; }')
+        let color = $state('red')
+        let enabled = $state(false)
+        api = {
+          hide: () => (show = false),
+          setCss: value => (css = value),
+          updateMixed: value => {
+            enabled = true
+            color = value
+          },
+        }
+        return (
+          <section>
+            <script type="application/json" data-id="script">{show && <span>code</span>}</script>
+            <style data-id="style">{css}</style>
+            <title data-id="title">{show && <span>title</span>}</title>
+            <script
+              type="application/json"
+              data-id="children-prop"
+              children={show && <span>child</span>}
+            />
+            <style data-id="mixed">{'.a > .b '}{enabled && 'display:block; '}{'{'}{' color: '}{color}{null}{undefined}{false}{' }'}</style>
+          </section>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'raw-text-content',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const script = container.querySelector('[data-id="script"]')
+  const style = container.querySelector('[data-id="style"]')
+  const title = container.querySelector('[data-id="title"]')
+  const childrenProp = container.querySelector('[data-id="children-prop"]')
+  const mixed = container.querySelector('[data-id="mixed"]')
+  for (const element of [script, style, title, childrenProp, mixed]) {
+    assert.equal(element?.textContent.includes('fict:slot'), false)
+  }
+  assert.equal(childrenProp?.hasAttribute('children'), false)
+  assert.equal(style?.textContent, 'body { color: red; }')
+  assert.equal(mixed?.textContent, '.a > .b { color: red }')
+  assert.equal(mixed?.textContent.includes('&gt;'), false)
+
+  compiled.api.setCss('body { color: blue; }')
+  compiled.api.updateMixed('blue')
+  await flushRuntime()
+  assert.equal(style?.textContent, 'body { color: blue; }')
+  assert.equal(mixed?.textContent, '.a > .b display:block; { color: blue }')
+
+  compiled.api.hide()
+  await flushRuntime()
+  assert.equal(script?.textContent, '')
+  assert.equal(title?.textContent, '')
+  assert.equal(childrenProp?.textContent, '')
+
+  dispose()
+  container.remove()
+})
+
+test('dynamic annotation-xml children use the final live encoding namespace', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+      import { createElement } from 'fict/internal'
+
+      export const evaluations = []
+      let updateToken = () => {}
+
+      function makeDom(id) {
+        return createElement({ type: 'mi', props: { 'data-id': id, children: id } })
+      }
+
+      function Token({ id }) {
+        let label = $state(id)
+        updateToken = value => (label = value)
+        return <mi data-id={id} data-label={label}>{label}</mi>
+      }
+
+      function App() {
+        const htmlEncoding = 'text/html'
+        const mathEncoding = 'application/xml'
+        const htmlAttrs = { encoding: htmlEncoding }
+        const mathAttrs = { encoding: mathEncoding }
+        const beforeMath = { encoding: mathEncoding }
+        const show = true
+        const items = ['list']
+        return (
+          <math>
+            <annotation-xml {...beforeMath} encoding={htmlEncoding}>
+              <mi data-id="html-static">static</mi>
+              {makeDom('html-direct')}
+              {show ? makeDom('html-conditional') : null}
+              {items.map(item => makeDom('html-' + item))}
+              <><mi data-id="html-fragment">fragment</mi></>
+              <Token id="html-component" />
+            </annotation-xml>
+            <annotation-xml
+              encoding={(evaluations.push('dynamic-static:first'), htmlEncoding)}
+              EnCoDiNg="application/xml"
+            >
+              <mi data-id="dynamic-static" />
+            </annotation-xml>
+            <annotation-xml
+              encoding="application/xml"
+              ENCODING={(evaluations.push('static-dynamic:last'), htmlEncoding)}
+            >
+              <mi data-id="static-dynamic" />
+            </annotation-xml>
+            <annotation-xml
+              encoding={(evaluations.push('dynamic-dynamic:first'), mathEncoding)}
+              ENCODING={(evaluations.push('dynamic-dynamic:last'), htmlEncoding)}
+            >
+              <mi data-id="dynamic-dynamic" />
+            </annotation-xml>
+            <annotation-xml encoding="application/xml" {...htmlAttrs}>
+              <mi data-id="spread-last" />
+            </annotation-xml>
+            <annotation-xml {...htmlAttrs} EnCoDiNg="application/xml">
+              <mi data-id="explicit-last" />
+            </annotation-xml>
+            <annotation-xml {...mathAttrs} EnCoDiNg={htmlEncoding}>
+              <mi data-id="dynamic-after-spread" />
+            </annotation-xml>
+          </math>
+        )
+      }
+
+      export function mount(container) {
+        evaluations.length = 0
+        return render(() => <App />, container)
+      }
+
+      export function update(value) {
+        updateToken(value)
+      }
+    `,
+    'dynamic-annotation-namespace',
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-J003', 'FICT-J003', 'FICT-J003', 'FICT-J003'],
+    },
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const htmlNamespace = 'http://www.w3.org/1999/xhtml'
+  const mathNamespace = 'http://www.w3.org/1998/Math/MathML'
+  for (const id of [
+    'html-static',
+    'html-direct',
+    'html-conditional',
+    'html-list',
+    'html-fragment',
+    'html-component',
+  ]) {
+    assert.equal(container.querySelector(`[data-id="${id}"]`)?.namespaceURI, htmlNamespace, id)
+  }
+  for (const [id, encoding, namespace] of [
+    ['dynamic-static', 'application/xml', mathNamespace],
+    ['static-dynamic', 'text/html', htmlNamespace],
+    ['dynamic-dynamic', 'text/html', htmlNamespace],
+    ['spread-last', 'text/html', htmlNamespace],
+    ['explicit-last', 'application/xml', mathNamespace],
+    ['dynamic-after-spread', 'text/html', htmlNamespace],
+  ]) {
+    const child = container.querySelector(`[data-id="${id}"]`)
+    assert.equal(child?.parentElement?.getAttribute('encoding'), encoding, `${id} encoding`)
+    assert.equal(child?.namespaceURI, namespace, `${id} namespace`)
+  }
+  assert.deepEqual(compiled.evaluations, [
+    'dynamic-static:first',
+    'static-dynamic:last',
+    'dynamic-dynamic:first',
+    'dynamic-dynamic:last',
+  ])
+  const component = container.querySelector('[data-id="html-component"]')
+  assert.equal(component?.getAttribute('data-label'), 'html-component')
+  assert.equal(component?.textContent, 'html-component')
+  compiled.update('updated')
+  await flushRuntime()
+  assert.equal(component?.getAttribute('data-label'), 'updated')
+  assert.equal(component?.textContent, 'updated')
+
+  dispose()
+  container.remove()
+})
+
 test('native binding reports the Rust-only compiler protocol', () => {
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')

@@ -68,6 +68,7 @@ pub enum EmitValueRef {
     Literal(LiteralValue),
     Function(FunctionId),
     Binding(BindingId),
+    Text(Vec<DomTextSegment>),
 }
 
 /// Reactive runtime slot category.
@@ -157,6 +158,16 @@ pub enum DomBindingKind {
     Class,
     Style,
     Spread,
+}
+
+/// One authored segment in a raw-text/RCDATA `textContent` binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DomTextSegment {
+    Literal(String),
+    Source {
+        value: Option<ValueId>,
+        origin: Origin,
+    },
 }
 
 /// Owner responsible for disposing event/ref/list/effect resources.
@@ -332,6 +343,9 @@ pub enum EmitOperation {
         template: TemplateId,
         source_result: ValueId,
         target: EmitTemporaryId,
+        namespace_helper: Option<RuntimeHelper>,
+        reactive_helper: Option<RuntimeHelper>,
+        fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
     ResolveElement {
@@ -392,7 +406,7 @@ pub enum EmitOperation {
     Evaluate { value: EmitValueRef, origin: Origin },
     Insert {
         parent: EmitTemporaryId,
-        value: EmitValueRef,
+        value: Option<EmitValueRef>,
         before: Option<EmitTemporaryId>,
         namespace: DomNamespace,
         helper: RuntimeHelper,
@@ -499,6 +513,10 @@ impl EmitOperation {
             | Self::CreateVNode {
                 fragment_helper: helper,
                 ..
+            }
+            | Self::CloneTemplate {
+                namespace_helper: helper,
+                ..
             } => *helper,
             Self::InvokeComponent {
                 prop_helper,
@@ -531,7 +549,6 @@ impl EmitOperation {
             | Self::UpdateReactive { .. }
             | Self::DeleteReactive { .. }
             | Self::Evaluate { .. }
-            | Self::CloneTemplate { .. }
             | Self::Return { .. } => None,
         }
     }
@@ -544,6 +561,9 @@ impl EmitOperation {
             Self::Conditional { create_helper, .. } => Some(*create_helper),
             Self::ConditionalReturn { create_helper, .. } => Some(*create_helper),
             Self::KeyedChild { cleanup_helper, .. } => Some(*cleanup_helper),
+            Self::CloneTemplate {
+                reactive_helper, ..
+            } => *reactive_helper,
             Self::InvokeComponent {
                 prop_helper: Some(_),
                 fragment_helper,
@@ -559,6 +579,9 @@ impl EmitOperation {
             Self::Conditional { cleanup_helper, .. } => Some(*cleanup_helper),
             Self::ConditionalReturn { cleanup_helper, .. } => Some(*cleanup_helper),
             Self::Insert {
+                fragment_helper, ..
+            } => *fragment_helper,
+            Self::CloneTemplate {
                 fragment_helper, ..
             } => *fragment_helper,
             _ => None,
@@ -659,9 +682,9 @@ impl EmitOperation {
             Self::BindDom { value: tag, .. }
             | Self::BindRef { reference: tag, .. }
             | Self::Evaluate { value: tag, .. }
-            | Self::Insert { value: tag, .. }
             | Self::Conditional { source: tag, .. }
             | Self::KeyedList { items: tag, .. } => visit(tag),
+            Self::Insert { value, .. } => value.iter().for_each(visit),
             Self::ApplyProps {
                 operation: PropsOperation::Spread { source, .. },
                 ..
