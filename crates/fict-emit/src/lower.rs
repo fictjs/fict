@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct NoJsxLoweringOptions {
     /// Runtime package/import family.
     pub runtime_family: RuntimeFamily,
-    /// Reject derived SCCs instead of emitting best-effort non-memo regions.
+    /// Reject non-guaranteed control-flow fallback; derived SCCs are always rejected.
     pub strict_guarantee: bool,
     /// Allow Preview ABI helpers (none are emitted by this phase).
     pub preview: bool,
@@ -153,16 +153,14 @@ fn lower_program(
             GuaranteeClass::Internal,
         )]));
     }
-    if options.strict_guarantee
-        && let Some(cycle) = cycles.iter().flat_map(|analysis| &analysis.cycles).next()
-    {
+    if let Some(cycle) = cycles.iter().flat_map(|analysis| &analysis.cycles).next() {
         return Err(DiagnosticBundle::new(vec![lower_error(
             "FICT-R-CYCLE",
             format!(
                 "detected cyclic derived dependency across {} binding(s)",
                 cycle.nodes.len()
             ),
-            GuaranteeClass::Fallback,
+            GuaranteeClass::Unsupported,
         )]));
     }
     let captured_write_bindings = collect_captured_write_bindings(hir);

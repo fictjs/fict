@@ -557,6 +557,35 @@ test('runtime reactive creators preserve calls and enforce configurable R004', a
   )
 })
 
+test('derived cycles fail closed even when strict guarantees are disabled', () => {
+  const result = binding.transformSync({
+    code: `
+      import { $state } from 'fict'
+      export function App() {
+        let source = $state(0)
+        const first = second + source
+        const second = first + 1
+        return <div>{first}{second}</div>
+      }
+    `,
+    filename: '/fixtures/derived-cycle.tsx',
+    options: {
+      strictGuarantee: false,
+      warningLevels: { 'FICT-R-CYCLE': 'off' },
+    },
+  })
+
+  assert.equal(result.code, '')
+  assert.deepEqual(
+    result.diagnostics.map(({ code, guaranteeClass, severity }) => ({
+      code,
+      guaranteeClass,
+      severity,
+    })),
+    [{ code: 'FICT-R-CYCLE', guaranteeClass: 'unsupported', severity: 'error' }],
+  )
+})
+
 test('semantic EmitIR identities preserve destructuring and authored export names', async () => {
   const destructured = await compileAndImport(
     `

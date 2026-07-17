@@ -484,6 +484,20 @@ count++
 return <div>{count}</div>
 ```
 
+### FICT-R-CYCLE: Cyclic derived dependency
+
+**Severity:** Error
+
+**Why:** Two or more derived bindings depend on each other, or one derived binding references
+itself. The resulting memo graph has no valid evaluation order.
+
+**Impact:** Emitting the graph would create recursively evaluating accessors that can overflow the
+stack or loop at runtime.
+
+**Fix:** Break the cycle by deriving both values from an independent state source, or compute the
+mutually dependent values together in one acyclic derivation. This diagnostic is always a hard
+error: `strictGuarantee: false` and `warningLevels` cannot downgrade or suppress it.
+
 ---
 
 ## Performance (FICT-X\*)
