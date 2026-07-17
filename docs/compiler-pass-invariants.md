@@ -56,6 +56,8 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 ### EmitIR and code generation
 
 - Only verified IR reaches output construction.
+- Every `EmitOperation` variant has a production construction site in the HIR
+  lowerer; verifier-only or adapter-only operation variants are forbidden.
 - Runtime hooks appear only in render-safe locations and helper imports match
   the runtime ABI.
 - Metadata, diagnostics, artifacts, and source maps refer to authored source

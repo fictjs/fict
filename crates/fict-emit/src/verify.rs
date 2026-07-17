@@ -1042,16 +1042,6 @@ fn verify_operations(
                     ));
                 }
             }
-            EmitOperation::CreateElement {
-                namespace: DomNamespace::Parent,
-                helper,
-                ..
-            } if *helper != RuntimeHelper::CreateElementInParentNamespace => {
-                diagnostics.push(emit_error(
-                    "FICT-EMIT-NAMESPACE",
-                    "parent-derived namespace requires its dedicated helper",
-                ));
-            }
             EmitOperation::InvokeComponent {
                 component,
                 props,
@@ -1446,18 +1436,6 @@ fn verify_helper_semantics(
             matches!(helper, RuntimeHelper::Effect | RuntimeHelper::UseEffect)
         }
         EmitOperation::DeclareTemplate { helper, .. } => *helper == RuntimeHelper::Template,
-        EmitOperation::CreateElement {
-            namespace, helper, ..
-        } => match namespace {
-            DomNamespace::Html => *helper == RuntimeHelper::CreateElement,
-            DomNamespace::Svg
-            | DomNamespace::MathMl
-            | DomNamespace::MathMlTextIntegration
-            | DomNamespace::MathMlAnnotationXml => {
-                *helper == RuntimeHelper::CreateElementInNamespace
-            }
-            DomNamespace::Parent => *helper == RuntimeHelper::CreateElementInParentNamespace,
-        },
         EmitOperation::BindDom {
             kind,
             reactive,

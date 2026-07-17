@@ -1,7 +1,7 @@
 use fict_emit::{
-    DomBindingKind, DomNamespace, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
-    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, ReactiveSlot, ReactiveSlotKind,
-    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
+    EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId, EmitTemporary,
+    EmitTemporaryId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
+    RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
 };
 use fict_hir::{
     BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
@@ -77,33 +77,14 @@ fn program() -> EmitProgram {
         strict_rejected: false,
         module: EmitModulePlan {
             source_fragment: None,
-            reserved_names: vec![
-                "createElement".into(),
-                "createSignal".into(),
-                "element".into(),
-                "setText".into(),
-            ],
+            reserved_names: vec!["createSignal".into(), "value".into()],
         },
-        imports: vec![
-            RuntimeImportIntent {
-                helper: RuntimeHelper::Signal,
-                module_request: "@fictjs/runtime/internal".into(),
-                imported: "createSignal".into(),
-                local: "createSignal".into(),
-            },
-            RuntimeImportIntent {
-                helper: RuntimeHelper::CreateElement,
-                module_request: "@fictjs/runtime/internal".into(),
-                imported: "createElement".into(),
-                local: "createElement".into(),
-            },
-            RuntimeImportIntent {
-                helper: RuntimeHelper::SetText,
-                module_request: "@fictjs/runtime/internal".into(),
-                imported: "setText".into(),
-                local: "setText".into(),
-            },
-        ],
+        imports: vec![RuntimeImportIntent {
+            helper: RuntimeHelper::Signal,
+            module_request: "@fictjs/runtime/internal".into(),
+            imported: "createSignal".into(),
+            local: "createSignal".into(),
+        }],
         functions: vec![EmitFunction {
             source: FunctionId::new(0),
             context: None,
@@ -118,7 +99,7 @@ fn program() -> EmitProgram {
             }],
             temporaries: vec![EmitTemporary {
                 id: EmitTemporaryId::new(0),
-                name: "element".into(),
+                name: "value".into(),
                 origin: origin(),
             }],
             regions: Vec::new(),
@@ -137,19 +118,12 @@ fn program() -> EmitProgram {
                     helper: RuntimeHelper::Signal,
                     origin: origin(),
                 },
-                EmitOperation::CreateElement {
-                    target: EmitTemporaryId::new(0),
-                    tag: EmitValueRef::Literal(LiteralValue::String("div".into())),
-                    namespace: DomNamespace::Html,
-                    helper: RuntimeHelper::CreateElement,
-                    origin: origin(),
-                },
-                EmitOperation::BindDom {
-                    element: EmitTemporaryId::new(0),
-                    kind: DomBindingKind::Text,
-                    value: EmitValueRef::Literal(LiteralValue::String("hello".into())),
-                    reactive: false,
-                    helper: RuntimeHelper::SetText,
+                EmitOperation::WriteReactive {
+                    slot: EmitSlotId::new(0),
+                    source_result: Some(fict_hir::ValueId::new(0)),
+                    projections: Vec::new(),
+                    value: EmitValueRef::Literal(LiteralValue::Undefined),
+                    target: Some(EmitTemporaryId::new(0)),
                     origin: origin(),
                 },
                 EmitOperation::Return {

@@ -682,7 +682,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             EmitOperation::ApplyProps { operation, .. } => {
                 !matches!(operation, PropsOperation::Spread { .. })
             }
-            _ => matches!(operation, EmitOperation::CreateElement { .. }),
+            _ => false,
         });
     unsupported.map_or_else(Vec::new, |operation| {
         let mut diagnostic = emit_error(
@@ -7315,7 +7315,6 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::CloneTemplate { origin, .. }
         | EmitOperation::ResolveElement { origin, .. }
         | EmitOperation::InvokeComponent { origin, .. }
-        | EmitOperation::CreateElement { origin, .. }
         | EmitOperation::BindDom { origin, .. }
         | EmitOperation::ApplyProps { origin, .. }
         | EmitOperation::BindEvent { origin, .. }

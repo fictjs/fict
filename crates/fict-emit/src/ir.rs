@@ -356,13 +356,6 @@ pub enum EmitOperation {
         fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
-    CreateElement {
-        target: EmitTemporaryId,
-        tag: EmitValueRef,
-        namespace: DomNamespace,
-        helper: RuntimeHelper,
-        origin: Origin,
-    },
     BindDom {
         element: EmitTemporaryId,
         kind: DomBindingKind,
@@ -493,7 +486,6 @@ impl EmitOperation {
             Self::CreateReactive { helper, .. }
             | Self::RegisterEffect { helper, .. }
             | Self::DeclareTemplate { helper, .. }
-            | Self::CreateElement { helper, .. }
             | Self::BindDom { helper, .. }
             | Self::ApplyProps { helper, .. }
             | Self::BindEvent { helper, .. }
@@ -641,7 +633,6 @@ impl EmitOperation {
             | Self::CloneTemplate { target, .. }
             | Self::ResolveElement { target, .. }
             | Self::InvokeComponent { target, .. }
-            | Self::CreateElement { target, .. }
             | Self::Conditional { target, .. }
             | Self::ConditionalReturn { target, .. }
             | Self::KeyedChild { target, .. }
@@ -665,8 +656,7 @@ impl EmitOperation {
             Self::WriteReactive { value, .. } => visit(value),
             Self::WriteReactivePattern { value, .. } => visit(value),
             Self::UpdateReactive { value, .. } => value.iter().for_each(visit),
-            Self::CreateElement { tag, .. }
-            | Self::BindDom { value: tag, .. }
+            Self::BindDom { value: tag, .. }
             | Self::BindRef { reference: tag, .. }
             | Self::Evaluate { value: tag, .. }
             | Self::Insert { value: tag, .. }
