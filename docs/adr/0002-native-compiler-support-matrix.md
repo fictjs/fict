@@ -39,6 +39,13 @@ package, install, and execute all of the following targets:
 | `win32-x64-msvc`   | Windows      | x64          | MSVC      | yes              |
 | `win32-arm64-msvc` | Windows      | arm64        | MSVC      | yes              |
 
+Linux libc detection is tri-state. A valid process report with a glibc runtime
+marker selects GNU, a valid Linux report without that marker selects musl, and
+an unavailable or malformed report leaves libc unknown. For an unknown libc,
+the facade probes the GNU package and then the musl package, validates the
+reported Rust ABI for each candidate, and aggregates both failures. This is
+package selection for the same Rust compiler, not a compiler fallback.
+
 Windows ARM64 is intentionally blocking rather than best-effort. Removing it
 from a release requires a superseding support-policy decision; a temporarily
 unavailable hosted runner is a release-infrastructure problem, not permission
