@@ -169,13 +169,13 @@ pub struct FrontendMacroImport {
     pub span: SourceSpan,
 }
 
-/// Binding-confirmed compiler-macro call.
+/// Direct compiler-macro call or unresolved reserved macro spelling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontendMacroCall {
     /// Macro semantics.
     pub kind: FictMacroKind,
-    /// Resolved imported binding identity.
-    pub binding: BindingId,
+    /// Resolved imported binding identity, absent only for an unresolved reserved spelling.
+    pub binding: Option<BindingId>,
     /// Full call span.
     pub call_span: SourceSpan,
     /// Callee identifier span.
@@ -200,7 +200,7 @@ pub struct FrontendMacroValueUse {
 /// Namespace macro-shaped call, retained for a structured unsupported diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceMacroCall {
-    /// Macro semantics implied by the static property.
+    /// Macro semantics implied by the statically known property.
     pub kind: FictMacroKind,
     /// Namespace import binding identity.
     pub namespace_binding: BindingId,
@@ -208,7 +208,7 @@ pub struct NamespaceMacroCall {
     pub source: String,
     /// Full call span.
     pub call_span: SourceSpan,
-    /// Static property span.
+    /// Static or computed property span.
     pub property_span: SourceSpan,
     /// Whether optional-call syntax was authored.
     pub optional: bool,
@@ -399,7 +399,8 @@ fn build_summary(
                 }
             }
             ImportedName::Namespace | ImportedName::ImportEquals
-                if FICT_MACRO_MODULES.contains(&record.source.as_str()) =>
+                if FICT_MACRO_MODULES.contains(&record.source.as_str())
+                    || MEMO_MACRO_MODULES.contains(&record.source.as_str()) =>
             {
                 namespace_macros.insert(record.symbol, (binding, record.source.clone()));
             }
@@ -927,7 +928,19 @@ impl<'a> Visit<'a> for MacroCollector<'_, '_> {
                     self.callee_references.insert(reference_id);
                     self.calls.push(FrontendMacroCall {
                         kind: *kind,
-                        binding: *binding,
+                        binding: Some(*binding),
+                        call_span: source_span(call.span),
+                        callee_span: source_span(identifier.span),
+                        optional: call.optional,
+                        pure: call.pure,
+                    });
+                } else if identifier.reference_id.get().is_some_and(|reference| {
+                    self.scoping.get_reference(reference).symbol_id().is_none()
+                }) && let Some(kind) = macro_kind("fict", identifier.name.as_str())
+                {
+                    self.calls.push(FrontendMacroCall {
+                        kind,
+                        binding: None,
                         call_span: source_span(call.span),
                         callee_span: source_span(identifier.span),
                         optional: call.optional,
@@ -935,19 +948,40 @@ impl<'a> Visit<'a> for MacroCollector<'_, '_> {
                     });
                 }
             }
-            Expression::StaticMemberExpression(member) => {
-                if let Expression::Identifier(object) = unwrap_transparent_callee(&member.object)
+            Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
+                let member = match callee {
+                    Expression::StaticMemberExpression(member) => Some((
+                        &member.object,
+                        member.property.name.as_str(),
+                        member.property.span,
+                        member.optional,
+                    )),
+                    Expression::ComputedMemberExpression(member) => {
+                        match unwrap_transparent_callee(&member.expression) {
+                            Expression::StringLiteral(property) => Some((
+                                &member.object,
+                                property.value.as_str(),
+                                property.span,
+                                member.optional,
+                            )),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some((object, property, property_span, member_optional)) = member
+                    && let Expression::Identifier(object) = unwrap_transparent_callee(object)
                     && let Some((_, symbol)) = resolved_identifier(self.scoping, object)
                     && let Some((binding, source)) = self.namespace_macros.get(&symbol)
-                    && let Some(kind) = namespace_macro_kind(member.property.name.as_str())
+                    && let Some(kind) = macro_kind(source, property)
                 {
                     self.namespace_calls.push(NamespaceMacroCall {
                         kind,
                         namespace_binding: *binding,
                         source: source.clone(),
                         call_span: source_span(call.span),
-                        property_span: source_span(member.property.span),
-                        optional: call.optional || member.optional,
+                        property_span: source_span(property_span),
+                        optional: call.optional || member_optional,
                     });
                 }
             }
@@ -994,14 +1028,6 @@ pub(crate) fn macro_kind(source: &str, imported_name: &str) -> Option<FictMacroK
         "$state" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::State),
         "$effect" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Effect),
         "$memo" if MEMO_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Memo),
-        _ => None,
-    }
-}
-
-fn namespace_macro_kind(property: &str) -> Option<FictMacroKind> {
-    match property {
-        "$state" => Some(FictMacroKind::State),
-        "$effect" => Some(FictMacroKind::Effect),
         _ => None,
     }
 }

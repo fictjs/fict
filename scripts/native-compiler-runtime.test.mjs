@@ -586,6 +586,47 @@ test('derived cycles fail closed even when strict guarantees are disabled', () =
   )
 })
 
+test('reserved compiler macros fail closed without direct Fict imports', () => {
+  for (const [name, source, expectedCode] of [
+    [
+      'unbound',
+      `export function App() { let value = $state(0); return value }`,
+      'FICT-HIR-MACRO-UNBOUND',
+    ],
+    [
+      'computed-namespace',
+      `import * as Fict from 'fict'; export function App() { let value = Fict['$state'](0); return value }`,
+      'FICT-HIR-MACRO-NAMESPACE',
+    ],
+  ]) {
+    const result = binding.transformSync({
+      code: source,
+      filename: `/fixtures/${name}-macro.tsx`,
+      options: { strictGuarantee: false },
+    })
+    assert.equal(result.code, '', name)
+    assert.deepEqual(
+      result.diagnostics.map(({ code, severity }) => ({ code, severity })),
+      [{ code: expectedCode, severity: 'error' }],
+      name,
+    )
+  }
+
+  for (const [name, source] of [
+    ['local', `function $state(value) { return value }; export const value = $state(1)`],
+    ['other-module', `import { $state } from 'other'; export const value = $state(1)`],
+    ['other-namespace', `import * as Other from 'other'; export const value = Other['$state'](1)`],
+  ]) {
+    const result = binding.transformSync({
+      code: source,
+      filename: `/fixtures/${name}-macro.ts`,
+      options: { strictGuarantee: false },
+    })
+    assert.notEqual(result.code, '', name)
+    assert.deepEqual(result.diagnostics, [], name)
+  }
+})
+
 test('semantic EmitIR identities preserve destructuring and authored export names', async () => {
   const destructured = await compileAndImport(
     `

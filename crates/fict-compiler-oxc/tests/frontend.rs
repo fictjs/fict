@@ -91,7 +91,7 @@ fn recognizes_aliased_macro_calls_by_import_binding_identity() {
     assert_eq!(frontend.macro_calls[0].kind, FictMacroKind::State);
     assert_eq!(
         frontend.macro_calls[0].binding,
-        frontend.macro_imports[0].binding
+        Some(frontend.macro_imports[0].binding)
     );
 
     let shadowed: Vec<_> = frontend
@@ -104,13 +104,19 @@ fn recognizes_aliased_macro_calls_by_import_binding_identity() {
 }
 
 #[test]
-fn never_grants_macro_semantics_to_unbound_or_wrong_module_names() {
+fn distinguishes_unbound_reserved_macros_from_wrong_module_bindings() {
     let unbound = summary(
         "$state(1); $effect(() => {});",
         OxcSourceLanguage::JavaScript,
     );
     assert!(unbound.macro_imports.is_empty());
-    assert!(unbound.macro_calls.is_empty());
+    assert_eq!(unbound.macro_calls.len(), 2);
+    assert!(
+        unbound
+            .macro_calls
+            .iter()
+            .all(|call| call.binding.is_none())
+    );
 
     let wrong_module = summary(
         "import { $state } from 'not-fict'; $state(1);",
@@ -160,7 +166,7 @@ fn records_optional_value_and_namespace_uses_for_later_policy() {
     let namespace = summary(
         r#"
             import * as Fict from 'fict';
-            Fict.$state(1);
+            Fict['$state'](1);
             Fict.$effect?.(() => {});
         "#,
         OxcSourceLanguage::JavaScript,

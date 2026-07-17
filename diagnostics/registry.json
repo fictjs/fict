@@ -40,7 +40,10 @@
         "FICT-H",
         "FICT-H002",
         "FICT-H003",
-        "FICT-HIR-MACRO-OPTIONAL"
+        "FICT-HIR-MACRO-NAMESPACE",
+        "FICT-HIR-MACRO-OPTIONAL",
+        "FICT-HIR-MACRO-UNBOUND",
+        "FICT-HIR-MACRO-VALUE"
       ],
       "additional": [
         "FICT-FUNCTION-GENERATOR-HOOK",

@@ -8,7 +8,16 @@ use super::{Builder, CallFact, error};
 pub(super) fn unsupported_macro_diagnostics(frontend: &FrontendSummary) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for call in &frontend.macro_calls {
-        if call.optional {
+        if call.binding.is_none() {
+            diagnostics.push(
+                error(
+                    "FICT-HIR-MACRO-UNBOUND",
+                    "an unresolved Fict compiler macro would remain as a runtime call",
+                    call.callee_span,
+                )
+                .with_help("import this compiler macro by name from 'fict'"),
+            );
+        } else if call.optional {
             diagnostics.push(
                 error(
                     "FICT-HIR-MACRO-OPTIONAL",

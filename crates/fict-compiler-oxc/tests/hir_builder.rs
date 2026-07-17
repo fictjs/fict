@@ -6382,7 +6382,7 @@ fn unsupported_macro_shapes_fail_closed_with_structured_codes() {
             "FICT-HIR-MACRO-VALUE",
         ),
         (
-            "import * as Fict from 'fict'; Fict.$state(1);",
+            "import * as Fict from 'fict'; Fict['$state'](1);",
             "FICT-HIR-MACRO-NAMESPACE",
         ),
     ];

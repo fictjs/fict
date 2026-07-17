@@ -689,6 +689,42 @@ Other `FICT-HIR-*` and `FICT-OXC-EMIT-*` diagnostics are internal verifier/emitt
 than a generic unsupported-syntax bucket. Preserve their exact code and report the smallest source
 fixture; do not rewrite supported JavaScript merely to avoid an internal code.
 
+### FICT-HIR-MACRO-UNBOUND: Compiler macro is not imported
+
+**Severity:** Error
+
+**Why:** An unresolved call uses the reserved `$state`, `$effect`, or `$memo` spelling without a
+matching named import from a Fict entrypoint.
+
+**Impact:** The call would otherwise remain in emitted JavaScript and fail at runtime instead of
+receiving compiler semantics.
+
+**Fix:** Import the macro by name from `fict`. A locally declared function with the same name, or a
+binding imported from another package, remains an ordinary JavaScript call.
+
+### FICT-HIR-MACRO-NAMESPACE: Compiler macro accessed through a namespace
+
+**Severity:** Error
+
+**Why:** A Fict namespace import accesses a compiler macro through a static or statically known
+computed property, such as `Fict.$state()` or `Fict['$state']()`.
+
+**Impact:** Namespace access cannot carry the direct imported binding identity required for macro
+lowering.
+
+**Fix:** Replace the namespace access with a named import and direct call.
+
+### FICT-HIR-MACRO-VALUE: Compiler macro used as a runtime value
+
+**Severity:** Error
+
+**Why:** A named compiler macro import is referenced without being called directly.
+
+**Impact:** Compiler macros have no runtime value contract and cannot be stored, passed, or
+returned.
+
+**Fix:** Call the imported macro directly at the use site.
+
 ### FICT-NATIVE-LOAD: Native compiler could not be loaded
 
 **Severity:** Error
