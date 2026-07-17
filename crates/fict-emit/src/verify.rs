@@ -921,6 +921,21 @@ fn verify_operations(
                 verify_slot(function, *slot, diagnostics);
                 verify_source_result(hir_function, *source_result, diagnostics);
             }
+            EmitOperation::DeleteReactive {
+                slot,
+                source_result,
+                projections,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                verify_source_result(hir_function, *source_result, diagnostics);
+                if projections.is_empty() {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-DELETE",
+                        "reactive deletion requires a projected property target",
+                    ));
+                }
+            }
             EmitOperation::WriteReactivePattern {
                 source_result,
                 targets,
@@ -1456,17 +1471,7 @@ fn verify_helper_semantics(
             (crate::DomBindingKind::Style, false) => *helper == RuntimeHelper::SetStyle,
             (crate::DomBindingKind::Spread, _) => *helper == RuntimeHelper::Spread,
         },
-        EmitOperation::ApplyProps {
-            operation, helper, ..
-        } => match operation {
-            crate::PropsOperation::Getter { .. } => *helper == RuntimeHelper::PropGetter,
-            crate::PropsOperation::Rest { .. } => {
-                matches!(helper, RuntimeHelper::PropsRest | RuntimeHelper::ObjectRest)
-            }
-            crate::PropsOperation::Merge(_) => *helper == RuntimeHelper::MergeProps,
-            crate::PropsOperation::Spread { .. } => *helper == RuntimeHelper::Spread,
-            crate::PropsOperation::Keyed(_) => *helper == RuntimeHelper::Keyed,
-        },
+        EmitOperation::ApplyProps { helper, .. } => *helper == RuntimeHelper::Spread,
         EmitOperation::BindEvent {
             event,
             options,
@@ -1644,6 +1649,7 @@ fn verify_helper_semantics(
         | EmitOperation::WriteReactive { .. }
         | EmitOperation::WriteReactivePattern { .. }
         | EmitOperation::UpdateReactive { .. }
+        | EmitOperation::DeleteReactive { .. }
         | EmitOperation::Evaluate { .. }
         | EmitOperation::CloneTemplate { .. }
         | EmitOperation::Return { .. } => true,

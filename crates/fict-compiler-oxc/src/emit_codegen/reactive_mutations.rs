@@ -5,7 +5,7 @@ use oxc::{
     allocator::TakeIn,
     ast::{
         AstBuilder,
-        ast::{AssignmentTarget, Expression},
+        ast::{AssignmentTarget, Expression, SimpleAssignmentTarget},
     },
     ast_visit::walk_mut,
     syntax::number::NumberBase,
@@ -14,8 +14,8 @@ use oxc::{
 use super::{
     AstRewriter, MutationRewrite, assignment_target_name, compound_binary_operator,
     compound_logical_operator, emit_error, getter_call, logical_compound_update, postfix_update,
-    rewrite_pattern_assignment_target, simple_assignment_target_name, update_binary_operator,
-    value_preserving_setter,
+    rewrite_pattern_assignment_target, rewrite_reactive_root, simple_assignment_target_name,
+    update_binary_operator, value_preserving_setter,
 };
 
 impl<'a> AstRewriter<'a, '_> {
@@ -25,12 +25,16 @@ impl<'a> AstRewriter<'a, '_> {
         rewrite: MutationRewrite,
     ) -> bool {
         match rewrite {
-            MutationRewrite::Write => {
+            MutationRewrite::Write { projected } => {
                 let Expression::AssignmentExpression(assignment) = expression else {
                     return false;
                 };
                 if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign {
                     return false;
+                }
+                if projected {
+                    walk_mut::walk_assignment_expression(self, assignment);
+                    return rewrite_assignment_target_root(&mut assignment.left, self.allocator);
                 }
                 let Some(signal) = assignment_target_name(&assignment.left) else {
                     return false;
@@ -41,10 +45,17 @@ impl<'a> AstRewriter<'a, '_> {
                 *expression = value_preserving_setter(self.allocator, &signal, right, span);
                 true
             }
-            MutationRewrite::Compound(operator) => {
+            MutationRewrite::Compound {
+                operator,
+                projected,
+            } => {
                 let Expression::AssignmentExpression(assignment) = expression else {
                     return false;
                 };
+                if projected {
+                    walk_mut::walk_assignment_expression(self, assignment);
+                    return rewrite_assignment_target_root(&mut assignment.left, self.allocator);
+                }
                 let Some(signal) = assignment_target_name(&assignment.left) else {
                     return false;
                 };
@@ -74,12 +85,23 @@ impl<'a> AstRewriter<'a, '_> {
                 };
                 true
             }
-            MutationRewrite::Update { operator, prefix } => {
+            MutationRewrite::Update {
+                operator,
+                prefix,
+                projected,
+            } => {
                 let Expression::UpdateExpression(update) = expression else {
                     return false;
                 };
                 if update.prefix != prefix {
                     return false;
+                }
+                if projected {
+                    walk_mut::walk_update_expression(self, update);
+                    return rewrite_simple_assignment_target_root(
+                        &mut update.argument,
+                        self.allocator,
+                    );
                 }
                 let Some(signal) = simple_assignment_target_name(&update.argument) else {
                     return false;
@@ -107,6 +129,16 @@ impl<'a> AstRewriter<'a, '_> {
                     postfix_update(self.allocator, &signal, operator, update.span)
                 };
                 true
+            }
+            MutationRewrite::Delete => {
+                let Expression::UnaryExpression(delete) = expression else {
+                    return false;
+                };
+                if delete.operator != oxc::syntax::operator::UnaryOperator::Delete {
+                    return false;
+                }
+                walk_mut::walk_unary_expression(self, delete);
+                rewrite_reactive_root(&mut delete.argument, self.allocator)
             }
             MutationRewrite::Pattern { targets } => {
                 let Expression::AssignmentExpression(assignment) = expression else {
@@ -145,5 +177,67 @@ impl<'a> AstRewriter<'a, '_> {
                 true
             }
         }
+    }
+}
+
+fn rewrite_assignment_target_root<'a>(
+    target: &mut AssignmentTarget<'a>,
+    allocator: &'a oxc::allocator::Allocator,
+) -> bool {
+    match target {
+        AssignmentTarget::StaticMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        AssignmentTarget::ComputedMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        AssignmentTarget::PrivateFieldExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        AssignmentTarget::TSAsExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        AssignmentTarget::TSSatisfiesExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        AssignmentTarget::TSNonNullExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        AssignmentTarget::TSTypeAssertion(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        AssignmentTarget::AssignmentTargetIdentifier(_)
+        | AssignmentTarget::ArrayAssignmentTarget(_)
+        | AssignmentTarget::ObjectAssignmentTarget(_) => false,
+    }
+}
+
+fn rewrite_simple_assignment_target_root<'a>(
+    target: &mut SimpleAssignmentTarget<'a>,
+    allocator: &'a oxc::allocator::Allocator,
+) -> bool {
+    match target {
+        SimpleAssignmentTarget::StaticMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        SimpleAssignmentTarget::ComputedMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        SimpleAssignmentTarget::PrivateFieldExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        SimpleAssignmentTarget::TSAsExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        SimpleAssignmentTarget::TSSatisfiesExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        SimpleAssignmentTarget::TSNonNullExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        SimpleAssignmentTarget::TSTypeAssertion(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        SimpleAssignmentTarget::AssignmentTargetIdentifier(_) => false,
     }
 }

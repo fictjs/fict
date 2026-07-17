@@ -1106,12 +1106,19 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
 }
 #[derive(Debug, Clone)]
 enum MutationRewrite {
-    Write,
-    Compound(CompoundAssignmentOperator),
+    Write {
+        projected: bool,
+    },
+    Compound {
+        operator: CompoundAssignmentOperator,
+        projected: bool,
+    },
     Update {
         operator: UpdateOperator,
         prefix: bool,
+        projected: bool,
     },
+    Delete,
     Pattern {
         targets: BTreeSet<(u32, u32)>,
     },
@@ -1127,26 +1134,45 @@ fn mutation_rewrites(
         .flat_map(|function| &function.operations)
     {
         let (origin, rewrite) = match operation {
-            EmitOperation::WriteReactive { origin, .. } => (origin, MutationRewrite::Write),
+            EmitOperation::WriteReactive {
+                origin,
+                projections,
+                ..
+            } => (
+                origin,
+                MutationRewrite::Write {
+                    projected: !projections.is_empty(),
+                },
+            ),
             EmitOperation::UpdateReactive {
                 origin,
                 compound: Some(operator),
                 update: None,
+                projections,
                 ..
-            } => (origin, MutationRewrite::Compound(*operator)),
+            } => (
+                origin,
+                MutationRewrite::Compound {
+                    operator: *operator,
+                    projected: !projections.is_empty(),
+                },
+            ),
             EmitOperation::UpdateReactive {
                 origin,
                 compound: None,
                 update: Some(operator),
                 prefix,
+                projections,
                 ..
             } => (
                 origin,
                 MutationRewrite::Update {
                     operator: *operator,
                     prefix: *prefix,
+                    projected: !projections.is_empty(),
                 },
             ),
+            EmitOperation::DeleteReactive { origin, .. } => (origin, MutationRewrite::Delete),
             EmitOperation::WriteReactivePattern {
                 origin, targets, ..
             } => {
@@ -7277,35 +7303,8 @@ mod tests {
         assert!(output.code.contains("export { batch }"));
     }
     #[test]
-    fn fails_closed_for_unmaterialized_operations_and_bad_origins() {
+    fn fails_closed_for_bad_origins() {
         let source = "import { $effect } from 'fict'; $effect(() => 1);";
-        let mut unsupported = effect_program(source);
-        unsupported.functions[0]
-            .operations
-            .push(EmitOperation::WriteReactive {
-                slot: EmitSlotId::new(0),
-                source_result: None,
-                projections: vec![Projection::StaticProperty {
-                    name: "value".into(),
-                    optional: false,
-                }],
-                value: EmitValueRef::Literal(LiteralValue::Undefined),
-                target: None,
-                origin: Origin::source(SourceSpan::empty(0)),
-            });
-        let output = emit_program(
-            source,
-            "unsupported.js",
-            options(OxcSourceLanguage::JavaScript, false),
-            &unsupported,
-        );
-        assert!(output.code.is_empty());
-        assert!(
-            output
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-UNSUPPORTED")
-        );
         let mut bad_origin = effect_program(source);
         let EmitOperation::RegisterEffect { origin, .. } =
             &mut bad_origin.functions[0].operations[0]

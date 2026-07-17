@@ -170,22 +170,12 @@ pub enum CleanupOwner {
 /// Props transformation operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PropsOperation {
-    Getter {
-        name: String,
-        value: EmitValueRef,
-    },
-    Rest {
-        source: EmitValueRef,
-        excluded: Vec<String>,
-    },
-    Merge(Vec<EmitValueRef>),
     Spread {
         source: EmitValueRef,
         namespace: DomNamespace,
         skip_children: bool,
         excluded: Vec<String>,
     },
-    Keyed(EmitValueRef),
 }
 
 /// Binding-aware component callee.
@@ -312,6 +302,14 @@ pub enum EmitOperation {
         update: Option<UpdateOperator>,
         prefix: bool,
         target: Option<EmitTemporaryId>,
+        origin: Origin,
+    },
+    /// Delete a projected property through a reactive accessor and preserve the boolean result.
+    DeleteReactive {
+        slot: EmitSlotId,
+        source_result: ValueId,
+        projections: Vec<Projection>,
+        target: EmitTemporaryId,
         origin: Origin,
     },
     /// Materialize one complete JSX root as a Fict VNode fallback.
@@ -531,6 +529,7 @@ impl EmitOperation {
             | Self::WriteReactive { .. }
             | Self::WriteReactivePattern { .. }
             | Self::UpdateReactive { .. }
+            | Self::DeleteReactive { .. }
             | Self::Evaluate { .. }
             | Self::CloneTemplate { .. }
             | Self::Return { .. } => None,
@@ -636,7 +635,8 @@ impl EmitOperation {
             | Self::Conditional { target, .. }
             | Self::ConditionalReturn { target, .. }
             | Self::KeyedChild { target, .. }
-            | Self::KeyedList { target, .. } => Some(*target),
+            | Self::KeyedList { target, .. }
+            | Self::DeleteReactive { target, .. } => Some(*target),
             Self::UpdateReactive {
                 target: Some(target),
                 ..
@@ -662,13 +662,10 @@ impl EmitOperation {
             | Self::Insert { value: tag, .. }
             | Self::Conditional { source: tag, .. }
             | Self::KeyedList { items: tag, .. } => visit(tag),
-            Self::ApplyProps { operation, .. } => match operation {
-                PropsOperation::Getter { value, .. } | PropsOperation::Keyed(value) => visit(value),
-                PropsOperation::Rest { source, .. } | PropsOperation::Spread { source, .. } => {
-                    visit(source)
-                }
-                PropsOperation::Merge(values) => values.iter().for_each(visit),
-            },
+            Self::ApplyProps {
+                operation: PropsOperation::Spread { source, .. },
+                ..
+            } => visit(source),
             Self::BindEvent { handler, .. } => visit(handler),
             Self::InvokeComponent {
                 component,
@@ -697,6 +694,7 @@ impl EmitOperation {
             | Self::CreateDerived { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::ReadReactive { .. }
+            | Self::DeleteReactive { .. }
             | Self::CreateVNode { .. }
             | Self::DeclareTemplate { .. }
             | Self::CloneTemplate { .. }

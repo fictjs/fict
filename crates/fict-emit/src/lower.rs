@@ -11,12 +11,13 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    ArrayElement, BindingId, BlockId, CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile,
-    HirFunction, HirInstruction, HirInstructionKind, ImportedHookPropertyMatch, ImportedHookReturn,
-    ImportedName, ImportedReactiveKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName,
-    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, LocalKind,
-    ObjectEntry, ObjectPropertyKind, Origin, PlaceBase, ReactiveCallKind, TemplateId,
-    TerminatorKind, ValueId, ValueKind,
+    ArrayElement, BindingId, BlockId, CallHost, DeleteTarget, FictMacroKind, FunctionId,
+    FunctionKind, HirFile, HirFunction, HirInstruction, HirInstructionKind,
+    ImportedHookPropertyMatch, ImportedHookReturn, ImportedName, ImportedReactiveKind,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxExpressionKind,
+    JsxListExpression, JsxListReceiver, JsxNode, LocalId, LocalKind, ObjectEntry,
+    ObjectPropertyKind, Origin, PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId,
+    ValueKind,
 };
 use fict_reactivity::{
     ReactiveBindingKind, ReactiveCycleAnalysis, ReactiveScopeAnalysis, RegionAnalysis,
@@ -1418,6 +1419,49 @@ fn lower_function(
                         value: value.map(|value| lower_value(value, &value_temporaries)),
                         update: *update,
                         prefix: *prefix,
+                        target,
+                        origin: instruction.origin,
+                    });
+                }
+                HirInstructionKind::Delete {
+                    target: DeleteTarget::Place(place),
+                } if !place.projections.is_empty() => {
+                    reject_imported_hook_member_mutation(
+                        &imported_hook_calls,
+                        &structured_hook_locals,
+                        place,
+                    )?;
+                    reject_captured_hook_member_mutation(
+                        function,
+                        function_id,
+                        structured_hook_roots,
+                        place,
+                    )?;
+                    let Some(slot) = place_local(place.base)
+                        .and_then(|local| slot_by_local.get(&local).copied())
+                    else {
+                        preserve(&mut operations, block.id, instruction_index, instruction);
+                        continue;
+                    };
+                    ensure_writable_hook_return(&slots, slot)?;
+                    let Some(source_result) = instruction.result else {
+                        return Err(DiagnosticBundle::new(vec![lower_error(
+                            "FICT-EMIT-DELETE-RESULT",
+                            "reactive property deletion has no HIR result",
+                            GuaranteeClass::Internal,
+                        )]));
+                    };
+                    let target = allocate_temporary(
+                        &mut temporaries,
+                        &mut temporary_names,
+                        format!("__fict_v{}", source_result.index()),
+                        instruction.origin,
+                    );
+                    value_temporaries.insert(source_result, target);
+                    operations.push(EmitOperation::DeleteReactive {
+                        slot,
+                        source_result,
+                        projections: place.projections.clone(),
                         target,
                         origin: instruction.origin,
                     });

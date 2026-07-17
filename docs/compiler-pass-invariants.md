@@ -63,6 +63,10 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 - Only verified IR reaches output construction.
 - Every `EmitOperation` variant has a production construction site in the HIR
   lowerer; verifier-only or adapter-only operation variants are forbidden.
+- `ApplyProps` models DOM spread only; component getter, rest, merge, and keyed
+  props remain owned by `EmitPropsPlan` and `InvokeComponent`.
+- Projected reactive writes, updates, and deletes rewrite only the accessor root
+  so native JavaScript preserves key/RHS order, evaluation count, and results.
 - Runtime hooks appear only in render-safe locations and helper imports match
   the runtime ABI.
 - Metadata, diagnostics, artifacts, and source maps refer to authored source

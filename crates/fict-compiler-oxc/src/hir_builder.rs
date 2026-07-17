@@ -3343,14 +3343,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let projected_root_suppressions: BTreeSet<_> = member_reads
             .iter()
             .filter_map(|fact| fact.place.root_reference_span)
-            .chain(mutations.iter().filter_map(|fact| {
-                let reactive = fact
-                    .symbol
-                    .and_then(|symbol| self.symbol_to_binding.get(&symbol))
-                    .is_some_and(|binding| reactive_targets.contains(binding));
-                let materialized = !fact.projected || !reactive;
-                materialized.then_some(fact.place.as_ref()?.root_reference_span?)
-            }))
+            .chain(
+                mutations
+                    .iter()
+                    .filter_map(|fact| fact.place.as_ref()?.root_reference_span),
+            )
             .chain(pattern_assignments.iter().flat_map(|assignment| {
                 assignment
                     .projected_targets
@@ -3724,7 +3721,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             }
             if mutation.projected && reactive {
                 self.report_nested_reactive_mutation(mutation.span);
-                continue;
             }
             if mutation.projected && mutation.place.is_none() {
                 continue;

@@ -1,5 +1,5 @@
 use fict_diagnostics::{Diagnostic, GuaranteeClass};
-use fict_emit::{EmitOperation, EmitProgram, PropsOperation};
+use fict_emit::{EmitOperation, EmitProgram};
 
 use super::{emit_error, is_scoped_helper};
 
@@ -26,27 +26,7 @@ pub(super) fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
         });
         return vec![diagnostic];
     }
-    let unsupported = emit
-        .functions
-        .iter()
-        .flat_map(|function| &function.operations)
-        .find(|operation| match operation {
-            EmitOperation::WriteReactive { projections, .. } => !projections.is_empty(),
-            EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
-            EmitOperation::ApplyProps { operation, .. } => {
-                !matches!(operation, PropsOperation::Spread { .. })
-            }
-            _ => false,
-        });
-    unsupported.map_or_else(Vec::new, |operation| {
-        let mut diagnostic = emit_error(
-            "FICT-OXC-EMIT-UNSUPPORTED",
-            "EmitIR contains an operation not yet materialized by the OXC output adapter",
-            GuaranteeClass::Unsupported,
-        );
-        diagnostic.primary_span = operation_origin(operation).primary_span;
-        vec![diagnostic]
-    })
+    Vec::new()
 }
 
 pub(super) fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
@@ -60,6 +40,7 @@ pub(super) fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::WriteReactive { origin, .. }
         | EmitOperation::WriteReactivePattern { origin, .. }
         | EmitOperation::UpdateReactive { origin, .. }
+        | EmitOperation::DeleteReactive { origin, .. }
         | EmitOperation::CreateVNode { origin, .. }
         | EmitOperation::DeclareTemplate { origin, .. }
         | EmitOperation::CloneTemplate { origin, .. }

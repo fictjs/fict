@@ -260,6 +260,131 @@ test('captured reactive aliases remain mutable after an event', async () => {
   container.remove()
 })
 
+test('projected reactive mutations preserve JavaScript evaluation semantics', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let readSnapshot = () => null
+
+    function App() {
+      const events = []
+      const target = {
+        assigned: 1,
+        compound: 2,
+        postfix: 4,
+        prefix: 6,
+        postdec: 8,
+        predec: 10,
+        removed: 11,
+      }
+      const state = $state({
+        get nested() {
+          events.push('root')
+          return target
+        },
+      })
+      const key = name => {
+        events.push('key:' + name)
+        return name
+      }
+      const rhs = (name, value) => {
+        events.push('rhs:' + name)
+        return value
+      }
+
+      function mutate() {
+        const assigned = (state.nested.assigned = rhs('assigned', 3))
+        const compound = (state.nested[key('compound')] += rhs('delta', 5))
+        const postfix = state.nested[key('postfix')]++
+        const prefix = ++state.nested[key('prefix')]
+        const postdec = state.nested[key('postdec')]--
+        const predec = --state.nested[key('predec')]
+        const removed = delete state.nested[key('removed')]
+        readSnapshot = () => ({
+          events: [...events],
+          results: { assigned, compound, postfix, prefix, postdec, predec, removed },
+          target: { ...target },
+        })
+      }
+
+      return <button data-id="projected-mutations" onClick={mutate}>mutate</button>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+
+    export function read() {
+      return readSnapshot()
+    }
+  `
+  const compiled = await compileAndImport(source, 'projected-mutations', {
+    options: { strictGuarantee: false },
+    diagnosticCodes: [
+      'FICT-M',
+      'FICT-H',
+      'FICT-M',
+      'FICT-H',
+      'FICT-M',
+      'FICT-M',
+      'FICT-H',
+      'FICT-H',
+      'FICT-M',
+      'FICT-M',
+      'FICT-H',
+      'FICT-M',
+      'FICT-H',
+    ],
+  })
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(compiled.read(), null)
+  container.querySelector('[data-id="projected-mutations"]')?.click()
+  await flushRuntime()
+  assert.deepEqual(compiled.read(), {
+    events: [
+      'root',
+      'rhs:assigned',
+      'root',
+      'key:compound',
+      'rhs:delta',
+      'root',
+      'key:postfix',
+      'root',
+      'key:prefix',
+      'root',
+      'key:postdec',
+      'root',
+      'key:predec',
+      'root',
+      'key:removed',
+    ],
+    results: {
+      assigned: 3,
+      compound: 7,
+      postfix: 4,
+      prefix: 7,
+      postdec: 8,
+      predec: 9,
+      removed: true,
+    },
+    target: {
+      assigned: 3,
+      compound: 7,
+      postfix: 5,
+      prefix: 7,
+      postdec: 7,
+      predec: 9,
+    },
+  })
+
+  dispose()
+  container.remove()
+})
+
 test('native binding reports the Rust-only compiler protocol', () => {
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')
