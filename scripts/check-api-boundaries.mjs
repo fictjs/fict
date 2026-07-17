@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { discoverRepositoryFiles } from './api-boundary-file-discovery.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const failures = []
@@ -52,17 +52,22 @@ function staticImports(text) {
   return imports
 }
 
-function trackedFiles() {
-  try {
-    return execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
-      .split('\n')
-      .filter(Boolean)
-  } catch {
-    return []
-  }
+let repositoryFiles
+try {
+  repositoryFiles = discoverRepositoryFiles(root).files
+} catch (error) {
+  console.error('API boundary check failed:')
+  console.error(`- ${error instanceof Error ? error.message : String(error)}`)
+  process.exit(1)
 }
 
-const generatedArtifactFiles = trackedFiles().filter(
+if (repositoryFiles.length === 0) {
+  console.error('API boundary check failed:')
+  console.error('- repository file discovery returned no files')
+  process.exit(1)
+}
+
+const generatedArtifactFiles = repositoryFiles.filter(
   file => file.endsWith('.fict.meta.json') || file.split('/').includes('__fict_cross_module__'),
 )
 if (generatedArtifactFiles.length > 0) {
@@ -71,6 +76,12 @@ if (generatedArtifactFiles.length > 0) {
       .slice(0, 10)
       .join(', ')}`,
   )
+}
+
+for (const file of repositoryFiles.filter(file => file.startsWith('packages/runtime/src/'))) {
+  if (readText(file).includes('node:async_hooks')) {
+    fail(`@fictjs/runtime browser graph must not import node:async_hooks: ${file}`)
+  }
 }
 
 for (const [text, token, expected] of [
@@ -148,11 +159,6 @@ for (const [subpath, basename] of [
   }
 }
 
-for (const file of trackedFiles().filter(file => file.startsWith('packages/runtime/src/'))) {
-  if (readText(file).includes('node:async_hooks')) {
-    fail(`@fictjs/runtime browser graph must not import node:async_hooks: ${file}`)
-  }
-}
 for (const file of ['packages/ssr/src/index.ts', 'packages/ssr/src/experimental.ts']) {
   const source = readText(file)
   if (source.includes('node:async_hooks') || source.includes('node-session-carrier')) {
