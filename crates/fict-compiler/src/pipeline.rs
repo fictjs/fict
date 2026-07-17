@@ -3215,12 +3215,7 @@ mod tests {
             .insert("FICT-P".into(), WarningLevel::Off);
         let muted = compile(muted_request);
         assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
-        assert!(
-            muted
-                .diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Info)
-        );
+        assert!(muted.diagnostics.is_empty());
         assert!(!muted.code.is_empty());
     }
 
@@ -3460,10 +3455,12 @@ mod tests {
             .insert("FICT-R006".into(), WarningLevel::Off);
         let muted = compile(muted_request);
         assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
-        assert!(muted.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code.as_str() == "FICT-R006"
-                && diagnostic.severity == DiagnosticSeverity::Info
-        }));
+        assert!(
+            muted
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
+        );
     }
 
     #[test]
@@ -3894,10 +3891,7 @@ mod tests {
         explicit_off.integration_diagnostics.push(finding());
         let explicit_off = compile(explicit_off);
         assert!(!explicit_off.has_errors(), "{:?}", explicit_off.diagnostics);
-        assert_eq!(
-            explicit_off.diagnostics[0].severity,
-            DiagnosticSeverity::Info
-        );
+        assert!(explicit_off.diagnostics.is_empty());
         assert!(explicit_off.code.contains("export const value = 1"));
     }
 
@@ -4283,9 +4277,7 @@ mod tests {
             .insert("FICT-M".into(), WarningLevel::Off);
         let muted = compile(muted_request);
         assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
-        assert_eq!(muted.diagnostics.len(), 1);
-        assert_eq!(muted.diagnostics[0].code.as_str(), "FICT-M");
-        assert_eq!(muted.diagnostics[0].severity, DiagnosticSeverity::Info);
+        assert!(muted.diagnostics.is_empty());
 
         let mut escalated_request = request(source, "nested-escalated.js");
         escalated_request.options.strict_guarantee = false;
@@ -4426,10 +4418,12 @@ mod tests {
             .insert("FICT-R002".into(), WarningLevel::Off);
         let muted = compile(muted_request);
         assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
-        assert!(muted.diagnostics.iter().all(|diagnostic| {
-            diagnostic.code.as_str() != "FICT-R002"
-                || diagnostic.severity == DiagnosticSeverity::Info
-        }));
+        assert!(
+            muted
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002")
+        );
 
         let mut escalated_request = request(source, "reactive-argument-escapes-escalated.js");
         escalated_request.options.strict_guarantee = false;
@@ -4495,10 +4489,12 @@ mod tests {
             .insert("FICT-R007".into(), WarningLevel::Off);
         let muted = compile(muted_request);
         assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
-        assert!(muted.diagnostics.iter().all(|diagnostic| {
-            diagnostic.code.as_str() != "FICT-R007"
-                || diagnostic.severity == DiagnosticSeverity::Info
-        }));
+        assert!(
+            muted
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R007")
+        );
 
         let mut escalated_request = request(source, "reactive-jsx-write-escalated.tsx");
         escalated_request.options.strict_guarantee = false;
@@ -4581,12 +4577,7 @@ mod tests {
             .insert("FICT-X003".into(), WarningLevel::Off);
         let muted = compile(muted_request);
         assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
-        assert!(
-            muted
-                .diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Info)
-        );
+        assert!(muted.diagnostics.is_empty());
 
         let mut escalated_request = request(source, "inline-function-props-error.tsx");
         escalated_request
@@ -4634,7 +4625,7 @@ mod tests {
             .insert("FICT-M003".into(), WarningLevel::Off);
         let muted = compile(muted_request);
         assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
-        assert_eq!(muted.diagnostics[0].severity, DiagnosticSeverity::Info);
+        assert!(muted.diagnostics.is_empty());
         assert!(!muted.code.is_empty());
 
         let mut escalated_request = request(source, "memo-side-effect-escalated.ts");

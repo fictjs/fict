@@ -48,16 +48,25 @@ const CONFIGURABLE_DIAGNOSTIC_CODES: &[&str] = &[
     "FICT-X003",
 ];
 
-pub(crate) fn apply_diagnostic_policy(options: &CompilerOptions, diagnostics: &mut [Diagnostic]) {
-    for diagnostic in diagnostics {
-        diagnostic.severity = effective_severity(options, diagnostic);
-    }
+pub(crate) fn apply_diagnostic_policy(
+    options: &CompilerOptions,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    diagnostics.retain_mut(|diagnostic| {
+        let Some(severity) = effective_severity(options, diagnostic) else {
+            return false;
+        };
+        diagnostic.severity = severity;
+        true
+    });
 }
-
-fn effective_severity(options: &CompilerOptions, diagnostic: &Diagnostic) -> DiagnosticSeverity {
+fn effective_severity(
+    options: &CompilerOptions,
+    diagnostic: &Diagnostic,
+) -> Option<DiagnosticSeverity> {
     let code = diagnostic.code.as_str();
     if options.strict_guarantee && strict_guarantee_code_matches(code) {
-        return DiagnosticSeverity::Error;
+        return Some(DiagnosticSeverity::Error);
     }
 
     if let Some(level) = configured_warning_level(&options.warning_levels, code)
@@ -65,20 +74,20 @@ fn effective_severity(options: &CompilerOptions, diagnostic: &Diagnostic) -> Dia
             || diagnostic.severity != DiagnosticSeverity::Error
             || configurable_diagnostic_code(code))
     {
-        return warning_level_severity(level);
+        return (level != WarningLevel::Off).then(|| warning_level_severity(level));
     }
 
     if options.strict_reactivity && matches_any(code, STRICT_REACTIVITY_CODES) {
-        return DiagnosticSeverity::Error;
+        return Some(DiagnosticSeverity::Error);
     }
 
     if diagnostic.severity != DiagnosticSeverity::Error
         && warnings_as_errors_matches(&options.warnings_as_errors, code)
     {
-        return DiagnosticSeverity::Error;
+        return Some(DiagnosticSeverity::Error);
     }
 
-    diagnostic.severity
+    Some(diagnostic.severity)
 }
 
 pub(crate) fn configured_diagnostic_severity(
@@ -206,6 +215,6 @@ mod tests {
             .insert("FICT-PLACEMENT".into(), WarningLevel::Off);
         let mut diagnostics = vec![warning("FICT-PLACEMENT-HOOK-CONTROL")];
         apply_diagnostic_policy(&options, &mut diagnostics);
-        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Info);
+        assert!(diagnostics.is_empty());
     }
 }

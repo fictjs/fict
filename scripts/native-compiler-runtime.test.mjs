@@ -526,6 +526,35 @@ test('runtime reactive creators preserve calls and enforce configurable R004', a
   const lifecycleWarnings = fallback.diagnostics.filter(({ code }) => code === 'FICT-R004')
   assert.equal(lifecycleWarnings.length, 3)
   assert.ok(lifecycleWarnings.every(({ severity }) => severity === 'warning'))
+
+  const mutedOptions = {
+    strictGuarantee: false,
+    warningLevels: { 'FICT-R004': 'off' },
+  }
+  const muted = binding.transformSync({
+    code: source,
+    filename: '/fixtures/runtime-reactive-control.ts',
+    options: mutedOptions,
+  })
+  assert.notEqual(muted.code, '')
+  assert.equal(
+    muted.diagnostics.some(({ code }) => code === 'FICT-R004'),
+    false,
+  )
+  assert.equal(
+    muted.diagnostics.some(({ code }) => code === 'FICT-M001'),
+    true,
+  )
+
+  const analysis = binding.analyzeSync({
+    code: source,
+    filename: '/fixtures/runtime-reactive-control.ts',
+    options: { compilerOptions: mutedOptions },
+  })
+  assert.equal(
+    analysis.diagnostics.some(({ code }) => code === 'FICT-R004'),
+    false,
+  )
 })
 
 test('semantic EmitIR identities preserve destructuring and authored export names', async () => {
