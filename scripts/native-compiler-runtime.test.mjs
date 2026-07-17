@@ -385,6 +385,77 @@ test('projected reactive mutations preserve JavaScript evaluation semantics', as
   container.remove()
 })
 
+test('reactive conditional returns preserve branch statements and local scope', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    export const events = []
+    globalThis.__fictMig004Hoisted = 'GLOBAL'
+    let toggle = () => {}
+
+    function App() {
+      let show = $state(true)
+      let count = $state(1)
+      toggle = () => {
+        show = !show
+        count++
+      }
+      if (show) {
+        {
+          events.push('on')
+          const label = count + 1
+          var __fictMig004Hoisted = 'LOCAL'
+          events.push('on:' + __fictMig004Hoisted)
+          return <p data-id="conditional-return">{label}</p>
+        }
+      }
+      const label = count + 10
+      events.push(
+        'off:' +
+          typeof __fictMig004Hoisted +
+          ':' +
+          (__fictMig004Hoisted ?? 'local-undefined'),
+      )
+      return <p data-id="conditional-return">{label}</p>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+
+    export function update() {
+      toggle()
+    }
+  `
+  const compiled = await compileAndImport(source, 'conditional-return-statements')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="conditional-return"]')?.textContent, '2')
+  assert.deepEqual(compiled.events, ['on', 'on:LOCAL'])
+
+  compiled.update()
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="conditional-return"]')?.textContent, '12')
+  assert.deepEqual(compiled.events, ['on', 'on:LOCAL', 'off:undefined:local-undefined'])
+
+  compiled.update()
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="conditional-return"]')?.textContent, '4')
+  assert.deepEqual(compiled.events, [
+    'on',
+    'on:LOCAL',
+    'off:undefined:local-undefined',
+    'on',
+    'on:LOCAL',
+  ])
+
+  dispose()
+  container.remove()
+})
+
 test('native binding reports the Rust-only compiler protocol', () => {
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')

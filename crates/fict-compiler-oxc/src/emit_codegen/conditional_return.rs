@@ -1,9 +1,12 @@
-use super::{block_iife, const_statement, zero_parameter_expression_arrow};
+use super::{expression_arrow, zero_parameter_expression_arrow};
 use oxc::{
     allocator::{Allocator, CloneIn, Vec as ArenaVec},
     ast::{
         AstBuilder, NONE,
-        ast::{Argument, Expression, IdentifierName, Statement},
+        ast::{
+            Argument, BindingPattern, Expression, FormalParameter, FormalParameterKind,
+            FormalParameters, FunctionBody, IdentifierName, IfStatement, Statement,
+        },
     },
     span::Span,
 };
@@ -30,7 +33,7 @@ pub(super) fn lower_statements<'a>(
     statements: &mut ArenaVec<'a, Statement<'a>>,
     rewrites: &BTreeMap<(u32, u32), ConditionalReturnRewrite>,
     matched: &mut BTreeSet<(u32, u32)>,
-    await_allowed: bool,
+    _await_allowed: bool,
 ) {
     let mut index = 0;
     while index < statements.len() {
@@ -46,7 +49,6 @@ pub(super) fn lower_statements<'a>(
                     conditional.consequent.clone_in(allocator),
                     conditional.alternate.clone_in(allocator),
                     returned.span,
-                    await_allowed,
                 );
                 statements[index] = Statement::new_return_statement(
                     returned.span,
@@ -67,64 +69,117 @@ pub(super) fn lower_statements<'a>(
             index += 1;
             continue;
         };
-        let Some(consequent) = return_argument(allocator, &statement.consequent) else {
+        if matches!(
+            &statement.test,
+            Expression::Identifier(identifier)
+                if identifier.name.as_str() == rewrite.target.as_str()
+        ) {
             index += 1;
             continue;
-        };
-        let (alternate, remove_next) = if let Some(alternate) = &statement.alternate {
-            (return_argument(allocator, alternate), false)
+        }
+        let remove_count = if statement.alternate.is_some() {
+            0
         } else {
-            (
-                statements
-                    .get(index + 1)
-                    .and_then(|next| return_argument(allocator, next)),
-                true,
-            )
-        };
-        let Some(alternate) = alternate else {
-            index += 1;
-            continue;
+            let Some(count) = fallthrough_statement_count(&statements[index + 1..]) else {
+                index += 1;
+                continue;
+            };
+            count
         };
         let test = statement.test.clone_in(allocator);
-        let replacement = binding_expression(
+        let dispatcher = statement_dispatcher_expression(
             allocator,
             rewrite,
-            test,
-            consequent,
-            alternate,
-            statement.span,
-            await_allowed,
+            statement,
+            &statements[index + 1..index + 1 + remove_count],
         );
+        let replacement =
+            dispatcher_binding_expression(allocator, rewrite, test, dispatcher, statement.span);
         statements[index] = Statement::new_return_statement(
             statement.span,
             Some(replacement),
             &AstBuilder::new(allocator),
         );
-        if remove_next {
+        for _ in 0..remove_count {
             statements.remove(index + 1);
         }
         matched.insert(location);
         index += 1;
     }
 }
-fn return_argument<'a>(
+
+fn fallthrough_statement_count(statements: &[Statement<'_>]) -> Option<usize> {
+    statements
+        .iter()
+        .position(statement_returns_value)
+        .map(|index| index.saturating_add(1))
+}
+
+fn statement_dispatcher_expression<'a>(
     allocator: &'a Allocator,
-    statement: &Statement<'a>,
-) -> Option<Expression<'a>> {
-    let returned = match statement {
-        Statement::ReturnStatement(returned) => returned,
-        Statement::BlockStatement(block) if block.body.len() == 1 => {
-            let Statement::ReturnStatement(returned) = &block.body[0] else {
-                return None;
-            };
-            returned
-        }
-        _ => return None,
-    };
-    returned
-        .argument
-        .as_ref()
-        .map(|value| value.clone_in(allocator))
+    rewrite: &ConditionalReturnRewrite,
+    statement: &IfStatement<'a>,
+    fallthrough: &[Statement<'a>],
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let selector = allocator.alloc_str(&rewrite.target);
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(Statement::new_if_statement(
+        statement.span,
+        Expression::new_identifier(statement.span, selector, &builder),
+        statement.consequent.clone_in(allocator),
+        statement.alternate.clone_in(allocator),
+        &builder,
+    ));
+    statements.extend(
+        fallthrough
+            .iter()
+            .map(|statement| statement.clone_in(allocator)),
+    );
+    let pattern = BindingPattern::new_binding_identifier(statement.span, selector, &builder);
+    let parameter = FormalParameter::new(
+        statement.span,
+        ArenaVec::new_in(&allocator),
+        pattern,
+        NONE,
+        NONE,
+        false,
+        None,
+        false,
+        false,
+        &builder,
+    );
+    let parameters = FormalParameters::boxed(
+        statement.span,
+        FormalParameterKind::ArrowFormalParameters,
+        ArenaVec::from_array_in([parameter], &allocator),
+        NONE,
+        &builder,
+    );
+    let body = FunctionBody::boxed(
+        statement.span,
+        ArenaVec::new_in(&allocator),
+        statements,
+        &builder,
+    );
+    Expression::new_arrow_function_expression(
+        statement.span,
+        false,
+        false,
+        NONE,
+        parameters,
+        NONE,
+        body,
+        &builder,
+    )
+}
+
+fn statement_returns_value(statement: &Statement<'_>) -> bool {
+    match statement {
+        Statement::ReturnStatement(returned) => returned.argument.is_some(),
+        Statement::BlockStatement(block) => block.body.iter().any(statement_returns_value),
+        _ => false,
+    }
 }
 fn binding_expression<'a>(
     allocator: &'a Allocator,
@@ -133,7 +188,54 @@ fn binding_expression<'a>(
     consequent: Expression<'a>,
     alternate: Expression<'a>,
     span: Span,
-    await_allowed: bool,
+) -> Expression<'a> {
+    let binding = conditional_expression(allocator, rewrite, test, consequent, alternate, span);
+    finalized_binding_expression(allocator, rewrite, binding, span)
+}
+
+fn dispatcher_binding_expression<'a>(
+    allocator: &'a Allocator,
+    rewrite: &ConditionalReturnRewrite,
+    test: Expression<'a>,
+    dispatcher: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let dispatcher_call = |selected| {
+        call_with_argument(
+            allocator,
+            Expression::new_identifier(span, allocator.alloc_str(&rewrite.target), &builder),
+            Expression::new_boolean_literal(span, selected, &builder),
+            span,
+        )
+    };
+    let binding = conditional_expression(
+        allocator,
+        rewrite,
+        test,
+        dispatcher_call(true),
+        dispatcher_call(false),
+        span,
+    );
+    // The allocated target is collision-free. Reusing it in nested, non-overlapping parameter
+    // scopes materializes the dispatcher exactly once without inventing another local name.
+    let finalized = finalized_binding_expression(allocator, rewrite, binding, span);
+    let receive_dispatcher = expression_arrow(
+        allocator,
+        allocator.alloc_str(&rewrite.target),
+        finalized,
+        span,
+    );
+    call_with_argument(allocator, receive_dispatcher, dispatcher, span)
+}
+
+fn conditional_expression<'a>(
+    allocator: &'a Allocator,
+    rewrite: &ConditionalReturnRewrite,
+    test: Expression<'a>,
+    consequent: Expression<'a>,
+    alternate: Expression<'a>,
+    span: Span,
 ) -> Expression<'a> {
     let builder = AstBuilder::new(allocator);
     let callee = Expression::new_identifier(span, allocator.alloc_str(&rewrite.helper), &builder);
@@ -146,13 +248,21 @@ fn binding_expression<'a>(
             .map(|value| Argument::from(zero_parameter_expression_arrow(allocator, value, span))),
     );
     arguments.insert(2, Argument::from(create));
-    let binding = Expression::new_call_expression(span, callee, NONE, arguments, false, &builder);
-    let mut body = ArenaVec::new_in(&allocator);
-    body.push(const_statement(allocator, &rewrite.target, binding, span));
-    let target = Expression::new_identifier(span, allocator.alloc_str(&rewrite.target), &builder);
+    Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
+}
+
+fn finalized_binding_expression<'a>(
+    allocator: &'a Allocator,
+    rewrite: &ConditionalReturnRewrite,
+    binding: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let target =
+        || Expression::new_identifier(span, allocator.alloc_str(&rewrite.target), &builder);
     let dispose = Expression::new_static_member_expression(
         span,
-        target,
+        target(),
         IdentifierName::new(span, "dispose", &builder),
         false,
         &builder,
@@ -167,15 +277,32 @@ fn binding_expression<'a>(
         false,
         &builder,
     );
-    body.push(Statement::new_expression_statement(span, cleanup, &builder));
-    body.push(Statement::new_return_statement(
+    let result = Expression::new_sequence_expression(
         span,
-        Some(Expression::new_identifier(
-            span,
-            allocator.alloc_str(&rewrite.target),
-            &builder,
-        )),
+        ArenaVec::from_array_in([cleanup, target()], &allocator),
         &builder,
-    ));
-    block_iife(allocator, body, span, await_allowed)
+    );
+    let finalize = expression_arrow(
+        allocator,
+        allocator.alloc_str(&rewrite.target),
+        result,
+        span,
+    );
+    call_with_argument(allocator, finalize, binding, span)
+}
+
+fn call_with_argument<'a>(
+    allocator: &'a Allocator,
+    callee: Expression<'a>,
+    argument: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    Expression::new_call_expression(
+        span,
+        callee,
+        NONE,
+        ArenaVec::from_array_in([Argument::from(argument)], &allocator),
+        false,
+        &AstBuilder::new(allocator),
+    )
 }

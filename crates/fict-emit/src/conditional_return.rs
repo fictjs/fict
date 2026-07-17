@@ -43,6 +43,7 @@ pub(crate) fn lower_conditional_returns(
             plans.push(instruction.origin);
         }
     }
+    let mut dynamic_blocks = BTreeSet::new();
     for construct in control_flow
         .top_level_constructs
         .iter()
@@ -69,14 +70,16 @@ pub(crate) fn lower_conditional_returns(
         if !reactive_test(function, operations, test_span) {
             continue;
         }
-        let Some(consequent) = returned_jsx(function, consequent) else {
+        let Some((consequent, consequent_blocks)) = returned_jsx(function, consequent) else {
             continue;
         };
-        let Some(alternate) = returned_jsx(function, alternate) else {
+        let Some((alternate, alternate_blocks)) = returned_jsx(function, alternate) else {
             continue;
         };
         if consequent != alternate {
             plans.push(hint.origin);
+            dynamic_blocks.extend(consequent_blocks);
+            dynamic_blocks.extend(alternate_blocks);
         }
     }
     for origin in plans {
@@ -93,6 +96,33 @@ pub(crate) fn lower_conditional_returns(
             cleanup_helper: RuntimeHelper::OnDestroy,
             origin,
         });
+    }
+    use_dynamic_branch_helpers(function, &dynamic_blocks, operations);
+}
+
+fn use_dynamic_branch_helpers(
+    function: &HirFunction,
+    dynamic_blocks: &BTreeSet<fict_hir::BlockId>,
+    operations: &mut [EmitOperation],
+) {
+    let dynamic_results: BTreeSet<_> = dynamic_blocks
+        .iter()
+        .flat_map(|block| &function.blocks[block.as_usize()].instructions)
+        .filter_map(|instruction| instruction.result)
+        .collect();
+    for operation in operations {
+        match operation {
+            EmitOperation::CreateDerived {
+                source_result,
+                helper: Some(helper),
+                ..
+            } if dynamic_results.contains(source_result) && *helper == RuntimeHelper::UseMemo => {
+                // Conditional factories rerun outside component hook execution. A root-owned memo
+                // follows the branch lifecycle without consuming the component hook cursor.
+                *helper = RuntimeHelper::Memo;
+            }
+            _ => {}
+        }
     }
 }
 fn reactive_test(
@@ -137,7 +167,10 @@ fn jsx_value(function: &HirFunction, value: ValueId) -> bool {
         .instruction_for_result(value)
         .is_some_and(|instruction| matches!(instruction.kind, HirInstructionKind::Jsx { .. }))
 }
-fn returned_jsx(function: &HirFunction, start: fict_hir::BlockId) -> Option<ValueId> {
+fn returned_jsx(
+    function: &HirFunction,
+    start: fict_hir::BlockId,
+) -> Option<(ValueId, BTreeSet<fict_hir::BlockId>)> {
     let mut current = start;
     let mut visited = BTreeSet::new();
     loop {
@@ -147,7 +180,7 @@ fn returned_jsx(function: &HirFunction, start: fict_hir::BlockId) -> Option<Valu
         let block = function.blocks.get(current.as_usize())?;
         match block.terminator.kind {
             TerminatorKind::Return { value: Some(value) } if jsx_value(function, value) => {
-                return Some(value);
+                return Some((value, visited));
             }
             TerminatorKind::Goto { target } if block.instructions.is_empty() => current = target,
             _ => return None,
