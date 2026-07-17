@@ -54,6 +54,10 @@ use oxc::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 mod conditional_return;
+mod operation_support;
+mod reactive_mutations;
+
+use operation_support::{operation_origin, unsupported_operations};
 /// Lower the currently supported EmitIR subset into the original OXC program, run TypeScript
 /// lowering and OXC code generation, and parse the generated JavaScript again as a hard backend
 /// invariant.
@@ -648,51 +652,6 @@ fn strip_compiler_macro_imports(program: &mut oxc::ast::ast::Program<'_>) {
         });
         original_len == specifiers.len() || !specifiers.is_empty()
     });
-}
-fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
-    let unsupported_scoped_helper = emit.functions.iter().find(|function| {
-        function.context.is_none()
-            && function
-                .operations
-                .iter()
-                .filter_map(EmitOperation::helper)
-                .any(is_scoped_helper)
-    });
-    if let Some(function) = unsupported_scoped_helper {
-        let mut diagnostic = emit_error(
-            "FICT-OXC-EMIT-CONTEXT",
-            "component and hook runtime helpers require a function context plan",
-            GuaranteeClass::Unsupported,
-        );
-        diagnostic.primary_span = function.operations.iter().find_map(|operation| {
-            operation
-                .helper()
-                .filter(|helper| is_scoped_helper(*helper))
-                .and(operation_origin(operation).primary_span)
-        });
-        return vec![diagnostic];
-    }
-    let unsupported = emit
-        .functions
-        .iter()
-        .flat_map(|function| &function.operations)
-        .find(|operation| match operation {
-            EmitOperation::WriteReactive { projections, .. } => !projections.is_empty(),
-            EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
-            EmitOperation::ApplyProps { operation, .. } => {
-                !matches!(operation, PropsOperation::Spread { .. })
-            }
-            _ => false,
-        });
-    unsupported.map_or_else(Vec::new, |operation| {
-        let mut diagnostic = emit_error(
-            "FICT-OXC-EMIT-UNSUPPORTED",
-            "EmitIR contains an operation not yet materialized by the OXC output adapter",
-            GuaranteeClass::Unsupported,
-        );
-        diagnostic.primary_span = operation_origin(operation).primary_span;
-        vec![diagnostic]
-    })
 }
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(
@@ -5698,133 +5657,6 @@ impl<'a> AstRewriter<'a, '_> {
         let index = call.arguments.len().min(1);
         call.arguments.insert(index, Argument::from(options));
     }
-    fn rewrite_mutation(
-        &mut self,
-        expression: &mut Expression<'a>,
-        rewrite: MutationRewrite,
-    ) -> bool {
-        match rewrite {
-            MutationRewrite::Write => {
-                let Expression::AssignmentExpression(assignment) = expression else {
-                    return false;
-                };
-                if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign {
-                    return false;
-                }
-                let Some(signal) = assignment_target_name(&assignment.left) else {
-                    return false;
-                };
-                walk_mut::walk_assignment_expression(self, assignment);
-                let right = assignment.right.take_in(&self.allocator);
-                let span = assignment.span;
-                *expression = value_preserving_setter(self.allocator, &signal, right, span);
-                true
-            }
-            MutationRewrite::Compound(operator) => {
-                let Expression::AssignmentExpression(assignment) = expression else {
-                    return false;
-                };
-                let Some(signal) = assignment_target_name(&assignment.left) else {
-                    return false;
-                };
-                walk_mut::walk_assignment_expression(self, assignment);
-                let right = assignment.right.take_in(&self.allocator);
-                *expression = if let Some(logical) = compound_logical_operator(operator) {
-                    logical_compound_update(
-                        self.allocator,
-                        &signal,
-                        logical,
-                        right,
-                        assignment.span,
-                    )
-                } else {
-                    let binary = compound_binary_operator(operator)
-                        .expect("non-logical compound operator must be binary");
-                    let builder = AstBuilder::new(self.allocator);
-                    let current = getter_call(self.allocator, &signal, assignment.span);
-                    let next = Expression::new_binary_expression(
-                        assignment.span,
-                        current,
-                        binary,
-                        right,
-                        &builder,
-                    );
-                    value_preserving_setter(self.allocator, &signal, next, assignment.span)
-                };
-                true
-            }
-            MutationRewrite::Update { operator, prefix } => {
-                let Expression::UpdateExpression(update) = expression else {
-                    return false;
-                };
-                if update.prefix != prefix {
-                    return false;
-                }
-                let Some(signal) = simple_assignment_target_name(&update.argument) else {
-                    return false;
-                };
-                walk_mut::walk_update_expression(self, update);
-                *expression = if prefix {
-                    let builder = AstBuilder::new(self.allocator);
-                    let current = getter_call(self.allocator, &signal, update.span);
-                    let one = Expression::new_numeric_literal(
-                        update.span,
-                        1.0,
-                        None,
-                        NumberBase::Decimal,
-                        &builder,
-                    );
-                    let next = Expression::new_binary_expression(
-                        update.span,
-                        current,
-                        update_binary_operator(operator),
-                        one,
-                        &builder,
-                    );
-                    value_preserving_setter(self.allocator, &signal, next, update.span)
-                } else {
-                    postfix_update(self.allocator, &signal, operator, update.span)
-                };
-                true
-            }
-            MutationRewrite::Pattern { targets } => {
-                let Expression::AssignmentExpression(assignment) = expression else {
-                    return false;
-                };
-                if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign
-                    || !matches!(
-                        assignment.left,
-                        AssignmentTarget::ArrayAssignmentTarget(_)
-                            | AssignmentTarget::ObjectAssignmentTarget(_)
-                    )
-                {
-                    return false;
-                }
-                walk_mut::walk_assignment_expression(self, assignment);
-                let mut matched = BTreeSet::new();
-                rewrite_pattern_assignment_target(
-                    &mut assignment.left,
-                    &targets,
-                    &mut matched,
-                    self.allocator,
-                );
-                if matched != targets {
-                    self.diagnostics.push(
-                        emit_error(
-                            "FICT-OXC-EMIT-PATTERN",
-                            "reactive pattern target origins do not match the OXC assignment pattern",
-                            GuaranteeClass::Internal,
-                        )
-                        .with_primary_span(
-                            SourceSpan::new(assignment.span.start, assignment.span.end)
-                                .expect("ordered OXC assignment span"),
-                        ),
-                    );
-                }
-                true
-            }
-        }
-    }
 }
 fn rewrite_pattern_assignment_target<'a>(
     target: &mut AssignmentTarget<'a>,
@@ -7297,35 +7129,6 @@ fn output_source_type(module_kind: OxcModuleKind) -> SourceType {
         OxcModuleKind::Script => SourceType::cjs().with_script(true),
         OxcModuleKind::CommonJs => SourceType::cjs(),
         OxcModuleKind::Unambiguous => SourceType::unambiguous(),
-    }
-}
-fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
-    match operation {
-        EmitOperation::PreserveHir { origin, .. }
-        | EmitOperation::CreateReactive { origin, .. }
-        | EmitOperation::CreateDerived { origin, .. }
-        | EmitOperation::TrackRuntimeReactive { origin, .. }
-        | EmitOperation::ReadReactive { origin, .. }
-        | EmitOperation::RegisterEffect { origin, .. }
-        | EmitOperation::WriteReactive { origin, .. }
-        | EmitOperation::WriteReactivePattern { origin, .. }
-        | EmitOperation::UpdateReactive { origin, .. }
-        | EmitOperation::CreateVNode { origin, .. }
-        | EmitOperation::DeclareTemplate { origin, .. }
-        | EmitOperation::CloneTemplate { origin, .. }
-        | EmitOperation::ResolveElement { origin, .. }
-        | EmitOperation::InvokeComponent { origin, .. }
-        | EmitOperation::BindDom { origin, .. }
-        | EmitOperation::ApplyProps { origin, .. }
-        | EmitOperation::BindEvent { origin, .. }
-        | EmitOperation::BindRef { origin, .. }
-        | EmitOperation::Evaluate { origin, .. }
-        | EmitOperation::Insert { origin, .. }
-        | EmitOperation::Conditional { origin, .. }
-        | EmitOperation::ConditionalReturn { origin, .. }
-        | EmitOperation::KeyedChild { origin, .. }
-        | EmitOperation::KeyedList { origin, .. }
-        | EmitOperation::Return { origin, .. } => *origin,
     }
 }
 fn with_operation_span(mut diagnostic: Diagnostic, origin: fict_hir::Origin) -> Diagnostic {

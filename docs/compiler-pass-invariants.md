@@ -20,6 +20,8 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 - Input: source, filename/language/module kind, and serializable options.
 - Output: OXC syntax/semantic facts plus Fict-owned HIR with stable source
   origins.
+- Macro placement policy lives outside the HIR builder driver so new macro and
+  runtime-primitive rules cannot silently expand the parser-to-HIR coordinator.
 - Preserve directives, comments, statement order, lexical ownership, JSX
   shape, TypeScript/CTS semantics, and macro identity.
 - Rebuild semantic information after syntax-changing TypeScript passes.
@@ -55,6 +57,9 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 
 ### EmitIR and code generation
 
+- Emit operation support checks and reactive mutation materialization live in
+  dedicated adapter modules; the OXC codegen coordinator must not absorb new
+  operation-specific lowering policy.
 - Only verified IR reaches output construction.
 - Every `EmitOperation` variant has a production construction site in the HIR
   lowerer; verifier-only or adapter-only operation variants are forbidden.
