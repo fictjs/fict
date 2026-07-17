@@ -6221,8 +6221,13 @@ fn retains_patterns_and_function_bodies_as_owned_controlled_fragments() {
     let view = hir
         .functions
         .iter()
-        .find(|function| function.kind == FunctionKind::Component)
-        .expect("inferred arrow component");
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "View")
+        })
+        .expect("View arrow function");
+    assert_eq!(view.kind, FunctionKind::Plain);
     let pattern = &hir.syntax_fragments[view.parameters[0].pattern.as_usize()];
     assert_eq!(pattern.kind, SyntaxFragmentKind::Pattern);
     let summary = pattern.summary.pattern.as_ref().expect("pattern summary");
@@ -6838,6 +6843,51 @@ fn models_simple_component_object_props_with_exact_read_origins() {
     );
     assert_eq!(mixed_property.references.len(), 2);
 }
+
+#[test]
+fn keeps_ordinary_uppercase_functions_and_jsx_callbacks_plain() {
+    let source = r#"
+        import { $state } from 'fict';
+        export function Helper({ a, b, unused }) {
+            return b + a;
+        }
+        export const renderItems = items => items.map(item => <span>{item}</span>);
+        export function App() {
+            let count = $state(0);
+            return <div>{count}</div>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::TypeScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let function = |name: &str| {
+        hir.functions
+            .iter()
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .unwrap_or_else(|| panic!("missing {name} function"))
+    };
+
+    assert_eq!(function("Helper").kind, FunctionKind::Plain);
+    assert_eq!(function("renderItems").kind, FunctionKind::Plain);
+    assert_eq!(function("App").kind, FunctionKind::Component);
+    assert_eq!(
+        hir.functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Component)
+            .count(),
+        1,
+        "the anonymous JSX callback must not acquire the component props ABI"
+    );
+}
+
 #[test]
 fn diagnoses_unsupported_component_props_patterns_with_strict_fallback_policy() {
     let source = r#"
@@ -6968,8 +7018,13 @@ fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity
     let app = hir
         .functions
         .iter()
-        .find(|function| function.kind == FunctionKind::Component)
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "App")
+        })
         .expect("App");
+    assert_eq!(app.kind, FunctionKind::Plain);
     let inner = hir
         .functions
         .iter()

@@ -633,9 +633,11 @@ fn propagates_namespace_hook_members_into_scopes_and_regions() {
 fn keeps_dynamic_reads_closed_and_only_treats_the_first_component_parameter_as_props() {
     let frontend = build_hir(
         r#"
+            import { createSignal } from 'fict/advanced';
             export function Lookup(props, key) {
+                const marker = createSignal(0);
                 const model = { a: 1, b: 2 };
-                return props[key] + model[key];
+                return props[key] + model[key] + marker();
             }
         "#,
         OxcCompileOptions {

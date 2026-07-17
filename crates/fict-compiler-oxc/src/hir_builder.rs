@@ -1987,11 +1987,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             facts: Vec::new(),
         };
         member_accesses.visit_program(program);
-        for root in &jsx.roots {
-            if root.owner != FunctionId::new(0)
-                && self.functions[root.owner.as_usize()].kind == FunctionKind::Plain
+        let jsx_owners: BTreeSet<_> = jsx.roots.iter().map(|root| root.owner).collect();
+        let component_context_owners: BTreeSet<_> = calls
+            .calls
+            .iter()
+            .filter(|call| self.call_uses_component_context_primitive(call))
+            .map(|call| call.owner)
+            .collect();
+        for function in &self.function_facts {
+            if function.id != FunctionId::new(0)
+                && self.functions[function.id.as_usize()].kind == FunctionKind::Plain
+                && is_component_name(function.display_name.as_deref())
+                && (jsx_owners.contains(&function.id)
+                    || component_context_owners.contains(&function.id))
             {
-                self.functions[root.owner.as_usize()].kind = FunctionKind::Component;
+                self.functions[function.id.as_usize()].kind = FunctionKind::Component;
             }
         }
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
@@ -2349,7 +2359,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .function_facts
             .iter()
             .filter(|function| {
-                classify_named_function(function.display_name.as_deref()) == FunctionKind::Component
+                self.functions[function.id.as_usize()].kind == FunctionKind::Component
             })
             .flat_map(|function| function.parameters.iter())
             .flat_map(|parameter| parameter.bindings.iter().copied())
@@ -3163,6 +3173,40 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.reactive_functions.insert(callback, kind);
             }
         }
+    }
+
+    fn call_uses_component_context_primitive(&self, call: &CallFact) -> bool {
+        if call.hook.is_some() {
+            return true;
+        }
+        let Some(binding) = call.binding else {
+            return false;
+        };
+        if self.macro_bindings.contains_key(&binding) {
+            return true;
+        }
+        let Some(import) = self
+            .frontend
+            .bindings
+            .iter()
+            .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
+            .and_then(|binding| binding.import.as_ref())
+        else {
+            return false;
+        };
+        let fict_hir::ImportedName::Named(imported) = &import.imported else {
+            return false;
+        };
+        is_fict_runtime_source(&import.source)
+            && matches!(
+                imported.as_str(),
+                "$store"
+                    | "createEffect"
+                    | "createMemo"
+                    | "createRenderEffect"
+                    | "createSignal"
+                    | "createStore"
+            )
     }
 
     fn validate_macro_placement(&mut self, calls: &[CallFact]) {
@@ -10367,11 +10411,14 @@ fn classify_named_function(name: Option<&str>) -> FunctionKind {
     };
     if is_hook_name(name) {
         FunctionKind::Hook
-    } else if name.chars().next().is_some_and(char::is_uppercase) {
-        FunctionKind::Component
     } else {
         FunctionKind::Plain
     }
+}
+
+fn is_component_name(name: Option<&str>) -> bool {
+    name.and_then(|name| name.as_bytes().first())
+        .is_some_and(u8::is_ascii_uppercase)
 }
 
 fn declaration_kind(kind: FrontendBindingKind) -> DeclarationKind {
