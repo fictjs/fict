@@ -68,6 +68,14 @@ test('release verification retains regression, tarball, SSR, browser, and clean-
   assert.deepEqual(verifyReleaseContract(rootPackage, releaseWorkflow), [])
 })
 
+test('CI validates the live compiler rollout state', () => {
+  assert.match(ciWorkflow, /pnpm test:compiler:rollout-state/)
+  assert.match(
+    rootPackage.scripts['test:compiler:rollout-state'],
+    /node scripts\/compiler-rollout-readiness\.mjs$/,
+  )
+})
+
 test('release publishing uses one dependency-ordered publisher after native certification', () => {
   assert.match(releaseWorkflow, /name: Build native compiler packages/)
   assert.match(releaseWorkflow, /name: Certify native compiler packages/)

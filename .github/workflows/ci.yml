@@ -175,7 +175,8 @@ jobs:
         run: >-
           pnpm test:release-publish-plan &&
           pnpm test:release-verification &&
-          pnpm test:compiler:native-package-contract
+          pnpm test:compiler:native-package-contract &&
+          pnpm test:compiler:rollout-state
 
       - name: Audit production dependencies
         run: pnpm security:audit:prod
