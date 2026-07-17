@@ -6227,6 +6227,75 @@ fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
         .expect("render call");
     assert!(matches!(render_call.host, CallHost::ReactiveScope(_)));
 }
+
+#[test]
+fn classifies_named_function_expressions_by_their_public_binding() {
+    let source = r#"
+        import { $state } from 'fict';
+        export const useF = function inner() {
+            let count = $state(0);
+            return typeof inner === 'function' ? count : -1;
+        };
+        const helper = function useInternal() {
+            return typeof useInternal;
+        };
+        export const NamedView = function recursiveView() {
+            return <span>view</span>;
+        };
+        const helperView = function InnerView() {
+            return <span>helper</span>;
+        };
+        export function App() {
+            const count = useF();
+            return <div>{count}</div>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let function = |name: &str| {
+        hir.functions
+            .iter()
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .unwrap_or_else(|| panic!("missing {name} function"))
+    };
+    let use_f = function("useF");
+    assert_eq!(use_f.kind, FunctionKind::Hook);
+    assert_eq!(function("helper").kind, FunctionKind::Plain);
+    assert_eq!(function("NamedView").kind, FunctionKind::Component);
+    assert_eq!(function("helperView").kind, FunctionKind::Plain);
+    let app = function("App");
+    assert_eq!(app.kind, FunctionKind::Component);
+    let use_f_binding = use_f.binding.expect("public hook binding");
+    assert!(
+        app.blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(
+                &instruction.kind,
+                HirInstructionKind::Call(call) if call.host == CallHost::Binding(use_f_binding)
+            ))
+    );
+    assert!(
+        hir.bindings
+            .iter()
+            .any(|binding| binding.display_name == "inner")
+    );
+    assert!(
+        hir.bindings
+            .iter()
+            .any(|binding| binding.display_name == "useInternal")
+    );
+}
+
 #[test]
 fn retains_patterns_and_function_bodies_as_owned_controlled_fragments() {
     let source = "const View = ({ value = 1, ...rest }) => value + rest.offset;";

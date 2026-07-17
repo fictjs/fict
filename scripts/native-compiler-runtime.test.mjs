@@ -456,6 +456,35 @@ test('reactive conditional returns preserve branch statements and local scope', 
   container.remove()
 })
 
+test('named function expression hooks use their public binding role', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    const useNamed = function inner() {
+      let count = $state(0)
+      return typeof inner + ':' + count
+    }
+
+    function App() {
+      return <p data-id="named-hook">{useNamed()}</p>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+  `
+  const compiled = await compileAndImport(source, 'named-function-expression-hook')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="named-hook"]')?.textContent, 'function:0')
+
+  dispose()
+  container.remove()
+})
+
 test('native binding reports the Rust-only compiler protocol', () => {
   const info = binding.nativeCompilerInfo()
   assert.equal(info.backend, 'rust')

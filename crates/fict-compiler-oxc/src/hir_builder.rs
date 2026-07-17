@@ -34,16 +34,16 @@ use oxc::{
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
             AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
             CallExpression, ChainElement, Class, ClassElement, ClassType, ComputedMemberExpression,
-            Decorator, Expression, FormalParameters, Function, FunctionBody, IdentifierReference,
-            ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
-            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
-            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
-            NewExpression, ObjectAssignmentTarget, ObjectPropertyKind as OxcObjectPropertyKind,
-            Program, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
-            SimpleAssignmentTarget, Statement, Super, TaggedTemplateExpression, TemplateLiteral,
-            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
-            VariableDeclarator,
+            Decorator, Expression, FormalParameters, Function, FunctionBody, FunctionType,
+            IdentifierReference, ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem,
+            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
+            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
+            JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
+            MetaProperty, NewExpression, ObjectAssignmentTarget,
+            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
+            PropertyKind, ReturnStatement, SimpleAssignmentTarget, Statement, Super,
+            TaggedTemplateExpression, TemplateLiteral, ThisExpression, UpdateExpression,
+            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -340,18 +340,21 @@ impl FunctionCollector {
         span: Span,
         body_span: Span,
         scope: Option<oxc::syntax::scope::ScopeId>,
-        explicit_binding: Option<&BindingIdentifier<'_>>,
+        public_binding: Option<&BindingIdentifier<'_>>,
         parameters: &FormalParameters<'_>,
         flags: FunctionFlags,
     ) -> FunctionId {
         let id = FunctionId::new(count_u32(self.functions.len()));
         let inferred = self.inferred_bindings.get(&(span.start, span.end));
-        let binding = explicit_binding
-            .and_then(|identifier| identifier.symbol_id.get())
-            .or_else(|| inferred.map(|(symbol, _)| *symbol));
-        let display_name = explicit_binding
-            .map(|identifier| identifier.name.to_string())
-            .or_else(|| inferred.map(|(_, name)| name.clone()));
+        // A function-expression id is a lexical self-binding, not the public binding that
+        // determines hook/component role. Prefer the surrounding variable binding and only use
+        // an explicit id for declarations, where it is also the public binding.
+        let binding = inferred
+            .map(|(symbol, _)| *symbol)
+            .or_else(|| public_binding.and_then(|identifier| identifier.symbol_id.get()));
+        let display_name = inferred
+            .map(|(_, name)| name.clone())
+            .or_else(|| public_binding.map(|identifier| identifier.name.to_string()));
         self.functions.push(FunctionFact {
             id,
             parent: *self.stack.last().expect("module function stack"),
@@ -389,11 +392,16 @@ impl<'a> Visit<'a> for FunctionCollector {
         let Some(body) = &function.body else {
             return;
         };
+        let public_binding = if function.r#type == FunctionType::FunctionDeclaration {
+            function.id.as_ref()
+        } else {
+            None
+        };
         let id = self.add_function(
             function.span,
             body.span,
             function.scope_id.get(),
-            function.id.as_ref(),
+            public_binding,
             &function.params,
             FunctionFlags {
                 is_async: function.r#async,
