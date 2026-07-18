@@ -105,7 +105,7 @@ test('retains the complete frozen 0.28 compile corpus and reviewed deviations', 
   assert.deepEqual(policyCounts, corpus.deviationPolicyCounts)
   assert.deepEqual(corpus.deviationPolicyCounts, {
     'rust-capability-expansion': 22,
-    'reserved-option-rejected': 37,
+    'reserved-option-rejected': 33,
     'narrow-component-role': 24,
     'structured-hook-return': 6,
     'namespace-macro-fail-closed': 1,

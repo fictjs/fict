@@ -120,7 +120,7 @@ export interface NativeCompilerOptions {
   explain?: boolean
   /** Lower supported reactive control-flow returns through lazy runtime branches. */
   lazyConditional?: boolean
-  /** Reserved compatibility field. Only `true` is currently implemented. */
+  /** Cache repeated signal/accessor reads within safe synchronous callback blocks. */
   getterCache?: boolean
   fineGrainedDom?: boolean
   optimize?: boolean

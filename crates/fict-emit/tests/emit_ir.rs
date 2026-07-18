@@ -73,6 +73,7 @@ fn program() -> EmitProgram {
     EmitProgram {
         runtime_family: RuntimeFamily::Runtime,
         dev: false,
+        getter_cache: true,
         preview: false,
         preview_plan: None,
         strict_rejected: false,
@@ -89,6 +90,8 @@ fn program() -> EmitProgram {
         }],
         functions: vec![EmitFunction {
             source: FunctionId::new(0),
+            kind: FunctionKind::Module,
+            origin: origin(),
             context: None,
             props: None,
             slots: vec![ReactiveSlot {

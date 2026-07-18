@@ -33,6 +33,8 @@ pub struct NoJsxLoweringOptions {
     pub dev: bool,
     /// Lower supported reactive control-flow returns through lazy runtime branches.
     pub lazy_conditional: bool,
+    /// Cache repeated accessor reads inside safe synchronous callback blocks.
+    pub getter_cache: bool,
     /// Reject non-guaranteed control-flow fallback; derived SCCs are always rejected.
     pub strict_guarantee: bool,
     /// Allow Preview ABI helpers (none are emitted by this phase).
@@ -46,6 +48,7 @@ impl Default for NoJsxLoweringOptions {
             runtime_family: RuntimeFamily::Fict,
             dev: false,
             lazy_conditional: true,
+            getter_cache: true,
             strict_guarantee: true,
             preview: false,
             fine_grained_dom: true,
@@ -353,6 +356,7 @@ fn lower_program(
     let program = EmitProgram {
         runtime_family: options.runtime_family,
         dev: options.dev,
+        getter_cache: options.getter_cache,
         preview: options.preview,
         preview_plan: None,
         strict_rejected: false,
@@ -1599,6 +1603,8 @@ fn lower_function(
         });
     Ok(EmitFunction {
         source: function_id,
+        kind: function.kind,
+        origin: function.origin,
         context,
         props,
         slots,

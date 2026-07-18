@@ -1,7 +1,7 @@
 use fict_hir::{
-    BindingId, BlockId, CompoundAssignmentOperator, FunctionId, ImportedHookPropertyMatch,
-    ImportedHookReturn, LiteralValue, LocalId, Origin, Projection, RegionId, SsaName,
-    SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
+    BindingId, BlockId, CompoundAssignmentOperator, FunctionId, FunctionKind,
+    ImportedHookPropertyMatch, ImportedHookReturn, LiteralValue, LocalId, Origin, Projection,
+    RegionId, SsaName, SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
 };
 use std::collections::BTreeMap;
 
@@ -915,6 +915,8 @@ pub struct EmitPreviewPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitFunction {
     pub source: FunctionId,
+    pub kind: FunctionKind,
+    pub origin: Origin,
     pub context: Option<EmitContext>,
     pub props: Option<EmitPropsPlan>,
     pub slots: Vec<ReactiveSlot>,
@@ -930,6 +932,8 @@ pub struct EmitProgram {
     pub runtime_family: RuntimeFamily,
     /// Whether creation rewrites attach authored DevTools source labels.
     pub dev: bool,
+    /// Whether codegen caches repeated accessor reads in safe synchronous callbacks.
+    pub getter_cache: bool,
     pub preview: bool,
     pub preview_plan: Option<EmitPreviewPlan>,
     pub strict_rejected: bool,

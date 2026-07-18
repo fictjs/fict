@@ -239,6 +239,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             runtime_family,
             dev: request.options.dev,
             lazy_conditional: request.options.lazy_conditional,
+            getter_cache: request.options.getter_cache,
             strict_guarantee: request.options.strict_guarantee,
             preview: request
                 .options

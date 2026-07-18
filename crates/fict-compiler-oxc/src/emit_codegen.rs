@@ -13,11 +13,11 @@ use fict_diagnostics::{
 use fict_emit::{
     ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, DomTextSegment,
     EmitOperation, EmitPreviewHandler, EmitPreviewPlan, EmitProgram, EmitPropMode, EmitValueRef,
-    EventOptions, PropsOperation, RuntimeHelper,
+    EventOptions, PropsOperation, ReactiveSlotKind, RuntimeHelper,
 };
 use fict_hir::{
-    BindingId, CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId,
-    UpdateOperator,
+    BindingId, CompoundAssignmentOperator, FunctionKind, JavaScriptString, LiteralValue,
+    TemplateId, UpdateOperator,
 };
 use oxc::{
     allocator::{Allocator, Box as ArenaBox, CloneIn, TakeIn, Vec as ArenaVec},
@@ -55,6 +55,7 @@ use oxc::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 mod conditional_return;
+mod getter_cache;
 mod operation_support;
 mod polymorphic_root;
 mod reactive_mutations;
@@ -116,6 +117,13 @@ pub fn emit_program(
         Ok(declarations) => declarations,
         Err(findings) => return failed_output(findings),
     };
+    let getter_cache_functions: BTreeSet<_> = emit
+        .functions
+        .iter()
+        .filter(|function| function.kind == FunctionKind::Plain)
+        .filter_map(|function| function.origin.primary_span)
+        .map(|span| (span.start(), span.end()))
+        .collect();
     strip_compiler_macro_imports(&mut program);
     let (creations, rewrite_diagnostics) = creation_rewrites(emit, source, filename);
     let props_rewrites = props_rewrites(emit);
@@ -188,6 +196,7 @@ pub fn emit_program(
         active_list_key_origin: None,
         active_list_key_initializer: None,
         suppressed_evaluations: BTreeSet::new(),
+        cacheable_accessor_calls: BTreeSet::new(),
         prefer_template_clones: 0,
         vnode_depth: 0,
         active_fragment_local: None,
@@ -359,6 +368,15 @@ pub fn emit_program(
     diagnostics.append(&mut rewriter.diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
+    }
+    if emit.getter_cache {
+        getter_cache::rewrite(
+            &allocator,
+            &mut program,
+            &rewriter.cacheable_accessor_calls,
+            &getter_cache_functions,
+            &emit.module.reserved_names,
+        );
     }
     let mut prepared_preview_handlers = std::mem::take(&mut rewriter.prepared_preview_handlers);
     for prepared in prepared_preview_handlers.values_mut() {
@@ -1126,6 +1144,7 @@ fn creation_rewrites(
 #[derive(Debug, Clone, Copy)]
 struct ReadRewrite {
     binding: Option<BindingId>,
+    cacheable: bool,
     projected: bool,
     accessor_depth: u16,
     projection_count: usize,
@@ -1172,15 +1191,16 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
                 );
                 continue;
             }
+            let slot = function
+                .slots
+                .iter()
+                .find(|candidate| candidate.id == *slot);
             if reads
                 .insert(
                     (span.start(), span.end()),
                     ReadRewrite {
-                        binding: function
-                            .slots
-                            .iter()
-                            .find(|candidate| candidate.id == *slot)
-                            .and_then(|slot| slot.binding),
+                        binding: slot.and_then(|slot| slot.binding),
+                        cacheable: slot.is_some_and(|slot| slot.kind == ReactiveSlotKind::Signal),
                         projected: !projections.is_empty(),
                         accessor_depth: *accessor_depth,
                         projection_count: projections.len(),
@@ -3133,6 +3153,7 @@ struct AstRewriter<'a, 'emit> {
     active_list_key_origin: Option<(u32, u32)>,
     active_list_key_initializer: Option<(u32, u32)>,
     suppressed_evaluations: BTreeSet<(u32, u32)>,
+    cacheable_accessor_calls: BTreeSet<(u32, u32)>,
     prefer_template_clones: usize,
     vnode_depth: usize,
     active_fragment_local: Option<String>,
@@ -3568,6 +3589,11 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
                 self.allocator,
             ) {
                 self.matched_reads.insert(location);
+                if rewrite.cacheable
+                    && let Some(root) = root
+                {
+                    self.cacheable_accessor_calls.insert(root);
+                }
                 let suppressed_list_read = root.filter(|root| self.active_list_reads.remove(root));
                 if let Some(root) = suppressed_list_read {
                     self.matched_list_reads.insert(root);
@@ -3586,14 +3612,14 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         let location = (identifier.span.start, identifier.span.end);
         let list_read = self.active_list_reads.contains(&location);
         let prop_read = self.prop_reads.contains(&location);
-        let reactive_read = self.reads.get(&location).is_some_and(|rewrite| {
+        let reactive_read = self.reads.get(&location).copied().filter(|rewrite| {
             !self.matched_reads.contains(&location)
                 && rewrite.binding.is_none_or(|binding| {
                     self.semantic_identities.binding_for_reference(identifier) == Some(binding)
                         || self.source_clone_depth > 0
                 })
         });
-        if !list_read && !prop_read && !reactive_read {
+        if !list_read && !prop_read && reactive_read.is_none() {
             walk_mut::walk_expression(self, expression);
             return;
         }
@@ -3614,8 +3640,14 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         if prop_read {
             self.matched_prop_reads.insert(location);
         }
-        if reactive_read {
+        if let Some(rewrite) = reactive_read {
             self.matched_reads.insert(location);
+            if rewrite.cacheable {
+                self.cacheable_accessor_calls.insert(location);
+            }
+        }
+        if list_read || prop_read {
+            self.cacheable_accessor_calls.insert(location);
         }
     }
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {

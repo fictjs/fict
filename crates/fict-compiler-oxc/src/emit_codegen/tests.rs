@@ -6,8 +6,8 @@ use fict_emit::{
     RuntimeHelper, RuntimeImportIntent,
 };
 use fict_hir::{
-    CompoundAssignmentOperator, FunctionId, JavaScriptString, LiteralValue, Origin, Projection,
-    SourceSpan, UpdateOperator, ValueId,
+    CompoundAssignmentOperator, FunctionId, FunctionKind, JavaScriptString, LiteralValue, Origin,
+    Projection, SourceSpan, UpdateOperator, ValueId,
 };
 use fict_reactivity::{StructurizeAnalysis, StructurizeStats};
 fn options(language: OxcSourceLanguage, sourcemap: bool) -> OxcCompileOptions {
@@ -46,6 +46,7 @@ fn effect_program(source: &str) -> EmitProgram {
     EmitProgram {
         runtime_family: RuntimeFamily::Runtime,
         dev: false,
+        getter_cache: true,
         preview: false,
         preview_plan: None,
         strict_rejected: false,
@@ -62,6 +63,8 @@ fn effect_program(source: &str) -> EmitProgram {
         }],
         functions: vec![EmitFunction {
             source: FunctionId::new(0),
+            kind: FunctionKind::Module,
+            origin,
             context: None,
             props: None,
             slots: vec![ReactiveSlot {

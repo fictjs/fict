@@ -47,10 +47,11 @@ restore fail-closed behavior.
 
 Set `dev: true` to attach authored source labels to signal, memo, and effect
 DevTools registrations. Set `lazyConditional: false` to preserve authored
-control-flow returns instead of installing runtime branch bindings. `getterCache`,
-`optimizeLevel`, and `inlineDerivedMemos` remain in the request schema for
-compatibility but accept only their defaults. Non-default values fail with
-`FICT-OPTION-UNIMPLEMENTED`.
+control-flow returns instead of installing runtime branch bindings. `getterCache`
+caches repeated signal/accessor reads only inside safe synchronous callbacks;
+set it to `false` to emit every read directly. `optimizeLevel` and
+`inlineDerivedMemos` remain in the request schema for compatibility but accept
+only their defaults. Non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
 
 ## Direct host
 

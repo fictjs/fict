@@ -1235,9 +1235,74 @@ test('lazyConditional false preserves authored control-flow returns', () => {
   assert.match(disabled.code, /if \(count\(\) > 10\)/)
 })
 
+test('getterCache controls safe repeated synchronous accessor reads', async () => {
+  const source = `
+    import { $memo, $state } from 'fict'
+    export function useGetterCache() {
+      const count = $state(1)
+      const doubled = $memo(() => count * 2)
+      const repeated = (__cached_count_0) => count + count + count + __cached_count_0
+      const functionRepeated = function () { return count + count + count }
+      const memoRepeated = () => doubled + doubled + doubled
+      const segmented = () => count + count + count + touch() + count + count + count
+      const branch = (ok) => ok ? count + count : 0
+      const asynchronous = async () => count + count
+      const generated = function* () { return count + count }
+      const written = () => { count = 2; return count + count }
+      return {
+        repeated, functionRepeated, memoRepeated, segmented, branch,
+        asynchronous, generated, written
+      }
+    }
+  `
+  const enabled = binding.transformSync({
+    code: source,
+    filename: '/fixtures/getter-cache.ts',
+  })
+  assert.deepEqual(enabled.diagnostics, [])
+  const cacheName = enabled.code.match(/let (__cached_count_\d+);/)?.[1]
+  assert.equal(cacheName, '__cached_count_1')
+  assert.match(enabled.code, new RegExp(`${cacheName} = count\\(\\)`))
+  assert.match(enabled.code, /let __cached_count_2;/)
+  assert.match(enabled.code, /let __cached_count_3;/)
+  assert.equal(enabled.code.match(/let __cached_count_/g)?.length, 3)
+  assert.equal(enabled.code.match(/= count\(\)/g)?.length, 4)
+  assert.doesNotMatch(enabled.code, /__cached_doubled_/)
+
+  const disabled = binding.transformSync({
+    code: source,
+    filename: '/fixtures/getter-cache.ts',
+    options: { getterCache: false },
+  })
+  assert.deepEqual(disabled.diagnostics, [])
+  assert.doesNotMatch(disabled.code, /let __cached_count_/)
+
+  const runtime = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+      let runCase = () => ''
+      function App() {
+        let count = $state(1)
+        const touch = () => { count = 2; return 'touch' }
+        runCase = () => count + ':' + count + ':' + touch() + ':' + count + ':' + count
+        return <span />
+      }
+      export const mount = container => render(() => <App />, container)
+      export const run = () => runCase()
+    `,
+    'getter-cache-runtime',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = runtime.mount(container)
+  await flushRuntime()
+  assert.equal(runtime.run(), '1:1:touch:2:2')
+  dispose()
+  container.remove()
+})
+
 test('native binding rejects unimplemented non-default compiler options', () => {
   for (const [name, value] of [
-    ['getterCache', false],
     ['optimizeLevel', 'full'],
     ['inlineDerivedMemos', false],
   ]) {

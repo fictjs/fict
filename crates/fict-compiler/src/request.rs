@@ -150,7 +150,7 @@ pub struct CompilerOptions {
     pub explain: bool,
     /// Lower supported reactive control-flow returns through lazy runtime branches.
     pub lazy_conditional: bool,
-    /// Reserved compatibility field; only `true` is currently implemented.
+    /// Cache repeated signal/accessor reads within safe synchronous callback blocks.
     pub getter_cache: bool,
     /// Emit fine-grained DOM operations.
     pub fine_grained_dom: bool,
@@ -200,9 +200,7 @@ impl Default for CompilerOptions {
 }
 
 fn validate_implemented_options(options: &CompilerOptions) -> Result<(), CompileRequestError> {
-    let unsupported = if !options.getter_cache {
-        Some(("getterCache", "true"))
-    } else if options.optimize_level != OptimizeLevel::Safe {
+    let unsupported = if options.optimize_level != OptimizeLevel::Safe {
         Some(("optimizeLevel", "\"safe\""))
     } else if !options.inline_derived_memos {
         Some(("inlineDerivedMemos", "true"))
@@ -810,7 +808,6 @@ mod tests {
     #[test]
     fn non_default_unimplemented_options_produce_a_stable_diagnostic() {
         for (name, value) in [
-            ("getterCache", json!(false)),
             ("optimizeLevel", json!("full")),
             ("inlineDerivedMemos", json!(false)),
         ] {
