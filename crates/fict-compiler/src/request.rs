@@ -156,7 +156,7 @@ pub struct CompilerOptions {
     pub fine_grained_dom: bool,
     /// Run the Fict optimizer.
     pub optimize: bool,
-    /// Optimizer safety policy; only `safe` is currently implemented.
+    /// Optimizer safety policy; `full` enables additional authored algebraic folding.
     pub optimize_level: OptimizeLevel,
     /// Reserved compatibility field; only `true` is currently implemented.
     pub inline_derived_memos: bool,
@@ -200,9 +200,7 @@ impl Default for CompilerOptions {
 }
 
 fn validate_implemented_options(options: &CompilerOptions) -> Result<(), CompileRequestError> {
-    let unsupported = if options.optimize_level != OptimizeLevel::Safe {
-        Some(("optimizeLevel", "\"safe\""))
-    } else if !options.inline_derived_memos {
+    let unsupported = if !options.inline_derived_memos {
         Some(("inlineDerivedMemos", "true"))
     } else {
         None
@@ -807,26 +805,22 @@ mod tests {
 
     #[test]
     fn non_default_unimplemented_options_produce_a_stable_diagnostic() {
-        for (name, value) in [
-            ("optimizeLevel", json!("full")),
-            ("inlineDerivedMemos", json!(false)),
-        ] {
-            let mut payload = json!({
-                "code": "export const value = 1",
-                "filename": "options.ts",
-                "options": {}
-            });
-            payload["options"][name] = value;
-            let request = serde_json::from_value(payload).expect("deserialize option request");
-            let result = compile(request);
-            assert!(result.code.is_empty(), "{name}: {}", result.code);
-            assert_eq!(result.diagnostics.len(), 1, "{name}: {result:?}");
-            assert_eq!(
-                result.diagnostics[0].code.as_str(),
-                "FICT-OPTION-UNIMPLEMENTED"
-            );
-            assert!(result.diagnostics[0].message.contains(name));
-        }
+        let name = "inlineDerivedMemos";
+        let mut payload = json!({
+            "code": "export const value = 1",
+            "filename": "options.ts",
+            "options": {}
+        });
+        payload["options"][name] = json!(false);
+        let request = serde_json::from_value(payload).expect("deserialize option request");
+        let result = compile(request);
+        assert!(result.code.is_empty(), "{name}: {}", result.code);
+        assert_eq!(result.diagnostics.len(), 1, "{name}: {result:?}");
+        assert_eq!(
+            result.diagnostics[0].code.as_str(),
+            "FICT-OPTION-UNIMPLEMENTED"
+        );
+        assert!(result.diagnostics[0].message.contains(name));
     }
 
     #[test]

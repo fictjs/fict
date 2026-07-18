@@ -240,6 +240,8 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             dev: request.options.dev,
             lazy_conditional: request.options.lazy_conditional,
             getter_cache: request.options.getter_cache,
+            full_optimization: request.options.optimize
+                && request.options.optimize_level == crate::request::OptimizeLevel::Full,
             strict_guarantee: request.options.strict_guarantee,
             preview: request
                 .options

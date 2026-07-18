@@ -10,8 +10,8 @@
     "uniqueFixtures": 1892,
     "scannedLegacyTestFiles": 107,
     "representedLegacyTestFiles": 73,
-    "reviewedRevision": "40cb283114a5fffe50f676fdd5d98bae09f06e19",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-7bda3390da902cbbfaeec65ae4d11ec75ca25281784b1c015897fa4c3873902d"
+    "reviewedRevision": "e69ebc750968fe5d43fbe34a2281de7e8cd0f1c8",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-5b8a35abdc2a7e68c6ac59ec809559c81e13bb4ae4a610d912b7ced66a3ef674"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by Babel 0.28.",
@@ -22,7 +22,7 @@
   },
   "deviationPolicyCounts": {
     "rust-capability-expansion": 22,
-    "reserved-option-rejected": 33,
+    "reserved-option-rejected": 2,
     "narrow-component-role": 24,
     "structured-hook-return": 6,
     "namespace-macro-fail-closed": 1
@@ -22650,17 +22650,11 @@
         "codeSha256": "3a2563f104781ff40fa7c05b6220d646d3e1432796ecbe9526f360cfd4d00cf2"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "afcde1727ea45f00d0806757393df886c20fb120a1cdef31e802289ac3ee6e3d"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:30:transform",
@@ -22681,17 +22675,11 @@
         "codeSha256": "a6fbfeb455b12a1305547abe269d05ef5cf0a6c58499943fdffc0ad425d0142f"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "db778975b219f552b15a88200e3071f3f0a2954b6f9913ce2f8e354efc0392d5"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:42:transform",
@@ -22712,17 +22700,11 @@
         "codeSha256": "9df821dd55dd1345822ef6e5bd4076a471bdce95a69ef2e86cc90babc4df0b58"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "975493c54c722974d18c0f10d26efc28739f984c1e770da6a752b50e7c3eef2e"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:54:transform",
@@ -22743,17 +22725,11 @@
         "codeSha256": "c1e5dbf84524482500f5f51a3c84a3ec6f0fec67b504367670f37a98d25d106e"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "2d28a8473aa9f7a49caec16772dd554bfdc06b35c7539e78026e99be18e4c163"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:66:transform",
@@ -22774,17 +22750,11 @@
         "codeSha256": "a55b585d59656392b16c8ab59dbb2b369f6531fdcd5c63caafa0f29faf95d2ef"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "f2e2257eb546034fa1c47d6e0aec21582dad7aee58eef7f881fd641460b8e4e9"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:78:transform",
@@ -22805,17 +22775,11 @@
         "codeSha256": "77a0e6debbb9e8051b81db03e094462ad835835816ff6539489d8f6413ba19b3"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "36234fc771668ba32462133967bcfc6bfedc2ef0f17fb16bdec7707147397cee"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:90:transform",
@@ -22836,17 +22800,11 @@
         "codeSha256": "520844637a3016ca0a151cbebbcd9bbcb685ca1c8eadfccb8dd9e13b6390fcc1"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "65f70b0aba551a53873b19fc89c0828bf6d914b8697b8d798bb526949c946533"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:102:transform",
@@ -22867,17 +22825,11 @@
         "codeSha256": "9362af504fa0bef82855be727004e5cd2600371b9f9f32a63d4e6053592716ef"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "1e8ed67f73c1b6baabd6d25e1e6d0204a94bf12cd50b716b5c8ce67962d6e530"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:112:transform",
@@ -22898,17 +22850,11 @@
         "codeSha256": "79b293bee597f95f6779d6c43c66938f1f33f4c14906720a2fe80a7da2c1822d"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "645cd93492d0b57cfac686fddb66db2f4e206a995252edf63d0d554618e653c8"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:122:transform",
@@ -22929,17 +22875,11 @@
         "codeSha256": "9074980fc821afe48df64254658057e2b794e070bc110f4c5789781918f825f1"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "8e3e77dd7fdc04c31b2522671014480668ffb799b7f6d49feb0058c2b4cbb008"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:136:transform",
@@ -22960,17 +22900,11 @@
         "codeSha256": "3a2563f104781ff40fa7c05b6220d646d3e1432796ecbe9526f360cfd4d00cf2"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "afcde1727ea45f00d0806757393df886c20fb120a1cdef31e802289ac3ee6e3d"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:148:transform",
@@ -22991,17 +22925,11 @@
         "codeSha256": "a6fbfeb455b12a1305547abe269d05ef5cf0a6c58499943fdffc0ad425d0142f"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "db778975b219f552b15a88200e3071f3f0a2954b6f9913ce2f8e354efc0392d5"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:160:transform",
@@ -23022,17 +22950,11 @@
         "codeSha256": "42b15f9c4940f14081f699fe17fb7e40e30946f1a567fa9f6c191aa8e3887bbf"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "3cc3c2bb0e9306b5156519cfbd5d12f7329c6274fee7efce3ef74b00749d7651"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:172:transform",
@@ -23053,17 +22975,11 @@
         "codeSha256": "3ae2f6a82b76b9fa5254a2ac77d278985a8c1b5f1fdfed2a35ef5e6bf96ac58b"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "103d156bfc38bd70146a73224f9643cdab7416303bd4ffd04cfb06259fc32421"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:184:transform",
@@ -23084,17 +23000,11 @@
         "codeSha256": "a55b585d59656392b16c8ab59dbb2b369f6531fdcd5c63caafa0f29faf95d2ef"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "f2e2257eb546034fa1c47d6e0aec21582dad7aee58eef7f881fd641460b8e4e9"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:194:transform",
@@ -23115,17 +23025,11 @@
         "codeSha256": "763a0e8e33c07f21a750af25ba58c3650d3946b49c8063855552e7e454a1d1e5"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "fe92684f7e9bb9e2e82d2cec35e33aa386168935b89039197cd241769d9cb40d"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:206:transform",
@@ -23146,17 +23050,11 @@
         "codeSha256": "0170150e83ca7f5af17de251627e0e1a99f254676c4c9d5aee8e697be439fc64"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "1ba4a7453801a04925b394a533e119dd1791a55f179767741f236fb600ced7e0"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:218:transform",
@@ -23177,17 +23075,11 @@
         "codeSha256": "42b15f9c4940f14081f699fe17fb7e40e30946f1a567fa9f6c191aa8e3887bbf"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "3b0f6e7831a9c1a05ffdcd6de32409ab8b51cba68fa7f25aa28087531cf34850"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:232:transform",
@@ -23208,17 +23100,11 @@
         "codeSha256": "3a2563f104781ff40fa7c05b6220d646d3e1432796ecbe9526f360cfd4d00cf2"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "afcde1727ea45f00d0806757393df886c20fb120a1cdef31e802289ac3ee6e3d"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:244:transform",
@@ -23239,17 +23125,11 @@
         "codeSha256": "a6fbfeb455b12a1305547abe269d05ef5cf0a6c58499943fdffc0ad425d0142f"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "db778975b219f552b15a88200e3071f3f0a2954b6f9913ce2f8e354efc0392d5"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:256:transform",
@@ -23270,17 +23150,11 @@
         "codeSha256": "9e072efb2b6164d171dec5f496c5ca82156bc697a367f5d84cc44377cbdc2d30"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "4a496d672aa8e2a80c05928ce55436c370cc5edd75895a207a2236097a937f84"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:269:transform",
@@ -23301,17 +23175,11 @@
         "codeSha256": "0170150e83ca7f5af17de251627e0e1a99f254676c4c9d5aee8e697be439fc64"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "fdd37f0154902c96519e71741015784c0271050b74f1f40587a620ff67cb675c"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:280:transform",
@@ -23332,17 +23200,11 @@
         "codeSha256": "42b15f9c4940f14081f699fe17fb7e40e30946f1a567fa9f6c191aa8e3887bbf"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "e53c1f6bd0797d9b9dee9ddb37d166fef83707def51b729a8721aebc15d49715"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:292:transform",
@@ -23363,17 +23225,11 @@
         "codeSha256": "3a2563f104781ff40fa7c05b6220d646d3e1432796ecbe9526f360cfd4d00cf2"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "afcde1727ea45f00d0806757393df886c20fb120a1cdef31e802289ac3ee6e3d"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:307:transform",
@@ -23394,17 +23250,11 @@
         "codeSha256": "3a2563f104781ff40fa7c05b6220d646d3e1432796ecbe9526f360cfd4d00cf2"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "aa8f840e722b2d22a6bb5fc37a9cec031d031b94d1626df519aefe988c46e1d2"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:320:transform",
@@ -23425,17 +23275,11 @@
         "codeSha256": "a6fbfeb455b12a1305547abe269d05ef5cf0a6c58499943fdffc0ad425d0142f"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "26a682a27801e37a09699e4e6203333b1796c3893ca26a9ae1c8e32a5156f3f9"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:332:transform",
@@ -23456,17 +23300,11 @@
         "codeSha256": "9e072efb2b6164d171dec5f496c5ca82156bc697a367f5d84cc44377cbdc2d30"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "236c4802c3b471298c5aeff6d9bc0ed2bb089594742e620923395c759908b479"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:342:transform",
@@ -23487,17 +23325,11 @@
         "codeSha256": "f6de1e3363e84f0c592d6d0b2582e64dec12fe5cd210f3aca880d013538d3569"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "65c29419eca3bc799705cd5bc7f4ed41872d9f7bcdddec33504b038147c316cc"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:355:transform",
@@ -23518,17 +23350,11 @@
         "codeSha256": "42b15f9c4940f14081f699fe17fb7e40e30946f1a567fa9f6c191aa8e3887bbf"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "e53c1f6bd0797d9b9dee9ddb37d166fef83707def51b729a8721aebc15d49715"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:366:transform",
@@ -23549,17 +23375,11 @@
         "codeSha256": "0170150e83ca7f5af17de251627e0e1a99f254676c4c9d5aee8e697be439fc64"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "fdd37f0154902c96519e71741015784c0271050b74f1f40587a620ff67cb675c"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-algebraic.test.ts:382:transform",
@@ -24063,17 +23883,11 @@
         "codeSha256": "0086c47a8578e8c6d5df417df67b27c5fa57427a6db730fbed677813d67dd0f8"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "a25bc0b52719b5bbdbdc475dd07de5bb0db53b0661259c55558c0fbe04e2c9f7"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/optimizer-semantics.test.ts:152:transform",

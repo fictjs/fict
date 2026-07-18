@@ -47,6 +47,7 @@ fn effect_program(source: &str) -> EmitProgram {
         runtime_family: RuntimeFamily::Runtime,
         dev: false,
         getter_cache: true,
+        full_optimization: false,
         preview: false,
         preview_plan: None,
         strict_rejected: false,

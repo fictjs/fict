@@ -76,6 +76,10 @@ impl SemanticIdentities {
             .and_then(|reference| self.references.get(&reference).copied())
     }
 
+    pub(super) fn binding_for_symbol(&self, symbol: SymbolId) -> Option<BindingId> {
+        self.symbols.get(&symbol).copied()
+    }
+
     fn pattern_bindings<'a>(&self, pattern: &BindingPattern<'a>) -> Vec<PatternBindingIdentity> {
         let mut collector = PatternBindingCollector {
             identities: self,

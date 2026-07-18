@@ -50,9 +50,10 @@ Native lowering options such as `strictReactivity`, `warningLevels`,
 `warningsAsErrors`, `fineGrainedDom`, `optimize`, and `reactiveScopes` are
 accepted directly. `onWarn` and `explain` adapt structured native diagnostics
 for the Vite host. `dev`, `lazyConditional`, and `getterCache` are also honored.
-The compatibility fields `optimizeLevel` and `inlineDerivedMemos` accept only
-their documented defaults; non-default values fail with
-`FICT-OPTION-UNIMPLEMENTED`.
+`optimizeLevel` supports the default conservative `'safe'` profile and the
+opt-in `'full'` algebraic profile. The compatibility field
+`inlineDerivedMemos` accepts only its documented `true` default; `false` fails
+with `FICT-OPTION-UNIMPLEMENTED`.
 
 `publicIdentityNamespace` provides a stable namespace for Preview resumable
 output when no named package boundary owns the Vite root. Normal Core builds do

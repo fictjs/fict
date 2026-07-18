@@ -55,6 +55,7 @@ use oxc::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 mod conditional_return;
+mod full_optimizer;
 mod getter_cache;
 mod operation_support;
 mod polymorphic_root;
@@ -113,6 +114,9 @@ pub fn emit_program(
         Ok(identities) => identities,
         Err(findings) => return failed_output(findings),
     };
+    let full_optimization = emit
+        .full_optimization
+        .then(|| full_optimizer::analyze(&program, &identities, program.source_type.is_module()));
     let context_declarations = match parse_context_declarations(&allocator, &context_sources) {
         Ok(declarations) => declarations,
         Err(findings) => return failed_output(findings),
@@ -368,6 +372,9 @@ pub fn emit_program(
     diagnostics.append(&mut rewriter.diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
+    }
+    if let Some(plan) = &full_optimization {
+        full_optimizer::rewrite(&allocator, &mut program, &identities, plan);
     }
     if emit.getter_cache {
         getter_cache::rewrite(

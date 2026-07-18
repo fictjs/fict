@@ -934,6 +934,8 @@ pub struct EmitProgram {
     pub dev: bool,
     /// Whether codegen caches repeated accessor reads in safe synchronous callbacks.
     pub getter_cache: bool,
+    /// Whether codegen applies the opt-in authored algebraic folding profile.
+    pub full_optimization: bool,
     pub preview: bool,
     pub preview_plan: Option<EmitPreviewPlan>,
     pub strict_rejected: bool,

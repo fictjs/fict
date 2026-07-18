@@ -124,7 +124,7 @@ export interface NativeCompilerOptions {
   getterCache?: boolean
   fineGrainedDom?: boolean
   optimize?: boolean
-  /** Reserved compatibility field. Only `'safe'` is currently implemented. */
+  /** Select conservative output or opt-in legacy-compatible algebraic folding. */
   optimizeLevel?: NativeOptimizeLevel
   /** Reserved compatibility field. Only `true` is currently implemented. */
   inlineDerivedMemos?: boolean

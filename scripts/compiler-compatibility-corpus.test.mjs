@@ -105,7 +105,7 @@ test('retains the complete frozen 0.28 compile corpus and reviewed deviations', 
   assert.deepEqual(policyCounts, corpus.deviationPolicyCounts)
   assert.deepEqual(corpus.deviationPolicyCounts, {
     'rust-capability-expansion': 22,
-    'reserved-option-rejected': 33,
+    'reserved-option-rejected': 2,
     'narrow-component-role': 24,
     'structured-hook-return': 6,
     'namespace-macro-fail-closed': 1,
@@ -157,6 +157,7 @@ test('retains native runtime and option compatibility outcomes', () => {
     'intrinsic children props become child content without leaking attributes',
     'raw-text and RCDATA expressions bind literal textContent',
     'dynamic annotation-xml children use the final live encoding namespace',
+    'optimizeLevel full applies opt-in authored algebraic folding safely',
     'native binding rejects unimplemented non-default compiler options',
   ]) {
     assert.ok(runtime.includes(`test('${name}'`), name)

@@ -554,9 +554,13 @@ Inlining note: Single-use derived values are inlined by default (including user-
 Use `$memo` to keep a user-named derived value as an explicit memo.
 Hook note: Hook-like functions (explicit `useX` or inferred hooks using `$state`/`$store`)
 do not inline user-named derived values by default, to preserve accessor return shapes.
-Optimizer safety is currently fixed at `optimizeLevel: 'safe'`, which avoids
-non-constant algebraic rewrites that can change JavaScript semantics. The
-reserved `'full'` value fails with `FICT-OPTION-UNIMPLEMENTED`.
+`optimizeLevel: 'safe'` is the default and leaves authored algebraic expressions
+unchanged. The opt-in `'full'` profile propagates proven local constants, folds
+supported literal expressions, and applies the legacy logical, conditional, comparison,
+and double-negation identities. It preserves unknown arithmetic such as
+`value + 0` and `value * 0`, and preserves evaluation of identical conditional
+branches. Because the legacy `- -value` identity can remove JavaScript numeric
+coercion, use `'full'` only where that aggressive contract is intended.
 Benchmarking and optimizer evidence are owned by the Rust compiler crates and
 the release-native evidence pipeline. Run `pnpm guardrails:rust-crates` for
 crate/largest-file budgets and `pnpm release:compiler:verify` for native

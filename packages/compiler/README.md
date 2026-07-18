@@ -80,15 +80,18 @@ The native options include:
 - `getterCache`: cache repeated signal/accessor reads inside safe synchronous
   callbacks; `false` emits every read directly;
 - `fineGrainedDom` and `optimize`: lowering controls;
+- `optimizeLevel`: keep authored expressions in the conservative `'safe'`
+  profile (default), or opt into `'full'` constant propagation and legacy
+  algebraic identities;
 - `reactiveScopes`: names whose first callback is a compiler-recognized
   reactive scope;
 - `typescript`: serializable OXC TypeScript lowering controls;
 - `preview`: default-off resumability controls that are not part of the Core
   1.0 promise.
 
-Two wire-compatibility fields currently accept only their defaults:
-`optimizeLevel: 'safe'` and `inlineDerivedMemos: true`. A non-default value fails
-with `FICT-OPTION-UNIMPLEMENTED`; it is never silently ignored.
+The wire-compatibility field `inlineDerivedMemos` currently accepts only its
+default, `true`. Setting it to `false` fails with
+`FICT-OPTION-UNIMPLEMENTED`; it is never silently ignored.
 
 Production integrations force fail-closed guarantees. Use relaxed options only
 in non-production migration experiments.

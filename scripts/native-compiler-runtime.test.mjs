@@ -1301,11 +1301,127 @@ test('getterCache controls safe repeated synchronous accessor reads', async () =
   container.remove()
 })
 
+test('optimizeLevel full applies opt-in authored algebraic folding safely', async () => {
+  const source = `
+    export function probe(x, check) {
+      const a = 2 + 3
+      const b = a + 0
+      return [b, true && x, - -x, x + 0, x * 0, check() ? 7 : 7, 0 === -0]
+    }
+
+    export function negativeZero() {
+      const direct = -0
+      const propagated = direct
+      const product = 0 * -1
+      const positive = -0 + 0
+      return [
+        Object.is(direct, -0),
+        Object.is(propagated, -0),
+        1 / propagated,
+        Object.is(product, -0),
+        Object.is(positive, -0),
+      ]
+    }
+
+    export function shorthand() {
+      const value = 2 + 3
+      return { value }
+    }
+
+    export function shadowedUndefined(undefined) {
+      return undefined ?? 9
+    }
+
+    export function branchEffects(select) {
+      const log = []
+      const left = () => { log.push('left'); return 1 }
+      const right = () => { log.push('right'); return 1 }
+      const value = select ? (left(), 7) : (right(), 7)
+      return [value, log.join(',')]
+    }
+
+    export function switchTdz(which) {
+      switch (which) {
+        case 0:
+          const local = 5
+          return local
+        case 1:
+          try { return local } catch (error) { return error instanceof ReferenceError }
+      }
+    }
+  `
+  const safe = binding.transformSync({
+    code: source,
+    filename: '/fixtures/optimize-full.ts',
+    options: { optimizeLevel: 'safe' },
+  })
+  assert.deepEqual(safe.diagnostics, [])
+  assert.match(safe.code, /const a = 2 \+ 3/)
+  assert.match(safe.code, /true && x/)
+  assert.match(safe.code, /- -x/)
+
+  const full = binding.transformSync({
+    code: source,
+    filename: '/fixtures/optimize-full.ts',
+    options: { optimizeLevel: 'full' },
+  })
+  assert.deepEqual(full.diagnostics, [])
+  assert.match(full.code, /const a = 5/)
+  assert.match(full.code, /const b = 5/)
+  assert.match(full.code, /check\(\), 7/)
+  assert.match(full.code, /x \+ 0/)
+  assert.match(full.code, /x \* 0/)
+  assert.doesNotMatch(full.code, /true && x/)
+  assert.doesNotMatch(full.code, /- -x/)
+  assert.match(full.code, /return \{\s*value\s*\}/)
+  assert.match(full.code, /return undefined \?\? 9/)
+  assert.match(full.code, /select \? \(left\(\), 7\) : \(right\(\), 7\)/)
+  assert.match(full.code, /case 1:[\s\S]*return local/)
+
+  const disabled = binding.transformSync({
+    code: source,
+    filename: '/fixtures/optimize-full-disabled.ts',
+    options: { optimize: false, optimizeLevel: 'full' },
+  })
+  assert.deepEqual(disabled.diagnostics, [])
+  assert.match(disabled.code, /const a = 2 \+ 3/)
+
+  const runtime = await compileAndImport(source, 'optimize-full-runtime', {
+    options: { optimizeLevel: 'full' },
+  })
+  let checks = 0
+  assert.deepEqual(
+    runtime.probe(4, () => (++checks, false)),
+    [5, 4, 4, 4, 0, 7, true],
+  )
+  assert.equal(checks, 1)
+  assert.deepEqual(runtime.negativeZero(), [true, true, -Infinity, true, false])
+  assert.deepEqual(runtime.shorthand(), { value: 5 })
+  assert.equal(runtime.shadowedUndefined(3), 3)
+  assert.deepEqual(runtime.branchEffects(true), [7, 'left'])
+  assert.deepEqual(runtime.branchEffects(false), [7, 'right'])
+  assert.equal(runtime.switchTdz(0), 5)
+  assert.equal(runtime.switchTdz(1), true)
+
+  const dynamicScope = binding.transformSync({
+    code: `
+      let result
+      const value = 1
+      with ({ value: 2, undefined: 3 }) {
+        result = [value, undefined ?? 9]
+      }
+    `,
+    filename: '/fixtures/optimize-full-with.js',
+    moduleKind: 'script',
+    options: { optimizeLevel: 'full' },
+  })
+  assert.deepEqual(dynamicScope.diagnostics, [])
+  assert.match(dynamicScope.code, /result = \[\s*value,\s*undefined \?\? 9\s*\]/)
+  assert.deepEqual(new Function(`${dynamicScope.code}\nreturn result`)(), [2, 3])
+})
+
 test('native binding rejects unimplemented non-default compiler options', () => {
-  for (const [name, value] of [
-    ['optimizeLevel', 'full'],
-    ['inlineDerivedMemos', false],
-  ]) {
+  for (const [name, value] of [['inlineDerivedMemos', false]]) {
     const result = binding.transformSync({
       code: 'export const value = 1',
       filename: `/fixtures/unimplemented-${name}.ts`,

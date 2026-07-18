@@ -49,9 +49,11 @@ Set `dev: true` to attach authored source labels to signal, memo, and effect
 DevTools registrations. Set `lazyConditional: false` to preserve authored
 control-flow returns instead of installing runtime branch bindings. `getterCache`
 caches repeated signal/accessor reads only inside safe synchronous callbacks;
-set it to `false` to emit every read directly. `optimizeLevel` and
-`inlineDerivedMemos` remain in the request schema for compatibility but accept
-only their defaults. Non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
+set it to `false` to emit every read directly. `optimizeLevel: 'full'` opts into
+constant propagation and legacy algebraic identities; the default `'safe'`
+profile leaves authored algebra alone. `inlineDerivedMemos` remains in the
+request schema for compatibility and accepts only `true`; `false` fails with
+`FICT-OPTION-UNIMPLEMENTED`.
 
 ## Direct host
 
