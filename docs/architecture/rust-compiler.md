@@ -227,9 +227,21 @@ corpus.
 
 The guardrail verifies corpus size, provenance, deviation counts, test wiring,
 and retained native runtime cases so deleting the regression asset cannot
-silently leave CI green. Independent Babel semantic evidence must use
-Babel-owned output or behavior as its oracle instead of copying this corpus's
-Rust `expected` field.
+silently leave CI green.
+
+The distinct Babel 0.28 semantic oracle freezes compiled CommonJS output,
+structured warnings, and observable results for 12 runtime probes. Its
+provenance binds the exact 0.28.0 source-tree digest, built artifact digest,
+frozen lockfile and package-manager identity, Babel dependency versions, and
+input digest. CI executes that frozen Babel code and current Rust output through
+the same isolated reactive harness, then compares both diagnostics and
+observable values. The one reviewed diagnostic deviation removes two spurious
+hook-member escape warnings and is explicit in the input manifest.
+
+This independent oracle covers state, derived invalidation, effects, projected
+mutation, destructuring, hooks, loops, try/finally, explicit memos, optional
+dependencies, update-expression order, and numeric edge cases. It is a real
+semantic gate for those domains, not a claim of full language equivalence.
 
 Run the focused gate with:
 

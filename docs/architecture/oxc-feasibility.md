@@ -89,7 +89,9 @@ This conclusion applies only to the executable probes and current compiler
 contracts. It does not prove full language parity. After the completed switch,
 the frozen Rust source/golden corpus remains a permanent determinism and drift
 gate that runs without an executable legacy backend; its Rust-generated
-expected values are not an independent Babel equivalence oracle.
+expected values are not an independent Babel equivalence oracle. A separate
+exact-0.28 frozen-output suite executes Babel and Rust code through the same
+semantic harness for its reviewed runtime domains.
 
 ## Human review requirements
 

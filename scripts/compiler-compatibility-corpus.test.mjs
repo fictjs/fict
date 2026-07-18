@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
@@ -9,6 +10,7 @@ const readJson = relative => JSON.parse(read(relative))
 const sha256Pattern = /^[0-9a-f]{64}$/
 const revisionPattern = /^[0-9a-f]{40}$/
 const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
+const sha256 = value => createHash('sha256').update(value).digest('hex')
 
 test('retains the Rust-only frozen codegen corpus and reviewed Babel audit deviations', () => {
   const corpus = readJson(compileCorpusPath)
@@ -142,6 +144,57 @@ test('retains normalized frontend and analysis compatibility oracles', () => {
   assert.match(analysisTest, /include_str!\("analysis_compatibility\.json"\)/)
   assert.match(compileTest, /include_str!\(\s*"rust_frozen_codegen_corpus\.json"\s*\)/)
   assert.match(compileTest, /frozen_rust_codegen_corpus/)
+})
+
+test('retains the independently generated Babel 0.28 semantic oracle', () => {
+  const inputsText = read('scripts/fixtures/babel_0_28_semantic_inputs.json')
+  const inputs = JSON.parse(inputsText)
+  const oracle = readJson('crates/fict-compiler/tests/babel_0_28_semantic_oracle.json')
+  assert.equal(inputs.schemaVersion, 1)
+  assert.equal(oracle.schemaVersion, 1)
+  assert.deepEqual(
+    {
+      legacyRelease: oracle.provenance.legacyRelease,
+      legacyRevision: oracle.provenance.legacyRevision,
+      legacyCompilerSourceSha256: oracle.provenance.legacyCompilerSourceSha256,
+      legacyCompilerArtifactSha256: oracle.provenance.legacyCompilerArtifactSha256,
+      legacyLockfileSha256: oracle.provenance.legacyLockfileSha256,
+      legacyPackageManager: oracle.provenance.legacyPackageManager,
+      oracleInputsSha256: oracle.provenance.oracleInputsSha256,
+    },
+    {
+      legacyRelease: '0.28.0',
+      legacyRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+      legacyCompilerSourceSha256:
+        'cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a',
+      legacyCompilerArtifactSha256:
+        '07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789',
+      legacyLockfileSha256: '2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6',
+      legacyPackageManager: 'pnpm@9.1.1',
+      oracleInputsSha256: sha256(inputsText),
+    },
+  )
+  assert.equal(inputs.fixtures.length, 12)
+  assert.equal(oracle.fixtures.length, 12)
+  assert.deepEqual(
+    oracle.fixtures.map(fixture => fixture.id),
+    inputs.fixtures.map(fixture => fixture.id),
+  )
+  for (const fixture of oracle.fixtures) {
+    assert.match(fixture.babelCodeSha256, sha256Pattern, fixture.id)
+    assert.equal(sha256(fixture.babelCode), fixture.babelCodeSha256, fixture.id)
+    assert.ok(fixture.babelCode.includes('exports.Scenario'), fixture.id)
+    assert.ok(fixture.expected !== undefined, fixture.id)
+  }
+
+  const semanticTest = read('scripts/babel-compiler-semantic-oracle.test.mjs')
+  assert.match(semanticTest, /executeCommonJs\(expected\.babelCode/)
+  assert.match(semanticTest, /executeCommonJs\(result\.code/)
+  assert.match(semanticTest, /binding\.transformSync\(fixture\.request\)/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:babel-semantic-oracle/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /babel-compiler-semantic-oracle\.test\.mjs/)
 })
 
 test('retains native runtime and option compatibility outcomes', () => {

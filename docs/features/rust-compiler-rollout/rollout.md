@@ -58,6 +58,11 @@ Babel audit fields came from the 0.30.1 legacy backend, while its expected
 diagnostics and code hashes are Rust-generated regression goldens; neither is
 mislabelled as exact 0.28.0 semantic output.
 
+Exact 0.28.0 behavior evidence is retained separately as frozen Babel output
+with source, artifact, dependency, and input digests. CI executes that output
+and current Rust output through one isolated semantic harness; the legacy
+compiler itself is not installed or loaded during verification.
+
 M7 approval cannot be reused as M9 approval.
 
 ## M9 legacy-removal gate

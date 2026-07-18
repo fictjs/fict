@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "legacyRelease": "0.28.0",
+    "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "legacyCompilerSourceSha256": "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a",
+    "legacyCompilerArtifactSha256": "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789",
+    "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
+    "legacyPackageManager": "pnpm@9.1.1",
+    "babelDependencies": {
+      "@babel/core": "7.29.7",
+      "@babel/plugin-transform-modules-commonjs": "7.28.6",
+      "@babel/plugin-transform-typescript": "7.28.5"
+    },
+    "oracleInputsSha256": "5cb6c0183740c5f33c9cad703b5d4e19fb2238f3c559908eeeed457c15b7efdd"
+  },
+  "fixtures": [
+    {
+      "id": "state-derived-update",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "c8c69ee9521f097e07c921ed7c6c45ec3ebb445d6e1ebf87e81c574f762bb82d",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const doubled = (0, _internal.__fictUseMemo)(__fictCtx, () => count() * 2, {\n      name: \"doubled\"\n    }, 1000);\n    const before = (0, _internal.__fictUseMemo)(__fictCtx, () => [count(), doubled()], {\n      name: \"before\"\n    }, 1001);\n    count(count() + 2);\n    return {\n      doubled,\n      before\n    };\n  }, {\n    internal: true\n  }, 1002);\n  const {\n    doubled,\n    before\n  } = __region_0();\n  return {\n    before: before(),\n    after: [count(), doubled()]\n  };\n}",
+      "expected": { "after": [3, 6], "before": [3, 6] }
+    },
+    {
+      "id": "update-expression-order",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/update-expression-order.tsx",
+          "line": 8,
+          "column": 15
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/update-expression-order.tsx",
+          "line": 5,
+          "column": 15
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/update-expression-order.tsx",
+          "line": 6,
+          "column": 15
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/update-expression-order.tsx",
+          "line": 7,
+          "column": 15
+        }
+      ],
+      "babelCodeSha256": "cc13b357db0857150494482b0a1ce9a57da410f201dabe19a73d65ade4a457ff",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const values = [];\n  values.push((__prev_0 => (__old_1 => (count(__prev_0), __old_1))(__prev_0++))(count()));\n  values.push((__prev_2 => (count(++__prev_2), __prev_2))(count()));\n  values.push((__next_3 => (count(__next_3), __next_3))(count() + 4));\n  values.push(count());\n  return values;\n}",
+      "expected": [1, 3, 7, 7]
+    },
+    {
+      "id": "derived-invalidation",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/derived-invalidation.tsx",
+          "line": 8,
+          "column": 15
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/derived-invalidation.tsx",
+          "line": 10,
+          "column": 15
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/derived-invalidation.tsx",
+          "line": 12,
+          "column": 15
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/derived-invalidation.tsx",
+          "line": 14,
+          "column": 15
+        }
+      ],
+      "babelCodeSha256": "721aa9b2db04b47f89807d2caebd722be96750422dc74ba74a01d279d5b94051",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const flag = (0, _internal.__fictUseSignal)(__fictCtx, false, {\n    name: \"flag\"\n  });\n  const left = (0, _internal.__fictUseSignal)(__fictCtx, 2, {\n    name: \"left\"\n  });\n  const right = (0, _internal.__fictUseSignal)(__fictCtx, 7, {\n    name: \"right\"\n  });\n  const chosen = (0, _internal.__fictUseMemo)(__fictCtx, () => flag() ? left() : right(), {\n    name: \"chosen\"\n  });\n  const values = [];\n  values.push(chosen());\n  right(8);\n  values.push(chosen());\n  flag(true);\n  values.push(chosen());\n  left(3);\n  values.push(chosen());\n  return values;\n}",
+      "expected": [7, 8, 2, 3]
+    },
+    {
+      "id": "effect-reexecution",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/effect-reexecution.tsx",
+          "line": 5,
+          "column": 29
+        }
+      ],
+      "babelCodeSha256": "4a3955f49c9453653a4f12961fd378578638ffff29e7024b9ea9e2262a30f115",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const values = [];\n  (0, _internal.__fictUseEffect)(__fictCtx, () => values.push(count()));\n  count(2);\n  count(3);\n  return values;\n}",
+      "expected": [1, 2, 3]
+    },
+    {
+      "id": "projected-mutations",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-M",
+          "severity": "warning",
+          "message": "Direct mutation of nested property detected; use immutable update or $store helpers",
+          "fileName": "/oracle/projected-mutations.tsx",
+          "line": 4,
+          "column": 19
+        },
+        {
+          "code": "FICT-M",
+          "severity": "warning",
+          "message": "Direct mutation of nested property detected; use immutable update or $store helpers",
+          "fileName": "/oracle/projected-mutations.tsx",
+          "line": 4,
+          "column": 34
+        },
+        {
+          "code": "FICT-M",
+          "severity": "warning",
+          "message": "Direct mutation of nested property detected; use immutable update or $store helpers",
+          "fileName": "/oracle/projected-mutations.tsx",
+          "line": 4,
+          "column": 56
+        }
+      ],
+      "babelCodeSha256": "405553d21f7958bb8c415b306c1e9679257153c922a0ac6cb70b21580e9f8502",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const state = (0, _internal.__fictUseSignal)(__fictCtx, {\n    count: 1,\n    nested: {\n      value: 2\n    }\n  }, {\n    name: \"state\"\n  });\n  const values = [state().count++, ++state().nested.value, state().count += 3];\n  return {\n    values,\n    state: state()\n  };\n}",
+      "expected": {
+        "state": { "count": 5, "nested": { "value": 3 } },
+        "values": [1, 3, 5]
+      }
+    },
+    {
+      "id": "destructuring-evaluation",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/destructuring-evaluation.tsx",
+          "line": 6,
+          "column": 31
+        }
+      ],
+      "babelCodeSha256": "4bd603de2bd946205442533ca678a2dfaee3e9b82fcaeaa7e93fc14a41fc37db",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 2, {\n    name: \"count\"\n  });\n  const calls = [];\n  const source = {};\n  const _source$value = source.value;\n  const value = _source$value === void 0 ? (calls.push(count()), count() * 2) : _source$value;\n  const __region_2 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const first = (0, _internal.__fictUseMemo)(__fictCtx, () => value, {\n      name: \"first\"\n    }, 1000);\n    return {\n      first\n    };\n  }, {\n    internal: true\n  }, 1001);\n  const {\n    first\n  } = __region_2();\n  count(3);\n  const __region_3 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const second = (0, _internal.__fictUseMemo)(__fictCtx, () => value, {\n      name: \"second\"\n    }, 1002);\n    return {\n      second\n    };\n  }, {\n    internal: true\n  }, 1003);\n  const {\n    second\n  } = __region_3();\n  return {\n    calls,\n    first: first(),\n    second: second()\n  };\n}",
+      "expected": { "calls": [2], "first": 4, "second": 4 }
+    },
+    {
+      "id": "structured-hook-return",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R005",
+          "severity": "warning",
+          "message": "Function captures reactive variable(s): counter. Pass them as parameters or memoize explicitly to avoid hidden dependencies.",
+          "fileName": "/oracle/structured-hook-return.tsx",
+          "line": 9,
+          "column": 15
+        },
+        {
+          "code": "FICT-R005",
+          "severity": "warning",
+          "message": "Function captures reactive variable(s): counter. Pass them as parameters or memoize explicitly to avoid hidden dependencies.",
+          "fileName": "/oracle/structured-hook-return.tsx",
+          "line": 11,
+          "column": 15
+        }
+      ],
+      "babelCodeSha256": "6ecf487d8a6ae7d441df5213d8ca24193a45f67bb0bf324a0dad322226d55ab6",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction useCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  return {\n    count,\n    increment: () => (__prev_0 => (__old_1 => (count(__prev_0), __old_1))(__prev_0++))(count())\n  };\n}\nfunction Scenario() {\n  const counter = useCounter();\n  const values = [];\n  values.push(counter.count());\n  counter.increment();\n  values.push(counter.count());\n  return values;\n}",
+      "expected": [1, 2]
+    },
+    {
+      "id": "reactive-loop-control",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/reactive-loop-control.tsx",
+          "line": 6,
+          "column": 17
+        }
+      ],
+      "babelCodeSha256": "65923d944b64c4039c4468e49bcfcd2a4bcb5f94cf22c7df3504bffd47103429",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const values = [];\n  while (count() < 4) {\n    values.push(count());\n    (__prev_0 => count(++__prev_0))(count());\n  }\n  return values;\n}",
+      "expected": [1, 2, 3]
+    },
+    {
+      "id": "try-finally-order",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/try-finally-order.tsx",
+          "line": 6,
+          "column": 17
+        },
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/try-finally-order.tsx",
+          "line": 8,
+          "column": 17
+        }
+      ],
+      "babelCodeSha256": "ffce92999a25d20da8a483bfbe004f0070d7af48aca86edd8b83d25ee0d18ca7",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const values = [];\n  try {\n    values.push(count());\n    count(2);\n    values.push(count());\n  } finally {\n    values.push(\"finally\");\n  }\n  return values;\n}",
+      "expected": [1, 2, "finally"]
+    },
+    {
+      "id": "explicit-memo-invalidation",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/explicit-memo-invalidation.tsx",
+          "line": 7,
+          "column": 15
+        }
+      ],
+      "babelCodeSha256": "2975d350522c5e3851fc58e64a9a872ee27a33cdd2113155ca4dd5e32767a325",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 2, {\n    name: \"count\"\n  });\n  const doubled = (0, _fict.$memo)(() => count() * 2);\n  const values = (0, _internal.__fictUseMemo)(__fictCtx, () => [doubled()], {\n    name: \"values\"\n  });\n  count(4);\n  values().push(doubled());\n  return values();\n}",
+      "expected": [8, 8]
+    },
+    {
+      "id": "optional-nullish-dependency",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/optional-nullish-dependency.tsx",
+          "line": 7,
+          "column": 15
+        }
+      ],
+      "babelCodeSha256": "1084783938aa966f5fec483abf6971f43c5bc1ca13803fcf53bbdf7bc2b14720",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const state = (0, _internal.__fictUseSignal)(__fictCtx, null, {\n    name: \"state\"\n  });\n  const selected = (0, _internal.__fictUseMemo)(__fictCtx, () => state()?.value ?? 5, {\n    name: \"selected\"\n  });\n  const values = (0, _internal.__fictUseMemo)(__fictCtx, () => [selected()], {\n    name: \"values\"\n  });\n  state({\n    value: 9\n  });\n  values().push(selected());\n  return values();\n}",
+      "expected": [9, 9]
+    },
+    {
+      "id": "argument-and-negative-zero",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "10a906e4d29472fe715d193a5aff2d81e6c1834c9492106474827d0a8da0b570",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario(seed) {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, seed, {\n    name: \"count\"\n  });\n  const reciprocal = (0, _internal.__fictUseMemo)(__fictCtx, () => 1 / count(), {\n    name: \"reciprocal\"\n  });\n  count(-0);\n  return {\n    initial: reciprocal(),\n    updated: 1 / count()\n  };\n}",
+      "expected": {
+        "initial": { "$type": "-infinity" },
+        "updated": { "$type": "-infinity" }
+      }
+    }
+  ]
+}
