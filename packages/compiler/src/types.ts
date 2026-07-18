@@ -216,6 +216,10 @@ export interface AnalyzeRequest {
   moduleId?: string | null
   language?: SourceLanguage | null
   moduleKind?: ModuleKind | null
+  /** Bundler-authoritative snapshot used to classify imported reactive values and hooks. */
+  metadata?: ResolvedMetadataInput[]
+  /** Diagnostics produced by the official host before native analysis. */
+  integrationDiagnostics?: FictDiagnostic[]
   options?: NativeAnalyzeOptions
 }
 

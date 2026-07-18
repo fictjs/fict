@@ -320,6 +320,12 @@ pub struct AnalyzeRequest {
     /// Explicit module grammar, or infer from the filename.
     #[serde(default)]
     pub module_kind: Option<ModuleKind>,
+    /// Bundler-authoritative resolved metadata snapshot.
+    #[serde(default)]
+    pub metadata: Vec<ResolvedMetadataInput>,
+    /// Diagnostics supplied by an official integration before analysis.
+    #[serde(default)]
+    pub integration_diagnostics: Vec<Diagnostic>,
     /// Tooling and compiler analysis controls.
     #[serde(default)]
     pub options: AnalyzeOptions,
@@ -454,8 +460,8 @@ impl AnalyzeRequest {
             module_kind: self.module_kind,
             input_source_map: None,
             options: self.options.compiler_options,
-            metadata: Vec::new(),
-            integration_diagnostics: Vec::new(),
+            metadata: self.metadata,
+            integration_diagnostics: self.integration_diagnostics,
         }
         .normalize()?;
 
@@ -470,6 +476,8 @@ impl AnalyzeRequest {
             include_diagnostics: self.options.include_diagnostics,
             verbosity: self.options.verbosity,
             compiler_options: normalized.options,
+            metadata: normalized.metadata,
+            integration_diagnostics: normalized.integration_diagnostics,
         })
     }
 }
@@ -541,6 +549,10 @@ pub struct NormalizedAnalyzeRequest {
     pub verbosity: AnalyzeVerbosity,
     /// Validated pure compiler policy/options.
     pub compiler_options: CompilerOptions,
+    /// Validated metadata snapshot shared with compilation.
+    pub metadata: Vec<ResolvedMetadataInput>,
+    /// Integration-owned diagnostics shared with compilation.
+    pub integration_diagnostics: Vec<Diagnostic>,
 }
 
 /// Fail-closed request normalization error.
@@ -687,8 +699,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        CompileRequest, CompileRequestError, CompilerOptions, ModuleKind, ScanRequest,
-        SourceLanguage,
+        AnalyzeRequest, CompileRequest, CompileRequestError, CompilerOptions, ModuleKind,
+        ScanRequest, SourceLanguage,
     };
     use crate::{COMPILER_PROTOCOL_VERSION, compile};
 
@@ -785,6 +797,56 @@ mod tests {
             "{}",
             result.code
         );
+    }
+
+    #[test]
+    fn analysis_normalization_validates_and_preserves_graph_host_inputs() {
+        let payload = json!({
+            "code": "import { count } from './dep'",
+            "filename": "consumer.ts",
+            "metadata": [{
+                "request": "./dep",
+                "resolvedId": "/src/dep.ts",
+                "status": "resolved",
+                "metadata": {
+                    "version": 1,
+                    "exports": { "count": "signal" }
+                },
+                "fingerprint": "sha256:dep"
+            }],
+            "integrationDiagnostics": [{
+                "code": "FICT-R006",
+                "severity": "warning",
+                "message": "integration warning",
+                "primarySpan": null,
+                "secondaryLabels": [],
+                "help": null,
+                "notes": [],
+                "guaranteeClass": "advisory"
+            }]
+        });
+        let input: AnalyzeRequest =
+            serde_json::from_value(payload.clone()).expect("deserialize analysis request");
+        let normalized = input.normalize().expect("normalize analysis request");
+        assert_eq!(normalized.metadata.len(), 1);
+        assert_eq!(normalized.metadata[0].request, "./dep");
+        assert_eq!(normalized.integration_diagnostics.len(), 1);
+        assert_eq!(
+            normalized.integration_diagnostics[0].code.as_str(),
+            "FICT-R006"
+        );
+
+        let mut duplicate = payload;
+        duplicate["metadata"] = json!([
+            duplicate["metadata"][0].clone(),
+            duplicate["metadata"][0].clone()
+        ]);
+        let duplicate: AnalyzeRequest =
+            serde_json::from_value(duplicate).expect("deserialize duplicate metadata request");
+        assert!(matches!(
+            duplicate.normalize(),
+            Err(CompileRequestError::DuplicateMetadataRequest(request)) if request == "./dep"
+        ));
     }
 
     #[test]

@@ -810,6 +810,54 @@ test('same-module hook metadata protects structured reactive members', () => {
   }
 })
 
+test('compile and analyze consume the same resolved metadata snapshot', () => {
+  const code = `
+    import { count, useCounter } from './dep.js'
+    export function App() {
+      const api = useCounter()
+      return <div>{count}{api.count}</div>
+    }
+  `
+  const metadata = [
+    {
+      request: './dep.js',
+      resolvedId: '/fixtures/dep.js',
+      status: 'resolved',
+      metadata: {
+        version: 1,
+        exports: { count: 'signal' },
+        hooks: { useCounter: { objectProps: { count: 'signal' } } },
+      },
+      fingerprint: 'sha256:dep',
+    },
+  ]
+  const compilerOptions = { strictGuarantee: false }
+  const compiled = binding.transformSync({
+    code,
+    filename: '/fixtures/metadata-consumer.tsx',
+    metadata,
+    options: compilerOptions,
+  })
+  const analyzed = binding.analyzeSync({
+    code,
+    filename: '/fixtures/metadata-consumer.tsx',
+    metadata,
+    options: { compilerOptions },
+  })
+
+  assert.deepEqual(compiled.diagnostics, [])
+  assert.match(compiled.code, /count\(\)/)
+  assert.match(compiled.code, /api\.count\(\)/)
+  assert.deepEqual(analyzed.diagnostics, [])
+  const app = analyzed.components.find(component => component.name === 'App')
+  assert.ok(app)
+  const dependencies = app.trace.flatMap(({ markers }) =>
+    markers.flatMap(marker => marker.deps ?? []),
+  )
+  assert.ok(dependencies.includes('count'))
+  assert.ok(dependencies.includes('api.count'))
+})
+
 test('semantic EmitIR identities preserve destructuring and authored export names', async () => {
   const destructured = await compileAndImport(
     `
@@ -1324,7 +1372,7 @@ test('program compiler-disable preserves authored Fict syntax and wins over enab
 
 test('fict-ignore suppressions apply before compile and analyze escalation', () => {
   const code = `
-    import { $memo } from 'fict'
+    import { $memo } from 'fict' // fict-ignore FICT-R006
     // fict-ignore-next-line FICT-M\u2028    const value = $memo(() => { console.log('side') })
   `
   const compilerOptions = {
@@ -1346,9 +1394,25 @@ test('fict-ignore suppressions apply before compile and analyze escalation', () 
     code,
     filename: '/fixtures/suppressed.ts',
     options: { compilerOptions },
+    integrationDiagnostics: [
+      {
+        code: 'FICT-R006',
+        severity: 'warning',
+        message: 'integration warning',
+        primarySpan: { start: code.indexOf('import'), end: code.indexOf('import') },
+        secondaryLabels: [],
+        help: null,
+        notes: [],
+        guaranteeClass: 'advisory',
+      },
+    ],
   })
   assert.equal(
     analyzed.diagnostics.some(({ code: diagnosticCode }) => diagnosticCode === 'FICT-M003'),
+    false,
+  )
+  assert.equal(
+    analyzed.diagnostics.some(({ code: diagnosticCode }) => diagnosticCode === 'FICT-R006'),
     false,
   )
 

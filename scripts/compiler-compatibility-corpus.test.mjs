@@ -586,6 +586,7 @@ test('retains native runtime and option compatibility outcomes', () => {
     'derived cycles fail closed even when strict guarantees are disabled',
     'reserved compiler macros fail closed without direct Fict imports',
     'same-module hook metadata protects structured reactive members',
+    'compile and analyze consume the same resolved metadata snapshot',
     'semantic EmitIR identities preserve destructuring and authored export names',
     'intrinsic children props become child content without leaking attributes',
     'raw-text and RCDATA expressions bind literal textContent',

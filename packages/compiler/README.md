@@ -63,9 +63,9 @@ published platform packages.
 
 Callbacks, filesystem resolution, and bundler graph objects do not cross the
 native boundary. Hosts scan imports, resolve their own graph, and pass a
-`ResolvedMetadataInput[]` snapshot on each transform request. Diagnostics,
-source maps, compiler artifacts, stats, and module metadata are returned as
-structured data.
+`ResolvedMetadataInput[]` snapshot on each transform or analyze request.
+Diagnostics, source maps, compiler artifacts, stats, and module metadata are
+returned as structured data.
 
 The native options include:
 

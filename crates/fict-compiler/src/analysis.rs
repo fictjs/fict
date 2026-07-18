@@ -252,7 +252,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
                 "FICT-R004",
                 DiagnosticSeverity::Error,
             ),
-            resolved_metadata: Vec::new(),
+            resolved_metadata: request.metadata.clone(),
         },
     );
     let suppressions = build
@@ -260,7 +260,8 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
         .as_ref()
         .map(|frontend| frontend.source_facts.suppressions.clone())
         .unwrap_or_default();
-    let mut diagnostics = build.diagnostics;
+    let mut diagnostics = request.integration_diagnostics;
+    diagnostics.extend(build.diagnostics);
     if build
         .frontend
         .as_ref()
@@ -817,10 +818,20 @@ impl<'source> SourceIndex<'source> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use fict_diagnostics::{
+        Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
+    };
+    use fict_metadata::{
+        HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
+        ResolvedMetadataInput,
+    };
+
     use super::{AnalyzeDiagnosticSeverity, TraceMarkerKind, analyze};
     use crate::{
         AnalyzeOptions, AnalyzeRequest, AnalyzeVerbosity, COMPILER_PROTOCOL_VERSION,
-        WarningsAsErrors,
+        CompileRequest, WarningsAsErrors, compile,
     };
 
     fn request(code: &str, filename: &str) -> AnalyzeRequest {
@@ -831,6 +842,8 @@ mod tests {
             module_id: None,
             language: None,
             module_kind: None,
+            metadata: Vec::new(),
+            integration_diagnostics: Vec::new(),
             options: AnalyzeOptions {
                 verbosity: AnalyzeVerbosity::Verbose,
                 ..AnalyzeOptions::default()
@@ -908,6 +921,137 @@ mod tests {
         let result = analyze(input);
         assert!(result.components.is_empty());
         assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn shares_resolved_import_metadata_with_compilation() {
+        let source = r#"
+            import { count } from './dep';
+            import { useCounter } from './hooks';
+            export function App() {
+                const api = useCounter();
+                return <div>{count}{api.count}</div>;
+            }
+        "#;
+        let metadata = vec![
+            ResolvedMetadataInput {
+                request: "./dep".into(),
+                resolved_id: Some("/src/dep.ts".into()),
+                status: MetadataResolutionStatus::Resolved,
+                metadata: Some(ModuleReactiveMetadata {
+                    exports: BTreeMap::from([("count".into(), ReactiveExportKind::Signal)]),
+                    ..ModuleReactiveMetadata::new()
+                }),
+                fingerprint: "sha256:dep".into(),
+            },
+            ResolvedMetadataInput {
+                request: "./hooks".into(),
+                resolved_id: Some("/src/hooks.ts".into()),
+                status: MetadataResolutionStatus::Resolved,
+                metadata: Some(ModuleReactiveMetadata {
+                    hooks: BTreeMap::from([(
+                        "useCounter".into(),
+                        HookReturnInfo {
+                            object_props: BTreeMap::from([(
+                                "count".into(),
+                                ReactiveExportKind::Signal,
+                            )]),
+                            ..HookReturnInfo::default()
+                        },
+                    )]),
+                    ..ModuleReactiveMetadata::new()
+                }),
+                fingerprint: "sha256:hooks".into(),
+            },
+        ];
+        let mut analyze_request = request(source, "consumer.tsx");
+        analyze_request.metadata = metadata.clone();
+        let compile_result = compile(CompileRequest {
+            protocol_version: COMPILER_PROTOCOL_VERSION,
+            code: source.into(),
+            filename: "consumer.tsx".into(),
+            module_id: None,
+            public_module_id: None,
+            language: None,
+            module_kind: None,
+            input_source_map: None,
+            options: analyze_request.options.compiler_options.clone(),
+            metadata,
+            integration_diagnostics: Vec::new(),
+        });
+        let analyze_result = analyze(analyze_request);
+
+        assert!(
+            !compile_result.has_errors(),
+            "{:?}",
+            compile_result.diagnostics
+        );
+        assert!(
+            compile_result.code.contains("count()"),
+            "{}",
+            compile_result.code
+        );
+        assert!(
+            compile_result.code.contains("api.count()"),
+            "{}",
+            compile_result.code
+        );
+        assert!(
+            analyze_result.diagnostics.is_empty(),
+            "{:?}",
+            analyze_result.diagnostics
+        );
+        let app = analyze_result
+            .components
+            .iter()
+            .find(|component| component.name == "App")
+            .expect("App analysis");
+        let dependencies: Vec<_> = app
+            .trace
+            .iter()
+            .flat_map(|line| &line.markers)
+            .flat_map(|marker| marker.deps.iter().flatten())
+            .collect();
+        assert!(dependencies.iter().any(|dependency| *dependency == "count"));
+        assert!(
+            dependencies
+                .iter()
+                .any(|dependency| dependency.as_str() == "api.count")
+        );
+    }
+
+    #[test]
+    fn includes_integration_diagnostics_in_analysis_policy() {
+        let mut input = request(
+            "export function App() { return <div />; }",
+            "integration.tsx",
+        );
+        input.options.compiler_options.strict_guarantee = false;
+        input.integration_diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::new("FICT-R006").expect("diagnostic code"),
+                DiagnosticSeverity::Warning,
+                "integration warning",
+            )
+            .with_primary_span(SourceSpan::empty(0))
+            .with_guarantee_class(GuaranteeClass::Advisory),
+        );
+
+        let result = analyze(input);
+
+        assert!(
+            result
+                .components
+                .iter()
+                .any(|component| component.name == "App")
+        );
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "FICT-R006"
+                && diagnostic.message == "integration warning"
+                && diagnostic.severity == AnalyzeDiagnosticSeverity::Warning
+                && diagnostic.line == 1
+                && diagnostic.column == 1
+        }));
     }
 
     #[test]

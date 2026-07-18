@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   COMPILER_PROTOCOL_VERSION,
   MODULE_REACTIVE_METADATA_VERSION,
+  type AnalyzeRequest,
   type CompileRequest,
   type CompileResult,
   type ScanRequest,
@@ -77,5 +78,41 @@ describe('native compile protocol', () => {
 
     expect(JSON.parse(JSON.stringify(request))).toEqual(request)
     expect(JSON.parse(JSON.stringify(result))).toEqual(result)
+  })
+
+  it('exposes graph metadata and integration diagnostics to analysis requests', () => {
+    const request: AnalyzeRequest = {
+      protocolVersion: COMPILER_PROTOCOL_VERSION,
+      code: `import { count } from './dep'`,
+      filename: '/src/consumer.ts',
+      moduleId: '/src/consumer.ts?client',
+      metadata: [
+        {
+          request: './dep',
+          resolvedId: '/src/dep.ts',
+          status: 'resolved',
+          metadata: {
+            version: MODULE_REACTIVE_METADATA_VERSION,
+            exports: { count: 'signal' },
+          },
+          fingerprint: 'sha256:dep',
+        },
+      ],
+      integrationDiagnostics: [
+        {
+          code: 'FICT-R006',
+          severity: 'warning',
+          message: 'integration warning',
+          primarySpan: null,
+          secondaryLabels: [],
+          help: null,
+          notes: [],
+          guaranteeClass: 'advisory',
+        },
+      ],
+      options: { compilerOptions: { strictGuarantee: false } },
+    }
+
+    expect(JSON.parse(JSON.stringify(request))).toEqual(request)
   })
 })
