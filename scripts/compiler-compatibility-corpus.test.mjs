@@ -487,6 +487,26 @@ test('ports the Babel VNode prop-order domain through executable native output',
   assert.match(ci, /native-compiler-vnode-props-order\.test\.mjs/)
 })
 
+test('binds native cache identity to the complete Rust build input set', () => {
+  const runtime = read('scripts/native-compiler-build-id.test.mjs')
+  for (const marker of [
+    'fict-compiler-build-id-v1',
+    'rust-toolchain.toml',
+    "entry.name.startsWith('fict-')",
+    'compilerBuildRevision',
+    'simulated source change',
+  ]) {
+    assert.match(runtime, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.match(runtime, /assert\.equal\(info\.compilerBuildId/)
+  assert.match(runtime, /assert\.notEqual\(changed, baseline\)/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:build-id/)
+  assert.match(packageJson, /native-compiler-build-id\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-build-id\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
