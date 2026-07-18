@@ -73,6 +73,14 @@ without a frozen audit row and 132 compiler callsites under parameterized
 execution. Its corpus links are explicitly contextual: they do not claim that
 the old assertion or each runtime loop instance executes in CI.
 
+The 34 no-audit-row files have a separate domain ledger whose schema records
+whether each replacement is runtime behavior, emitted-output/diagnostic
+contract, migrated host behavior, structural invariant, type contract, gate, or
+intentional removal. In particular, directive and optimizer replacement claims
+are now bound to executable compiler-disable, no-memo, `use pure`, output
+filtering, and runtime barrier tests; parse and HIR flags alone are not accepted
+as their migration evidence.
+
 The machine-readable
 [compatibility evidence scope](../../../scripts/fixtures/compiler_compatibility_evidence_scope.json)
 keeps those claim boundaries release-visible. It separately identifies the

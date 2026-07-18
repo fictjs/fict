@@ -254,6 +254,23 @@ The inventory is pinned to the same legacy source-tree and extraction-input
 digests as the corpus, so changing the old suite or audit requires a reviewed
 regeneration rather than silently preserving the 73-file headline.
 
+The 34 files with no audit row use a separate
+[legacy domain ledger](../../scripts/fixtures/legacy_0_28_test_domain_coverage.json).
+Its schema declares the strength of every replacement claim instead of treating
+all marker matches alike: 11 domains have executable runtime behavior, four
+assert emitted output or diagnostics, four execute migrated host contracts,
+eight assert structural IR/analysis invariants, one compiles the public type
+contract, three execute tooling or release gates, and three are documented
+intentional removals. Structural and gate evidence is explicitly not presented
+as runtime equivalence.
+
+The directive domain is now behavioral evidence, not parse/flag evidence. It
+executes compiler-disable precedence, module and nested no-memo lowering,
+function-pure DCE/CSE with mutation and coercion barriers, and exact removal of
+`use no memo`/`use pure` while preserving authored directives. The optimizer
+domain likewise combines internal fixed-point/SSA invariants with executable
+optimization on/off and `use pure` runtime results.
+
 Status review is not used as a proxy for diagnostic compatibility. The
 [diagnostic deviation review](../../scripts/fixtures/compiler_diagnostic_deviation_reviews.json)
 binds the exact ordered Babel code/severity sequence and Rust

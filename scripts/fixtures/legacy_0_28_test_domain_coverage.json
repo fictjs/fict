@@ -1,7 +1,53 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "baseline": "@fictjs/compiler@0.28.0",
   "unrepresentedFileCount": 34,
+  "claimBoundary": "A replacement marker proves only the domain's declared assertion level; structural and gate evidence are not runtime-equivalence evidence.",
+  "assertionLevelDefinitions": {
+    "runtime-behavior": "Current compiled output executes and its observable result is asserted.",
+    "output-contract": "Compilation, analysis, emitted code, or diagnostics are asserted without claiming runtime execution.",
+    "host-contract": "The migrated host integration executes its replacement contract.",
+    "structural-invariant": "Typed IR, analysis, or verifier invariants are asserted without claiming legacy observable semantics.",
+    "type-contract": "The public type surface is compiled in the supported module systems.",
+    "gate-contract": "A tooling or release gate executes and rejects contract drift.",
+    "intentional-removal": "The retired private surface is documented and its artifacts remain absent."
+  },
+  "domainAssertionLevels": {
+    "api-type-contract": "type-contract",
+    "cache-fingerprint-path": "host-contract",
+    "cache-fingerprint": "host-contract",
+    "codegen-auto-extract": "runtime-behavior",
+    "codegen-expression-deps": "runtime-behavior",
+    "codegen-reactive-accessors": "runtime-behavior",
+    "compiler-complexity-report": "gate-contract",
+    "conformance-matrix": "output-contract",
+    "delegated-events-parity": "output-contract",
+    "dependency-key": "structural-invariant",
+    "diagnostic-docs": "gate-contract",
+    "directives": "runtime-behavior",
+    "fine-grained-dom": "runtime-behavior",
+    "hir-builder": "structural-invariant",
+    "hir-fuzzing": "structural-invariant",
+    "module-metadata-safety": "host-contract",
+    "optimizer-bench-cli": "intentional-removal",
+    "optimizer-bench-sampling": "intentional-removal",
+    "optimizer-diff": "runtime-behavior",
+    "optimizer": "runtime-behavior",
+    "regions": "structural-invariant",
+    "release-strict-scope": "gate-contract",
+    "runtime-abi": "runtime-behavior",
+    "scopes": "structural-invariant",
+    "shapes": "structural-invariant",
+    "ssa": "structural-invariant",
+    "state-machine-name-collision": "runtime-behavior",
+    "structurize": "structural-invariant",
+    "template-extractor": "runtime-behavior",
+    "tooling-export-surface": "host-contract",
+    "tooling-minimize": "intentional-removal",
+    "using-declaration": "output-contract",
+    "validation": "output-contract",
+    "vnode-props-order": "runtime-behavior"
+  },
   "domains": [
     {
       "name": "api-type-contract",
@@ -191,16 +237,24 @@
     {
       "name": "directives",
       "legacyFile": "packages/compiler/test/directives.test.ts",
-      "disposition": "architecture-replacement",
-      "summary": "OXC frontend facts and verified HIR own directive parsing, scope identity, and function policy.",
+      "disposition": "behavior-port",
+      "summary": "Directive evidence executes disable precedence, module no-memo lowering, pure optimization barriers, and exact removal of compiler-only directives while preserving authored directives.",
       "evidence": [
         {
-          "path": "crates/fict-compiler-oxc/tests/frontend.rs",
-          "markers": ["collects_program_and_function_directive_prologues_by_scope"]
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": [
+            "program compiler-disable preserves authored Fict syntax and wins over enable",
+            "module no-memo policy reaches top-level and nested lowering",
+            "use pure drives DCE and CSE while preserving mutation and coercion barriers"
+          ]
         },
         {
-          "path": "crates/fict-compiler-oxc/tests/hir_builder.rs",
-          "markers": ["applies_function_directives_and_erases_type_only_binding_ids"]
+          "path": "crates/fict-compiler-oxc/src/emit_codegen/tests.rs",
+          "markers": ["consumes_only_fict_optimization_directives_in_every_scope"]
+        },
+        {
+          "path": "scripts/fixtures/compiler_request_matrix.json",
+          "markers": ["consumed-optimization-directives", "codeExcludes", "use no memo", "use pure"]
         }
       ]
     },
@@ -314,7 +368,7 @@
       "name": "optimizer",
       "legacyFile": "packages/compiler/test/optimizer.test.ts",
       "disposition": "architecture-replacement",
-      "summary": "Rust reactivity tests directly verify constant propagation, CSE, DCE, barriers, SSA reads, and fixed-point failure policy.",
+      "summary": "Rust reactivity invariants and executable native output jointly verify constant propagation, CSE, DCE, function-level use-pure semantics, mutation/coercion barriers, SSA reads, and fixed-point failure policy.",
       "evidence": [
         {
           "path": "crates/fict-reactivity/tests/optimize_constants.rs",
@@ -323,6 +377,14 @@
             "fails_closed_when_the_fixed_point_budget_is_exhausted",
             "cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier"
           ]
+        },
+        {
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": ["use pure drives DCE and CSE while preserving mutation and coercion barriers"]
+        },
+        {
+          "path": "scripts/native-compiler-optimizer-diff.test.mjs",
+          "markers": ["optimization on/off and safe/full profiles preserve observable semantics"]
         }
       ]
     },

@@ -28,6 +28,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'babelSemanticOracle',
     'diagnosticDeviationReview',
     'legacyAssertionInventory',
+    'legacyDomainLedger',
     'rustCodegenCorpus',
   ])
 
@@ -46,6 +47,21 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.ok(inventoryScope.doesNotProve.includes('assertion-level-semantic-parity'))
   assert.ok(read(inventoryScope.generator).length > 0)
   assert.ok(read(inventoryScope.ciTest).length > 0)
+
+  const domainScope = scope.assets.legacyDomainLedger
+  const domainLedger = readJson(domainScope.artifact)
+  const observedAssertionLevels = Object.values(domainLedger.domainAssertionLevels).reduce(
+    (counts, level) => ({ ...counts, [level]: (counts[level] ?? 0) + 1 }),
+    {},
+  )
+  assert.equal(domainScope.domainCount, domainLedger.domains.length)
+  assert.deepEqual(domainScope.assertionLevelCounts, observedAssertionLevels)
+  assert.equal(domainScope.assertionLevel, 'domain-scoped-migration-evidence')
+  assert.ok(domainScope.proves.includes('declared-evidence-strength-per-domain'))
+  assert.ok(
+    domainScope.doesNotProve.includes('runtime-equivalence-for-structural-invariant-domains'),
+  )
+  assert.ok(read(domainScope.ciTest).length > 0)
 
   const codegen = scope.assets.rustCodegenCorpus
   const codegenCorpus = readJson(codegen.artifact)

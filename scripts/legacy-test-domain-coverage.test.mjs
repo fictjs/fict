@@ -52,18 +52,38 @@ const dispositions = new Set([
   'host-migration',
   'intentional-removal',
 ])
+const assertionLevels = new Set([
+  'runtime-behavior',
+  'output-contract',
+  'host-contract',
+  'structural-invariant',
+  'type-contract',
+  'gate-contract',
+  'intentional-removal',
+])
 
 test('accounts for the exact 34 legacy test domains missing from the extracted corpus', () => {
-  assert.equal(manifest.schemaVersion, 1)
+  assert.equal(manifest.schemaVersion, 2)
   assert.equal(manifest.baseline, '@fictjs/compiler@0.28.0')
   assert.equal(manifest.unrepresentedFileCount, expectedDomains.length)
   assert.deepEqual(manifest.domains.map(domain => domain.name).sort(), [...expectedDomains].sort())
   assert.equal(new Set(manifest.domains.map(domain => domain.name)).size, expectedDomains.length)
+  assert.match(manifest.claimBoundary, /structural and gate evidence are not runtime-equivalence/)
+  assert.deepEqual(
+    Object.keys(manifest.assertionLevelDefinitions).sort(),
+    [...assertionLevels].sort(),
+  )
+  assert.deepEqual(Object.keys(manifest.domainAssertionLevels).sort(), [...expectedDomains].sort())
+  assert.ok(
+    Object.values(manifest.assertionLevelDefinitions).every(definition => definition.length >= 60),
+  )
 })
 
 test('keeps every replacement or removal claim bound to live repository evidence', () => {
   for (const domain of manifest.domains) {
     assert.ok(dispositions.has(domain.disposition), `${domain.name}: unknown disposition`)
+    const assertionLevel = manifest.domainAssertionLevels[domain.name]
+    assert.ok(assertionLevels.has(assertionLevel), `${domain.name}: unknown assertion level`)
     assert.equal(
       domain.legacyFile,
       `packages/compiler/test/${domain.name}.test.ts`,
@@ -88,13 +108,19 @@ test('keeps every replacement or removal claim bound to live repository evidence
 
     const retiredArtifacts = domain.retiredArtifacts ?? []
     if (domain.disposition === 'intentional-removal') {
+      assert.equal(assertionLevel, 'intentional-removal', `${domain.name}: removal assertion level`)
       assert.ok(retiredArtifacts.length > 0, `${domain.name}: removed artifacts are required`)
       assert.ok(
         domain.evidence.some(evidence => evidence.path.startsWith('docs/')),
         `${domain.name}: intentional removal needs a documented decision`,
       )
     } else {
+      assert.notEqual(assertionLevel, 'intentional-removal', `${domain.name}: live domain level`)
       assert.deepEqual(retiredArtifacts, [], `${domain.name}: only removals may retire artifacts`)
+      assert.ok(
+        domain.evidence.some(evidence => /(?:test|pipeline\.rs|package\.json)/.test(evidence.path)),
+        `${domain.name}: executable or compiled evidence is required`,
+      )
     }
     for (const artifact of retiredArtifacts) {
       assert.equal(
@@ -104,6 +130,53 @@ test('keeps every replacement or removal claim bound to live repository evidence
       )
     }
   }
+})
+
+test('uses behavioral evidence for observable legacy semantics', () => {
+  for (const domain of manifest.domains) {
+    const assertionLevel = manifest.domainAssertionLevels[domain.name]
+    if (domain.disposition === 'behavior-port') {
+      assert.ok(
+        ['runtime-behavior', 'output-contract', 'host-contract', 'gate-contract'].includes(
+          assertionLevel,
+        ),
+        `${domain.name}: behavior ports cannot rely on ${assertionLevel}`,
+      )
+    }
+    if (domain.disposition === 'host-migration') {
+      assert.equal(assertionLevel, 'host-contract', `${domain.name}: host contract`)
+    }
+    if (assertionLevel === 'runtime-behavior') {
+      assert.ok(
+        domain.evidence.some(evidence => /test(?:s)?[/.]|\.test\./.test(evidence.path)),
+        `${domain.name}: runtime behavior needs executable test evidence`,
+      )
+    }
+  }
+
+  const directives = manifest.domains.find(domain => domain.name === 'directives')
+  assert.equal(directives.disposition, 'behavior-port')
+  assert.equal(manifest.domainAssertionLevels.directives, 'runtime-behavior')
+  const directiveMarkers = directives.evidence.flatMap(evidence => evidence.markers)
+  for (const marker of [
+    'program compiler-disable preserves authored Fict syntax and wins over enable',
+    'module no-memo policy reaches top-level and nested lowering',
+    'use pure drives DCE and CSE while preserving mutation and coercion barriers',
+    'consumes_only_fict_optimization_directives_in_every_scope',
+    'consumed-optimization-directives',
+  ]) {
+    assert.ok(directiveMarkers.includes(marker), `directives: missing ${marker}`)
+  }
+
+  const optimizer = manifest.domains.find(domain => domain.name === 'optimizer')
+  assert.equal(manifest.domainAssertionLevels.optimizer, 'runtime-behavior')
+  assert.ok(
+    optimizer.evidence.some(evidence =>
+      evidence.markers.includes(
+        'use pure drives DCE and CSE while preserving mutation and coercion barriers',
+      ),
+    ),
+  )
 })
 
 test('runs the domain ledger in compatibility and Rust guardrail gates', () => {

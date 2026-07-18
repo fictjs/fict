@@ -20,6 +20,30 @@
         "parameterized-runtime-instance-count"
       ]
     },
+    "legacyDomainLedger": {
+      "artifact": "scripts/fixtures/legacy_0_28_test_domain_coverage.json",
+      "ciTest": "scripts/legacy-test-domain-coverage.test.mjs",
+      "domainCount": 34,
+      "assertionLevelCounts": {
+        "runtime-behavior": 11,
+        "output-contract": 4,
+        "host-contract": 4,
+        "structural-invariant": 8,
+        "type-contract": 1,
+        "gate-contract": 3,
+        "intentional-removal": 3
+      },
+      "assertionLevel": "domain-scoped-migration-evidence",
+      "proves": [
+        "exact-unrepresented-file-accounting",
+        "declared-evidence-strength-per-domain",
+        "behavioral-evidence-for-observable-directives-and-optimizer"
+      ],
+      "doesNotProve": [
+        "full-legacy-test-semantic-equivalence",
+        "runtime-equivalence-for-structural-invariant-domains"
+      ]
+    },
     "rustCodegenCorpus": {
       "artifact": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
       "generator": "scripts/generate-rust-codegen-corpus.mjs",
