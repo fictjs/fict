@@ -536,6 +536,9 @@ describe('native compiler loader', () => {
     expect(resolveNativeCompilerRuntimeHelper('@oxc-project/runtime/helpers/../package')).toBe(
       undefined,
     )
+    expect(resolveNativeCompilerRuntimeHelper('@oxc-project/runtime/helpers/not-real')).toBe(
+      undefined,
+    )
     expect(resolveNativeCompilerRuntimeHelper('consumer-package/helpers/decorate')).toBe(undefined)
   })
 })

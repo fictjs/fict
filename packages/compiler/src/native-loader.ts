@@ -100,7 +100,20 @@ export function resolveNativeCompilerRuntimeHelper(request: string): string | un
   if (!subpath || subpath.split('/').some(segment => !/^[A-Za-z0-9_-]+$/.test(segment))) {
     return undefined
   }
-  return requireFromCompiler.resolve(request)
+  try {
+    return requireFromCompiler.resolve(request)
+  } catch (error) {
+    if (!isRecord(error) || typeof error.message !== 'string') throw error
+    const missingModule =
+      error.code === 'MODULE_NOT_FOUND' &&
+      error.message.split('\n', 1)[0] === `Cannot find module '${request}'`
+    const missingExport =
+      error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' &&
+      error.message.includes(`Package subpath './helpers/${subpath}'`) &&
+      error.message.includes('@oxc-project/runtime/package.json')
+    if (missingModule || missingExport) return undefined
+    throw error
+  }
 }
 
 function toNativeBinding(
