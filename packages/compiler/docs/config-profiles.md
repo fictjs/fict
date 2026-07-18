@@ -51,9 +51,9 @@ control-flow returns instead of installing runtime branch bindings. `getterCache
 caches repeated signal/accessor reads only inside safe synchronous callbacks;
 set it to `false` to emit every read directly. `optimizeLevel: 'full'` opts into
 constant propagation and legacy algebraic identities; the default `'safe'`
-profile leaves authored algebra alone. `inlineDerivedMemos` remains in the
-request schema for compatibility and accepts only `true`; `false` fails with
-`FICT-OPTION-UNIMPLEMENTED`.
+profile leaves authored algebra alone. `inlineDerivedMemos: false` preserves
+user-named single-use derived memos; compiler-generated `__*` temporaries can
+still be inlined. User-named derived values in hooks are always preserved.
 
 ## Direct host
 

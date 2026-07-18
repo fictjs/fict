@@ -242,6 +242,8 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             getter_cache: request.options.getter_cache,
             full_optimization: request.options.optimize
                 && request.options.optimize_level == crate::request::OptimizeLevel::Full,
+            optimize: request.options.optimize,
+            inline_derived_memos: request.options.inline_derived_memos,
             strict_guarantee: request.options.strict_guarantee,
             preview: request
                 .options
@@ -290,12 +292,8 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             return result;
         }
     }
-    let helpers: Vec<_> = emit
-        .imports
-        .iter()
-        .map(|intent| intent.helper.spec().key.to_owned())
-        .collect();
     let output = emit_program(&request.code, &request.filename, oxc_options, &emit);
+    let helpers = output.runtime_helpers.clone();
     result.diagnostics.extend(output.diagnostics);
     finalize_diagnostics(&mut result, &request.options);
 
@@ -702,6 +700,112 @@ mod tests {
             #[rustfmt::skip]
             assert!(rejected.is_empty() || rejected.split('|').all(|s| !result.code.contains(s)), "{}", result.code);
         }
+    }
+
+    #[test]
+    fn controls_single_use_derived_memo_inlining() {
+        let source = "import { $state } from 'fict'; export function Counter() { let count = $state(2); const doubled = count * 2; return doubled; }";
+
+        let mut enabled_request = request(source, "inline-derived.ts");
+        enabled_request.options.explain = true;
+        let enabled = compile(enabled_request);
+        assert!(!enabled.has_errors(), "{:?}", enabled.diagnostics);
+        assert!(
+            enabled.code.contains("return count() * 2"),
+            "{}",
+            enabled.code
+        );
+        assert!(!enabled.code.contains("__fictUseMemo"), "{}", enabled.code);
+        assert!(
+            !enabled
+                .explain
+                .as_ref()
+                .expect("inline explanation")
+                .helpers
+                .iter()
+                .any(|helper| helper == "memo"),
+            "{:?}",
+            enabled.explain
+        );
+
+        let mut disabled_request = request(source, "inline-derived.ts");
+        disabled_request.options.inline_derived_memos = false;
+        let disabled = compile(disabled_request);
+        assert!(!disabled.has_errors(), "{:?}", disabled.diagnostics);
+        assert!(
+            disabled.code.contains("const doubled = __fictUseMemo"),
+            "{}",
+            disabled.code
+        );
+        assert!(
+            disabled.code.contains("return doubled()"),
+            "{}",
+            disabled.code
+        );
+
+        let generated_source = source.replace("doubled", "__doubled");
+        let mut generated_request = request(&generated_source, "inline-generated.ts");
+        generated_request.options.inline_derived_memos = false;
+        let generated = compile(generated_request);
+        assert!(!generated.has_errors(), "{:?}", generated.diagnostics);
+        assert!(
+            generated.code.contains("return count() * 2"),
+            "{}",
+            generated.code
+        );
+        assert!(
+            !generated.code.contains("__fictUseMemo"),
+            "{}",
+            generated.code
+        );
+
+        let mut unoptimized_request = request(source, "inline-unoptimized.ts");
+        unoptimized_request.options.optimize = false;
+        let unoptimized = compile(unoptimized_request);
+        assert!(!unoptimized.has_errors(), "{:?}", unoptimized.diagnostics);
+        assert!(
+            unoptimized.code.contains("const doubled = __fictUseMemo"),
+            "{}",
+            unoptimized.code
+        );
+
+        let hook = compile(request(
+            "import { $state } from 'fict'; export function useCounter() { let count = $state(2); const doubled = count * 2; return doubled; }",
+            "inline-hook.ts",
+        ));
+        assert!(!hook.has_errors(), "{:?}", hook.diagnostics);
+        assert!(
+            hook.code.contains("const doubled = __fictUseMemo"),
+            "{}",
+            hook.code
+        );
+
+        let generated_hook = compile(request(
+            "import { $state } from 'fict'; export function useCounter() { let count = $state(2); const __doubled = count * 2; return __doubled; }",
+            "inline-generated-hook.ts",
+        ));
+        assert!(
+            !generated_hook.has_errors(),
+            "{:?}",
+            generated_hook.diagnostics
+        );
+        assert!(
+            generated_hook
+                .code
+                .contains("const __doubled = __fictUseMemo"),
+            "{}",
+            generated_hook.code
+        );
+        let nested = compile(request(
+            "import { $state } from 'fict'; export function Counter() { let count = $state(2); const doubled = count * 2; return () => doubled; }",
+            "inline-nested.ts",
+        ));
+        assert!(!nested.has_errors(), "{:?}", nested.diagnostics);
+        assert!(
+            nested.code.contains("const doubled = __fictUseMemo"),
+            "{}",
+            nested.code
+        );
     }
 
     #[test]

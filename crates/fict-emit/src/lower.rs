@@ -37,6 +37,10 @@ pub struct NoJsxLoweringOptions {
     pub getter_cache: bool,
     /// Apply the opt-in authored algebraic folding profile during code generation.
     pub full_optimization: bool,
+    /// Run optimizer-owned derived-memo inlining.
+    pub optimize: bool,
+    /// Permit eligible user-authored derived names to be inlined.
+    pub inline_derived_memos: bool,
     /// Reject non-guaranteed control-flow fallback; derived SCCs are always rejected.
     pub strict_guarantee: bool,
     /// Allow Preview ABI helpers (none are emitted by this phase).
@@ -52,6 +56,8 @@ impl Default for NoJsxLoweringOptions {
             lazy_conditional: true,
             getter_cache: true,
             full_optimization: false,
+            optimize: true,
+            inline_derived_memos: true,
             strict_guarantee: true,
             preview: false,
             fine_grained_dom: true,
@@ -361,6 +367,8 @@ fn lower_program(
         dev: options.dev,
         getter_cache: options.getter_cache,
         full_optimization: options.full_optimization,
+        optimize: options.optimize,
+        inline_derived_memos: options.inline_derived_memos,
         preview: options.preview,
         preview_plan: None,
         strict_rejected: false,

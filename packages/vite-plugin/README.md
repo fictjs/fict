@@ -52,8 +52,8 @@ accepted directly. `onWarn` and `explain` adapt structured native diagnostics
 for the Vite host. `dev`, `lazyConditional`, and `getterCache` are also honored.
 `optimizeLevel` supports the default conservative `'safe'` profile and the
 opt-in `'full'` algebraic profile. The compatibility field
-`inlineDerivedMemos` accepts only its documented `true` default; `false` fails
-with `FICT-OPTION-UNIMPLEMENTED`.
+`inlineDerivedMemos` defaults to `true`; set it to `false` to preserve eligible
+user-named single-use derived memos while retaining compiler-temp inlining.
 
 `publicIdentityNamespace` provides a stable namespace for Preview resumable
 output when no named package boundary owns the Vite root. Normal Core builds do

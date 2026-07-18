@@ -3,7 +3,6 @@
   "active": {
     "rust": {
       "documented": [
-        "FICT-OPTION-UNIMPLEMENTED",
         "FICT-P001",
         "FICT-P002",
         "FICT-P003",

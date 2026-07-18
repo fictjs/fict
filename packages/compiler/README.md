@@ -89,9 +89,9 @@ The native options include:
 - `preview`: default-off resumability controls that are not part of the Core
   1.0 promise.
 
-The wire-compatibility field `inlineDerivedMemos` currently accepts only its
-default, `true`. Setting it to `false` fails with
-`FICT-OPTION-UNIMPLEMENTED`; it is never silently ignored.
+`inlineDerivedMemos` defaults to `true`. Set it to `false` to preserve eligible
+user-named single-use derived memos. Compiler-generated `__*` temporaries may
+still be inlined, and user-named values in hooks remain memoized in both modes.
 
 Production integrations force fail-closed guarantees. Use relaxed options only
 in non-production migration experiments.

@@ -14,20 +14,6 @@ active and producer-backed, and prevents retired codes from returning to officia
 
 ---
 
-## Request options
-
-### FICT-OPTION-UNIMPLEMENTED: Reserved compiler option value
-
-**Severity:** Error
-
-**Why:** A compatibility field requested behavior that the Rust compiler does not yet implement.
-
-**Impact:** Compilation stops without emitting code instead of silently ignoring the option.
-
-**Fix:** Use the currently supported `inlineDerivedMemos: true` behavior.
-
----
-
 ## Props (FICT-P\*)
 
 ### FICT-P001: Props destructuring fallback

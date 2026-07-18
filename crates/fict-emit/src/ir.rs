@@ -936,6 +936,10 @@ pub struct EmitProgram {
     pub getter_cache: bool,
     /// Whether codegen applies the opt-in authored algebraic folding profile.
     pub full_optimization: bool,
+    /// Whether optimizer-owned derived-memo inlining is enabled.
+    pub optimize: bool,
+    /// Whether eligible user-authored derived names may be inlined.
+    pub inline_derived_memos: bool,
     pub preview: bool,
     pub preview_plan: Option<EmitPreviewPlan>,
     pub strict_rejected: bool,

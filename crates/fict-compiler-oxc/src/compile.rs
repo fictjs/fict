@@ -68,6 +68,8 @@ pub struct OxcCompileOutput {
     pub source_map_json: Option<String>,
     /// Standalone Preview handler modules emitted from the same in-memory OXC program.
     pub handler_artifacts: Vec<OxcHandlerArtifact>,
+    /// Runtime helper keys whose imports remain in the emitted module.
+    pub runtime_helpers: Vec<String>,
     /// Owned structured diagnostics.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -234,6 +236,7 @@ pub fn compile_passthrough(
         code: generated.code,
         source_map_json: generated.map.map(|map| map.to_json_string()),
         handler_artifacts: Vec::new(),
+        runtime_helpers: Vec::new(),
         diagnostics: sorted(diagnostics),
     }
 }
@@ -259,6 +262,7 @@ pub(crate) fn failed_output(diagnostics: Vec<Diagnostic>) -> OxcCompileOutput {
         code: String::new(),
         source_map_json: None,
         handler_artifacts: Vec::new(),
+        runtime_helpers: Vec::new(),
         diagnostics: sorted(diagnostics),
     }
 }

@@ -55,6 +55,7 @@ use oxc::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 mod conditional_return;
+mod derived_inline;
 mod full_optimizer;
 mod getter_cache;
 mod operation_support;
@@ -92,7 +93,6 @@ pub fn emit_program(
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
-    let import_source = render_runtime_imports(emit);
     let (context_sources, context_diagnostics) = render_context_sources(emit);
     diagnostics.extend(context_diagnostics);
     if !diagnostics.is_empty() {
@@ -373,6 +373,17 @@ pub fn emit_program(
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
+    let reactive_read_locations = reads.keys().copied().collect();
+    let inlined_derived = match derived_inline::rewrite(
+        &allocator,
+        &mut program,
+        &identities,
+        &creations.derived_bindings,
+        &reactive_read_locations,
+    ) {
+        Ok(inlined) => inlined,
+        Err(findings) => return failed_output(findings),
+    };
     if let Some(plan) = &full_optimization {
         full_optimizer::rewrite(&allocator, &mut program, &identities, plan);
     }
@@ -492,6 +503,7 @@ pub fn emit_program(
     for statement in template_declarations.into_iter().rev() {
         program.body.insert(0, statement);
     }
+    let (import_source, runtime_helpers) = render_runtime_imports(emit, &inlined_derived);
     if !import_source.is_empty() {
         let parsed_imports = Parser::new(&allocator, &import_source, SourceType::mjs()).parse();
         if !parsed_imports.diagnostics.is_empty() {
@@ -676,6 +688,7 @@ pub fn emit_program(
         code: generated.code,
         source_map_json: generated.map.map(|map| map.to_json_string()),
         handler_artifacts,
+        runtime_helpers,
         diagnostics: sorted(diagnostics),
     }
 }
@@ -720,6 +733,8 @@ struct CreationRewrite {
 struct DerivedCreationRewrite {
     rewrite: CreationRewrite,
     origin: SourceSpan,
+    inline_compiler_names: bool,
+    inline_user_names: bool,
 }
 #[derive(Debug, Default)]
 struct CreationRewrites {
@@ -1117,6 +1132,13 @@ fn creation_rewrites(
                         DerivedCreationRewrite {
                             rewrite,
                             origin: span,
+                            inline_compiler_names: emit.optimize
+                                && function.kind != FunctionKind::Hook
+                                && helper.is_some(),
+                            inline_user_names: emit.optimize
+                                && emit.inline_derived_memos
+                                && function.kind != FunctionKind::Hook
+                                && helper.is_some(),
                         },
                     )
                     .is_some()
@@ -2920,9 +2942,17 @@ fn quote_javascript_string(value: &str) -> String {
     quoted.push('"');
     quoted
 }
-fn render_runtime_imports(emit: &EmitProgram) -> String {
+fn render_runtime_imports(
+    emit: &EmitProgram,
+    inlined_derived: &BTreeSet<BindingId>,
+) -> (String, Vec<String>) {
     let mut output = String::new();
+    let mut helpers = Vec::new();
     for intent in &emit.imports {
+        if helper_only_used_by_inlined_derived(emit, intent.helper, inlined_derived) {
+            continue;
+        }
+        helpers.push(intent.helper.spec().key.to_owned());
         output.push_str("import { ");
         output.push_str(&intent.imported);
         if intent.imported != intent.local {
@@ -2933,7 +2963,64 @@ fn render_runtime_imports(emit: &EmitProgram) -> String {
         output.push_str(&format!("{:?}", intent.module_request));
         output.push_str(";\n");
     }
-    output
+    (output, helpers)
+}
+fn helper_only_used_by_inlined_derived(
+    emit: &EmitProgram,
+    helper: RuntimeHelper,
+    inlined_derived: &BTreeSet<BindingId>,
+) -> bool {
+    let mut removed = false;
+    for function in &emit.functions {
+        if function
+            .context
+            .as_ref()
+            .is_some_and(|context| context.helper == helper)
+            || function.props.as_ref().is_some_and(|props| {
+                props.helper == Some(helper)
+                    || props
+                        .rest
+                        .as_ref()
+                        .is_some_and(|rest| rest.helper == helper)
+            })
+        {
+            return false;
+        }
+        for operation in &function.operations {
+            if let EmitOperation::CreateDerived {
+                slot,
+                helper: Some(candidate),
+                ..
+            } = operation
+                && *candidate == helper
+                && function
+                    .slots
+                    .iter()
+                    .find(|candidate| candidate.id == *slot)
+                    .and_then(|slot| slot.binding)
+                    .is_some_and(|binding| inlined_derived.contains(&binding))
+            {
+                removed = true;
+                continue;
+            }
+            if operation
+                .helper_slots()
+                .into_iter()
+                .flatten()
+                .any(|candidate| candidate == helper)
+            {
+                return false;
+            }
+        }
+    }
+    if emit
+        .preview_plan
+        .as_ref()
+        .is_some_and(|preview| preview.helpers.contains(&helper))
+    {
+        return false;
+    }
+    removed
 }
 #[derive(Debug)]
 struct ContextSource {

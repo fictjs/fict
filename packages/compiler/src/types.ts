@@ -126,7 +126,7 @@ export interface NativeCompilerOptions {
   optimize?: boolean
   /** Select conservative output or opt-in legacy-compatible algebraic folding. */
   optimizeLevel?: NativeOptimizeLevel
-  /** Reserved compatibility field. Only `true` is currently implemented. */
+  /** Inline eligible single-use derived memos with user-authored names. */
   inlineDerivedMemos?: boolean
   strictReactivity?: boolean
   strictGuarantee?: boolean

@@ -873,12 +873,11 @@ mod tests {
     }
 
     #[test]
-    fn reports_unimplemented_options_through_the_analysis_protocol() {
-        let mut unimplemented = request("export const value = 1", "options.ts");
-        unimplemented.options.compiler_options.inline_derived_memos = false;
-        let result = analyze(unimplemented);
+    fn accepts_disabled_derived_memo_inlining_through_the_analysis_protocol() {
+        let mut input = request("export const value = 1", "options.ts");
+        input.options.compiler_options.inline_derived_memos = false;
+        let result = analyze(input);
         assert!(result.components.is_empty());
-        assert_eq!(result.diagnostics.len(), 1);
-        assert_eq!(result.diagnostics[0].code, "FICT-OPTION-UNIMPLEMENTED");
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
     }
 }

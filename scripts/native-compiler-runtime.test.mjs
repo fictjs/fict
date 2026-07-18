@@ -1420,16 +1420,34 @@ test('optimizeLevel full applies opt-in authored algebraic folding safely', asyn
   assert.deepEqual(new Function(`${dynamicScope.code}\nreturn result`)(), [2, 3])
 })
 
-test('native binding rejects unimplemented non-default compiler options', () => {
-  for (const [name, value] of [['inlineDerivedMemos', false]]) {
-    const result = binding.transformSync({
-      code: 'export const value = 1',
-      filename: `/fixtures/unimplemented-${name}.ts`,
-      options: { [name]: value },
+test('native binding honors derived memo inline policy', () => {
+  const source = `
+    import { $state } from 'fict'
+    export function Counter() {
+      let count = $state(2)
+      const doubled = count * 2
+      return doubled
+    }
+  `
+  const transform = (code, inlineDerivedMemos) =>
+    binding.transformSync({
+      code,
+      filename: '/fixtures/inline-derived.ts',
+      options: { inlineDerivedMemos },
     })
-    assert.equal(result.code, '', name)
-    assert.equal(result.diagnostics.length, 1, name)
-    assert.equal(result.diagnostics[0].code, 'FICT-OPTION-UNIMPLEMENTED', name)
-    assert.match(result.diagnostics[0].message, new RegExp(name), name)
-  }
+
+  const enabled = transform(source, true)
+  assert.deepEqual(enabled.diagnostics, [])
+  assert.match(enabled.code, /return count\(\) \* 2/)
+  assert.doesNotMatch(enabled.code, /__fictUseMemo/)
+
+  const disabled = transform(source, false)
+  assert.deepEqual(disabled.diagnostics, [])
+  assert.match(disabled.code, /const doubled = __fictUseMemo/)
+  assert.match(disabled.code, /return doubled\(\)/)
+
+  const generated = transform(source.replaceAll('doubled', '__doubled'), false)
+  assert.deepEqual(generated.diagnostics, [])
+  assert.match(generated.code, /return count\(\) \* 2/)
+  assert.doesNotMatch(generated.code, /__fictUseMemo/)
 })

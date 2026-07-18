@@ -53,7 +53,7 @@ pub enum OptimizeLevel {
     /// Preserve conservative JavaScript semantics.
     #[default]
     Safe,
-    /// Reserved compatibility value; currently rejected as unimplemented.
+    /// Apply the opt-in authored algebraic folding profile.
     Full,
 }
 
@@ -158,7 +158,7 @@ pub struct CompilerOptions {
     pub optimize: bool,
     /// Optimizer safety policy; `full` enables additional authored algebraic folding.
     pub optimize_level: OptimizeLevel,
-    /// Reserved compatibility field; only `true` is currently implemented.
+    /// Inline eligible single-use derived memos with user-authored names.
     pub inline_derived_memos: bool,
     /// Escalate documented control-flow fallback diagnostics.
     pub strict_reactivity: bool,
@@ -197,21 +197,6 @@ impl Default for CompilerOptions {
             preview: None,
         }
     }
-}
-
-fn validate_implemented_options(options: &CompilerOptions) -> Result<(), CompileRequestError> {
-    let unsupported = if !options.inline_derived_memos {
-        Some(("inlineDerivedMemos", "true"))
-    } else {
-        None
-    };
-    if let Some((option, supported_value)) = unsupported {
-        return Err(CompileRequestError::UnimplementedOption {
-            option,
-            supported_value,
-        });
-    }
-    Ok(())
 }
 
 /// Public serializable request accepted by sync and async compiler entrypoints.
@@ -380,8 +365,6 @@ impl CompileRequest {
         {
             return Err(CompileRequestError::InvalidPreviewThreshold);
         }
-
-        validate_implemented_options(&self.options)?;
 
         if self.options.strict_guarantee
             && let Some((pattern, level)) =
@@ -584,13 +567,6 @@ pub enum CompileRequestError {
     DuplicateMetadataRequest(String),
     /// Automatic Preview extraction cannot use a zero-node threshold.
     InvalidPreviewThreshold,
-    /// A compatibility field requested behavior that the Rust compiler does not implement.
-    UnimplementedOption {
-        /// Public camelCase option name.
-        option: &'static str,
-        /// Only accepted value until the option is implemented.
-        supported_value: &'static str,
-    },
     /// Fail-closed diagnostics cannot be disabled or downgraded.
     StrictGuaranteeWarningDowngrade {
         /// Exact code or numeric-prefix pattern.
@@ -627,13 +603,6 @@ impl std::fmt::Display for CompileRequestError {
             Self::InvalidPreviewThreshold => {
                 formatter.write_str("Preview auto-extract threshold must be greater than zero")
             }
-            Self::UnimplementedOption {
-                option,
-                supported_value,
-            } => write!(
-                formatter,
-                "compiler option {option:?} is not implemented for non-default values; use {supported_value}"
-            ),
             Self::StrictGuaranteeWarningDowngrade { pattern, level } => write!(
                 formatter,
                 "strictGuarantee does not allow downgrading {pattern} to \"{}\"",
@@ -645,10 +614,7 @@ impl std::fmt::Display for CompileRequestError {
 
 impl CompileRequestError {
     pub(crate) const fn diagnostic_code(&self) -> &'static str {
-        match self {
-            Self::UnimplementedOption { .. } => "FICT-OPTION-UNIMPLEMENTED",
-            _ => "FICT-REQUEST",
-        }
+        "FICT-REQUEST"
     }
 }
 
@@ -804,23 +770,21 @@ mod tests {
     }
 
     #[test]
-    fn non_default_unimplemented_options_produce_a_stable_diagnostic() {
-        let name = "inlineDerivedMemos";
+    fn accepts_both_inline_derived_memo_modes() {
         let mut payload = json!({
             "code": "export const value = 1",
             "filename": "options.ts",
             "options": {}
         });
-        payload["options"][name] = json!(false);
+        payload["options"]["inlineDerivedMemos"] = json!(false);
         let request = serde_json::from_value(payload).expect("deserialize option request");
         let result = compile(request);
-        assert!(result.code.is_empty(), "{name}: {}", result.code);
-        assert_eq!(result.diagnostics.len(), 1, "{name}: {result:?}");
-        assert_eq!(
-            result.diagnostics[0].code.as_str(),
-            "FICT-OPTION-UNIMPLEMENTED"
+        assert!(!result.has_errors(), "{result:?}");
+        assert!(
+            result.code.contains("export const value = 1"),
+            "{}",
+            result.code
         );
-        assert!(result.diagnostics[0].message.contains(name));
     }
 
     #[test]

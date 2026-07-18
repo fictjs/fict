@@ -75,6 +75,8 @@ fn program() -> EmitProgram {
         dev: false,
         getter_cache: true,
         full_optimization: false,
+        optimize: true,
+        inline_derived_memos: true,
         preview: false,
         preview_plan: None,
         strict_rejected: false,

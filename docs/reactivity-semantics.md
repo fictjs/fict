@@ -28,7 +28,7 @@ console.log(count()) // ← getter call
 
 ## Rule 1: Derived Values Are Memoized
 
-Any binding that depends on reactive state becomes a memo accessor by default, whether or not it flows to JSX, effects, events, or plain functions. The compiler may inline single-use memos as an optimization, but the semantics are memoized. If you need a concrete memo node for a single-use derived value, use `$memo`.
+Any binding that depends on reactive state becomes a memo accessor by default, whether or not it flows to JSX, effects, events, or plain functions. The compiler may inline a safe, straight-line single-use memo when `optimize` and `inlineDerivedMemos` are enabled, but the semantics remain memoized. Set `inlineDerivedMemos: false` to preserve user-named implicit memos. If you need a concrete memo node regardless of optimization, use `$memo`.
 
 | Pattern               | Outcome                       |
 | --------------------- | ----------------------------- |

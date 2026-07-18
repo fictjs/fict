@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "totalMaxLines": 88100,
+  "totalMaxLines": 88700,
   "defaultFileMaxLines": 2000,
   "crates": {
-    "fict-compiler": 16350,
+    "fict-compiler": 16400,
     "fict-compiler-napi": 500,
-    "fict-compiler-oxc": 39400,
+    "fict-compiler-oxc": 39900,
     "fict-compiler-preview": 2400,
     "fict-diagnostics": 600,
     "fict-emit": 9750,
@@ -14,11 +14,11 @@
     "fict-reactivity": 13000
   },
   "fileOverrides": {
-    "crates/fict-compiler-oxc/src/emit_codegen.rs": 7700,
+    "crates/fict-compiler-oxc/src/emit_codegen.rs": 7800,
     "crates/fict-compiler-oxc/src/hir_builder.rs": 10600,
     "crates/fict-compiler-oxc/tests/hir_builder.rs": 8200,
     "crates/fict-compiler-preview/src/lib.rs": 2350,
-    "crates/fict-compiler/src/pipeline.rs": 6550,
+    "crates/fict-compiler/src/pipeline.rs": 6650,
     "crates/fict-compiler/tests/pass_manager.rs": 2350,
     "crates/fict-emit/src/lower.rs": 4200
   }

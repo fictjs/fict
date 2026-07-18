@@ -144,16 +144,11 @@ pub struct CompileResult {
 
 pub(crate) fn request_error_result(error: CompileRequestError) -> CompileResult {
     let code = error.diagnostic_code();
-    let help = if code == "FICT-OPTION-UNIMPLEMENTED" {
-        "use the documented default until the Rust compiler implements this option"
-    } else {
-        REQUEST_HELP
-    };
     failed_result(
         code,
         error.to_string(),
         GuaranteeClass::Unsupported,
-        Some(help),
+        Some(REQUEST_HELP),
     )
 }
 

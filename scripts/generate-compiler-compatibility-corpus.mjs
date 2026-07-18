@@ -23,8 +23,6 @@ const expectedSummary = {
 const deviationPolicies = {
   'rust-capability-expansion':
     'Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by Babel 0.28.',
-  'reserved-option-rejected':
-    'Rust 0.31 rejects a non-default option whose Babel behavior is not implemented, instead of silently ignoring it.',
   'narrow-component-role':
     'Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.',
   'structured-hook-return':
@@ -34,7 +32,6 @@ const deviationPolicies = {
 }
 const expectedPolicyCounts = {
   'rust-capability-expansion': 22,
-  'reserved-option-rejected': 2,
   'narrow-component-role': 24,
   'structured-hook-return': 6,
   'namespace-macro-fail-closed': 1,
@@ -103,7 +100,6 @@ function deviationPolicy(legacyStatus, currentStatus, currentErrorCodes) {
   if (legacyStatus === currentStatus) return null
   if (legacyStatus === 'error' && currentStatus === 'ok') return 'rust-capability-expansion'
   const codes = currentErrorCodes.join(',')
-  if (codes === 'FICT-OPTION-UNIMPLEMENTED') return 'reserved-option-rejected'
   if (codes === 'FICT-PLACEMENT-STATE-OWNER') return 'narrow-component-role'
   if (codes === 'FICT-M') return 'structured-hook-return'
   if (codes === 'FICT-HIR-MACRO-NAMESPACE') return 'namespace-macro-fail-closed'
