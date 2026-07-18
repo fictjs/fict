@@ -408,6 +408,23 @@ describe('native compiler loader', () => {
     ).toThrow('reported incompatible compiler metadata')
   })
 
+  it.each([9, 11, 12])('rejects a binding built for Node-API %s instead of 10', nodeApiVersion => {
+    const binding = createBinding()
+    binding.nativeCompilerInfo = () => ({
+      ...createBinding().nativeCompilerInfo(),
+      nodeApiVersion,
+    })
+
+    expect(() =>
+      loadNativeCompilerBinding({
+        nativePath: '/tmp/incompatible.node',
+        platform: 'darwin',
+        arch: 'arm64',
+        load: () => binding,
+      }),
+    ).toThrow('reported incompatible compiler metadata')
+  })
+
   it('rejects a malformed compiled source revision', () => {
     const binding = createBinding()
     binding.nativeCompilerInfo = () => ({

@@ -138,7 +138,7 @@ function toNativeBinding(
   const sourceHash = info.compilerBuildId?.slice(expectedBuildPrefix.length)
   if (
     info.backend !== 'rust' ||
-    info.nodeApiVersion < 10 ||
+    info.nodeApiVersion !== 10 ||
     info.oxcVersion !== EXPECTED_OXC_VERSION ||
     info.compilerProtocolVersion !== EXPECTED_COMPILER_PROTOCOL_VERSION ||
     info.metadataSchemaVersion !== EXPECTED_METADATA_SCHEMA_VERSION ||
