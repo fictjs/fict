@@ -388,7 +388,9 @@ describe('Rust compiler backend', () => {
           import { __fictQrl } from 'fict/internal'
           const button = document.createElement('button')
           button.setAttribute('on:click', __fictQrl("fict:compiler-artifact:handler-0", "default"))
-          export { button }
+          const fallbackButton = document.createElement('button')
+          fallbackButton.setAttribute('on:click', __fictQrl("fict:compiler-artifact:handler-0", "default"))
+          export { button, fallbackButton }
         `,
         map: {
           version: 3,
@@ -441,7 +443,12 @@ describe('Rust compiler backend', () => {
       autoExtractThreshold: 3,
     })
     expect(transformed.code).not.toContain('fict:compiler-artifact:handler-0')
-    const handlerModuleId = transformed.code.match(/"(virtual:fict-handler:[^"]+)"/)?.[1]
+    const handlerModuleIds = [...transformed.code.matchAll(/"(virtual:fict-handler:[^"]+)"/g)].map(
+      match => match[1],
+    )
+    expect(handlerModuleIds).toHaveLength(2)
+    expect(new Set(handlerModuleIds).size).toBe(1)
+    const handlerModuleId = handlerModuleIds[0]
     expect(handlerModuleId).toBeTruthy()
     expect(transformed.map).toMatchObject({ sources: ['/sources/App.tsx'] })
 

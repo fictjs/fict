@@ -5032,8 +5032,7 @@ function consumeStructuredHandlerArtifacts(
     sourceExportName: string
     handlerId: string
     moduleId: string
-    start: number
-    end: number
+    ranges: { start: number; end: number }[]
   }[] = []
   for (const artifact of handlers) {
     const metadata = artifact.handler
@@ -5051,10 +5050,15 @@ function consumeStructuredHandlerArtifacts(
       )
     }
     const encodedSpecifier = JSON.stringify(metadata.moduleSpecifier)
-    const start = code.indexOf(encodedSpecifier)
-    if (start < 0 || code.indexOf(encodedSpecifier, start + encodedSpecifier.length) >= 0) {
+    const ranges: { start: number; end: number }[] = []
+    let start = code.indexOf(encodedSpecifier)
+    while (start >= 0) {
+      ranges.push({ start, end: start + encodedSpecifier.length })
+      start = code.indexOf(encodedSpecifier, start + encodedSpecifier.length)
+    }
+    if (ranges.length === 0) {
       throw new Error(
-        `[fict] Rust artifact ${JSON.stringify(artifact.id)} must have exactly one ` +
+        `[fict] Rust artifact ${JSON.stringify(artifact.id)} has no ` +
           `main-output placeholder ${encodedSpecifier}.`,
       )
     }
@@ -5072,14 +5076,15 @@ function consumeStructuredHandlerArtifacts(
       handlerId,
       moduleId:
         resolveHandlerModuleId?.(handlerId) ?? `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`,
-      start,
-      end: start + encodedSpecifier.length,
+      ranges,
     })
   }
 
   const edited = new MagicString(code)
   for (const item of pending) {
-    edited.overwrite(item.start, item.end, JSON.stringify(item.moduleId))
+    for (const range of item.ranges) {
+      edited.overwrite(range.start, range.end, JSON.stringify(item.moduleId))
+    }
   }
   if (edited.toString().includes('fict:compiler-artifact:')) {
     throw new Error('[fict] Rust output contains an unclaimed compiler artifact placeholder.')

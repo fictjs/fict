@@ -136,7 +136,7 @@ function compileModule(
     const artifactPath = path.join(tempDir, `${artifact.id}.mjs`)
     const artifactUrl = pathToFileURL(artifactPath).href
     writeFileSync(artifactPath, artifact.code, 'utf8')
-    entryCode = entryCode.replace(
+    entryCode = entryCode.replaceAll(
       JSON.stringify(artifact.handler.moduleSpecifier),
       JSON.stringify(artifactUrl),
     )
