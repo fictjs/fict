@@ -547,6 +547,31 @@ test('documents every reviewed Babel status and request-identity deviation', () 
   assert.match(migrationGuide, /language: "jsx"/)
 })
 
+test('keeps native recovery diagnostics free of removed legacy paths', () => {
+  const pipeline = read('crates/fict-compiler/src/pipeline.rs')
+  const scanner = read('crates/fict-compiler/src/scan.rs')
+  const recovery = read('crates/fict-compiler/src/result.rs')
+  const passthrough = read('crates/fict-compiler-oxc/src/compile.rs')
+  for (const source of [pipeline, scanner, recovery, passthrough]) {
+    assert.doesNotMatch(source, /retry (?:with|the build with) the legacy/)
+    assert.doesNotMatch(source, /use the legacy backend/)
+  }
+  for (const field of [
+    'compilerBuildId',
+    'protocolVersion',
+    'nativeTarget',
+    'source language',
+    'complete verified 0.30.1 application unit',
+    'without mixing compiler/runtime versions',
+  ]) {
+    assert.match(recovery, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.match(pipeline, /Some\(INTERNAL_RECOVERY_HELP\)/)
+  assert.match(scanner, /Some\(INTERNAL_RECOVERY_HELP\)/)
+  assert.match(passthrough, /route JSX through the complete Fict EmitIR pipeline/)
+  assert.match(passthrough, /syntax-only OXC pass-through entrypoint does not lower JSX/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [

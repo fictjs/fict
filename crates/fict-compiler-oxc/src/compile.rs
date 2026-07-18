@@ -126,9 +126,9 @@ pub fn compile_passthrough(
             Diagnostic::new(
                 static_code("FICT-NATIVE-JSX"),
                 DiagnosticSeverity::Error,
-                "native JSX lowering is not connected in the M1 pass-through pipeline",
+                "the syntax-only OXC pass-through entrypoint does not lower JSX",
             )
-            .with_help("use the legacy backend until the Fict EmitIR JSX pipeline is enabled")
+            .with_help("route JSX through the complete Fict EmitIR pipeline")
             .with_guarantee_class(GuaranteeClass::Unsupported),
         );
         return failed_output(diagnostics);

@@ -1,7 +1,7 @@
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::metadata_analysis::generate_module_metadata;
-use crate::result::{failed_result, request_error_result};
+use crate::result::{INTERNAL_RECOVERY_HELP, failed_result, request_error_result};
 use crate::source_map::compose_source_maps;
 use crate::{
     CompileRequest, CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
@@ -36,7 +36,7 @@ pub fn internal_error_result() -> CompileResult {
         "FICT-I001",
         "the native compiler encountered an internal error",
         GuaranteeClass::Internal,
-        Some("retry with the legacy backend for the entire build and report the failing fixture"),
+        Some(INTERNAL_RECOVERY_HELP),
     )
 }
 fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {

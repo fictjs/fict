@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, ModuleKind, NormalizedScanRequest, ScanRequest,
-    SourceLanguage,
+    SourceLanguage, result::INTERNAL_RECOVERY_HELP,
 };
 
 /// Static module-request category returned to bundler graph hosts.
@@ -104,7 +104,7 @@ pub fn internal_scan_error_result() -> ScanResult {
         "FICT-I001",
         "the native compiler scanner encountered an internal error",
         GuaranteeClass::Internal,
-        Some("retry the build with the legacy module scanner and report the failing fixture"),
+        Some(INTERNAL_RECOVERY_HELP),
     )
 }
 

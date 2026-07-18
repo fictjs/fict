@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, CompileRequestError, RawSourceMap};
 
 const REQUEST_HELP: &str = "fix the request shape before invoking the native compiler";
+pub(crate) const INTERNAL_RECOVERY_HELP: &str = "report the minimized fixture with compilerBuildId, protocolVersion, nativeTarget, and source language; recover only by restoring the complete verified 0.30.1 application unit without mixing compiler/runtime versions";
 
 /// Kind of additional module emitted by the compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
