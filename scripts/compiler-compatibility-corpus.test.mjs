@@ -346,6 +346,26 @@ test('ports the unrepresented Babel reactive-accessor domain through executable 
   assert.match(ci, /native-compiler-reactive-accessors\.test\.mjs/)
 })
 
+test('ports the unrepresented Babel optimizer differential domain through executable output', () => {
+  const runtime = read('scripts/native-compiler-optimizer-diff.test.mjs')
+  for (const behavior of [
+    'optimization on/off and safe/full profiles preserve observable semantics',
+    'disabled-safe',
+    'enabled-safe',
+    'enabled-full',
+    'disabled-full',
+  ]) {
+    assert.match(runtime, new RegExp(behavior))
+  }
+  assert.match(runtime, /executeCommonJs/)
+  assert.match(runtime, /observedDifferentCode/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:optimizer-diff/)
+  assert.match(packageJson, /native-compiler-optimizer-diff\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-optimizer-diff\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
