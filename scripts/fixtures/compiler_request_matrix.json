@@ -489,6 +489,27 @@
       }
     },
     {
+      "id": "consumed-optimization-directives",
+      "domain": "directive-semantics",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "\"use client\"; \"use no memo\"; \"custom program\"; import { $state } from 'fict'; export function App() { \"use pure\"; \"custom function\"; const count = $state(1); return count; }",
+        "filename": "/matrix/consumed-directives.js",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["use client", "custom program", "custom function"],
+        "codeExcludes": ["use no memo", "use pure"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["use client", "custom program", "custom function"],
+        "codeExcludes": ["use no memo", "use pure"]
+      }
+    },
+    {
       "id": "resolved-metadata-snapshot",
       "domain": "structured-results",
       "legacy": false,

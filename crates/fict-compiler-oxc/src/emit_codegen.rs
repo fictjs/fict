@@ -130,6 +130,7 @@ pub fn emit_program(
         .map(|span| (span.start(), span.end()))
         .collect();
     strip_compiler_macro_imports(&mut program);
+    strip_consumed_fict_directives(&mut program);
     let (creations, rewrite_diagnostics) = creation_rewrites(emit, source, filename);
     let props_rewrites = props_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
@@ -744,6 +745,33 @@ fn strip_compiler_macro_imports(program: &mut oxc::ast::ast::Program<'_>) {
         });
         original_len == specifiers.len() || !specifiers.is_empty()
     });
+}
+fn strip_consumed_fict_directives(program: &mut Program<'_>) {
+    struct ConsumedDirectiveStripper;
+
+    impl<'a> VisitMut<'a> for ConsumedDirectiveStripper {
+        fn visit_program(&mut self, program: &mut Program<'a>) {
+            program.directives.retain(|directive| {
+                !matches!(
+                    directive.expression.value.as_str(),
+                    "use no memo" | "use pure"
+                )
+            });
+            walk_mut::walk_program(self, program);
+        }
+
+        fn visit_function_body(&mut self, body: &mut FunctionBody<'a>) {
+            body.directives.retain(|directive| {
+                !matches!(
+                    directive.expression.value.as_str(),
+                    "use no memo" | "use pure"
+                )
+            });
+            walk_mut::walk_function_body(self, body);
+        }
+    }
+
+    ConsumedDirectiveStripper.visit_program(program);
 }
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(

@@ -135,6 +135,49 @@ fn erases_only_exact_compiler_macro_import_specifiers() {
     assert!(output.code.contains("export { batch }"));
 }
 #[test]
+fn consumes_only_fict_optimization_directives_in_every_scope() {
+    let source = r#"
+        "use strict";
+        "use client";
+        "use no memo";
+        "use fict-compiler-disable";
+        "custom program";
+        import { $effect } from 'fict';
+        function outer() {
+            "use pure";
+            "custom function";
+            const nested = () => {
+                "use no memo";
+                "nested custom";
+                return 1;
+            };
+            return nested();
+        }
+        $effect(() => 1);
+        export { outer };
+    "#;
+    let output = emit_program(
+        source,
+        "directives.js",
+        options(OxcSourceLanguage::JavaScript, false),
+        &effect_program(source),
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(!output.code.contains("use no memo"), "{}", output.code);
+    assert!(!output.code.contains("use pure"), "{}", output.code);
+    for preserved in [
+        "use strict",
+        "use client",
+        "use fict-compiler-disable",
+        "custom program",
+        "custom function",
+        "nested custom",
+    ] {
+        assert!(output.code.contains(preserved), "{}", output.code);
+    }
+}
+#[test]
 fn fails_closed_for_bad_origins() {
     let source = "import { $effect } from 'fict'; $effect(() => 1);";
     let mut bad_origin = effect_program(source);
