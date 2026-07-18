@@ -533,6 +533,19 @@ test('documents every reviewed Babel status and request-identity deviation', () 
   ]) {
     assert.match(migrationGuide, new RegExp(option.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
+  for (const removedPresetOption of [
+    'allowDeclareFields: false',
+    'jsxPragma',
+    'jsxPragmaFrag',
+    'disallowAmbiguousJSXLike',
+  ]) {
+    assert.match(
+      migrationGuide,
+      new RegExp(removedPresetOption.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    )
+  }
+  assert.match(migrationGuide, /language: "tsx"/)
+  assert.match(migrationGuide, /custom JSX factories are not valid Fict compiler inputs/)
   const statusDifferenceCount = Object.values(corpus.deviationPolicyCounts).reduce(
     (sum, count) => sum + count,
     0,

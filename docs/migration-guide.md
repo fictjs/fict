@@ -101,6 +101,24 @@ rollback release. It is not part of the 0.31 workspace, publish plan, or support
 surface. Custom Babel plugins may still run as a separate downstream transform,
 but they must not attempt to compile Fict reactivity.
 
+### Removed Babel TypeScript preset switches
+
+The native request selects its grammar before parsing. It does not reproduce
+the Babel preset's open-ended extension and JSX-factory configuration:
+
+| Babel preset option           | 0.31 migration                                                                                                                                                                          |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `isTSX` / `allExtensions`     | Use a `.tsx` / `.jsx` physical `filename`, or pass `language: "tsx"` / `language: "jsx"` from a direct host. Native compilation does not parse JSX in every extension implicitly.       |
+| `disallowAmbiguousJSXLike`    | Removed. Select `language: "ts"` for non-JSX TypeScript or `language: "tsx"` for TSX; `.mts` and `.cts` infer non-JSX TypeScript. There is no post-parse ambiguity toggle.              |
+| `allowDeclareFields: false`   | Removed. The native TypeScript transform always accepts `declare` fields (`allowDeclareFields: true`). Enforce a project ban with TypeScript or linting before compilation if required. |
+| `jsxPragma` / `jsxPragmaFrag` | Removed. Fict owns JSX lowering and its runtime ABI; custom JSX factories are not valid Fict compiler inputs. Keep unrelated custom-factory sources outside the Fict transform.         |
+
+The native `typescript` object retains `allowNamespaces`,
+`onlyRemoveTypeImports`, `optimizeConstEnums`, and
+`rewriteImportExtensions`, and adds `optimizeEnums` and
+`removeClassFieldsWithoutInitializer`. These controls affect TypeScript
+lowering only; they do not change the selected source grammar or JSX runtime.
+
 ### Legacy compiler API replacements
 
 The 0.31 package root is a request/response API, not a compatibility alias for
