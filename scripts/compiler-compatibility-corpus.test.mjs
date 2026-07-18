@@ -286,6 +286,27 @@ test('retains full request dimensions with an exact Babel preset oracle', () => 
   assert.match(ci, /native-compiler-request-matrix\.test\.mjs/)
 })
 
+test('ports the unrepresented Babel auto-extraction domain through the native Preview pipeline', () => {
+  const runtime = read('scripts/native-compiler-auto-extract.test.mjs')
+  for (const behavior of [
+    'auto-extraction opt-out',
+    'stable bare handler bindings',
+    'mutated function-local handler identifiers',
+    'external, asynchronous, and threshold-complex handlers',
+    'simple handlers below the threshold',
+    'selected handler cannot be restored',
+  ]) {
+    assert.match(runtime, new RegExp(behavior))
+  }
+  assert.match(runtime, /result\.artifacts\.length, 1/)
+  assert.match(runtime, /result\.artifacts, \[\]/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:auto-extract/)
+  assert.match(packageJson, /native-compiler-auto-extract\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-auto-extract\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
