@@ -507,6 +507,46 @@ test('binds native cache identity to the complete Rust build input set', () => {
   assert.match(ci, /native-compiler-build-id\.test\.mjs/)
 })
 
+test('documents every reviewed Babel status and request-identity deviation', () => {
+  const corpus = readJson(compileCorpusPath)
+  const migrationGuide = read('docs/migration-guide.md')
+  for (const [policy, count] of Object.entries(corpus.deviationPolicyCounts)) {
+    const row = migrationGuide.split('\n').find(line => line.includes(`\`${policy}\``))
+    assert.ok(row, `${policy} migration row`)
+    assert.match(row, new RegExp(`\\|\\s+${count}\\s+\\|`), `${policy} migration count`)
+  }
+  for (const policy of [
+    'jsx-extension-required',
+    'cts-top-level-return',
+    'source-map-normalization',
+    'explain-normalization',
+  ]) {
+    assert.ok(migrationGuide.includes('`' + policy + '`'), policy)
+  }
+  for (const option of [
+    'dev: true',
+    'lazyConditional: false',
+    'getterCache: false',
+    'optimizeLevel: "full"',
+    'inlineDerivedMemos: false',
+  ]) {
+    assert.match(migrationGuide, new RegExp(option.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  const statusDifferenceCount = Object.values(corpus.deviationPolicyCounts).reduce(
+    (sum, count) => sum + count,
+    0,
+  )
+  const rustRejectionCount =
+    statusDifferenceCount - corpus.deviationPolicyCounts['rust-capability-expansion']
+  assert.match(migrationGuide, /37 option-driven Babel-success\/Rust-fail/)
+  assert.match(
+    migrationGuide,
+    new RegExp(`${statusDifferenceCount} intentional success/error status differences`),
+  )
+  assert.match(migrationGuide, new RegExp(`${rustRejectionCount} inputs accepted by Babel`))
+  assert.match(migrationGuide, /language: "jsx"/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [

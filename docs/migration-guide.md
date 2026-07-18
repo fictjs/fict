@@ -130,6 +130,43 @@ Preview `resumable: true` is available with the Rust compiler through compiler-o
 structured handler artifacts. It remains explicit and Preview; native support
 does not graduate it or make it a Core default.
 
+### Audited Babel 0.28 behavior differences
+
+The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,892-case
+compile corpus currently has 53 intentional success/error status differences:
+31 inputs accepted by Babel are rejected by Rust, and 22 inputs rejected by
+Babel are accepted by Rust. These are upgrade policies, not an automatic claim
+that every newly accepted case has identical runtime behavior.
+
+| Compatibility policy          | Count | 0.31 behavior and migration action                                                                                                                                                                    |
+| ----------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `narrow-component-role`       |    24 | Component-context macros require an explicit component owner. Move macros out of anonymous, indirect, assigned, wrapped, registry, or object-member functions into a directly declared component.     |
+| `structured-hook-return`      |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor. |
+| `namespace-macro-fail-closed` |     1 | Compiler macros called through a Fict namespace are rejected. Import `$state`, `$memo`, and other compiler macros by name.                                                                            |
+| `rust-capability-expansion`   |    22 | Rust accepts reviewed TypeScript, control-flow, or analysis inputs that Babel rejected. Add a runtime regression before relying on a newly accepted construct.                                        |
+
+An earlier migration audit also found 37 option-driven Babel-success/Rust-fail
+cases. Those are no longer deviations: native compilation now implements
+`dev: true`, `lazyConditional: false`, `getterCache: false`,
+`optimizeLevel: "full"`, and `inlineDerivedMemos: false`, with executable
+option-specific regressions. Do not retain an application workaround for
+`FICT-OPTION-UNIMPLEMENTED` for these values.
+
+Direct compiler hosts must also account for request-identity differences that
+do not appear in a source-only `.tsx` corpus:
+
+| Request policy             | Babel 0.28 versus Rust 0.31                                                                                                                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jsx-extension-required`   | Babel accepts JSX in a `.js` request. Rust infers plain JavaScript and rejects JSX unless the filename uses `.jsx` or the host passes `language: "jsx"`.                                                                |
+| `cts-top-level-return`     | Rust infers CommonJS for `.cts` and accepts a top-level `return`; Babel 0.28 rejects the audited request. Treat this as a capability expansion and confirm that the downstream CommonJS host supports the emitted form. |
+| `source-map-normalization` | Both compilers preserve the audited logical source and `sourcesContent`, but raw mapping segmentation and serialized map text are emitter-specific. Compare normalized source identities, not whole-map hashes.         |
+| `explain-normalization`    | Both expose the audited physical/graph identity and source-event kinds, but native explain events are a versioned structured artifact rather than a Babel text snapshot. Consume documented fields, not exact text.     |
+
+The exact policies and counts are release-blocking fixtures in
+`rust_frozen_codegen_corpus.json` and `compiler_request_matrix.json`; changing a
+classification requires updating the migration guide and its compatibility
+guard together.
+
 See the [Rust compiler architecture](architecture/rust-compiler.md) and
 [rollback runbook](operations/runbooks/compiler-backend-rollback.md) for the
 request boundary and 0.31 recovery procedure.
