@@ -397,7 +397,7 @@ fn analyze_function(
         start.line,
         TraceMarker {
             kind: TraceMarkerKind::Once,
-            label: "Component setup runs on mount".to_owned(),
+            label: tooling_function_setup_label(function.kind).to_owned(),
             deps: None,
             region_id: None,
         },
@@ -536,6 +536,16 @@ fn analyze_function(
             .collect(),
         regions,
     })
+}
+
+const fn tooling_function_setup_label(kind: FunctionKind) -> &'static str {
+    match kind {
+        FunctionKind::Module => "Module setup runs on evaluation",
+        FunctionKind::Plain => "Function body runs when called",
+        FunctionKind::Component => "Component setup runs on mount",
+        FunctionKind::Hook => "Hook body runs when called",
+        FunctionKind::ReactiveScope => "Reactive scope callback runs when invoked",
+    }
 }
 
 fn is_tooling_function(function: &HirFunction) -> bool {
@@ -785,11 +795,14 @@ mod tests {
         ResolvedMetadataInput,
     };
 
-    use super::{AnalyzeDiagnosticSeverity, TraceMarkerKind, analyze};
+    use super::{
+        AnalyzeDiagnosticSeverity, TraceMarkerKind, analyze, tooling_function_setup_label,
+    };
     use crate::{
         AnalyzeOptions, AnalyzeRequest, AnalyzeVerbosity, COMPILER_PROTOCOL_VERSION,
         CompileRequest, WarningsAsErrors, compile,
     };
+    use fict_hir::FunctionKind;
 
     fn request(code: &str, filename: &str) -> AnalyzeRequest {
         AnalyzeRequest {
@@ -844,6 +857,75 @@ mod tests {
         assert!(kinds.contains(&TraceMarkerKind::Once));
         assert!(kinds.contains(&TraceMarkerKind::Effect));
         assert!(kinds.contains(&TraceMarkerKind::Reactive));
+    }
+
+    #[test]
+    fn labels_tooling_functions_by_execution_kind() {
+        assert_eq!(
+            tooling_function_setup_label(FunctionKind::Module),
+            "Module setup runs on evaluation"
+        );
+        assert_eq!(
+            tooling_function_setup_label(FunctionKind::Plain),
+            "Function body runs when called"
+        );
+        assert_eq!(
+            tooling_function_setup_label(FunctionKind::Component),
+            "Component setup runs on mount"
+        );
+        assert_eq!(
+            tooling_function_setup_label(FunctionKind::Hook),
+            "Hook body runs when called"
+        );
+        assert_eq!(
+            tooling_function_setup_label(FunctionKind::ReactiveScope),
+            "Reactive scope callback runs when invoked"
+        );
+
+        let mut input = request(
+            r#"
+                import { $state } from 'fict';
+                export function App() {
+                    const count = $state(0);
+                    return <div>{count}</div>;
+                }
+                export function useCounter() {
+                    const count = $state(0);
+                    return count;
+                }
+                renderHook(() => {
+                    const count = $state(0);
+                    return count;
+                });
+            "#,
+            "function-kinds.tsx",
+        );
+        input.options.compiler_options.reactive_scopes = vec!["renderHook".into()];
+        let result = analyze(input);
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+
+        let setup_label = |name: &str| {
+            result
+                .components
+                .iter()
+                .find(|component| component.name == name)
+                .and_then(|component| component.trace.first())
+                .and_then(|trace| trace.markers.first())
+                .map(|marker| marker.label.as_str())
+        };
+        assert_eq!(setup_label("App"), Some("Component setup runs on mount"));
+        assert_eq!(
+            setup_label("useCounter"),
+            Some("Hook body runs when called")
+        );
+        assert!(result.components.iter().any(|component| {
+            component.trace.iter().any(|trace| {
+                trace
+                    .markers
+                    .iter()
+                    .any(|marker| marker.label == "Reactive scope callback runs when invoked")
+            })
+        }));
     }
 
     #[test]

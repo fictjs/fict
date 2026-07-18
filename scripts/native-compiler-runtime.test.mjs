@@ -1468,6 +1468,43 @@ test('analysis indexes every ECMAScript line terminator with UTF-16 columns', ()
   assert.ok(broken.diagnostics[0]?.column > 1)
 })
 
+test('analysis labels component, hook, and reactive-scope execution accurately', () => {
+  const analyzed = binding.analyzeSync({
+    code: `
+      import { $state } from 'fict'
+      export function App() {
+        const count = $state(0)
+        return <div>{count}</div>
+      }
+      export function useCounter() {
+        const count = $state(0)
+        return count
+      }
+      renderHook(() => {
+        const count = $state(0)
+        return count
+      })
+    `,
+    filename: '/fixtures/analysis-function-kinds.tsx',
+    options: { compilerOptions: { reactiveScopes: ['renderHook'] } },
+  })
+  assert.deepEqual(analyzed.diagnostics, [])
+
+  const setupLabels = component =>
+    component.trace.flatMap(({ markers }) => markers.map(marker => marker.label))
+  const app = analyzed.components.find(component => component.name === 'App')
+  const hook = analyzed.components.find(component => component.name === 'useCounter')
+  assert.ok(app)
+  assert.ok(hook)
+  assert.ok(setupLabels(app).includes('Component setup runs on mount'))
+  assert.ok(setupLabels(hook).includes('Hook body runs when called'))
+  assert.ok(
+    analyzed.components.some(component =>
+      setupLabels(component).includes('Reactive scope callback runs when invoked'),
+    ),
+  )
+})
+
 test('module no-memo policy reaches top-level and nested lowering', () => {
   const result = binding.transformSync({
     code: `
