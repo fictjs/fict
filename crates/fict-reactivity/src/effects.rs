@@ -365,6 +365,38 @@ pub fn analyze_dependencies(
                                 .extend(implicit_paths.iter().cloned());
                             input_edges[result_index].extend(instruction_inputs(instruction, file));
                         }
+                        HirInstructionKind::Call(call) => {
+                            input_edges[result_index].extend(instruction_inputs(instruction, file));
+                            let nested = match call.host {
+                                CallHost::Function(nested) => Some(nested),
+                                CallHost::Unknown
+                                | CallHost::Binding(_)
+                                | CallHost::ReactiveScope(_) => function
+                                    .values
+                                    .get(call.callee.as_usize())
+                                    .and_then(|value| match value.kind {
+                                        ValueKind::Function(nested) => Some(nested),
+                                        _ => None,
+                                    }),
+                            };
+                            if let Some(nested) = nested
+                                && let Some(nested) = file.functions.get(nested.as_usize())
+                            {
+                                direct_dependencies[result_index].extend(
+                                    nested
+                                        .locals
+                                        .iter()
+                                        .filter(|local| local.kind == LocalKind::Capture)
+                                        .filter_map(|capture| capture.binding)
+                                        .filter_map(|binding| local_by_binding.get(&binding))
+                                        .filter_map(|local| current_versions[local.as_usize()])
+                                        .map(|name| DependencyPath {
+                                            base: DependencyBase::Ssa(name),
+                                            segments: Vec::new(),
+                                        }),
+                                );
+                            }
+                        }
                         _ => {
                             input_edges[result_index].extend(instruction_inputs(instruction, file))
                         }

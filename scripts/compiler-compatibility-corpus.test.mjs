@@ -327,6 +327,25 @@ test('ports the unrepresented Babel expression-dependency domain through Preview
   assert.match(ci, /native-compiler-expression-deps\.test\.mjs/)
 })
 
+test('ports the unrepresented Babel reactive-accessor domain through executable output', () => {
+  const runtime = read('scripts/native-compiler-reactive-accessors.test.mjs')
+  for (const behavior of [
+    'object and array function entries remain lazy while eager entries run at creation',
+    'IIFEs do not pull returned function bodies across the lazy boundary',
+    'class definitions track eager dependencies but exclude method and instance bodies',
+  ]) {
+    assert.match(runtime, new RegExp(behavior))
+  }
+  assert.match(runtime, /executeCommonJs/)
+  assert.match(runtime, /instance-field/)
+  assert.match(runtime, /object-iife/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:reactive-accessors/)
+  assert.match(packageJson, /native-compiler-reactive-accessors\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-reactive-accessors\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [

@@ -12,8 +12,8 @@
     "uniqueFixtures": 1892,
     "scannedLegacyTestFiles": 107,
     "representedLegacyTestFiles": 73,
-    "reviewedRevision": "26b9af2ad845032854889b92b8a1461fac222af4",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-91fd4ed1126faf666f30b323625e90bed8197c4b53b14f16174ffd9bbfda39cc"
+    "reviewedRevision": "db1ba48ece994633a726f9b053493d5f316788c7",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-ef7aa48fbf6bf9472e6525372b408f5561df44ab561ac1b789b8e415fb74821b"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the audited Babel 0.30.1 legacy backend.",
@@ -36522,7 +36522,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "a29f8a0068ff23727879690dcfb6954a4db5184bdb7104b2c0913246cb2372df"
+        "codeSha256": "b05d7253c76cc7c9e1a2c3c5da3ad1801cbe581371ca90b211fd04a5042672f8"
       },
       "deviationPolicy": null
     },
@@ -39569,7 +39569,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "5cf0b8c2ae38319d6bb55dd60286b32daabfc68fc3654186d5de2ddaead23515"
+        "codeSha256": "47247f48787fcdcfd5a42bef073ba7b00a52e7b8f7ae24d74669bdcad5fb31cc"
       },
       "deviationPolicy": null
     },
@@ -39714,7 +39714,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "e768aabd62c362e69d3be809471f2ec0e02db04ca319378c0fbc8033631112c2"
+        "codeSha256": "aded500fd8c4274cde874d8b92dfc491325e0fc6e1c8be11d76c91be8a32c940"
       },
       "deviationPolicy": null
     },
@@ -39794,7 +39794,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "9fec541bcf301c5baa4e15b59d49cdb41703754ee1a14cdd45607335dc766de3"
+        "codeSha256": "341c668bcfcae93054951233cfd9aeec99a20d8fb40a8a494baf96fc99615789"
       },
       "deviationPolicy": null
     },
