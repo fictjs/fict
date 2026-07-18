@@ -1,4 +1,4 @@
-import type { CompileRequest, NativeCompilerOptions } from './types'
+import type { AnalyzeRequest, CompileRequest, NativeCompilerOptions } from './types'
 
 export interface CompilerEnvironmentPolicyInput {
   nodeEnv?: string | undefined
@@ -57,4 +57,16 @@ export function applyCompileRequestEnvironmentPolicy(
   const options = applyCompilerEnvironmentPolicy(request.options, environment)
   if (options === request.options) return request
   return { ...request, options }
+}
+
+export function applyAnalyzeRequestEnvironmentPolicy(
+  request: AnalyzeRequest,
+  environment?: CompilerEnvironmentPolicyInput,
+): AnalyzeRequest {
+  const compilerOptions = applyCompilerEnvironmentPolicy(
+    request.options?.compilerOptions,
+    environment,
+  )
+  if (compilerOptions === request.options?.compilerOptions) return request
+  return { ...request, options: { ...request.options, compilerOptions } }
 }

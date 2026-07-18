@@ -23,6 +23,7 @@ import type { AnalyzeResult } from '../src/tooling/types'
 import {
   COMPILER_PROTOCOL_VERSION,
   MODULE_REACTIVE_METADATA_VERSION,
+  type AnalyzeRequest,
   type CompileRequest,
   type CompileResult,
   type ScanResult,
@@ -144,6 +145,51 @@ describe('native compiler loader', () => {
       options: { strictGuarantee: true },
     })
     expect(request.options?.strictGuarantee).toBe(false)
+  })
+
+  it('forces the shared production policy for direct sync and async analysis', async () => {
+    const binding = createBinding()
+    const analyzeSync = vi.fn(() => createAnalyzeResult())
+    const analyze = vi.fn(async () => createAnalyzeResult())
+    binding.analyzeSync = analyzeSync
+    binding.analyze = analyze
+    const facade = createNativeCompilerFacade({
+      nativePath: '/tmp/fict-compiler.node',
+      platform: 'darwin',
+      arch: 'arm64',
+      load: () => binding,
+    })
+    const request: AnalyzeRequest = {
+      code: 'export const value = 1',
+      filename: 'module.ts',
+      options: {
+        includeRegions: true,
+        compilerOptions: { dev: true, strictGuarantee: false },
+      },
+    }
+
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('FICT_STRICT_GUARANTEE', 'false')
+    facade.analyzeSync(request)
+    expect(analyzeSync).toHaveBeenCalledWith({
+      ...request,
+      options: {
+        includeRegions: true,
+        compilerOptions: { dev: true, strictGuarantee: true },
+      },
+    })
+
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('FICT_STRICT_GUARANTEE', '1')
+    await facade.analyze(request)
+    expect(analyze).toHaveBeenCalledWith({
+      ...request,
+      options: {
+        includeRegions: true,
+        compilerOptions: { dev: true, strictGuarantee: true },
+      },
+    })
+    expect(request.options?.compilerOptions?.strictGuarantee).toBe(false)
   })
 
   it('exports the complete serializable direct compiler facade', () => {

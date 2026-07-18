@@ -1,6 +1,9 @@
 import { createRequire } from 'node:module'
 
-import { applyCompileRequestEnvironmentPolicy } from './environment-policy'
+import {
+  applyAnalyzeRequestEnvironmentPolicy,
+  applyCompileRequestEnvironmentPolicy,
+} from './environment-policy'
 import {
   NativeCompilerLoadError,
   nativeCompilerPackageName,
@@ -217,8 +220,8 @@ export function createNativeCompilerFacade(options?: NativeLoaderOptions): Nativ
     transform: request => compiler().transform(applyCompileRequestEnvironmentPolicy(request)),
     scanSync: request => compiler().scanSync(request),
     scan: request => compiler().scan(request),
-    analyzeSync: request => compiler().analyzeSync(request),
-    analyze: request => compiler().analyze(request),
+    analyzeSync: request => compiler().analyzeSync(applyAnalyzeRequestEnvironmentPolicy(request)),
+    analyze: request => compiler().analyze(applyAnalyzeRequestEnvironmentPolicy(request)),
   }
 }
 
