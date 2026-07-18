@@ -7494,7 +7494,7 @@ fn value_preserving_setter<'a>(
     value: Expression<'a>,
     span: Span,
 ) -> Expression<'a> {
-    let parameter = generated_parameter_name(allocator, signal, "__fict_value");
+    let parameter = generated_parameter_name(allocator, signal, "__fict_value", None);
     let parameter_value = || {
         let builder = AstBuilder::new(allocator);
         Expression::new_identifier(span, parameter, &builder)
@@ -7516,7 +7516,14 @@ fn logical_compound_update<'a>(
     right: Expression<'a>,
     span: Span,
 ) -> Expression<'a> {
-    let parameter = generated_parameter_name(allocator, signal, "__fict_previous");
+    let mut identifiers = IdentifierCollector::default();
+    identifiers.visit_expression(&right);
+    let parameter = generated_parameter_name(
+        allocator,
+        signal,
+        "__fict_previous",
+        Some(&identifiers.names),
+    );
     let builder = AstBuilder::new(allocator);
     let previous = Expression::new_identifier(span, parameter, &builder);
     let assigned = value_preserving_setter(allocator, signal, right, span);
@@ -7533,7 +7540,7 @@ fn postfix_update<'a>(
     operator: UpdateOperator,
     span: Span,
 ) -> Expression<'a> {
-    let parameter = generated_parameter_name(allocator, signal, "__fict_previous");
+    let parameter = generated_parameter_name(allocator, signal, "__fict_previous", None);
     let parameter_value = || {
         let builder = AstBuilder::new(allocator);
         Expression::new_identifier(span, parameter, &builder)
@@ -7695,12 +7702,14 @@ fn generated_parameter_name<'a>(
     allocator: &'a Allocator,
     signal: &str,
     preferred: &str,
+    unavailable: Option<&BTreeSet<String>>,
 ) -> &'a str {
-    if signal != preferred {
+    if signal != preferred && unavailable.is_none_or(|names| !names.contains(preferred)) {
         return allocator.alloc_str(preferred);
     }
     let mut candidate = format!("{preferred}_1");
-    while candidate == signal {
+    while candidate == signal || unavailable.is_some_and(|names| names.contains(candidate.as_str()))
+    {
         candidate.push('_');
     }
     allocator.alloc_str(&candidate)

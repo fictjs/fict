@@ -401,6 +401,24 @@ test('ports the Babel module-metadata safety domain to the native graph host', (
   assert.match(packageJson, /module-metadata-safety\.test\.ts/)
 })
 
+test('ports the Babel state-machine collision domain to structured native control flow', () => {
+  const runtime = read('scripts/native-compiler-state-machine-name-collision.test.mjs')
+  for (const behavior of [
+    'legacy state-machine collision scenarios stay structured and preserve authored bindings',
+    'current context helper allocation avoids authored parameter collisions',
+    'logical reactive updates do not capture user locals or parameters',
+  ]) {
+    assert.match(runtime, new RegExp(behavior))
+  }
+  assert.match(runtime, /executeCommonJs/)
+  assert.match(runtime, /__fict_previous_1_/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:state-machine-name-collision/)
+  assert.match(packageJson, /native-compiler-state-machine-name-collision\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-state-machine-name-collision\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
