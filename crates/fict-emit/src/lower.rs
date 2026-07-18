@@ -2998,7 +2998,7 @@ fn binds_element_text_content(tag: &str, namespace: DomNamespace) -> bool {
     namespace == DomNamespace::Html
         && matches!(
             tag.to_ascii_lowercase().as_str(),
-            "script" | "style" | "title"
+            "script" | "style" | "textarea" | "title"
         )
 }
 fn text_content_segments(children: &[JsxChild]) -> Vec<TemplateTextSegment> {

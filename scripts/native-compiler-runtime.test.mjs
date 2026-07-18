@@ -915,11 +915,13 @@ test('raw-text and RCDATA expressions bind literal textContent', async () => {
       function App() {
         let show = $state(true)
         let css = $state('body { color: red; }')
+        let draft = $state('hello')
         let color = $state('red')
         let enabled = $state(false)
         api = {
           hide: () => (show = false),
           setCss: value => (css = value),
+          setDraft: value => (draft = value),
           updateMixed: value => {
             enabled = true
             color = value
@@ -929,6 +931,7 @@ test('raw-text and RCDATA expressions bind literal textContent', async () => {
           <section>
             <script type="application/json" data-id="script">{show && <span>code</span>}</script>
             <style data-id="style">{css}</style>
+            <textarea data-id="textarea">{draft}</textarea>
             <title data-id="title">{show && <span>title</span>}</title>
             <script
               type="application/json"
@@ -953,21 +956,28 @@ test('raw-text and RCDATA expressions bind literal textContent', async () => {
 
   const script = container.querySelector('[data-id="script"]')
   const style = container.querySelector('[data-id="style"]')
+  const textarea = container.querySelector('[data-id="textarea"]')
   const title = container.querySelector('[data-id="title"]')
   const childrenProp = container.querySelector('[data-id="children-prop"]')
   const mixed = container.querySelector('[data-id="mixed"]')
-  for (const element of [script, style, title, childrenProp, mixed]) {
+  for (const element of [script, style, textarea, title, childrenProp, mixed]) {
     assert.equal(element?.textContent.includes('fict:slot'), false)
+    assert.equal(element?.textContent.includes('<!---->'), false)
   }
   assert.equal(childrenProp?.hasAttribute('children'), false)
   assert.equal(style?.textContent, 'body { color: red; }')
+  assert.equal(textarea?.textContent, 'hello')
+  assert.equal(textarea?.value, 'hello')
   assert.equal(mixed?.textContent, '.a > .b { color: red }')
   assert.equal(mixed?.textContent.includes('&gt;'), false)
 
   compiled.api.setCss('body { color: blue; }')
+  compiled.api.setDraft('updated')
   compiled.api.updateMixed('blue')
   await flushRuntime()
   assert.equal(style?.textContent, 'body { color: blue; }')
+  assert.equal(textarea?.textContent, 'updated')
+  assert.equal(textarea?.value, 'updated')
   assert.equal(mixed?.textContent, '.a > .b display:block; { color: blue }')
 
   compiled.api.hide()
