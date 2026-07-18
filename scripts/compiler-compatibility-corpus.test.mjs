@@ -307,6 +307,26 @@ test('ports the unrepresented Babel auto-extraction domain through the native Pr
   assert.match(ci, /native-compiler-auto-extract\.test\.mjs/)
 })
 
+test('ports the unrepresented Babel expression-dependency domain through Preview artifacts', () => {
+  const runtime = read('scripts/native-compiler-expression-deps.test.mjs')
+  for (const behavior of [
+    'optional member chains restore the base',
+    'every supported expression family',
+    'yield expressions restore their argument',
+    'computed members restore both the object and key',
+    'block-bodied function closures include branch, phi-source, and return dependencies',
+  ]) {
+    assert.match(runtime, new RegExp(behavior))
+  }
+  assert.match(runtime, /__scopeProps/)
+  assert.match(runtime, /__fictUseLexicalScope/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:expression-deps/)
+  assert.match(packageJson, /native-compiler-expression-deps\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-expression-deps\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
