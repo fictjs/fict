@@ -97,4 +97,19 @@ describe('release strict guarantee scope', () => {
     expect(platformJob).toContain('pnpm test:compiler:native-host')
     expect(platformJob).toContain('node scripts/native-compiler-package-smoke.mjs')
   })
+
+  it('keeps a pinned scheduled compiler fuzz campaign with crash artifacts', () => {
+    const ciWorkflow = readProjectFile('.github/workflows/ci.yml')
+    expect(ciWorkflow).toContain("cron: '17 8 * * *'")
+    const fuzzJob = workflowJob(ciWorkflow, 'rust-fuzz')
+    expect(fuzzJob).toContain(
+      "if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+    )
+    expect(fuzzJob).toContain('timeout-minutes: 30')
+    expect(fuzzJob).toContain('nightly-2026-04-28')
+    expect(fuzzJob).toContain('--manifest-path fuzz/Cargo.toml')
+    expect(fuzzJob).toContain('fuzz build compiler_pipeline')
+    expect(fuzzJob).toContain('-max_total_time=600')
+    expect(fuzzJob).toContain('path: fuzz/artifacts')
+  })
 })
