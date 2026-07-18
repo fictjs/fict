@@ -2784,7 +2784,24 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     }
 
     fn build_function_shells(&mut self) {
+        let module_scope = self
+            .function_facts
+            .first()
+            .map_or(ScopeId::new(0), |fact| fact.scope);
+        let module_policy = |kind| {
+            self.frontend
+                .source_facts
+                .directives
+                .iter()
+                .any(|directive| directive.scope == module_scope && directive.kind == kind)
+        };
+        let module_no_memo = module_policy(FictDirectiveKind::NoMemo);
+        let module_pure = module_policy(FictDirectiveKind::Pure);
         for mut fact in self.function_facts.clone() {
+            // Program directives are module policy and apply to every function in the file.
+            // Function-scoped directives remain local to the exact semantic scope below.
+            fact.flags.no_memo |= module_no_memo;
+            fact.flags.pure |= module_pure;
             for directive in self
                 .frontend
                 .source_facts

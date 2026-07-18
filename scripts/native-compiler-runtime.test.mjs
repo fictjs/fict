@@ -1373,6 +1373,30 @@ test('fict-ignore suppressions apply before compile and analyze escalation', () 
   assert.deepEqual(integration.diagnostics, [])
 })
 
+test('module no-memo policy reaches top-level and nested lowering', () => {
+  const result = binding.transformSync({
+    code: `
+      'use no memo'
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(1)
+        const doubled = count * 2
+        const renderNested = () => {
+          const tripled = count * 3
+          return <span>{tripled}</span>
+        }
+        return <div>{doubled}{renderNested()}</div>
+      }
+    `,
+    filename: '/fixtures/module-no-memo.tsx',
+  })
+
+  assert.deepEqual(result.diagnostics, [])
+  assert.doesNotMatch(result.code, /__fictUseMemo/)
+  assert.match(result.code, /\(\) => count\(\) \* 2/)
+  assert.match(result.code, /const renderNested = \(\) => \{\s*const tripled = count\(\) \* 3/)
+})
+
 test('dev compiler mode labels authored reactive creations for DevTools', () => {
   const source = `
     import { $effect, $memo, $state } from 'fict'

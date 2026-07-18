@@ -6430,6 +6430,66 @@ fn applies_function_directives_and_erases_type_only_binding_ids() {
     }
 }
 #[test]
+fn propagates_module_policies_without_leaking_function_policies() {
+    let module_output = build_hir(
+        r#"
+            "use no memo";
+            "use pure";
+            export function TopLevel() {
+                function Nested() { return 1; }
+                return Nested();
+            }
+        "#,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        module_output.diagnostics.is_empty(),
+        "{:?}",
+        module_output.diagnostics
+    );
+    let module_hir = module_output.hir.expect("verified module-policy HIR");
+    assert!(
+        module_hir
+            .functions
+            .iter()
+            .all(|function| function.flags.no_memo && function.flags.pure)
+    );
+
+    let local_output = build_hir(
+        r#"
+            export function Local() {
+                "use no memo";
+                "use pure";
+                function Child() { return 1; }
+                return Child();
+            }
+            export function Sibling() { return 2; }
+        "#,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        local_output.diagnostics.is_empty(),
+        "{:?}",
+        local_output.diagnostics
+    );
+    let local_hir = local_output.hir.expect("verified function-policy HIR");
+    for (name, expected) in [("Local", true), ("Child", false), ("Sibling", false)] {
+        let function = local_hir
+            .functions
+            .iter()
+            .find(|function| {
+                function.binding.is_some_and(|binding| {
+                    local_hir.bindings[binding.as_usize()].display_name == name
+                })
+            })
+            .unwrap_or_else(|| panic!("{name} function"));
+        assert_eq!(function.flags.no_memo, expected, "{name} no_memo");
+        assert_eq!(function.flags.pure, expected, "{name} pure");
+    }
+}
+#[test]
 fn builds_structural_jsx_tags_attributes_children_and_spreads() {
     let source = r#"
         import * as UI from './ui';
