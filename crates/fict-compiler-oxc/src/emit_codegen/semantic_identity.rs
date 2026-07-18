@@ -9,9 +9,9 @@ use oxc::{
     ast::{
         AstBuilder, NONE,
         ast::{
-            Argument, BindingIdentifier, BindingPattern, Expression, FormalParameterKind,
-            FormalParameters, FunctionBody, IdentifierReference, Program, Statement,
-            VariableDeclarationKind, VariableDeclarator,
+            Argument, ArrayExpressionElement, BindingIdentifier, BindingPattern, Expression,
+            FormalParameterKind, FormalParameters, FunctionBody, IdentifierReference, Program,
+            Statement, VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::Visit,
@@ -25,10 +25,13 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) struct SemanticIdentities {
     symbols: BTreeMap<SymbolId, BindingId>,
     references: BTreeMap<ReferenceId, BindingId>,
+    reserved_names: BTreeSet<String>,
 }
 
 impl SemanticIdentities {
     pub(super) fn build(program: &Program<'_>) -> Result<Self, Vec<Diagnostic>> {
+        let mut reserved_names = ReservedNameCollector::default();
+        reserved_names.visit_program(program);
         let built = SemanticBuilder::new()
             .with_check_syntax_error(true)
             .with_enum_eval(true)
@@ -40,7 +43,10 @@ impl SemanticIdentities {
             ));
         }
         let scoping = built.semantic.scoping();
-        let mut identities = Self::default();
+        let mut identities = Self {
+            reserved_names: reserved_names.names,
+            ..Self::default()
+        };
         // Mirror the frontend's runtime-only BindingId compaction exactly. OXC SymbolId values
         // cannot be used directly because erased TypeScript bindings remain in the symbol table.
         for (index, symbol) in scoping
@@ -77,6 +83,36 @@ impl SemanticIdentities {
         };
         collector.visit_binding_pattern(pattern);
         collector.bindings
+    }
+
+    fn destructure_temporary_name(&self, span: Span) -> String {
+        let preferred = format!("__fict_destructure_{}", span.start);
+        if !self.reserved_names.contains(&preferred) {
+            return preferred;
+        }
+        let mut suffix = 1_u32;
+        loop {
+            let candidate = format!("{preferred}_{suffix}");
+            if !self.reserved_names.contains(&candidate) {
+                return candidate;
+            }
+            suffix = suffix.saturating_add(1);
+        }
+    }
+}
+
+#[derive(Default)]
+struct ReservedNameCollector {
+    names: BTreeSet<String>,
+}
+
+impl<'a> Visit<'a> for ReservedNameCollector {
+    fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
+        self.names.insert(identifier.name.to_string());
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        self.names.insert(identifier.name.to_string());
     }
 }
 
@@ -148,8 +184,19 @@ pub(super) fn rewrite_derived_declarator<'a>(
         matched.insert(identity.binding);
         return vec![declarator];
     }
-    // Replaying the authored pattern inside each accessor preserves nested keys, rest elements,
-    // and binding-local names without attempting to reverse-engineer destructuring paths.
+    if bindings.len() > 1 {
+        return rewrite_shared_pattern_declarator(
+            allocator,
+            declarator,
+            bindings,
+            initializer,
+            plans,
+            identities,
+            matched,
+        );
+    }
+    // Replaying the authored pattern inside the accessor preserves nested keys, rest elements,
+    // and the binding-local name without reverse-engineering its destructuring path.
     let pattern = declarator.id;
     let mut rewritten = Vec::with_capacity(bindings.len());
     for identity in bindings {
@@ -188,6 +235,95 @@ pub(super) fn rewrite_derived_declarator<'a>(
             Some(value),
             declarator.definite,
             &AstBuilder::new(allocator),
+        ));
+    }
+    rewritten
+}
+
+fn rewrite_shared_pattern_declarator<'a>(
+    allocator: &'a Allocator,
+    declarator: VariableDeclarator<'a>,
+    bindings: Vec<PatternBindingIdentity>,
+    initializer: Expression<'a>,
+    plans: &BTreeMap<BindingId, DerivedCreationRewrite>,
+    identities: &SemanticIdentities,
+    matched: &mut BTreeSet<BindingId>,
+) -> Vec<VariableDeclarator<'a>> {
+    let shared_binding = bindings
+        .iter()
+        .find(|identity| {
+            plans.contains_key(&identity.binding) && !matched.contains(&identity.binding)
+        })
+        .expect("shared pattern rewrite has an unmatched derived binding");
+    let shared_binding_id = shared_binding.binding;
+    let shared_plan = plans
+        .get(&shared_binding_id)
+        .expect("shared pattern binding has a derived creation plan")
+        .clone();
+    let temporary = identities.destructure_temporary_name(declarator.span);
+    let getter = pattern_tuple_getter_expression(
+        allocator,
+        declarator.id,
+        initializer,
+        &bindings,
+        declarator.span,
+    );
+    let shared_value = derived_accessor_from_getter(
+        allocator,
+        getter,
+        shared_plan.rewrite.local,
+        shared_plan.rewrite.context,
+        declarator.span,
+    );
+    let builder = AstBuilder::new(allocator);
+    let mut rewritten = Vec::with_capacity(bindings.len() + 1);
+    rewritten.push(VariableDeclarator::new(
+        declarator.span,
+        declarator.kind,
+        BindingPattern::new_binding_identifier(
+            declarator.span,
+            allocator.alloc_str(&temporary),
+            &builder,
+        ),
+        NONE,
+        Some(shared_value),
+        declarator.definite,
+        &builder,
+    ));
+
+    for (index, identity) in bindings.into_iter().enumerate() {
+        let getter = tuple_member_getter_expression(allocator, &temporary, index, declarator.span);
+        let value = if identity.binding == shared_binding_id {
+            matched.insert(identity.binding);
+            getter
+        } else if let Some(planned) = plans
+            .get(&identity.binding)
+            .filter(|_| !matched.contains(&identity.binding))
+            .cloned()
+        {
+            matched.insert(identity.binding);
+            derived_accessor_from_getter(
+                allocator,
+                getter,
+                planned.rewrite.local,
+                planned.rewrite.context,
+                declarator.span,
+            )
+        } else {
+            invoke_zero_parameter_getter(allocator, getter, declarator.span)
+        };
+        rewritten.push(VariableDeclarator::new(
+            declarator.span,
+            declarator.kind,
+            BindingPattern::new_binding_identifier(
+                identity.span,
+                allocator.alloc_str(&identity.name),
+                &builder,
+            ),
+            NONE,
+            Some(value),
+            declarator.definite,
+            &builder,
         ));
     }
     rewritten
@@ -272,6 +408,87 @@ fn pattern_getter_expression<'a>(
     Expression::new_arrow_function_expression(
         span, false, false, NONE, parameters, NONE, body, &builder,
     )
+}
+
+fn pattern_tuple_getter_expression<'a>(
+    allocator: &'a Allocator,
+    pattern: BindingPattern<'a>,
+    initializer: Expression<'a>,
+    bindings: &[PatternBindingIdentity],
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let declarator = VariableDeclarator::new(
+        span,
+        VariableDeclarationKind::Const,
+        pattern,
+        NONE,
+        Some(initializer),
+        false,
+        &builder,
+    );
+    let mut declarations = ArenaVec::new_in(&allocator);
+    declarations.push(declarator);
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(Statement::new_variable_declaration(
+        span,
+        VariableDeclarationKind::Const,
+        declarations,
+        false,
+        &builder,
+    ));
+    let elements = ArenaVec::from_iter_in(
+        bindings.iter().map(|identity| {
+            ArrayExpressionElement::from(Expression::new_identifier(
+                identity.span,
+                allocator.alloc_str(&identity.name),
+                &builder,
+            ))
+        }),
+        &allocator,
+    );
+    statements.push(Statement::new_return_statement(
+        span,
+        Some(Expression::new_array_expression(span, elements, &builder)),
+        &builder,
+    ));
+    let parameters = FormalParameters::boxed(
+        span,
+        FormalParameterKind::ArrowFormalParameters,
+        ArenaVec::new_in(&allocator),
+        NONE,
+        &builder,
+    );
+    let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
+    Expression::new_arrow_function_expression(
+        span, false, false, NONE, parameters, NONE, body, &builder,
+    )
+}
+
+fn tuple_member_getter_expression<'a>(
+    allocator: &'a Allocator,
+    temporary: &str,
+    index: usize,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let tuple = Expression::new_call_expression(
+        span,
+        Expression::new_identifier(span, allocator.alloc_str(temporary), &builder),
+        NONE,
+        ArenaVec::new_in(&allocator),
+        false,
+        &builder,
+    );
+    let property = Expression::new_numeric_literal(
+        span,
+        f64::from(u32::try_from(index).expect("destructuring binding index fits u32")),
+        None,
+        oxc::syntax::number::NumberBase::Decimal,
+        &builder,
+    );
+    let member = Expression::new_computed_member_expression(span, tuple, property, false, &builder);
+    zero_parameter_expression_arrow(allocator, member, span)
 }
 
 fn invoke_zero_parameter_getter<'a>(

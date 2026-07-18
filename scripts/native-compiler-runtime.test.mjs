@@ -905,6 +905,56 @@ test('intrinsic children props become child content without leaking attributes',
   container.remove()
 })
 
+test('shared derived destructuring evaluates its initializer once per revision', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export const evaluations = []
+      let update = () => {}
+
+      function makePair(value) {
+        evaluations.push(value)
+        return { first: value, second: value + 1 }
+      }
+
+      function App() {
+        let value = $state(1)
+        const { first, second } = makePair(value)
+        update = next => (value = next)
+        return <p data-id="shared-destructuring">{first}:{second}</p>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function refresh(value) {
+        update(value)
+      }
+    `,
+    'shared-derived-destructuring',
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-S002'],
+    },
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="shared-destructuring"]')?.textContent, '1:2')
+  assert.deepEqual(compiled.evaluations, [1])
+
+  compiled.refresh(4)
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="shared-destructuring"]')?.textContent, '4:5')
+  assert.deepEqual(compiled.evaluations, [1, 4])
+
+  dispose()
+  container.remove()
+})
+
 test('raw-text and RCDATA expressions bind literal textContent', async () => {
   const compiled = await compileAndImport(
     `
