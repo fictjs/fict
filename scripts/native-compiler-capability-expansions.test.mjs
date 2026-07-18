@@ -1,0 +1,255 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import test from 'node:test'
+
+const require = createRequire(import.meta.url)
+const root = path.resolve(import.meta.dirname, '..')
+const binding = require(path.join(root, 'target/release/fict_compiler_napi.node'))
+const runtime = require(path.join(root, 'packages/runtime/dist/internal.cjs'))
+const corpus = JSON.parse(
+  readFileSync(
+    path.join(root, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
+    'utf8',
+  ),
+)
+
+const probes = [
+  {
+    id: 'packages/compiler/test/alias-reactivity.test.ts:70:transform',
+    suffix: 'export function probe() { return Component() }',
+    expected: 1,
+  },
+  {
+    id: 'packages/compiler/test/alias-reactivity.test.ts:84:transform',
+    suffix: 'export function probe() { return Component() }',
+    expected: 1,
+  },
+  {
+    id: 'packages/compiler/test/base-transform.test.ts:586:transformRawTypeScript',
+    suffix: 'export function probe() { return [Color.Red, Color[1]] }',
+    expected: [1, 'Red'],
+  },
+  {
+    id: 'packages/compiler/test/base-transform.test.ts:594:transformRawTypeScript',
+    suffix: 'export function probe() { return [Color.Red, Color[1]] }',
+    expected: [1, 'Red'],
+  },
+  {
+    id: 'packages/compiler/test/base-transform.test.ts:1224:transform',
+    suffix: `
+      export function probe() {
+        Component()
+        return 'completed'
+      }
+    `,
+    diagnosticCodes: ['FICT-C004'],
+    expected: 'completed',
+  },
+  {
+    id: 'packages/compiler/test/control-flow-runtime.test.ts:2959:compileAndRunHook',
+    suffix: '',
+    exportName: 'useRun',
+    expectedError: 'ReferenceError',
+  },
+  {
+    id: 'packages/compiler/test/control-flow-runtime.test.ts:4531:transformCommonJS',
+    suffix: `
+      export function useProbe() {
+        return useRun()
+      }
+    `,
+    exportName: 'useProbe',
+    resolveAccessor: true,
+    expected: 1,
+  },
+  {
+    id: 'packages/compiler/test/control-flow-runtime.test.ts:4590:compileAndRunHook',
+    suffix: `
+      export function useProbe() {
+        const result = useRun()
+        const before = result.view()
+        result.set(4)
+        return [before, result.view()]
+      }
+    `,
+    exportName: 'useProbe',
+    expected: ['01', '01'],
+  },
+  {
+    id: 'packages/compiler/test/control-flow.test.ts:953:runTransform',
+    suffix: `
+      export function probe() {
+        const node = Component()
+        return [node.type, node.props.children]
+      }
+    `,
+    diagnosticCodes: ['FICT-R006'],
+    expected: ['div', 'none'],
+  },
+  {
+    id: 'packages/compiler/test/cycles.test.ts:62:run',
+    suffix: 'export { Component as probe }',
+    expectedError: 'ReferenceError',
+  },
+  {
+    id: 'packages/compiler/test/do-while-break.test.ts:33:transform',
+    suffix: 'export function probe() { return Component() }',
+    expected: 5,
+  },
+  {
+    id: 'packages/compiler/test/do-while-break.test.ts:50:transform',
+    suffix: 'export function probe() { return Component() }',
+    expected: 6,
+  },
+  {
+    id: 'packages/compiler/test/do-while-break.test.ts:82:transform',
+    suffix: 'export function probe() { return Component() }',
+    expected: 15,
+  },
+  {
+    id: 'packages/compiler/test/semantic-validation.test.ts:500:transform',
+    suffix: 'export function probe() { return App() }',
+    expected: 0,
+  },
+  {
+    id: 'packages/compiler/test/semantic-validation.test.ts:513:transform',
+    suffix: 'export { App as probe }',
+    expectedError: 'TypeError',
+  },
+  {
+    id: 'packages/compiler/test/semantic-validation.test.ts:526:transform',
+    suffix: 'export { App as probe }',
+    expectedError: 'TypeError',
+  },
+  {
+    id: 'packages/compiler/test/semantic-validation.test.ts:1933:transform',
+    suffix: 'export function probe() { return App().type }',
+    expected: 'div',
+  },
+  {
+    id: 'packages/compiler/test/semantic-validation.test.ts:1948:transform',
+    suffix: `
+      export function probe() {
+        const node = App()
+        const read = () =>
+          typeof node.props.children === 'function'
+            ? node.props.children()
+            : node.props.children
+        const before = read()
+        node.props.onClick()
+        return [before, read()]
+      }
+    `,
+    expected: [0, 0],
+  },
+  {
+    id: 'packages/compiler/test/semantic-validation.test.ts:1963:transform',
+    suffix: `
+      export function probe() {
+        const node = App()
+        const read = () =>
+          typeof node.props.children === 'function'
+            ? node.props.children()
+            : node.props.children
+        const before = read()
+        node.props.onClick()
+        return [before, read()]
+      }
+    `,
+    expected: [0, 0],
+  },
+  {
+    id: 'packages/compiler/test/semantic-validation.test.ts:2062:transform',
+    suffix: 'export { App as probe }',
+    expectedError: 'TypeError',
+  },
+  {
+    id: 'packages/compiler/test/spec-complete.test.ts:619:transform',
+    suffix: `
+      export function probe() {
+        Component()
+        return 'completed'
+      }
+    `,
+    diagnosticCodes: ['FICT-C004'],
+    expected: 'completed',
+  },
+  {
+    id: 'packages/compiler/test/warnings-as-errors.test.ts:156:transform',
+    suffix: `
+      export function probe() {
+        const node = App({ mode: 2 })
+        const children =
+          typeof node.props.children === 'function'
+            ? node.props.children()
+            : node.props.children
+        return [node.type, children]
+      }
+    `,
+    expected: ['span', 2],
+  },
+]
+
+const capabilityFixtures = corpus.fixtures.filter(
+  fixture => fixture.deviationPolicy === 'rust-capability-expansion',
+)
+const fixturesById = new Map(capabilityFixtures.map(fixture => [fixture.id, fixture]))
+
+test('runtime probes cover every reviewed Rust capability expansion exactly once', () => {
+  assert.equal(probes.length, 22)
+  assert.deepEqual(
+    probes.map(probe => probe.id).sort(),
+    capabilityFixtures.map(fixture => fixture.id).sort(),
+  )
+})
+
+function compileProbe(probe) {
+  const fixture = fixturesById.get(probe.id)
+  assert.ok(fixture, probe.id)
+  const result = binding.transformSync({
+    code: `${fixture.source}\n${probe.suffix}`,
+    filename: `/fixtures/capability-expansion-${probes.indexOf(probe)}.tsx`,
+    language: 'tsx',
+    moduleKind: 'commonjs',
+    options: { ...fixture.options, fineGrainedDom: false },
+  })
+  assert.deepEqual(
+    result.diagnostics.map(diagnostic => diagnostic.code),
+    probe.diagnosticCodes ?? [],
+    `${probe.id}: ${result.diagnostics.map(diagnostic => diagnostic.message).join('\n')}`,
+  )
+  assert.notEqual(result.code, '', probe.id)
+  return result.code
+}
+
+function loadProbe(code) {
+  const module = { exports: {} }
+  const requireRuntime = request => {
+    if (request === 'fict/internal' || request === '@fictjs/runtime/internal') return runtime
+    throw new Error(`Unexpected capability-expansion import ${JSON.stringify(request)}`)
+  }
+  new Function('require', 'module', 'exports', code)(requireRuntime, module, module.exports)
+  return module.exports
+}
+
+for (const probe of probes) {
+  test(`executes reviewed Rust capability expansion: ${probe.id}`, () => {
+    const compiled = loadProbe(compileProbe(probe))
+    const entry = compiled[probe.exportName ?? 'probe']
+    assert.equal(typeof entry, 'function', probe.id)
+    runtime.__fictResetContext()
+    try {
+      const invoke = () => runtime.__fictRender({ slots: [], cursor: 0 }, () => entry())
+      if (probe.expectedError !== undefined) {
+        assert.throws(invoke, error => error?.constructor?.name === probe.expectedError)
+      } else {
+        const value = invoke()
+        assert.deepEqual(probe.resolveAccessor ? value() : value, probe.expected)
+      }
+    } finally {
+      runtime.__fictResetContext()
+    }
+  })
+}

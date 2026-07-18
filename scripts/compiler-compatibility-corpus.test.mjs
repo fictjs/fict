@@ -367,6 +367,19 @@ test('ports the unrepresented Babel optimizer differential domain through execut
   assert.match(ci, /native-compiler-optimizer-diff\.test\.mjs/)
 })
 
+test('executes every reviewed Rust capability expansion against the live runtime', () => {
+  const runtime = read('scripts/native-compiler-capability-expansions.test.mjs')
+  assert.match(runtime, /deviationPolicy === 'rust-capability-expansion'/)
+  assert.match(runtime, /assert\.equal\(probes\.length, 22\)/)
+  assert.match(runtime, /runtime\.__fictRender/)
+  assert.match(runtime, /capabilityFixtures\.map\(fixture => fixture\.id\)\.sort\(\)/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:capability-expansions/)
+  assert.match(packageJson, /native-compiler-capability-expansions\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-capability-expansions\.test\.mjs/)
+})
+
 test('maps the Babel delegated-event parity domain to the generated runtime ABI guard', () => {
   const parity = read('packages/runtime/test/delegated-events-parity.test.ts')
   assert.match(parity, /runtime-abi\.json/)
