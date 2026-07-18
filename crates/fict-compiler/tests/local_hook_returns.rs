@@ -97,13 +97,17 @@ fn consumes_structured_member_metadata_from_same_module_hooks() {
             invalid.has_errors() && invalid.code.is_empty(),
             "{name}: {invalid:?}"
         );
+        let diagnostic = invalid
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == expected_code)
+            .unwrap_or_else(|| panic!("{name}: {:?}", invalid.diagnostics));
         assert!(
-            invalid
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == expected_code),
-            "{name}: {:?}",
-            invalid.diagnostics
+            diagnostic
+                .help
+                .as_deref()
+                .is_some_and(|help| help.contains("explicit setter")),
+            "{name}: {diagnostic:?}"
         );
     }
 

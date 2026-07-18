@@ -7374,14 +7374,20 @@ fn enforces_state_owner_target_and_top_level_placement() {
             &HirBuildOptions::default(),
         );
         assert!(output.hir.is_none(), "{source}");
-        assert!(
-            output
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == expected),
-            "{source}: {:?}",
-            output.diagnostics
-        );
+        let diagnostic = output
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == expected)
+            .unwrap_or_else(|| panic!("{source}: {:?}", output.diagnostics));
+        if expected == "FICT-PLACEMENT-STATE-OWNER" {
+            assert!(
+                diagnostic
+                    .help
+                    .as_deref()
+                    .is_some_and(|help| help.contains("directly declared component or hook")),
+                "{source}: {diagnostic:?}"
+            );
+        }
     }
     for source in [
         "import { $state } from 'fict'; function App() { const value = $state(0); return value; }",

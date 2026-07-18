@@ -4005,25 +4005,34 @@ fn reject_hook_property_mutation(
 ) -> Result<(), DiagnosticBundle> {
     match property.kind {
         ImportedReactiveKind::Store if place.projections.len() > 1 => Ok(()),
-        ImportedReactiveKind::Store => Err(DiagnosticBundle::new(vec![lower_error(
-            "FICT-METADATA-READONLY",
-            "cannot replace or delete a store returned by a hook",
-            GuaranteeClass::Unsupported,
-        )])),
-        ImportedReactiveKind::Memo if place.projections.len() == 1 => {
-            Err(DiagnosticBundle::new(vec![lower_error(
+        ImportedReactiveKind::Store => Err(DiagnosticBundle::new(vec![
+            lower_error(
                 "FICT-METADATA-READONLY",
-                "cannot mutate a memo accessor returned by a hook",
+                "cannot replace or delete a store returned by a hook",
                 GuaranteeClass::Unsupported,
-            )]))
+            )
+            .with_help("mutate a nested store property, or expose an explicit setter from the hook"),
+        ])),
+        ImportedReactiveKind::Memo if place.projections.len() == 1 => {
+            Err(DiagnosticBundle::new(vec![
+                lower_error(
+                    "FICT-METADATA-READONLY",
+                    "cannot mutate a memo accessor returned by a hook",
+                    GuaranteeClass::Unsupported,
+                )
+                .with_help("perform the update inside the hook and expose an explicit setter"),
+            ]))
         }
-        ImportedReactiveKind::Signal | ImportedReactiveKind::Memo => {
-            Err(DiagnosticBundle::new(vec![lower_error(
+        ImportedReactiveKind::Signal | ImportedReactiveKind::Memo => Err(DiagnosticBundle::new(
+            vec![lower_error(
                 "FICT-M",
                 "mutating a hook return accessor member is not yet guaranteed",
                 GuaranteeClass::Fallback,
-            )]))
-        }
+            )
+            .with_help(
+                "call a returned signal accessor with the next value, or expose an explicit setter from the hook",
+            )],
+        )),
     }
 }
 fn ensure_writable_hook_return(

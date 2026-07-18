@@ -145,6 +145,42 @@ that every newly accepted case has identical runtime behavior.
 | `namespace-macro-fail-closed` |     1 | Compiler macros called through a Fict namespace are rejected. Import `$state`, `$memo`, and other compiler macros by name.                                                                            |
 | `rust-capability-expansion`   |    22 | Rust accepts reviewed TypeScript, control-flow, or analysis inputs that Babel rejected. Add a runtime regression before relying on a newly accepted construct.                                        |
 
+The three Rust-rejection policies have direct source migrations:
+
+```tsx
+// narrow-component-role: give the reactive owner a direct declaration.
+const registry = {
+  // Before: Button() is an indirect object-member owner.
+  // Button: () => {
+  //   let count = $state(0)
+  //   return <button>{count}</button>
+  // },
+}
+function Button() {
+  let count = $state(0)
+  return <button>{count}</button>
+}
+registry.Button = Button
+
+// structured-hook-return: mutate through an accessor or explicit setter.
+function useCounter() {
+  let count = $state(0)
+  return { count, setCount: (next: number) => (count = next) }
+}
+const counter = useCounter()
+counter.count(1) // or counter.setCount(1), not counter.count = 1
+
+// namespace-macro-fail-closed: import compiler macros by name.
+import { $memo } from 'fict'
+const doubled = $memo(() => count * 2) // not Fict.$memo(...)
+```
+
+The emitted diagnostics preserve these actions as structured `help`: declare a
+component or hook directly, call/expose a Hook setter, or replace a namespace
+macro access with a named import. Do not suppress these errors; doing so would
+leave compiler-only syntax or accessor writes with no supported runtime
+meaning.
+
 An earlier migration audit also found 37 option-driven Babel-success/Rust-fail
 cases. Those are no longer deviations: native compilation now implements
 `dev: true`, `lazyConditional: false`, `getterCache: false`,

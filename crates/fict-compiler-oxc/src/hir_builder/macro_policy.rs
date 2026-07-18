@@ -131,7 +131,9 @@ impl Builder<'_, '_> {
                                 "$state() must be declared inside a component or hook function body",
                                 call.span,
                             )
-                            .with_help("use $store or createSignal for module-level shared state"),
+                            .with_help(
+                                "move this state into a directly declared component or hook; use $store or createSignal only for module-level shared state",
+                            ),
                         );
                         continue;
                     }
