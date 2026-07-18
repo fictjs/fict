@@ -63,6 +63,13 @@ with source, artifact, dependency, and input digests. CI executes that output
 and current Rust output through one isolated semantic harness; the legacy
 compiler itself is not installed or loaded during verification.
 
+Filename and request-protocol evidence is retained separately from the Rust
+codegen goldens. The exact 0.28.0 preset oracle covers real extension inference,
+strict defaults, input-map composition, and explain output. Reviewed native-only
+rows cover explicit grammar/module modes and the serializable metadata and
+module-identity protocol without claiming that those 0.31 host fields existed in
+Babel.
+
 M7 approval cannot be reused as M9 approval.
 
 ## M9 legacy-removal gate

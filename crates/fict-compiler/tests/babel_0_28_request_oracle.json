@@ -1,0 +1,282 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "legacyRelease": "0.28.0",
+    "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "compilerSourceSha256": "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a",
+    "compilerArtifactSha256": "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789",
+    "presetSourceSha256": "81ccc41df119b4c3a4eda0eb7f0738734977bee64a4e179f4b2940a043f7d1e4",
+    "presetArtifactSha256": "19ba01dfc06eafd8e8021839f82f67775071f289011e56c433863c5afec86023",
+    "lockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
+    "packageManager": "pnpm@9.1.1",
+    "babelDependencies": {
+      "@babel/core": "7.29.7",
+      "@babel/plugin-syntax-jsx": "7.28.6",
+      "@babel/plugin-syntax-typescript": "7.27.1",
+      "@babel/plugin-transform-modules-commonjs": "7.28.6",
+      "@babel/plugin-transform-typescript": "7.28.5"
+    },
+    "environment": { "NODE_ENV": "test", "FICT_STRICT_GUARANTEE": "unset" },
+    "requestInputsSha256": "676f7e04dcf14305241fe7de6753e5ae675838948b83478eadc0e785db6b65e3"
+  },
+  "fixtures": [
+    {
+      "id": "infer-ts-module",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "fcbcb7aece718d280178457c2c5a3bfb8e8743b8331374c29a50397f38d511e4",
+      "babelCode": "export const value = 1;",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "infer-tsx-module",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "cd27fc910519dbb1e31e6a52e9191db45d2ea0a316e09d738dc44e5e70afe690",
+      "babelCode": "import { template } from \"fict/internal\";\nexport const view = (() => {\n  const __tmpl_1 = template(\"<div></div>\");\n  const __root_0 = __tmpl_1();\n  return __root_0;\n})();",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "infer-js-module",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "fcbcb7aece718d280178457c2c5a3bfb8e8743b8331374c29a50397f38d511e4",
+      "babelCode": "export const value = 1;",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "infer-jsx-module",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "cd27fc910519dbb1e31e6a52e9191db45d2ea0a316e09d738dc44e5e70afe690",
+      "babelCode": "import { template } from \"fict/internal\";\nexport const view = (() => {\n  const __tmpl_1 = template(\"<div></div>\");\n  const __root_0 = __tmpl_1();\n  return __root_0;\n})();",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "infer-mts-module",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "fcbcb7aece718d280178457c2c5a3bfb8e8743b8331374c29a50397f38d511e4",
+      "babelCode": "export const value = 1;",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "infer-mjs-module",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "fcbcb7aece718d280178457c2c5a3bfb8e8743b8331374c29a50397f38d511e4",
+      "babelCode": "export const value = 1;",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "infer-cts-commonjs",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "f8add66a6035d3afabd1db890443ab327e71aba9644eb032dc2fd046f729e6b5",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.value = void 0;\nconst value = exports.value = 1;",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "infer-cjs-commonjs",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "22917521a56b4b9bcca23242b59f77a4465858d03123ab0959c01fb8deb27cb6",
+      "babelCode": "exports.value = 1;",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "cts-top-level-return",
+      "status": "error",
+      "diagnostics": [{ "code": "BABEL-PARSE", "severity": "error" }],
+      "babelCodeSha256": null,
+      "babelCode": null,
+      "map": null,
+      "explain": null,
+      "errorSummary": "/matrix/return.cts: 'return' outside of function. (1:19)"
+    },
+    {
+      "id": "js-jsx-requires-explicit-mode",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "cd27fc910519dbb1e31e6a52e9191db45d2ea0a316e09d738dc44e5e70afe690",
+      "babelCode": "import { template } from \"fict/internal\";\nexport const view = (() => {\n  const __tmpl_1 = template(\"<div></div>\");\n  const __root_0 = __tmpl_1();\n  return __root_0;\n})();",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "js-rejects-typescript",
+      "status": "error",
+      "diagnostics": [{ "code": "BABEL-PARSE", "severity": "error" }],
+      "babelCodeSha256": null,
+      "babelCode": null,
+      "map": null,
+      "explain": null,
+      "errorSummary": "/matrix/typed.js: Unexpected token (1:18)"
+    },
+    {
+      "id": "ts-rejects-jsx",
+      "status": "error",
+      "diagnostics": [{ "code": "BABEL-PARSE", "severity": "error" }],
+      "babelCodeSha256": null,
+      "babelCode": null,
+      "map": null,
+      "explain": null,
+      "errorSummary": "/matrix/view.ts: Unexpected token, expected \",\" (1:25)"
+    },
+    {
+      "id": "strict-guarantee-default",
+      "status": "error",
+      "diagnostics": [{ "code": "FICT-P002", "severity": "error" }],
+      "babelCodeSha256": null,
+      "babelCode": null,
+      "map": null,
+      "explain": null,
+      "errorSummary": "/matrix/strict-default.tsx: Fict warning treated as error (FICT-P002): Array rest in props destructuring falls back to non-reactive binding."
+    },
+    {
+      "id": "strict-guarantee-explicit-opt-out",
+      "status": "ok",
+      "diagnostics": [
+        {
+          "code": "FICT-P002",
+          "severity": "warning",
+          "message": "Array rest in props destructuring falls back to non-reactive binding.",
+          "fileName": "/matrix/strict-opt-out.tsx",
+          "line": 1,
+          "column": 30
+        }
+      ],
+      "babelCodeSha256": "3a429a07ef662cef986e004868fb7090cf57ffdac499919914600ad80a30ceb4",
+      "babelCode": "import { __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, __fictElementNamespaceMatches, __fictUseContext } from \"fict/internal\";\nexport function Comp(__props) {\n  const {\n    list: [first, ...rest]\n  } = __props;\n  const __fictCtx = __fictUseContext();\n  return __fictElementNamespaceMatches(\"div\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0]);\n    const __end_3 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_3, () => first, __node => createElementInNamespace(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"div\",\n    props: {\n      children: first\n    }\n  };\n}",
+      "map": null,
+      "explain": null
+    },
+    {
+      "id": "composed-input-source-map",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "fcbcb7aece718d280178457c2c5a3bfb8e8743b8331374c29a50397f38d511e4",
+      "babelCode": "export const value = 1;",
+      "map": {
+        "version": 3,
+        "names": ["value"],
+        "sources": ["/authored/original.fict"],
+        "sourcesContent": ["export const value = 1"],
+        "mappings": "OAAA,MAAAA,KAAA",
+        "ignoreList": []
+      },
+      "explain": null
+    },
+    {
+      "id": "explain-physical-and-graph-identities",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "05d9cfd96a07fbe53ae6ff48bbc1850d20632f12c4bb976d76e07e7993ca09ee",
+      "babelCode": "import { __fictUseSignal, __fictUseEffect, __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from \"fict/internal\";\nexport function Counter() {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, 0, {\n    name: \"count\"\n  });\n  __fictUseEffect(__fictCtx, () => count());\n  return __fictElementNamespaceMatches(\"button\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<button><!--fict:slot:start--><!--fict:slot:end--></button>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0]);\n    const __end_3 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_3, () => count(), __node => createElementInNamespace(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"button\",\n    props: {\n      children: __fictReactive(() => count())\n    }\n  };\n}",
+      "map": null,
+      "explain": {
+        "version": 1,
+        "fileName": "/matrix/explain.tsx?raw#physical",
+        "helpers": [
+          "__fictElementNamespaceMatches",
+          "__fictReactive",
+          "__fictUseContext",
+          "__fictUseEffect",
+          "__fictUseMemo",
+          "__fictUseSignal",
+          "createElementInNamespace",
+          "getSlotEnd",
+          "insertBetween",
+          "resolvePath",
+          "template"
+        ],
+        "diagnostics": [],
+        "events": [
+          {
+            "kind": "source-signal",
+            "name": "$state",
+            "message": "$state creates a compiler-managed signal accessor.",
+            "line": 1,
+            "column": 78
+          },
+          {
+            "kind": "source-effect",
+            "name": "$effect",
+            "message": "$effect creates a compiler-managed effect boundary.",
+            "line": 1,
+            "column": 89
+          },
+          {
+            "kind": "source-jsx",
+            "message": "JSX subtree participates in compiler DOM lowering.",
+            "line": 1,
+            "column": 116
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictElementNamespaceMatches",
+            "message": "Compiler output imports runtime helper __fictElementNamespaceMatches."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictReactive",
+            "message": "Compiler output imports runtime helper __fictReactive."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseContext",
+            "message": "Compiler output imports runtime helper __fictUseContext."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseEffect",
+            "message": "Compiler output imports runtime helper __fictUseEffect."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseMemo",
+            "message": "Compiler output imports runtime helper __fictUseMemo."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseSignal",
+            "message": "Compiler output imports runtime helper __fictUseSignal."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "createElementInNamespace",
+            "message": "Compiler output imports runtime helper createElementInNamespace."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "getSlotEnd",
+            "message": "Compiler output imports runtime helper getSlotEnd."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "insertBetween",
+            "message": "Compiler output imports runtime helper insertBetween."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "resolvePath",
+            "message": "Compiler output imports runtime helper resolvePath."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "template",
+            "message": "Compiler output imports runtime helper template."
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -243,10 +243,28 @@ mutation, destructuring, hooks, loops, try/finally, explicit memos, optional
 dependencies, update-expression order, and numeric edge cases. It is a real
 semantic gate for those domains, not a claim of full language equivalence.
 
+A second full-request matrix prevents the semantic probes from collapsing every
+input to `.tsx`/CommonJS. Sixteen of its 26 reviewed requests freeze output from
+the exact 0.28.0 Babel preset build, including its own source and artifact
+digests. The matrix covers `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`,
+and `.cjs`; explicit language and module-kind overrides; strict-default and
+opt-out behavior; composed input maps; explanations; physical, graph, and public
+module identities; and resolved/incomplete metadata snapshots.
+
+The matrix compares structural behavior instead of emitter text. It records two
+intentional status differences rather than hiding them: Rust accepts CTS
+top-level returns that Babel rejected, while JSX in a `.js` file now requires a
+`.jsx` filename or explicit `language: "jsx"`. Source maps compare normalized
+authored identities because Babel resolves `sourceRoot` into `sources`, whereas
+the native response preserves the original structured fields. The ten
+native-only host-protocol rows are explicitly marked and are not presented as
+Babel equivalence evidence.
+
 Run the focused gate with:
 
 ```bash
 pnpm test:compiler:compatibility-corpus
+pnpm test:compiler:request-matrix
 ```
 
 After 0.31, rollback means restoring a complete 0.30.1 application release and

@@ -1,0 +1,564 @@
+{
+  "schemaVersion": 1,
+  "description": "Reviewed full-request compatibility matrix. Babel-backed rows freeze exact 0.28 preset behavior; native-only rows cover the serializable 0.31 host protocol that did not exist in Babel.",
+  "cases": [
+    {
+      "id": "infer-ts-module",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/value.ts?raw#physical",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "codeExcludes": [": number"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "codeExcludes": [": number"]
+      }
+    },
+    {
+      "id": "infer-tsx-module",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "export const view: JSX.Element = <div />",
+        "filename": "/matrix/view.tsx#physical",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["template(\"<div></div>\")"],
+        "codeExcludes": ["JSX.Element"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["template(\"<div></div>\")"],
+        "codeExcludes": ["JSX.Element"]
+      }
+    },
+    {
+      "id": "infer-js-module",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "export const value = 1",
+        "filename": "/matrix/value.js?raw",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": { "status": "ok", "codeIncludes": ["export const value = 1"] },
+      "currentExpected": { "status": "ok", "codeIncludes": ["export const value = 1"] }
+    },
+    {
+      "id": "infer-jsx-module",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "export const view = <div />",
+        "filename": "/matrix/view.jsx?raw",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["template(\"<div></div>\")"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["template(\"<div></div>\")"]
+      }
+    },
+    {
+      "id": "infer-mts-module",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/value.mts?raw",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "codeExcludes": [": number", "exports.value"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "codeExcludes": [": number", "exports.value"]
+      }
+    },
+    {
+      "id": "infer-mjs-module",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "export const value = 1",
+        "filename": "/matrix/value.mjs#physical",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "codeExcludes": ["exports.value"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "codeExcludes": ["exports.value"]
+      }
+    },
+    {
+      "id": "infer-cts-commonjs",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/value.cts#physical",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["exports.value", "\"use strict\""],
+        "codeExcludes": [": number"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["Object.defineProperty", "\"value\"", "\"use strict\""],
+        "codeExcludes": [": number", "export const"]
+      }
+    },
+    {
+      "id": "infer-cjs-commonjs",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "exports.value = 1",
+        "filename": "/matrix/value.cjs?raw",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": { "status": "ok", "codeIncludes": ["exports.value = 1"] },
+      "currentExpected": { "status": "ok", "codeIncludes": ["exports.value = 1"] }
+    },
+    {
+      "id": "cts-top-level-return",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "rust-capability-expansion",
+      "request": {
+        "code": "exports.value = 1; return",
+        "filename": "/matrix/return.cts",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "error",
+        "diagnostics": [{ "code": "BABEL-PARSE", "severity": "error" }]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["exports.value = 1", "return;"]
+      }
+    },
+    {
+      "id": "js-jsx-requires-explicit-mode",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "jsx-extension-required",
+      "request": {
+        "code": "export const view = <div />",
+        "filename": "/matrix/view.js",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["template(\"<div></div>\")"]
+      },
+      "currentExpected": {
+        "status": "error",
+        "diagnostics": [
+          { "code": "FICT-PARSE", "severity": "error", "guaranteeClass": "unsupported" }
+        ]
+      }
+    },
+    {
+      "id": "js-rejects-typescript",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "syntax-rejection-parity",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/typed.js",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "error",
+        "diagnostics": [{ "code": "BABEL-PARSE", "severity": "error" }]
+      },
+      "currentExpected": {
+        "status": "error",
+        "diagnostics": [
+          { "code": "FICT-PARSE", "severity": "error", "guaranteeClass": "unsupported" },
+          { "code": "FICT-PARSE", "severity": "error", "guaranteeClass": "unsupported" }
+        ]
+      }
+    },
+    {
+      "id": "ts-rejects-jsx",
+      "domain": "language-module-inference",
+      "legacy": true,
+      "compatibilityPolicy": "syntax-rejection-parity",
+      "request": {
+        "code": "export const view = <div />",
+        "filename": "/matrix/view.ts",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "error",
+        "diagnostics": [{ "code": "BABEL-PARSE", "severity": "error" }]
+      },
+      "currentExpected": {
+        "status": "error",
+        "diagnostics": [
+          { "code": "FICT-PARSE", "severity": "error", "guaranteeClass": "unsupported" }
+        ]
+      }
+    },
+    {
+      "id": "explicit-jsx-over-js-filename",
+      "domain": "explicit-language-module-kind",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "export const view = <div />",
+        "filename": "/matrix/view.js",
+        "language": "jsx",
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["template(\"<div></div>\")"]
+      }
+    },
+    {
+      "id": "explicit-ts-over-js-filename",
+      "domain": "explicit-language-module-kind",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/value.js",
+        "language": "ts",
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "codeExcludes": [": number"]
+      }
+    },
+    {
+      "id": "explicit-js-over-ts-filename",
+      "domain": "explicit-language-module-kind",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/value.ts",
+        "language": "js",
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "error",
+        "diagnostics": [
+          { "code": "FICT-PARSE", "severity": "error", "guaranteeClass": "unsupported" },
+          { "code": "FICT-PARSE", "severity": "error", "guaranteeClass": "unsupported" }
+        ]
+      }
+    },
+    {
+      "id": "explicit-commonjs-over-ts-filename",
+      "domain": "explicit-language-module-kind",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/value.ts",
+        "language": "ts",
+        "moduleKind": "commonjs",
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["Object.defineProperty", "\"value\"", "\"use strict\""],
+        "codeExcludes": [": number", "export const"]
+      }
+    },
+    {
+      "id": "explicit-script",
+      "domain": "explicit-language-module-kind",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "const value: number = 1",
+        "filename": "/matrix/value.ts",
+        "language": "ts",
+        "moduleKind": "script",
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["const value = 1"],
+        "codeExcludes": [": number", "export", "exports"]
+      }
+    },
+    {
+      "id": "explicit-unambiguous-module",
+      "domain": "explicit-language-module-kind",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "export const value = 1",
+        "filename": "/matrix/value.js",
+        "language": "js",
+        "moduleKind": "unambiguous",
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": { "status": "ok", "codeIncludes": ["export const value = 1"] }
+    },
+    {
+      "id": "explicit-unambiguous-script",
+      "domain": "explicit-language-module-kind",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "const value = 1",
+        "filename": "/matrix/value.js",
+        "language": "js",
+        "moduleKind": "unambiguous",
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["const value = 1"],
+        "codeExcludes": ["export", "exports"]
+      }
+    },
+    {
+      "id": "strict-guarantee-default",
+      "domain": "strict-policy",
+      "legacy": true,
+      "compatibilityPolicy": "strict-policy-parity",
+      "request": {
+        "code": "export function Comp({ list: [first, ...rest] }) { return <div>{first}</div> }",
+        "filename": "/matrix/strict-default.tsx"
+      },
+      "legacyExpected": {
+        "status": "error",
+        "diagnostics": [{ "code": "FICT-P002", "severity": "error" }]
+      },
+      "currentExpected": {
+        "status": "error",
+        "diagnostics": [{ "code": "FICT-P002", "severity": "error", "guaranteeClass": "fallback" }]
+      }
+    },
+    {
+      "id": "strict-guarantee-explicit-opt-out",
+      "domain": "strict-policy",
+      "legacy": true,
+      "compatibilityPolicy": "strict-policy-parity",
+      "request": {
+        "code": "export function Comp({ list: [first, ...rest] }) { return <div>{first}</div> }",
+        "filename": "/matrix/strict-opt-out.tsx",
+        "options": { "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "diagnostics": [{ "code": "FICT-P002", "severity": "warning" }],
+        "codeIncludes": ["export function Comp"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "diagnostics": [
+          { "code": "FICT-P002", "severity": "warning", "guaranteeClass": "fallback" }
+        ],
+        "codeIncludes": ["export function Comp"]
+      }
+    },
+    {
+      "id": "composed-input-source-map",
+      "domain": "structured-results",
+      "legacy": true,
+      "compatibilityPolicy": "source-map-normalization",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/matrix/intermediate.ts?raw#physical",
+        "moduleId": "/@id/intermediate.ts?worker#client",
+        "inputSourceMap": {
+          "version": 3,
+          "file": "/matrix/intermediate.ts",
+          "sourceRoot": "/authored",
+          "sources": ["original.fict"],
+          "sourcesContent": ["export const value = 1"],
+          "names": [],
+          "mappings": "AAAA",
+          "x_google_ignoreList": [0]
+        },
+        "options": { "sourcemap": true, "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "map": {
+          "version": 3,
+          "sources": ["/authored/original.fict"],
+          "sourcesContent": ["export const value = 1"],
+          "mappingsNonEmpty": true
+        }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "map": {
+          "version": 3,
+          "sourceRoot": "/authored",
+          "sources": ["original.fict"],
+          "sourcesContent": ["export const value = 1"],
+          "x_google_ignoreList": [0],
+          "mappingsNonEmpty": true
+        }
+      }
+    },
+    {
+      "id": "explain-physical-and-graph-identities",
+      "domain": "structured-results",
+      "legacy": true,
+      "compatibilityPolicy": "explain-normalization",
+      "request": {
+        "code": "import { $state, $effect } from 'fict'; export function Counter(){ let count=$state(0); $effect(()=>count); return <button>{count}</button> }",
+        "filename": "/matrix/explain.tsx?raw#physical",
+        "moduleId": "/@id/explain.tsx?worker#client",
+        "options": { "explain": true, "strictGuarantee": false }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "explain": {
+          "version": 1,
+          "fileName": "/matrix/explain.tsx?raw#physical",
+          "sourceEventKinds": ["source-signal", "source-effect", "source-jsx"]
+        }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "explain": {
+          "version": 1,
+          "fileName": "/matrix/explain.tsx",
+          "sourceEventKinds": ["source-signal", "source-effect", "source-jsx"]
+        }
+      }
+    },
+    {
+      "id": "resolved-metadata-snapshot",
+      "domain": "structured-results",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "import { count } from './dep'; export function useCount() { return count }",
+        "filename": "/matrix/consumer.ts",
+        "moduleId": "/@id/consumer.ts?worker#client",
+        "metadata": [
+          {
+            "request": "./dep",
+            "resolvedId": "/@id/dep.ts?client",
+            "status": "resolved",
+            "metadata": { "version": 1, "exports": { "count": "signal" } },
+            "fingerprint": "sha256:dep"
+          }
+        ],
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "moduleMetadata": {
+          "version": 1,
+          "exports": {},
+          "hooks": { "useCount": { "directAccessor": "signal" } }
+        },
+        "metadataDependencies": ["/@id/dep.ts?client"],
+        "unresolvedMetadataRequests": [],
+        "metadataIncomplete": false
+      }
+    },
+    {
+      "id": "incomplete-cycle-metadata-snapshot",
+      "domain": "structured-results",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "import { count } from './dep'; export function useCount() { return count }",
+        "filename": "/matrix/incomplete.ts",
+        "moduleId": "/@id/incomplete.ts?worker#client",
+        "metadata": [
+          {
+            "request": "./dep",
+            "resolvedId": "/@id/dep.ts?client",
+            "status": "incompleteCycle",
+            "metadata": { "version": 1, "exports": {} },
+            "fingerprint": "cycle:dep"
+          }
+        ],
+        "options": { "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "moduleMetadata": { "version": 1, "exports": {} },
+        "metadataDependencies": [],
+        "unresolvedMetadataRequests": ["./dep"],
+        "metadataIncomplete": true
+      }
+    },
+    {
+      "id": "physical-graph-public-identities",
+      "domain": "structured-results",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "import { $state } from 'fict'; export function App() { const count = $state(0); return <button onClick$={() => count++}>{count}</button> }",
+        "filename": "/matrix/physical.tsx?worker#physical",
+        "moduleId": "/@id/graph.tsx?worker#client",
+        "publicModuleId": "fict:module:stable-entry",
+        "options": {
+          "sourcemap": true,
+          "strictGuarantee": false,
+          "preview": { "resumable": true, "autoExtractHandlers": false }
+        }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["fict:module:stable-entry", "fict:compiler-artifact:handler-0"],
+        "codeExcludes": ["/@id/graph.tsx", "/matrix/physical.tsx"],
+        "map": {
+          "version": 3,
+          "sources": ["/matrix/physical.tsx"],
+          "mappingsNonEmpty": true
+        },
+        "artifacts": [
+          {
+            "id": "handler-0",
+            "kind": "handlerModule",
+            "mapSources": ["/matrix/physical.tsx"]
+          }
+        ]
+      }
+    }
+  ]
+}

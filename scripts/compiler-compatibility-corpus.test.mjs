@@ -197,6 +197,95 @@ test('retains the independently generated Babel 0.28 semantic oracle', () => {
   assert.match(ci, /babel-compiler-semantic-oracle\.test\.mjs/)
 })
 
+test('retains full request dimensions with an exact Babel preset oracle', () => {
+  const inputsText = read('scripts/fixtures/compiler_request_matrix.json')
+  const inputs = JSON.parse(inputsText)
+  const oracle = readJson('crates/fict-compiler/tests/babel_0_28_request_oracle.json')
+  assert.equal(inputs.schemaVersion, 1)
+  assert.equal(oracle.schemaVersion, 1)
+  assert.equal(inputs.cases.length, 26)
+  assert.equal(oracle.fixtures.length, 16)
+  assert.equal(oracle.provenance.legacyRelease, '0.28.0')
+  assert.equal(oracle.provenance.legacyRevision, 'b99ff5b185e3eed701e2d4f3521832dac67c979f')
+  for (const field of [
+    'compilerSourceSha256',
+    'compilerArtifactSha256',
+    'presetSourceSha256',
+    'presetArtifactSha256',
+    'lockfileSha256',
+    'requestInputsSha256',
+  ]) {
+    assert.match(oracle.provenance[field], sha256Pattern, field)
+  }
+  assert.equal(oracle.provenance.requestInputsSha256, sha256(inputsText))
+  assert.deepEqual(
+    oracle.fixtures.map(fixture => fixture.id),
+    inputs.cases.filter(fixture => fixture.legacy).map(fixture => fixture.id),
+  )
+
+  const inferredExtensions = inputs.cases
+    .filter(fixture => fixture.id.startsWith('infer-'))
+    .map(fixture => path.extname(fixture.request.filename.split(/[?#]/, 1)[0]))
+    .sort()
+  assert.deepEqual(inferredExtensions, [
+    '.cjs',
+    '.cts',
+    '.js',
+    '.jsx',
+    '.mjs',
+    '.mts',
+    '.ts',
+    '.tsx',
+  ])
+  assert.ok(inputs.cases.some(fixture => fixture.request.options === undefined))
+  for (const field of [
+    'language',
+    'moduleKind',
+    'inputSourceMap',
+    'moduleId',
+    'publicModuleId',
+    'metadata',
+  ]) {
+    assert.ok(
+      inputs.cases.some(fixture => fixture.request[field] !== undefined),
+      field,
+    )
+  }
+  assert.ok(inputs.cases.some(fixture => fixture.request.options?.explain === true))
+  assert.deepEqual(
+    Object.fromEntries(
+      Array.from(new Set(inputs.cases.map(fixture => fixture.compatibilityPolicy)))
+        .sort()
+        .map(policy => [
+          policy,
+          inputs.cases.filter(fixture => fixture.compatibilityPolicy === policy).length,
+        ]),
+    ),
+    {
+      'explain-normalization': 1,
+      'feature-parity': 8,
+      'jsx-extension-required': 1,
+      'native-host-protocol': 10,
+      'rust-capability-expansion': 1,
+      'source-map-normalization': 1,
+      'strict-policy-parity': 2,
+      'syntax-rejection-parity': 2,
+    },
+  )
+
+  const runtimeTest = read('scripts/native-compiler-request-matrix.test.mjs')
+  assert.match(runtimeTest, /binding\.transformSync\(fixture\.request\)/)
+  assert.match(runtimeTest, /normalizedSource\(first\.map\)/)
+  const generator = read('scripts/generate-babel-request-oracle.mjs')
+  assert.match(generator, /packages\/babel-preset/)
+  assert.match(generator, /presetArtifactSha256/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:request-matrix/)
+  assert.match(packageJson, /native-compiler-request-matrix\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-request-matrix\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [

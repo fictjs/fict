@@ -132,7 +132,7 @@ jobs:
         run: |
           pnpm --filter @fictjs/runtime build
           pnpm --filter fict build
-          node --test scripts/babel-compiler-semantic-oracle.test.mjs scripts/native-compiler-runtime.test.mjs
+          node --test scripts/babel-compiler-semantic-oracle.test.mjs scripts/native-compiler-request-matrix.test.mjs scripts/native-compiler-runtime.test.mjs
 
       - name: Typecheck ESM and CommonJS native facades
         if: matrix.node == '24'
