@@ -16,7 +16,7 @@ use fict_compiler_oxc::{
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
-use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core_with_hook_returns};
+use fict_emit::{NoJsxLoweringOptions, lower_core_with_hook_returns};
 use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
 use fict_metadata::MetadataResolutionStatus;
 use std::mem;
@@ -220,15 +220,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         .iter()
         .map(|analysis| analysis.scopes.clone())
         .collect();
-    let runtime_family = if frontend
-        .macro_imports
-        .iter()
-        .any(|import| import.source.starts_with("@fictjs/runtime"))
-    {
-        RuntimeFamily::Runtime
-    } else {
-        RuntimeFamily::Fict
-    };
+    let runtime_family = frontend.runtime_family;
     let emit = match lower_core_with_hook_returns(
         &core.hir,
         &regions,

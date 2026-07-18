@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
+use fict_emit::RuntimeFamily;
 use fict_hir::{
     BindingId, FictMacroKind, ImportBinding, ImportKind, ImportedName, ModuleExport,
     ModuleLocalExport, Origin, ScopeId,
@@ -40,6 +41,26 @@ use super::facts::{FrontendSourceFacts, collect_source_facts};
 
 const FICT_MACRO_MODULES: &[&str] = &["fict", "fict/slim"];
 const MEMO_MACRO_MODULES: &[&str] = &["fict", "fict/slim", "fict/plus"];
+const FICT_RUNTIME_MODULES: &[&str] = &[
+    "fict",
+    "fict/advanced",
+    "fict/internal",
+    "fict/internal/list",
+    "fict/jsx-runtime",
+    "fict/jsx-dev-runtime",
+    "fict/experimental/loader",
+    "fict/plus",
+    "fict/slim",
+];
+const STANDALONE_RUNTIME_MODULES: &[&str] = &[
+    "@fictjs/runtime",
+    "@fictjs/runtime/advanced",
+    "@fictjs/runtime/internal",
+    "@fictjs/runtime/internal/list",
+    "@fictjs/runtime/jsx-runtime",
+    "@fictjs/runtime/jsx-dev-runtime",
+    "@fictjs/runtime/experimental/loader",
+];
 
 /// Owned source and semantic counts produced by the OXC frontend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +261,8 @@ pub struct FrontendSummary {
     pub bindings: Vec<FrontendBinding>,
     /// Whether the parser observed ECMAScript module syntax.
     pub has_module_syntax: bool,
+    /// Package family selected from all authored static runtime imports.
+    pub runtime_family: RuntimeFamily,
     /// Runtime module exports in deterministic source order using frontend binding identities.
     pub module_exports: Vec<ModuleExport>,
     /// Local TypeScript namespace exports in deterministic source order.
@@ -463,12 +486,47 @@ fn build_summary(
         scopes,
         bindings,
         has_module_syntax: module_record.has_module_syntax || has_typescript_export_assignment,
+        runtime_family: detect_runtime_family(program),
         module_exports,
         namespace_exports: namespace_collector.exports,
         macro_imports,
         macro_calls: macro_collector.calls,
         macro_value_uses,
         namespace_macro_calls: macro_collector.namespace_calls,
+    }
+}
+
+fn detect_runtime_family(program: &oxc::ast::ast::Program<'_>) -> RuntimeFamily {
+    let mut saw_standalone = false;
+    for statement in &program.body {
+        let source = match statement {
+            Statement::ImportDeclaration(declaration) => Some(declaration.source.value.as_str()),
+            Statement::ExportNamedDeclaration(declaration) => declaration
+                .source
+                .as_ref()
+                .map(|source| source.value.as_str()),
+            Statement::ExportAllDeclaration(declaration) => Some(declaration.source.value.as_str()),
+            Statement::TSImportEqualsDeclaration(declaration) => {
+                if let TSModuleReference::ExternalModuleReference(reference) =
+                    &declaration.module_reference
+                {
+                    Some(reference.expression.value.as_str())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let Some(source) = source else { continue };
+        if FICT_RUNTIME_MODULES.contains(&source) {
+            return RuntimeFamily::Fict;
+        }
+        saw_standalone |= STANDALONE_RUNTIME_MODULES.contains(&source);
+    }
+    if saw_standalone {
+        RuntimeFamily::Runtime
+    } else {
+        RuntimeFamily::Fict
     }
 }
 

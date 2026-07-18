@@ -1259,6 +1259,44 @@ test('native binding reports the Rust-only compiler protocol', () => {
   assert.equal(info.oxcVersion, '0.139.0')
 })
 
+test('native pipeline follows the authored runtime helper package family', () => {
+  const cases = [
+    [
+      'fict-only',
+      `import { $state } from 'fict'; export function App() { let value = $state(0); return <div>{value}</div> }`,
+      'fict/internal',
+    ],
+    [
+      'runtime-only',
+      `import { render } from '@fictjs/runtime'; export function mount(node) { return render(() => <div />, node) }`,
+      '@fictjs/runtime/internal',
+    ],
+    [
+      'mixed',
+      `import { $state } from 'fict'; import { render } from '@fictjs/runtime'; export function App() { let value = $state(0); return <div>{value}</div> }`,
+      'fict/internal',
+    ],
+    ['default', `export function App() { return <div /> }`, 'fict/internal'],
+    [
+      'runtime-side-effect',
+      `import '@fictjs/runtime/advanced'; export function App() { return <div /> }`,
+      '@fictjs/runtime/internal',
+    ],
+  ]
+
+  for (const [name, code, expected] of cases) {
+    const result = binding.transformSync({
+      code,
+      filename: `/fixtures/runtime-family-${name}.tsx`,
+      options: { strictGuarantee: false },
+    })
+    assert.deepEqual(result.diagnostics, [], name)
+    assert.match(result.code, new RegExp(`from ["']${expected}["']`), name)
+    const rejected = expected === 'fict/internal' ? '@fictjs/runtime/internal' : 'fict/internal'
+    assert.doesNotMatch(result.code, new RegExp(`from ["']${rejected}["']`), name)
+  }
+})
+
 test('dev compiler mode labels authored reactive creations for DevTools', () => {
   const source = `
     import { $effect, $memo, $state } from 'fict'
