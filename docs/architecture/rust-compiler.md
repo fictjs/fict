@@ -213,15 +213,20 @@ Removing the executable Babel backend does not remove its reviewed behavior
 evidence. The repository retains a Rust-only frozen codegen corpus:
 
 - 1,892 unique source-and-option inputs extracted from the 0.28.0 test suite;
-- Babel status, diagnostic codes, and output hashes captured from the 0.30.1
-  legacy backend during the differential audit;
+- Babel status, diagnostic codes, and output hashes regenerated with the exact
+  0.28.0 compiler artifact from revision `b99ff5b185e3eed701e2d4f3521832dac67c979f`;
 - expected Rust status, structured diagnostic class, and output hashes generated
   by one reviewed native build, plus an explicit policy for every reviewed
   audited-Babel-to-Rust status deviation.
 
-The corpus records these as separate `sourceSuite*` and `babelAudit*`
-provenance fields. The 0.28.0 label describes where the test inputs came from;
-it does not relabel 0.30.1 Babel output as 0.28.0 output.
+The corpus records these as separate `sourceSuite*`, `babelAudit*`, and
+`rustAudit*` provenance fields. Its schema binds the 0.28.0 compiler source
+digest, built artifact digest, frozen lockfile, package-manager identity, Babel
+dependency versions, original virtual audit filename, and extraction-input
+digest. The extraction input supplies the 1,892 source/request rows; its
+embedded Babel outcomes are not copied into the corpus. Instead, every freshly
+executed 0.28.0 status, diagnostic-code list, and code hash must independently
+match that audit record before generation can succeed.
 
 The Rust integration test compiles every input twice, strips timing noise, and
 checks deterministic results against those Rust-owned goldens. This proves

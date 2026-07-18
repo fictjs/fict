@@ -3,26 +3,36 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { format, resolveConfig } from 'prettier'
 
 const require = createRequire(import.meta.url)
 const repositoryRoot = path.resolve(import.meta.dirname, '..')
+const corpusFormatPath = path.join(
+  repositoryRoot,
+  'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json',
+)
 const expectedAuditSha256 = '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f'
-const expectedSummary = {
+const expectedExtraction = {
   extracted: 1974,
   unique: 1892,
-  legacyOkCurrentError: 38,
-  legacyErrorCurrentOk: 41,
-  bothOk: 1730,
-  currentParseErrors: 1,
-  currentNondeterministic: 0,
-  currentThrows: 0,
+}
+const legacyRevision = 'b99ff5b185e3eed701e2d4f3521832dac67c979f'
+const legacyCompilerSourceSha256 =
+  'cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a'
+const legacyCompilerArtifactSha256 =
+  '07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789'
+const legacyLockfileSha256 = '2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6'
+const legacyAuditFilename = '/mnt/data/fict_audit/legacy/fict-0.28.0/fixture.tsx'
+const legacyDependencyVersions = {
+  '@babel/core': '7.29.7',
+  '@babel/plugin-transform-typescript': '7.28.5',
 }
 const deviationPolicies = {
   'rust-capability-expansion':
-    'Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the audited Babel 0.30.1 legacy backend.',
+    'Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.',
   'narrow-component-role':
     'Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.',
   'structured-hook-return':
@@ -51,24 +61,44 @@ function parseArguments(argv) {
     options[name.slice(2)] = value
   }
   const unknown = Object.keys(options).filter(
-    name => !['input', 'native-path', 'output'].includes(name),
+    name => !['input', 'legacy-root', 'native-path', 'output'].includes(name),
   )
   if (unknown.length > 0) throw new Error(`Unknown argument(s): ${unknown.join(', ')}`)
   if (!options.input) throw new Error('--input is required')
+  if (!options['legacy-root']) throw new Error('--legacy-root is required')
   return {
     input: path.resolve(options.input),
+    legacyRoot: path.resolve(options['legacy-root']),
     nativePath: path.resolve(
       options['native-path'] ?? path.join(repositoryRoot, 'target/release/fict_compiler_napi.node'),
     ),
-    output: path.resolve(
-      options.output ??
-        path.join(repositoryRoot, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
-    ),
+    output: path.resolve(options.output ?? corpusFormatPath),
   }
 }
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
+}
+
+function sourceTreeSha256(root) {
+  const files = []
+  const visit = directory => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name)
+      if (entry.isDirectory()) visit(absolute)
+      else if (entry.isFile()) files.push(absolute)
+    }
+  }
+  visit(root)
+  files.sort()
+  const hash = createHash('sha256')
+  for (const file of files) {
+    hash.update(path.relative(root, file).split(path.sep).join('/'))
+    hash.update('\0')
+    hash.update(readFileSync(file))
+    hash.update('\0')
+  }
+  return hash.digest('hex')
 }
 
 function resultStatus(diagnostics) {
@@ -99,6 +129,63 @@ function deterministicResult(result) {
   }
 }
 
+function normalizeLegacyDiagnostic(diagnostic) {
+  assert.match(diagnostic.code, /^FICT-[A-Z0-9-]+$/)
+  return {
+    code: diagnostic.code,
+    severity: diagnostic.severity ?? 'warning',
+  }
+}
+
+function compileLegacyFixture(row, legacy) {
+  const warnings = []
+  const compilerOptions = {
+    ...row.fixture.options,
+    emitModuleMetadata: false,
+    onWarn: warning => warnings.push(normalizeLegacyDiagnostic(warning)),
+  }
+  if (compilerOptions.dev === undefined) compilerOptions.dev = false
+  const plugins = [
+    [
+      legacy.transformTypescript,
+      {
+        isTSX: true,
+        allExtensions: true,
+        allowDeclareFields: true,
+        allowNamespaces: true,
+      },
+    ],
+  ]
+  plugins.push([legacy.compiler, compilerOptions])
+  try {
+    const result = legacy.transformSync(row.fixture.source, {
+      filename: legacyAuditFilename,
+      configFile: false,
+      babelrc: false,
+      sourceType: 'module',
+      parserOpts: {
+        sourceType: 'module',
+        plugins: ['typescript', 'jsx', 'decorators'],
+        allowReturnOutsideFunction: true,
+      },
+      plugins,
+      generatorOpts: { compact: false },
+    })
+    assert.equal(typeof result?.code, 'string', `${row.fixture.file}:${row.fixture.line}`)
+    return {
+      status: 'ok',
+      diagnostics: warnings,
+      codeSha256: sha256(result.code),
+    }
+  } catch {
+    return {
+      status: 'error',
+      diagnostics: warnings,
+      codeSha256: sha256(''),
+    }
+  }
+}
+
 function deviationPolicy(babelStatus, currentStatus, currentErrorCodes) {
   if (babelStatus === currentStatus) return null
   if (babelStatus === 'error' && currentStatus === 'ok') return 'rust-capability-expansion'
@@ -118,11 +205,50 @@ function deviationPolicy(babelStatus, currentStatus, currentErrorCodes) {
 }
 
 const options = parseArguments(process.argv.slice(2))
+const legacyCompilerRoot = path.join(options.legacyRoot, 'packages/compiler')
+const legacyCompilerSource = path.join(legacyCompilerRoot, 'src')
+const legacyCompilerArtifact = path.join(legacyCompilerRoot, 'dist/index.cjs')
+assert.equal(statSync(legacyCompilerSource).isDirectory(), true, 'missing legacy compiler source')
+assert.equal(statSync(legacyCompilerArtifact).isFile(), true, 'missing legacy compiler artifact')
+const legacyCompilerPackage = JSON.parse(
+  readFileSync(path.join(legacyCompilerRoot, 'package.json'), 'utf8'),
+)
+const legacyRootPackage = JSON.parse(
+  readFileSync(path.join(options.legacyRoot, 'package.json'), 'utf8'),
+)
+assert.equal(legacyCompilerPackage.version, '0.28.0', 'legacy compiler package version')
+assert.equal(legacyRootPackage.packageManager, 'pnpm@9.1.1', 'legacy package manager')
+assert.equal(
+  sha256(readFileSync(path.join(options.legacyRoot, 'pnpm-lock.yaml'))),
+  legacyLockfileSha256,
+  'legacy lockfile digest',
+)
+assert.equal(
+  sourceTreeSha256(legacyCompilerSource),
+  legacyCompilerSourceSha256,
+  'legacy compiler source digest',
+)
+assert.equal(
+  sha256(readFileSync(legacyCompilerArtifact)),
+  legacyCompilerArtifactSha256,
+  'legacy compiler artifact digest',
+)
+const legacyRequire = createRequire(path.join(legacyCompilerRoot, 'package.json'))
+for (const [name, version] of Object.entries(legacyDependencyVersions)) {
+  assert.equal(legacyRequire(`${name}/package.json`).version, version, `${name} version`)
+}
+const legacyCompilerModule = legacyRequire(legacyCompilerArtifact)
+const legacy = {
+  compiler: legacyCompilerModule.default ?? legacyCompilerModule,
+  transformSync: legacyRequire('@babel/core').transformSync,
+  transformTypescript: legacyRequire('@babel/plugin-transform-typescript'),
+}
 const inputText = readFileSync(options.input, 'utf8')
 assert.equal(sha256(inputText), expectedAuditSha256, 'unexpected batch differential input')
 const audit = JSON.parse(inputText)
-assert.deepEqual(audit.summary, expectedSummary)
-assert.equal(audit.results.length, expectedSummary.unique)
+assert.equal(audit.summary.extracted, expectedExtraction.extracted)
+assert.equal(audit.summary.unique, expectedExtraction.unique)
+assert.equal(audit.results.length, expectedExtraction.unique)
 
 const binding = require(options.nativePath)
 const compilerInfo = binding.nativeCompilerInfo()
@@ -151,10 +277,24 @@ const fixtures = audit.results.map(row => {
   )
 
   const status = resultStatus(first.diagnostics)
+  const babelAudit = compileLegacyFixture(row, legacy)
+  assert.deepEqual(
+    {
+      status: babelAudit.status,
+      diagnosticCodes: babelAudit.diagnostics.map(diagnostic => diagnostic.code),
+      codeSha256: babelAudit.codeSha256,
+    },
+    {
+      status: row.legacy.status,
+      diagnosticCodes: row.legacy.diagnostics.map(diagnostic => diagnostic.code),
+      codeSha256: row.legacy.codeHash ?? null,
+    },
+    `${file}:${line}:${callee} exact Babel 0.28 audit drift`,
+  )
   const errorCodes = first.diagnostics
     .filter(diagnostic => diagnostic.severity === 'error')
     .map(diagnostic => diagnostic.code)
-  const policy = deviationPolicy(row.legacy.status, status, errorCodes)
+  const policy = deviationPolicy(babelAudit.status, status, errorCodes)
   if (policy) policyCounts[policy]++
 
   return {
@@ -163,9 +303,9 @@ const fixtures = audit.results.map(row => {
     source,
     options: compilerOptions,
     babelAudit: {
-      status: row.legacy.status,
-      diagnosticCodes: row.legacy.diagnostics.map(diagnostic => diagnostic.code),
-      codeSha256: row.legacy.codeHash ?? null,
+      status: babelAudit.status,
+      diagnosticCodes: babelAudit.diagnostics.map(diagnostic => diagnostic.code),
+      codeSha256: babelAudit.codeSha256,
     },
     expected: {
       status,
@@ -183,17 +323,23 @@ const reviewedRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).trim()
 const corpus = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   provenance: {
     sourceSuiteRelease: '0.28.0',
-    sourceSuiteRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
-    babelAuditRelease: '0.30.1',
-    babelAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
-    rustAuditRelease: '0.30.1',
-    rustAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
+    sourceSuiteRevision: legacyRevision,
+    babelAuditRelease: '0.28.0',
+    babelAuditRevision: legacyRevision,
+    babelCompilerSourceSha256: legacyCompilerSourceSha256,
+    babelCompilerArtifactSha256: legacyCompilerArtifactSha256,
+    babelLockfileSha256: legacyLockfileSha256,
+    babelAuditFilename: legacyAuditFilename,
+    babelPackageManager: legacyRootPackage.packageManager,
+    babelDependencies: legacyDependencyVersions,
+    rustAuditRelease: '0.31.0',
+    rustAuditRevision: reviewedRevision,
     auditInputSha256: expectedAuditSha256,
-    extractedCalls: expectedSummary.extracted,
-    uniqueFixtures: expectedSummary.unique,
+    extractedCalls: expectedExtraction.extracted,
+    uniqueFixtures: expectedExtraction.unique,
     scannedLegacyTestFiles: 107,
     representedLegacyTestFiles: representedFiles.size,
     reviewedRevision,
@@ -204,7 +350,14 @@ const corpus = {
   fixtures,
 }
 
-writeFileSync(options.output, `${JSON.stringify(corpus, null, 2)}\n`)
+writeFileSync(
+  options.output,
+  await format(JSON.stringify(corpus, null, 2), {
+    ...(await resolveConfig(corpusFormatPath)),
+    filepath: corpusFormatPath,
+    parser: 'json',
+  }),
+)
 process.stdout.write(
   `${JSON.stringify({ output: options.output, fixtures: fixtures.length, representedFiles: representedFiles.size, policyCounts })}\n`,
 )

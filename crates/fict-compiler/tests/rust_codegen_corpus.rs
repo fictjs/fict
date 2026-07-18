@@ -32,6 +32,12 @@ struct CorpusProvenance {
     source_suite_revision: String,
     babel_audit_release: String,
     babel_audit_revision: String,
+    babel_compiler_source_sha256: String,
+    babel_compiler_artifact_sha256: String,
+    babel_lockfile_sha256: String,
+    babel_audit_filename: String,
+    babel_package_manager: String,
+    babel_dependencies: BTreeMap<String, String>,
     rust_audit_release: String,
     rust_audit_revision: String,
     audit_input_sha256: String,
@@ -160,13 +166,46 @@ fn replays_the_frozen_rust_codegen_corpus() {
         serde_json::from_str(include_str!("rust_frozen_codegen_corpus.json"))
             .expect("valid frozen Rust codegen corpus");
 
-    assert_eq!(corpus.schema_version, 2);
+    assert_eq!(corpus.schema_version, 3);
     assert_eq!(corpus.provenance.source_suite_release, "0.28.0");
-    assert_eq!(corpus.provenance.source_suite_revision.len(), 40);
-    assert_eq!(corpus.provenance.babel_audit_release, "0.30.1");
-    assert_eq!(corpus.provenance.babel_audit_revision.len(), 40);
-    assert_eq!(corpus.provenance.rust_audit_release, "0.30.1");
-    assert_eq!(corpus.provenance.rust_audit_revision.len(), 40);
+    assert_eq!(
+        corpus.provenance.source_suite_revision,
+        "b99ff5b185e3eed701e2d4f3521832dac67c979f"
+    );
+    assert_eq!(corpus.provenance.babel_audit_release, "0.28.0");
+    assert_eq!(
+        corpus.provenance.babel_audit_revision,
+        corpus.provenance.source_suite_revision
+    );
+    assert_eq!(
+        corpus.provenance.babel_compiler_source_sha256,
+        "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a"
+    );
+    assert_eq!(
+        corpus.provenance.babel_compiler_artifact_sha256,
+        "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789"
+    );
+    assert_eq!(
+        corpus.provenance.babel_lockfile_sha256,
+        "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6"
+    );
+    assert_eq!(
+        corpus.provenance.babel_audit_filename,
+        "/mnt/data/fict_audit/legacy/fict-0.28.0/fixture.tsx"
+    );
+    assert_eq!(corpus.provenance.babel_package_manager, "pnpm@9.1.1");
+    assert_eq!(
+        corpus.provenance.babel_dependencies,
+        BTreeMap::from([
+            ("@babel/core".into(), "7.29.7".into()),
+            ("@babel/plugin-transform-typescript".into(), "7.28.5".into()),
+        ])
+    );
+    assert_eq!(corpus.provenance.rust_audit_release, "0.31.0");
+    assert_eq!(
+        corpus.provenance.rust_audit_revision,
+        corpus.provenance.reviewed_revision
+    );
     assert_eq!(corpus.provenance.audit_input_sha256, EXPECTED_AUDIT_SHA256);
     assert_eq!(corpus.provenance.extracted_calls, 1_974);
     assert_eq!(corpus.provenance.unique_fixtures, EXPECTED_FIXTURES);

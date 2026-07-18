@@ -12,17 +12,22 @@ const revisionPattern = /^[0-9a-f]{40}$/
 const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
-test('retains the Rust-only frozen codegen corpus and reviewed Babel audit deviations', () => {
+test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations', () => {
   const corpus = readJson(compileCorpusPath)
-  assert.equal(corpus.schemaVersion, 2)
+  assert.equal(corpus.schemaVersion, 3)
   assert.deepEqual(
     {
       sourceSuiteRelease: corpus.provenance.sourceSuiteRelease,
       sourceSuiteRevision: corpus.provenance.sourceSuiteRevision,
       babelAuditRelease: corpus.provenance.babelAuditRelease,
       babelAuditRevision: corpus.provenance.babelAuditRevision,
+      babelCompilerSourceSha256: corpus.provenance.babelCompilerSourceSha256,
+      babelCompilerArtifactSha256: corpus.provenance.babelCompilerArtifactSha256,
+      babelLockfileSha256: corpus.provenance.babelLockfileSha256,
+      babelAuditFilename: corpus.provenance.babelAuditFilename,
+      babelPackageManager: corpus.provenance.babelPackageManager,
+      babelDependencies: corpus.provenance.babelDependencies,
       rustAuditRelease: corpus.provenance.rustAuditRelease,
-      rustAuditRevision: corpus.provenance.rustAuditRevision,
       auditInputSha256: corpus.provenance.auditInputSha256,
       extractedCalls: corpus.provenance.extractedCalls,
       uniqueFixtures: corpus.provenance.uniqueFixtures,
@@ -32,10 +37,19 @@ test('retains the Rust-only frozen codegen corpus and reviewed Babel audit devia
     {
       sourceSuiteRelease: '0.28.0',
       sourceSuiteRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
-      babelAuditRelease: '0.30.1',
-      babelAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
-      rustAuditRelease: '0.30.1',
-      rustAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
+      babelAuditRelease: '0.28.0',
+      babelAuditRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+      babelCompilerSourceSha256: 'cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a',
+      babelCompilerArtifactSha256:
+        '07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789',
+      babelLockfileSha256: '2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6',
+      babelAuditFilename: '/mnt/data/fict_audit/legacy/fict-0.28.0/fixture.tsx',
+      babelPackageManager: 'pnpm@9.1.1',
+      babelDependencies: {
+        '@babel/core': '7.29.7',
+        '@babel/plugin-transform-typescript': '7.28.5',
+      },
+      rustAuditRelease: '0.31.0',
       auditInputSha256: '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f',
       extractedCalls: 1974,
       uniqueFixtures: 1892,
@@ -43,6 +57,7 @@ test('retains the Rust-only frozen codegen corpus and reviewed Babel audit devia
       representedLegacyTestFiles: 73,
     },
   )
+  assert.equal(corpus.provenance.rustAuditRevision, corpus.provenance.reviewedRevision)
   assert.match(corpus.provenance.reviewedRevision, revisionPattern)
   assert.match(
     corpus.provenance.reviewedCompilerBuildId,
@@ -627,7 +642,21 @@ test('retains native runtime and option compatibility outcomes', () => {
 
 test('keeps corpus regeneration bound to the audited input digest', () => {
   const generator = read('scripts/generate-rust-codegen-corpus.mjs')
-  assert.match(generator, /676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f/)
+  for (const identity of [
+    '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f',
+    'cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a',
+    '07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789',
+    '2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6',
+    '/mnt/data/fict_audit/legacy/fict-0.28.0/fixture.tsx',
+    'pnpm@9.1.1',
+    "'@babel/core': '7.29.7'",
+    "'@babel/plugin-transform-typescript': '7.28.5'",
+  ]) {
+    assert.ok(generator.includes(identity), identity)
+  }
+  assert.match(generator, /--legacy-root is required/)
+  assert.match(generator, /compileLegacyFixture\(row, legacy\)/)
+  assert.match(generator, /exact Babel 0\.28 audit drift/)
   assert.match(generator, /Unreviewed compatibility deviation/)
-  assert.doesNotMatch(generator, /@babel\/|compiler\/legacy/)
+  assert.match(generator, /status: babelAudit\.status/)
 })
