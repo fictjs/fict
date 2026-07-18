@@ -254,6 +254,7 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
+      - run: pnpm test:compiler:release-strict-scope
       - run: pnpm test:strict-guarantee
       - run: pnpm build:strict-guarantee
       - run: pnpm test:bundlers:strict-guarantee

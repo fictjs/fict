@@ -42,6 +42,7 @@
     "test:compiler:optimizer-diff": "pnpm build:compiler:native-host && node --test scripts/native-compiler-optimizer-diff.test.mjs",
     "test:compiler:metadata-safety": "pnpm --dir packages/compiler exec vitest run test/module-metadata-safety.test.ts",
     "test:compiler:reactive-accessors": "pnpm build:compiler:native-host && node --test scripts/native-compiler-reactive-accessors.test.mjs",
+    "test:compiler:release-strict-scope": "pnpm --dir packages/compiler exec vitest run test/release-strict-scope.test.ts",
     "test:compiler:state-machine-name-collision": "pnpm build:compiler:native-host && node --test scripts/native-compiler-state-machine-name-collision.test.mjs",
     "test:compiler:compatibility-corpus": "pnpm build:compiler:native-host && node --test scripts/babel-compiler-semantic-oracle.test.mjs scripts/native-compiler-request-matrix.test.mjs scripts/compiler-compatibility-corpus.test.mjs && cargo test -p fict-compiler-oxc --test frontend_compatibility && cargo test -p fict-compiler --test analysis_compatibility --test rust_codegen_corpus",
     "test:compiler:native-types": "pnpm --filter @fictjs/compiler build && tsc -p scripts/fixtures/native-compiler-types/tsconfig.json",

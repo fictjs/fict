@@ -450,6 +450,23 @@ test('ports the Babel template extractor domain through serialized and live DOM 
   assert.match(ci, /native-compiler-runtime\.test\.mjs/)
 })
 
+test('maps the Babel release strict-scope domain to the explicit release gate', () => {
+  const strictScope = read('packages/compiler/test/release-strict-scope.test.ts')
+  for (const behavior of [
+    'owns strict compiler gates in explicit root scripts',
+    'keeps behavior-first test entrypoints outside strict mode',
+    'composes release verification from scoped strict gates',
+    'keeps workflow-level release and CI scope aligned with root scripts',
+  ]) {
+    assert.match(strictScope, new RegExp(behavior))
+  }
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:release-strict-scope/)
+  assert.match(packageJson, /vitest run test\/release-strict-scope\.test\.ts/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /pnpm test:compiler:release-strict-scope/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
