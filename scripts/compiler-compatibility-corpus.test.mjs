@@ -17,6 +17,7 @@ const revisionPattern = /^[0-9a-f]{40}$/
 const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
 const evidenceScopePath = 'scripts/fixtures/compiler_compatibility_evidence_scope.json'
 const requestPolicyPath = 'scripts/fixtures/compiler_corpus_request_policy.json'
+const assertionInventoryPath = 'scripts/fixtures/legacy_0_28_compiler_assertion_inventory.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
 test('keeps codegen, request, and semantic compatibility evidence roles distinct', () => {
@@ -26,8 +27,25 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'babelRequestOracle',
     'babelSemanticOracle',
     'diagnosticDeviationReview',
+    'legacyAssertionInventory',
     'rustCodegenCorpus',
   ])
+
+  const inventoryScope = scope.assets.legacyAssertionInventory
+  const inventory = readJson(inventoryScope.artifact)
+  assert.equal(inventoryScope.artifact, assertionInventoryPath)
+  assert.equal(inventoryScope.legacyTestFiles, inventory.summary.legacyTestFiles)
+  assert.equal(inventoryScope.testDeclarationSites, inventory.summary.testDeclarationSites)
+  assert.equal(inventoryScope.staticAssertionCallsites, inventory.summary.staticAssertionCallsites)
+  assert.equal(
+    inventoryScope.unrepresentedCompilerCallsites,
+    inventory.summary.unrepresentedCompilerCallsites,
+  )
+  assert.equal(inventoryScope.assertionLevel, 'coverage-inventory')
+  assert.ok(inventoryScope.proves.includes('exact-static-test-and-assertion-inventory'))
+  assert.ok(inventoryScope.doesNotProve.includes('assertion-level-semantic-parity'))
+  assert.ok(read(inventoryScope.generator).length > 0)
+  assert.ok(read(inventoryScope.ciTest).length > 0)
 
   const codegen = scope.assets.rustCodegenCorpus
   const codegenCorpus = readJson(codegen.artifact)
@@ -102,6 +120,176 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(rollout, /compiler_compatibility_evidence_scope\.json/)
 })
 
+test('accounts for legacy tests and assertions below the misleading file level', () => {
+  const inventory = readJson(assertionInventoryPath)
+  const corpus = readJson(compileCorpusPath)
+  assert.equal(inventory.schemaVersion, 1)
+  assert.deepEqual(inventory.baseline, {
+    package: '@fictjs/compiler',
+    release: '0.28.0',
+    revision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+    sourceAuditSha256: corpus.provenance.auditInputSha256,
+    legacyTestSourceSha256: corpus.provenance.legacyTestSourceSha256,
+    corpusBaseIdsSha256: '664c4446ee0d6cb05c2e1429047da07ab0289b67621afeeea205a6ffe70ba081',
+  })
+  assert.deepEqual(inventory.claimBoundary, {
+    inventoryUnit: 'static-test-and-expect-callsite',
+    parameterizedRuntimeInstancesExpanded: false,
+    corpusContextMeans:
+      'The static test callback contains a frozen corpus request; it does not replay the legacy assertion.',
+    unrepresentedCompilerCallsiteMeans:
+      'The call uses the same lexical binding as a represented corpus callee but has no frozen audit row.',
+    semanticAssertionParityProven: false,
+  })
+  assert.deepEqual(inventory.summary, {
+    legacyTestFiles: 107,
+    filesWithCorpusCalls: 73,
+    filesWithoutCorpusCalls: 34,
+    corpusBaseFixtures: 1892,
+    testDeclarationSites: 2657,
+    staticAssertionCallsites: 6350,
+    unrepresentedCompilerCallsites: 214,
+    parameterizedCompilerCallsites: 132,
+    testContextCounts: {
+      'corpus-context-no-known-gap': 1609,
+      'partial-corpus-context': 60,
+      'unrepresented-compiler-context': 123,
+      'no-direct-compiler-context': 865,
+    },
+    assertionContextCounts: {
+      'corpus-context-no-known-gap': 3740,
+      'partial-corpus-context': 227,
+      'unrepresented-compiler-context': 255,
+      'no-direct-compiler-context': 2083,
+      'outside-test-declaration': 45,
+    },
+    parameterizationCounts: { none: 2596, each: 37, 'lexical-loop': 24 },
+  })
+
+  const tests = inventory.files.flatMap(file => file.tests)
+  assert.equal(inventory.files.length, inventory.summary.legacyTestFiles)
+  assert.equal(tests.length, inventory.summary.testDeclarationSites)
+  assert.equal(new Set(tests.map(fixture => fixture.id)).size, tests.length)
+  assert.equal(
+    inventory.files.filter(file => file.corpusBaseFixtureCount > 0).length,
+    inventory.summary.filesWithCorpusCalls,
+  )
+  assert.equal(
+    inventory.files.filter(file => file.corpusBaseFixtureCount === 0).length,
+    inventory.summary.filesWithoutCorpusCalls,
+  )
+  assert.ok(
+    inventory.files.every(file =>
+      file.corpusBaseFixtureCount === 0
+        ? typeof file.domainLedgerName === 'string'
+        : file.domainLedgerName === null,
+    ),
+  )
+
+  const baselineCorpusIds = corpus.fixtures
+    .filter(fixture => fixture.origin.requestVariant === 'audit-baseline')
+    .map(fixture => fixture.id)
+    .sort()
+  const inventoriedCorpusIds = tests.flatMap(fixture => fixture.corpusBaseIds).sort()
+  assert.deepEqual(inventoriedCorpusIds, baselineCorpusIds)
+  assert.equal(sha256(inventoriedCorpusIds.join('\n')), inventory.baseline.corpusBaseIdsSha256)
+
+  const assertionIds = [
+    ...tests.flatMap(fixture => fixture.assertionIds),
+    ...inventory.outsideTestAssertionIds,
+  ]
+  assert.equal(assertionIds.length, inventory.summary.staticAssertionCallsites)
+  assert.equal(new Set(assertionIds).size, assertionIds.length)
+  const testContexts = Object.fromEntries(
+    Object.keys(inventory.summary.testContextCounts).map(context => [
+      context,
+      tests.filter(fixture => fixture.context === context).length,
+    ]),
+  )
+  assert.deepEqual(testContexts, inventory.summary.testContextCounts)
+  const assertionContexts = Object.fromEntries(
+    Object.keys(inventory.summary.assertionContextCounts).map(context => [
+      context,
+      context === 'outside-test-declaration'
+        ? inventory.outsideTestAssertionIds.length
+        : tests
+            .filter(fixture => fixture.context === context)
+            .reduce((count, fixture) => count + fixture.assertionIds.length, 0),
+    ]),
+  )
+  assert.deepEqual(assertionContexts, inventory.summary.assertionContextCounts)
+
+  assert.equal(
+    new Set(inventory.unrepresentedCompilerCallsites.map(callsite => callsite.id)).size,
+    inventory.summary.unrepresentedCompilerCallsites,
+  )
+  const testIds = new Set(tests.map(fixture => fixture.id))
+  assert.ok(
+    inventory.unrepresentedCompilerCallsites.every(
+      callsite => callsite.testId === null || testIds.has(callsite.testId),
+    ),
+  )
+  const parameterizedCompilerCallsites = [
+    ...inventory.parameterizedCorpusCallsites,
+    ...inventory.unrepresentedCompilerCallsites.filter(
+      callsite => callsite.invocationParameterization.kind !== 'none',
+    ),
+  ]
+  assert.equal(
+    parameterizedCompilerCallsites.length,
+    inventory.summary.parameterizedCompilerCallsites,
+  )
+  assert.ok(
+    inventory.parameterizedCorpusCallsites.every(callsite =>
+      baselineCorpusIds.includes(callsite.id),
+    ),
+  )
+
+  const omittedReactiveScopeTest = tests.find(
+    fixture => fixture.id === 'packages/compiler/test/semantic-validation.test.ts:119:3:it',
+  )
+  assert.deepEqual(
+    {
+      title: omittedReactiveScopeTest.title.text,
+      context: omittedReactiveScopeTest.context,
+      corpusBaseIds: omittedReactiveScopeTest.corpusBaseIds,
+      gaps: omittedReactiveScopeTest.unrepresentedCompilerCallsites,
+      assertions: omittedReactiveScopeTest.assertionIds,
+    },
+    {
+      title: 'allows strict reactive scope callbacks without escape warnings',
+      context: 'unrepresented-compiler-context',
+      corpusBaseIds: [],
+      gaps: ['packages/compiler/test/semantic-validation.test.ts:142:9:transform'],
+      assertions: [
+        'packages/compiler/test/semantic-validation.test.ts:141:7:expect',
+        'packages/compiler/test/semantic-validation.test.ts:149:7:expect',
+      ],
+    },
+  )
+  const omittedReactiveScopeCall = inventory.unrepresentedCompilerCallsites.find(
+    callsite => callsite.id === omittedReactiveScopeTest.unrepresentedCompilerCallsites[0],
+  )
+  assert.deepEqual(omittedReactiveScopeCall.invocationParameterization, {
+    kind: 'lexical-loop',
+    staticCaseCount: 2,
+  })
+
+  const currentPipeline = read('crates/fict-compiler/src/pipeline.rs')
+  const currentRuntime = read('scripts/native-compiler-runtime.test.mjs')
+  assert.match(
+    currentPipeline,
+    /configured_member_optional_and_global_scopes_preserve_strict_boundaries/,
+  )
+  assert.match(
+    currentRuntime,
+    /configured reactive scopes accept member, optional member, and global hosts/,
+  )
+  const generator = read('scripts/generate-legacy-compiler-assertion-inventory.mjs')
+  assert.match(generator, /same lexical binding/)
+  assert.match(generator, /parameterizedRuntimeInstancesExpanded: false/)
+})
+
 test('requires an exact review for every Babel-to-Rust diagnostic deviation', () => {
   const corpus = readJson(compileCorpusPath)
   const reviewed = readJson('scripts/fixtures/compiler_diagnostic_deviation_reviews.json')
@@ -154,7 +342,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
   const corpus = readJson(compileCorpusPath)
   const requestPolicyText = read(requestPolicyPath)
   const requestPolicy = JSON.parse(requestPolicyText)
-  assert.equal(corpus.schemaVersion, 4)
+  assert.equal(corpus.schemaVersion, 5)
   assert.deepEqual(
     {
       sourceSuiteRelease: corpus.provenance.sourceSuiteRelease,
@@ -176,7 +364,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
       strictGuaranteeTrueVariants: corpus.provenance.strictGuaranteeTrueVariants,
       corpusFixtures: corpus.provenance.corpusFixtures,
       scannedLegacyTestFiles: corpus.provenance.scannedLegacyTestFiles,
-      representedLegacyTestFiles: corpus.provenance.representedLegacyTestFiles,
+      legacyTestFilesWithAuditRows: corpus.provenance.legacyTestFilesWithAuditRows,
     },
     {
       sourceSuiteRelease: '0.28.0',
@@ -202,7 +390,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
       strictGuaranteeTrueVariants: 58,
       corpusFixtures: 1950,
       scannedLegacyTestFiles: 107,
-      representedLegacyTestFiles: 73,
+      legacyTestFilesWithAuditRows: 73,
     },
   )
   assert.equal(corpus.provenance.rustAuditRevision, corpus.provenance.reviewedRevision)
@@ -244,7 +432,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
 
   const ids = new Set()
   const inputs = new Set()
-  const representedFiles = new Set()
+  const filesWithAuditRows = new Set()
   const requestVariantCounts = { 'audit-baseline': 0, 'strict-guarantee': 0 }
   const strictFixtureIds = new Set()
   const policyCounts = Object.fromEntries(
@@ -269,7 +457,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
     assert.equal(ids.has(fixture.id), false, fixture.id)
     ids.add(fixture.id)
     assert.match(fixture.origin.file, /^packages\/compiler\/test\/.*\.test\.ts$/)
-    representedFiles.add(fixture.origin.file)
+    filesWithAuditRows.add(fixture.origin.file)
     const input = JSON.stringify([fixture.source, fixture.options])
     assert.equal(inputs.has(input), false, fixture.id)
     inputs.add(input)
@@ -315,7 +503,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
 
   assert.equal(ids.size, 1950)
   assert.equal(inputs.size, 1950)
-  assert.equal(representedFiles.size, 73)
+  assert.equal(filesWithAuditRows.size, 73)
   assert.deepEqual(requestVariantCounts, {
     'audit-baseline': 1892,
     'strict-guarantee': 58,

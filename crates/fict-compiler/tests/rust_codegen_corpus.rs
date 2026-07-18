@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 const EXPECTED_BASE_FIXTURES: usize = 1_892;
 const EXPECTED_STRICT_FIXTURES: usize = 58;
 const EXPECTED_FIXTURES: usize = EXPECTED_BASE_FIXTURES + EXPECTED_STRICT_FIXTURES;
-const EXPECTED_REPRESENTED_FILES: usize = 73;
+const EXPECTED_FILES_WITH_AUDIT_ROWS: usize = 73;
 const EXPECTED_AUDIT_SHA256: &str =
     "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f";
 
@@ -50,7 +50,7 @@ struct CorpusProvenance {
     strict_guarantee_true_variants: usize,
     corpus_fixtures: usize,
     scanned_legacy_test_files: usize,
-    represented_legacy_test_files: usize,
+    legacy_test_files_with_audit_rows: usize,
     reviewed_revision: String,
     reviewed_compiler_build_id: String,
 }
@@ -180,7 +180,7 @@ fn replays_the_frozen_rust_codegen_corpus() {
         serde_json::from_str(include_str!("rust_frozen_codegen_corpus.json"))
             .expect("valid frozen Rust codegen corpus");
 
-    assert_eq!(corpus.schema_version, 4);
+    assert_eq!(corpus.schema_version, 5);
     assert_eq!(corpus.provenance.source_suite_release, "0.28.0");
     assert_eq!(
         corpus.provenance.source_suite_revision,
@@ -238,8 +238,8 @@ fn replays_the_frozen_rust_codegen_corpus() {
     assert_eq!(corpus.provenance.corpus_fixtures, EXPECTED_FIXTURES);
     assert_eq!(corpus.provenance.scanned_legacy_test_files, 107);
     assert_eq!(
-        corpus.provenance.represented_legacy_test_files,
-        EXPECTED_REPRESENTED_FILES
+        corpus.provenance.legacy_test_files_with_audit_rows,
+        EXPECTED_FILES_WITH_AUDIT_ROWS
     );
     assert_sha256(EXPECTED_AUDIT_SHA256, "audit input digest");
     assert_sha256(
@@ -264,7 +264,7 @@ fn replays_the_frozen_rust_codegen_corpus() {
     );
 
     let mut ids = BTreeSet::new();
-    let mut represented_files = BTreeSet::new();
+    let mut files_with_audit_rows = BTreeSet::new();
     let mut request_variant_counts: BTreeMap<RequestVariant, usize> = BTreeMap::new();
     let mut observed_policy_counts: BTreeMap<String, usize> = BTreeMap::new();
     for fixture in corpus.fixtures {
@@ -291,7 +291,7 @@ fn replays_the_frozen_rust_codegen_corpus() {
             "duplicate fixture {}",
             fixture.id
         );
-        represented_files.insert(fixture.origin.file.clone());
+        files_with_audit_rows.insert(fixture.origin.file.clone());
         assert!(
             !fixture.source.trim().is_empty(),
             "{} has empty source",
@@ -362,7 +362,7 @@ fn replays_the_frozen_rust_codegen_corpus() {
         );
     }
 
-    assert_eq!(represented_files.len(), EXPECTED_REPRESENTED_FILES);
+    assert_eq!(files_with_audit_rows.len(), EXPECTED_FILES_WITH_AUDIT_ROWS);
     assert_eq!(
         request_variant_counts,
         BTreeMap::from([

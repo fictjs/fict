@@ -232,6 +232,28 @@ requests plus 12 calls whose compiler-default helper enabled strict mode. Corpus
 generation fails instead of assigning a deviation policy if any of those 58
 requests has different Babel and Rust success/error status.
 
+The 73 source files containing at least one audit row are not described as 73
+covered files. The source-grounded
+[legacy assertion inventory](../../scripts/fixtures/legacy_0_28_compiler_assertion_inventory.json)
+records all 2,657 static `it`/`test` declaration sites and 6,350 static `expect`
+calls in the 107-file suite. It links each test callback to its exact corpus
+base IDs, records 214 additional calls through the same compiler-helper
+bindings that have no audit row, and marks 132 compiler callsites found under
+parameterized execution. The report therefore distinguishes complete-looking
+corpus context, partial context, unrepresented compiler context, and tests with
+no direct compiler call. A corpus association means only that the callback
+contains a frozen request; it does not replay the old assertion or expand every
+runtime instance of an `it.each` or lexical loop.
+
+This distinction catches omissions hidden by file-level counting. For example,
+the two-case strict `renderHook`/`utils.renderHook` loop in the old semantic
+validation suite is explicitly recorded with two assertions and an
+unrepresented `transform` call, while current member, optional-member, global,
+alias, and shadowing behavior is covered by native frontend and runtime tests.
+The inventory is pinned to the same legacy source-tree and extraction-input
+digests as the corpus, so changing the old suite or audit requires a reviewed
+regeneration rather than silently preserving the 73-file headline.
+
 Status review is not used as a proxy for diagnostic compatibility. The
 [diagnostic deviation review](../../scripts/fixtures/compiler_diagnostic_deviation_reviews.json)
 binds the exact ordered Babel code/severity sequence and Rust

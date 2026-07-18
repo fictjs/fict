@@ -288,7 +288,7 @@ const binding = require(options.nativePath)
 const compilerInfo = binding.nativeCompilerInfo()
 const policyCounts = Object.fromEntries(Object.keys(deviationPolicies).map(policy => [policy, 0]))
 const diagnosticReviewFixtures = []
-const representedFiles = new Set()
+const filesWithAuditRows = new Set()
 const uniqueInputs = new Set()
 
 function compileCorpusFixture(row, { compilerOptions, id, requestVariant, verifyAudit }) {
@@ -366,7 +366,7 @@ function compileCorpusFixture(row, { compilerOptions, id, requestVariant, verify
 const fixtures = audit.results.flatMap(row => {
   const { callee, file, line, options: compilerOptions } = row.fixture
   const baseId = `${file}:${line}:${callee}`
-  representedFiles.add(file)
+  filesWithAuditRows.add(file)
   const fixturesForCall = [
     compileCorpusFixture(row, {
       compilerOptions,
@@ -389,7 +389,7 @@ const fixtures = audit.results.flatMap(row => {
   return fixturesForCall
 })
 
-assert.equal(representedFiles.size, 73)
+assert.equal(filesWithAuditRows.size, 73)
 assert.deepEqual(policyCounts, expectedPolicyCounts)
 const diagnosticReview = buildDiagnosticDeviationReview({
   sourceAuditSha256: expectedAuditSha256,
@@ -415,7 +415,7 @@ const reviewedRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).trim()
 const corpus = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   provenance: {
     sourceSuiteRelease: '0.28.0',
     sourceSuiteRevision: legacyRevision,
@@ -437,7 +437,7 @@ const corpus = {
     strictGuaranteeTrueVariants: requestPolicy.strictTrueVariants,
     corpusFixtures: fixtures.length,
     scannedLegacyTestFiles: 107,
-    representedLegacyTestFiles: representedFiles.size,
+    legacyTestFilesWithAuditRows: filesWithAuditRows.size,
     reviewedRevision,
     reviewedCompilerBuildId: compilerInfo.compilerBuildId,
   },
@@ -455,5 +455,5 @@ writeFileSync(
   }),
 )
 process.stdout.write(
-  `${JSON.stringify({ output: options.output, fixtures: fixtures.length, representedFiles: representedFiles.size, policyCounts })}\n`,
+  `${JSON.stringify({ output: options.output, fixtures: fixtures.length, filesWithAuditRows: filesWithAuditRows.size, policyCounts })}\n`,
 )

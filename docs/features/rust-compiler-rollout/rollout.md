@@ -66,6 +66,13 @@ sources. Their request-policy and source-tree digests are provenance fields, and
 regeneration rejects every strict Babel/Rust status mismatch rather than
 classifying it as an accepted deviation.
 
+The historical 73-file figure now means only “files containing an audit row.”
+It is paired with a pinned static inventory of all 2,657 legacy test declaration
+sites and 6,350 `expect` callsites. That inventory exposes 214 same-helper calls
+without a frozen audit row and 132 compiler callsites under parameterized
+execution. Its corpus links are explicitly contextual: they do not claim that
+the old assertion or each runtime loop instance executes in CI.
+
 The machine-readable
 [compatibility evidence scope](../../../scripts/fixtures/compiler_compatibility_evidence_scope.json)
 keeps those claim boundaries release-visible. It separately identifies the

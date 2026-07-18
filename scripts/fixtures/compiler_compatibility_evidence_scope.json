@@ -1,6 +1,25 @@
 {
   "schemaVersion": 1,
   "assets": {
+    "legacyAssertionInventory": {
+      "artifact": "scripts/fixtures/legacy_0_28_compiler_assertion_inventory.json",
+      "generator": "scripts/generate-legacy-compiler-assertion-inventory.mjs",
+      "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
+      "legacyTestFiles": 107,
+      "testDeclarationSites": 2657,
+      "staticAssertionCallsites": 6350,
+      "unrepresentedCompilerCallsites": 214,
+      "assertionLevel": "coverage-inventory",
+      "proves": [
+        "exact-static-test-and-assertion-inventory",
+        "parameterized-and-unextracted-callsite-accounting"
+      ],
+      "doesNotProve": [
+        "legacy-test-execution-in-ci",
+        "assertion-level-semantic-parity",
+        "parameterized-runtime-instance-count"
+      ]
+    },
     "rustCodegenCorpus": {
       "artifact": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
       "generator": "scripts/generate-rust-codegen-corpus.mjs",
