@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use fict_compiler_oxc::{FrontendSuppression, SourceLineIndex};
 use fict_diagnostics::{Diagnostic, DiagnosticSeverity};
 
 use crate::{CompilerOptions, WarningLevel, WarningsAsErrors};
@@ -58,6 +59,34 @@ pub(crate) fn apply_diagnostic_policy(
         };
         diagnostic.severity = severity;
         true
+    });
+}
+
+pub(crate) fn apply_diagnostic_suppressions(
+    source: &str,
+    suppressions: &[FrontendSuppression],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if suppressions.is_empty() {
+        return;
+    }
+    let lines = SourceLineIndex::new(source);
+    diagnostics.retain(|diagnostic| {
+        if diagnostic.severity == DiagnosticSeverity::Error {
+            return true;
+        }
+        let Some(span) = diagnostic.primary_span else {
+            return true;
+        };
+        let line = lines.line_of(span.start());
+        !suppressions.iter().any(|suppression| {
+            suppression.target_line == line
+                && (suppression.codes.is_empty()
+                    || suppression
+                        .codes
+                        .iter()
+                        .any(|pattern| diagnostic_code_matches(diagnostic.code.as_str(), pattern)))
+        })
     });
 }
 fn effective_severity(
@@ -160,9 +189,11 @@ pub(crate) fn diagnostic_code_matches(code: &str, pattern: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use fict_compiler_oxc::{FrontendSuppression, SuppressionMode};
+    use fict_diagnostics::SourceSpan;
     use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
 
-    use super::{apply_diagnostic_policy, diagnostic_code_matches};
+    use super::{apply_diagnostic_policy, apply_diagnostic_suppressions, diagnostic_code_matches};
     use crate::{CompilerOptions, WarningLevel, WarningsAsErrors};
 
     fn warning(code: &str) -> Diagnostic {
@@ -216,5 +247,49 @@ mod tests {
         let mut diagnostics = vec![warning("FICT-PLACEMENT-HOOK-CONTROL")];
         apply_diagnostic_policy(&options, &mut diagnostics);
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn source_suppressions_match_lines_and_families_before_policy() {
+        let source = "first();\r\nsecond();\u{2028}third();\u{2029}fourth();";
+        let located = |code: &str, needle: &str, severity| {
+            let start = u32::try_from(source.find(needle).expect("source needle")).expect("offset");
+            Diagnostic::new(
+                DiagnosticCode::new(code).expect("diagnostic code"),
+                severity,
+                code,
+            )
+            .with_primary_span(SourceSpan::new(start, start + 1).expect("span"))
+        };
+        let suppressions = vec![
+            FrontendSuppression {
+                mode: SuppressionMode::NextLine,
+                target_line: 2,
+                codes: vec!["FICT-M".into()],
+                comment_span: SourceSpan::empty(0),
+            },
+            FrontendSuppression {
+                mode: SuppressionMode::SameLine,
+                target_line: 3,
+                codes: Vec::new(),
+                comment_span: SourceSpan::empty(0),
+            },
+            FrontendSuppression {
+                mode: SuppressionMode::SameLine,
+                target_line: 4,
+                codes: Vec::new(),
+                comment_span: SourceSpan::empty(0),
+            },
+        ];
+        let mut diagnostics = vec![
+            located("FICT-M003", "second", DiagnosticSeverity::Warning),
+            located("FICT-R006", "third", DiagnosticSeverity::Info),
+            located("FICT-M003", "fourth", DiagnosticSeverity::Error),
+        ];
+
+        apply_diagnostic_suppressions(source, &suppressions, &mut diagnostics);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
     }
 }

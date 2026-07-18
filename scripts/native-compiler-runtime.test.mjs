@@ -1322,6 +1322,57 @@ test('program compiler-disable preserves authored Fict syntax and wins over enab
   assert.deepEqual(result.moduleMetadata, { exports: {}, version: 1 })
 })
 
+test('fict-ignore suppressions apply before compile and analyze escalation', () => {
+  const code = `
+    import { $memo } from 'fict'
+    // fict-ignore-next-line FICT-M\u2028    const value = $memo(() => { console.log('side') })
+  `
+  const compilerOptions = {
+    strictGuarantee: false,
+    warningsAsErrors: true,
+  }
+  const compiled = binding.transformSync({
+    code,
+    filename: '/fixtures/suppressed.ts',
+    options: compilerOptions,
+  })
+  assert.notEqual(compiled.code, '')
+  assert.equal(
+    compiled.diagnostics.some(({ code: diagnosticCode }) => diagnosticCode === 'FICT-M003'),
+    false,
+  )
+
+  const analyzed = binding.analyzeSync({
+    code,
+    filename: '/fixtures/suppressed.ts',
+    options: { compilerOptions },
+  })
+  assert.equal(
+    analyzed.diagnostics.some(({ code: diagnosticCode }) => diagnosticCode === 'FICT-M003'),
+    false,
+  )
+
+  const integration = binding.transformSync({
+    code: `export const value = 1 // fict-ignore FICT-R006`,
+    filename: '/fixtures/suppressed-integration.js',
+    options: compilerOptions,
+    integrationDiagnostics: [
+      {
+        code: 'FICT-R006',
+        severity: 'warning',
+        message: 'integration warning',
+        primarySpan: { start: 0, end: 0 },
+        secondaryLabels: [],
+        help: null,
+        notes: [],
+        guaranteeClass: 'advisory',
+      },
+    ],
+  })
+  assert.notEqual(integration.code, '')
+  assert.deepEqual(integration.diagnostics, [])
+})
+
 test('dev compiler mode labels authored reactive creations for DevTools', () => {
   const source = `
     import { $effect, $memo, $state } from 'fict'

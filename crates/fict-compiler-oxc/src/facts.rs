@@ -168,7 +168,7 @@ pub struct FrontendSourceFacts {
 }
 
 pub(super) fn collect_source_facts(source: &str, program: &Program<'_>) -> FrontendSourceFacts {
-    let line_index = LineIndex::new(source);
+    let line_index = SourceLineIndex::new(source);
     let mut facts = FrontendSourceFacts::default();
 
     for comment in &program.comments {
@@ -326,7 +326,7 @@ fn directive_kind(value: &str) -> FictDirectiveKind {
 fn parse_suppression(
     source: &str,
     comment: Comment,
-    line_index: &LineIndex,
+    line_index: &SourceLineIndex,
 ) -> Option<FrontendSuppression> {
     let content_span = comment.content_span();
     let content = source.get(content_span.start as usize..content_span.end as usize)?;
@@ -605,14 +605,13 @@ fn source_lines(source: &str) -> Vec<&str> {
     let mut start = 0_usize;
     let mut index = 0_usize;
     while index < bytes.len() {
-        if matches!(bytes[index], b'\n' | b'\r') {
+        if let Some(length) = line_terminator_len(bytes, index) {
             if let Some(line) = source.get(start..index) {
                 lines.push(line);
             }
-            if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
-                index += 1;
-            }
-            start = index.saturating_add(1);
+            index = index.saturating_add(length);
+            start = index;
+            continue;
         }
         index += 1;
     }
@@ -622,33 +621,50 @@ fn source_lines(source: &str) -> Vec<&str> {
     lines
 }
 
-struct LineIndex {
+/// One-based source-line lookup shared by source facts and diagnostic policy.
+pub struct SourceLineIndex {
     starts: Vec<u32>,
 }
 
-impl LineIndex {
-    fn new(source: &str) -> Self {
+impl SourceLineIndex {
+    /// Index ECMAScript line terminators in one source string.
+    #[must_use]
+    pub fn new(source: &str) -> Self {
         let bytes = source.as_bytes();
         let mut starts = vec![0];
         let mut index = 0_usize;
         while index < bytes.len() {
-            match bytes[index] {
-                b'\r' => {
-                    if bytes.get(index + 1) == Some(&b'\n') {
-                        index += 1;
-                    }
-                    starts.push(count_u32(index.saturating_add(1)));
-                }
-                b'\n' => starts.push(count_u32(index.saturating_add(1))),
-                _ => {}
+            if let Some(length) = line_terminator_len(bytes, index) {
+                index = index.saturating_add(length);
+                starts.push(count_u32(index));
+                continue;
             }
             index += 1;
         }
         Self { starts }
     }
 
-    fn line_of(&self, offset: u32) -> u32 {
+    /// Return the one-based line containing a byte offset.
+    #[must_use]
+    pub fn line_of(&self, offset: u32) -> u32 {
         count_u32(self.starts.partition_point(|start| *start <= offset))
+    }
+}
+
+fn line_terminator_len(bytes: &[u8], index: usize) -> Option<usize> {
+    match bytes.get(index)? {
+        b'\r' => Some(if bytes.get(index + 1) == Some(&b'\n') {
+            2
+        } else {
+            1
+        }),
+        b'\n' => Some(1),
+        0xe2 if bytes.get(index + 1) == Some(&0x80)
+            && matches!(bytes.get(index + 2), Some(0xa8 | 0xa9)) =>
+        {
+            Some(3)
+        }
+        _ => None,
     }
 }
 

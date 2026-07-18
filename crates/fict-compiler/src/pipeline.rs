@@ -1,5 +1,7 @@
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
-use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
+use crate::diagnostic_policy::{
+    apply_diagnostic_policy, apply_diagnostic_suppressions, configured_diagnostic_severity,
+};
 use crate::metadata_analysis::generate_module_metadata;
 use crate::result::{INTERNAL_RECOVERY_HELP, failed_result, request_error_result};
 use crate::source_map::compose_source_maps;
@@ -10,8 +12,8 @@ use crate::{
     run_core_passes,
 };
 use fict_compiler_oxc::{
-    HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions,
-    build_hir, compile_disabled, emit_program,
+    FrontendSuppression, HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage,
+    OxcTypeScriptOptions, analyze_frontend, build_hir, compile_disabled, emit_program,
 };
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
@@ -70,12 +72,6 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     }
     result.unresolved_metadata_requests.sort();
     result.unresolved_metadata_requests.dedup();
-    finalize_diagnostics(&mut result, &request.options);
-    if result.has_errors() {
-        attach_explain_if_requested(&mut result, &request, &[], &[]);
-        return result;
-    }
-
     let oxc_options = OxcCompileOptions {
         language: oxc_language(request.language),
         module_kind: oxc_module_kind(request.module_kind),
@@ -92,6 +88,29 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         },
         sourcemap: request.options.sourcemap,
     };
+    if !request.options.strict_guarantee
+        && result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity != DiagnosticSeverity::Error && diagnostic.primary_span.is_some()
+        })
+        && request
+            .code
+            .as_bytes()
+            .windows(b"fict-ignore".len())
+            .any(|window| window.eq_ignore_ascii_case(b"fict-ignore"))
+        && let Some(frontend) = analyze_frontend(&request.code, oxc_options).summary
+    {
+        apply_diagnostic_suppressions(
+            &request.code,
+            &frontend.source_facts.suppressions,
+            &mut result.diagnostics,
+        );
+    }
+    finalize_diagnostics(&mut result, &request.options);
+    if result.has_errors() {
+        attach_explain_if_requested(&mut result, &request, &[], &[]);
+        return result;
+    }
+
     let build = build_hir(
         &request.code,
         oxc_options,
@@ -144,6 +163,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     };
+    let suppressions = frontend.source_facts.suppressions.clone();
     let Some(module_plan) = build.module_plan else {
         result.diagnostics.push(diagnostic(
             "FICT-I005",
@@ -156,7 +176,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         return result;
     };
     if request.options.strict_guarantee
-        && let Some(suppression) = frontend.source_facts.suppressions.first()
+        && let Some(suppression) = suppressions.first()
     {
         result.diagnostics.push(
             diagnostic(
@@ -169,7 +189,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             .with_help("remove suppressions to keep fail-closed guarantees"),
         );
     }
-    finalize_diagnostics(&mut result, &request.options);
+    finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
@@ -184,7 +204,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         Ok(core) => core,
         Err(diagnostics) => {
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_diagnostics(&mut result, &request.options);
+            finalize_source_diagnostics(&mut result, &request, &suppressions);
             attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
@@ -203,7 +223,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result
         .diagnostics
         .extend(reactive_control_flow_diagnostics(&core));
-    finalize_diagnostics(&mut result, &request.options);
+    finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
@@ -255,7 +275,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         Ok(emit) => emit,
         Err(diagnostics) => {
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_diagnostics(&mut result, &request.options);
+            finalize_source_diagnostics(&mut result, &request, &suppressions);
             attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
@@ -280,13 +300,13 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             },
         ) {
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_diagnostics(&mut result, &request.options);
+            finalize_source_diagnostics(&mut result, &request, &suppressions);
             attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
         if let Err(diagnostics) = fict_emit::verify_emit_program(&core.hir, &regions, &emit) {
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_diagnostics(&mut result, &request.options);
+            finalize_source_diagnostics(&mut result, &request, &suppressions);
             attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
@@ -294,7 +314,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     let output = emit_program(&request.code, &request.filename, oxc_options, &emit);
     let helpers = output.runtime_helpers.clone();
     result.diagnostics.extend(output.diagnostics);
-    finalize_diagnostics(&mut result, &request.options);
+    finalize_source_diagnostics(&mut result, &request, &suppressions);
 
     if !result.has_errors() {
         result.code = output.code;
@@ -353,7 +373,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             .sort_by(|left, right| left.id.cmp(&right.id));
     }
 
-    finalize_diagnostics(&mut result, &request.options);
+    finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
         result.code.clear();
         result.map = None;
@@ -473,6 +493,15 @@ fn static_code(value: &'static str) -> DiagnosticCode {
 fn finalize_diagnostics(result: &mut CompileResult, options: &crate::CompilerOptions) {
     apply_diagnostic_policy(options, &mut result.diagnostics);
     result.diagnostics = DiagnosticBundle::new(mem::take(&mut result.diagnostics)).into_sorted();
+}
+
+fn finalize_source_diagnostics(
+    result: &mut CompileResult,
+    request: &NormalizedCompileRequest,
+    suppressions: &[FrontendSuppression],
+) {
+    apply_diagnostic_suppressions(&request.code, suppressions, &mut result.diagnostics);
+    finalize_diagnostics(result, &request.options);
 }
 
 fn attach_explain_if_requested(
@@ -622,7 +651,9 @@ fn structured_source_name(kind: &StructuredSourceKind) -> Option<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
+    use fict_diagnostics::{
+        Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
+    };
     use fict_metadata::{
         HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
         ResolvedMetadataInput,
@@ -4116,6 +4147,75 @@ mod tests {
         let non_strict = compile(non_strict);
         assert!(!non_strict.has_errors(), "{:?}", non_strict.diagnostics);
         assert!(non_strict.code.contains("export const value = 1"));
+    }
+
+    #[test]
+    fn applies_source_suppressions_before_warning_escalation() {
+        let sources = [
+            concat!(
+                "import { $memo } from 'fict';\n",
+                "// fict-ignore-next-line FICT-M003\n",
+                "const value = $memo(() => { console.log('side'); });",
+            ),
+            concat!(
+                "import { $memo } from 'fict';\n",
+                "// fict-ignore-next-line FICT-M\u{2028}",
+                "const value = $memo(() => { console.log('side'); });",
+            ),
+            concat!(
+                "import { $memo } from 'fict';\n",
+                "const value = $memo(() => { /* fict-ignore */ console.log('side'); });",
+            ),
+        ];
+        for source in sources {
+            let mut input = request(source, "suppressed.ts");
+            input.options.strict_guarantee = false;
+            input.options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+            let result = compile(input);
+            assert!(!result.has_errors(), "{:?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-M003")
+            );
+            assert!(!result.code.is_empty());
+        }
+
+        let mut prose = request(
+            concat!(
+                "import { $memo } from 'fict';\n",
+                "// documentation mentions fict-ignore-next-line FICT-M003\n",
+                "const value = $memo(() => { console.log('side'); });",
+            ),
+            "prose.ts",
+        );
+        prose.options.strict_guarantee = false;
+        let prose = compile(prose);
+        assert!(
+            prose
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-M003")
+        );
+
+        let mut integration = request(
+            "export const value = 1; // fict-ignore FICT-R006",
+            "integration.js",
+        );
+        integration.options.strict_guarantee = false;
+        integration.options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+        integration.integration_diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::new("FICT-R006").expect("diagnostic code"),
+                DiagnosticSeverity::Warning,
+                "integration warning",
+            )
+            .with_primary_span(SourceSpan::new(0, 6).expect("source span")),
+        );
+        let integration = compile(integration);
+        assert!(!integration.has_errors(), "{:?}", integration.diagnostics);
+        assert!(integration.diagnostics.is_empty());
     }
 
     #[test]

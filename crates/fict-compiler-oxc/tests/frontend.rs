@@ -411,6 +411,22 @@ fn parses_exact_same_line_and_next_line_suppressions() {
 }
 
 #[test]
+fn parses_suppressions_across_ecmascript_unicode_line_terminators() {
+    let frontend = summary(
+        "/*\u{2028} * fict-ignore-next-line FICT-M003\u{2029} */\u{2028}const a = 1;\u{2029}\
+         const b = 2; // fict-ignore FICT-R006",
+        OxcSourceLanguage::JavaScript,
+    );
+
+    let suppressions = &frontend.source_facts.suppressions;
+    assert_eq!(suppressions.len(), 2);
+    assert_eq!(suppressions[0].target_line, 4);
+    assert_eq!(suppressions[0].codes, ["FICT-M003"]);
+    assert_eq!(suppressions[1].target_line, 5);
+    assert_eq!(suppressions[1].codes, ["FICT-R006"]);
+}
+
+#[test]
 fn retains_applied_and_unapplied_pure_comments() {
     let frontend = summary(
         r#"

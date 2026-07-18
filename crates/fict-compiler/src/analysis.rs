@@ -9,7 +9,9 @@ use fict_reactivity::{DependencyBase, DependencyPath, DependencySegment, Reactiv
 use serde::{Deserialize, Serialize};
 
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
-use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
+use crate::diagnostic_policy::{
+    apply_diagnostic_policy, apply_diagnostic_suppressions, configured_diagnostic_severity,
+};
 use crate::pipeline::{oxc_language, oxc_module_kind};
 use crate::{
     AnalyzeRequest, AnalyzeVerbosity, CompileRequestError, CompilerOptions, CorePassOptions,
@@ -253,6 +255,11 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
             resolved_metadata: Vec::new(),
         },
     );
+    let suppressions = build
+        .frontend
+        .as_ref()
+        .map(|frontend| frontend.source_facts.suppressions.clone())
+        .unwrap_or_default();
     let mut diagnostics = build.diagnostics;
     if build
         .frontend
@@ -263,6 +270,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
             diagnostics,
             &request.compiler_options,
             &source_index,
+            &suppressions,
             request.include_diagnostics,
         );
         return result;
@@ -278,6 +286,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
             diagnostics,
             &request.compiler_options,
             &source_index,
+            &suppressions,
             request.include_diagnostics,
         );
         return result;
@@ -317,6 +326,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
                 diagnostics,
                 &request.compiler_options,
                 &source_index,
+                &suppressions,
                 request.include_diagnostics,
             );
             return result;
@@ -352,6 +362,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
         diagnostics,
         &request.compiler_options,
         &source_index,
+        &suppressions,
         request.include_diagnostics,
     );
     result
@@ -711,11 +722,13 @@ fn normalize_diagnostics(
     mut diagnostics: Vec<Diagnostic>,
     options: &CompilerOptions,
     source_index: &SourceIndex<'_>,
+    suppressions: &[fict_compiler_oxc::FrontendSuppression],
     include: bool,
 ) -> Vec<AnalyzeDiagnostic> {
     if !include {
         return Vec::new();
     }
+    apply_diagnostic_suppressions(source_index.source, suppressions, &mut diagnostics);
     apply_diagnostic_policy(options, &mut diagnostics);
     DiagnosticBundle::new(diagnostics)
         .into_sorted()
@@ -805,7 +818,10 @@ impl<'source> SourceIndex<'source> {
 #[cfg(test)]
 mod tests {
     use super::{AnalyzeDiagnosticSeverity, TraceMarkerKind, analyze};
-    use crate::{AnalyzeOptions, AnalyzeRequest, AnalyzeVerbosity, COMPILER_PROTOCOL_VERSION};
+    use crate::{
+        AnalyzeOptions, AnalyzeRequest, AnalyzeVerbosity, COMPILER_PROTOCOL_VERSION,
+        WarningsAsErrors,
+    };
 
     fn request(code: &str, filename: &str) -> AnalyzeRequest {
         AnalyzeRequest {
@@ -907,5 +923,30 @@ mod tests {
 
         assert!(result.components.is_empty());
         assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn applies_source_suppressions_before_analysis_warning_escalation() {
+        let mut input = request(
+            concat!(
+                "import { $memo } from 'fict';\n",
+                "// fict-ignore-next-line FICT-M\u{2029}",
+                "const value = $memo(() => { console.log('side'); });",
+            ),
+            "suppressed.ts",
+        );
+        input.options.compiler_options.strict_guarantee = false;
+        input.options.compiler_options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+
+        let result = analyze(input);
+
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "FICT-M003"),
+            "{:?}",
+            result.diagnostics
+        );
     }
 }
