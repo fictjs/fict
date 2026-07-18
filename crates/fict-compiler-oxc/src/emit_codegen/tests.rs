@@ -1,4 +1,4 @@
-use super::{emit_program, encode_javascript_string_for_oxc};
+use super::{devtools_source_label, emit_program, encode_javascript_string_for_oxc};
 use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions};
 use fict_emit::{
     CleanupOwner, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
@@ -36,6 +36,15 @@ fn encodes_exact_utf16_strings_for_oxc_without_replacement_loss() {
     assert_eq!(
         encode_javascript_string_for_oxc(&exact),
         ("a\u{fffd}d800\u{fffd}fffd😀\u{fffd}dc00".to_owned(), true,)
+    );
+}
+#[test]
+fn devtools_source_labels_use_ecmascript_lines_and_utf16_columns() {
+    let source = "first\rsecond\u{2028}third\u{2029}😀value";
+    let offset = u32::try_from(source.find("value").expect("value")).expect("offset");
+    assert_eq!(
+        devtools_source_label(source, "mixed.ts", offset),
+        "mixed.ts:4:2"
     );
 }
 fn effect_program(source: &str) -> EmitProgram {

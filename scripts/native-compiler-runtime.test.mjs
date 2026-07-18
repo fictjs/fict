@@ -1437,6 +1437,37 @@ test('fict-ignore suppressions apply before compile and analyze escalation', () 
   assert.deepEqual(integration.diagnostics, [])
 })
 
+test('analysis indexes every ECMAScript line terminator with UTF-16 columns', () => {
+  const code =
+    "import { $state } from 'fict';\r" +
+    'export function useCounter() {\u2028' +
+    '  let count = $state(0);\u2029' +
+    '  return count;\r\n' +
+    '}'
+  const analyzed = binding.analyzeSync({
+    code,
+    filename: '/fixtures/mixed-lines.ts',
+  })
+  assert.deepEqual(analyzed.diagnostics, [])
+  const hook = analyzed.components.find(component => component.name === 'useCounter')
+  assert.ok(hook)
+  assert.equal(hook.endLine, 5)
+  assert.ok(
+    hook.trace.some(
+      trace =>
+        trace.line === 3 &&
+        trace.markers.some(marker => marker.label === 'Signal initialization runs once'),
+    ),
+  )
+
+  const broken = binding.analyzeSync({
+    code: "const emoji = '😀';\rconst ok = 1;\u2028export const =",
+    filename: '/fixtures/mixed-lines-broken.ts',
+  })
+  assert.equal(broken.diagnostics[0]?.line, 3)
+  assert.ok(broken.diagnostics[0]?.column > 1)
+})
+
 test('module no-memo policy reaches top-level and nested lowering', () => {
   const result = binding.transformSync({
     code: `

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use fict_diagnostics::SourceSpan;
+use fict_diagnostics::{SourceIndex, SourceSpan};
 use fict_hir::ScopeId;
 use oxc::{
     ast::{
@@ -168,7 +168,7 @@ pub struct FrontendSourceFacts {
 }
 
 pub(super) fn collect_source_facts(source: &str, program: &Program<'_>) -> FrontendSourceFacts {
-    let line_index = SourceLineIndex::new(source);
+    let line_index = SourceIndex::new(source);
     let mut facts = FrontendSourceFacts::default();
 
     for comment in &program.comments {
@@ -326,14 +326,14 @@ fn directive_kind(value: &str) -> FictDirectiveKind {
 fn parse_suppression(
     source: &str,
     comment: Comment,
-    line_index: &SourceLineIndex,
+    line_index: &SourceIndex<'_>,
 ) -> Option<FrontendSuppression> {
     let content_span = comment.content_span();
     let content = source.get(content_span.start as usize..content_span.end as usize)?;
     let comment_start_line = line_index.line_of(comment.span.start);
     let comment_end_line = line_index.line_of(comment.span.end.saturating_sub(1));
 
-    for (line_offset, line) in source_lines(content).into_iter().enumerate() {
+    for (line_offset, line) in SourceIndex::new(content).lines().enumerate() {
         let normalized = line.trim().strip_prefix('*').unwrap_or(line.trim()).trim();
         let Some((mode, raw_codes)) = suppression_directive(normalized) else {
             continue;
@@ -399,8 +399,8 @@ fn parse_fict_return(source: &str, comment: Comment) -> Option<ParsedFictReturn>
 }
 
 fn normalize_jsdoc(raw: &str) -> String {
-    source_lines(raw)
-        .into_iter()
+    SourceIndex::new(raw)
+        .lines()
         .map(|line| {
             let line = line.trim_start();
             let line = line.strip_prefix('*').unwrap_or(line);
@@ -597,75 +597,6 @@ fn split_index_unquoted(value: &str, separator: char) -> Option<usize> {
         }
     }
     None
-}
-
-fn source_lines(source: &str) -> Vec<&str> {
-    let bytes = source.as_bytes();
-    let mut lines = Vec::new();
-    let mut start = 0_usize;
-    let mut index = 0_usize;
-    while index < bytes.len() {
-        if let Some(length) = line_terminator_len(bytes, index) {
-            if let Some(line) = source.get(start..index) {
-                lines.push(line);
-            }
-            index = index.saturating_add(length);
-            start = index;
-            continue;
-        }
-        index += 1;
-    }
-    if let Some(line) = source.get(start..) {
-        lines.push(line);
-    }
-    lines
-}
-
-/// One-based source-line lookup shared by source facts and diagnostic policy.
-pub struct SourceLineIndex {
-    starts: Vec<u32>,
-}
-
-impl SourceLineIndex {
-    /// Index ECMAScript line terminators in one source string.
-    #[must_use]
-    pub fn new(source: &str) -> Self {
-        let bytes = source.as_bytes();
-        let mut starts = vec![0];
-        let mut index = 0_usize;
-        while index < bytes.len() {
-            if let Some(length) = line_terminator_len(bytes, index) {
-                index = index.saturating_add(length);
-                starts.push(count_u32(index));
-                continue;
-            }
-            index += 1;
-        }
-        Self { starts }
-    }
-
-    /// Return the one-based line containing a byte offset.
-    #[must_use]
-    pub fn line_of(&self, offset: u32) -> u32 {
-        count_u32(self.starts.partition_point(|start| *start <= offset))
-    }
-}
-
-fn line_terminator_len(bytes: &[u8], index: usize) -> Option<usize> {
-    match bytes.get(index)? {
-        b'\r' => Some(if bytes.get(index + 1) == Some(&b'\n') {
-            2
-        } else {
-            1
-        }),
-        b'\n' => Some(1),
-        0xe2 if bytes.get(index + 1) == Some(&0x80)
-            && matches!(bytes.get(index + 2), Some(0xa8 | 0xa9)) =>
-        {
-            Some(3)
-        }
-        _ => None,
-    }
 }
 
 fn source_span(span: oxc::span::Span) -> SourceSpan {

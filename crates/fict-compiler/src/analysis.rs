@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fict_compiler_oxc::{HirBuildOptions, OxcCompileOptions, OxcTypeScriptOptions, build_hir};
 use fict_diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
+    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceIndex,
+    SourceSpan,
 };
 use fict_hir::{FictMacroKind, FunctionKind, HirFile, HirFunction, HirInstructionKind, SsaName};
 use fict_reactivity::{DependencyBase, DependencyPath, DependencySegment, ReactiveRegion};
@@ -729,7 +730,7 @@ fn normalize_diagnostics(
     if !include {
         return Vec::new();
     }
-    apply_diagnostic_suppressions(source_index.source, suppressions, &mut diagnostics);
+    apply_diagnostic_suppressions(source_index.source(), suppressions, &mut diagnostics);
     apply_diagnostic_policy(options, &mut diagnostics);
     DiagnosticBundle::new(diagnostics)
         .into_sorted()
@@ -770,50 +771,6 @@ fn internal_diagnostic(code: &'static str, message: &'static str) -> Diagnostic 
 
 fn diagnostic_code(code: &'static str) -> DiagnosticCode {
     DiagnosticCode::new(code).expect("analysis diagnostic literals must be valid")
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SourceLocation {
-    line: u32,
-    column: u32,
-}
-
-struct SourceIndex<'source> {
-    source: &'source str,
-    line_starts: Vec<usize>,
-}
-
-impl<'source> SourceIndex<'source> {
-    fn new(source: &'source str) -> Self {
-        let mut line_starts = vec![0];
-        line_starts.extend(
-            source
-                .bytes()
-                .enumerate()
-                .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
-        );
-        Self {
-            source,
-            line_starts,
-        }
-    }
-
-    fn location(&self, byte_offset: u32) -> SourceLocation {
-        let mut offset = (byte_offset as usize).min(self.source.len());
-        while offset > 0 && !self.source.is_char_boundary(offset) {
-            offset -= 1;
-        }
-        let line_index = self
-            .line_starts
-            .partition_point(|line_start| *line_start <= offset)
-            .saturating_sub(1);
-        let line_start = self.line_starts[line_index];
-        let utf16_column = self.source[line_start..offset].encode_utf16().count();
-        SourceLocation {
-            line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
-            column: u32::try_from(utf16_column).unwrap_or(u32::MAX),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -896,6 +853,44 @@ mod tests {
         assert_eq!(diagnostic.severity, AnalyzeDiagnosticSeverity::Error);
         assert_eq!(diagnostic.code, "FICT-PARSE");
         assert_eq!(diagnostic.line, 2);
+        assert!(diagnostic.column > 1);
+    }
+
+    #[test]
+    fn indexes_every_ecmascript_line_terminator_for_traces_and_diagnostics() {
+        let source = concat!(
+            "import { $state } from 'fict';\r",
+            "export function useCounter() {\u{2028}",
+            "  let count = $state(0);\u{2029}",
+            "  return count;\r\n",
+            "}",
+        );
+        let result = analyze(request(source, "mixed-lines.ts"));
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        let hook = result
+            .components
+            .iter()
+            .find(|component| component.name == "useCounter")
+            .expect("hook analysis");
+        assert_eq!(hook.end_line, 5);
+        assert!(
+            hook.trace.iter().any(|trace| {
+                trace.line == 3
+                    && trace
+                        .markers
+                        .iter()
+                        .any(|marker| marker.label == "Signal initialization runs once")
+            }),
+            "{:?}",
+            hook.trace
+        );
+
+        let broken = analyze(request(
+            "const emoji = '😀';\rconst ok = 1;\u{2028}export const =",
+            "broken.ts",
+        ));
+        let diagnostic = broken.diagnostics.first().expect("parser diagnostic");
+        assert_eq!(diagnostic.line, 3);
         assert!(diagnostic.column > 1);
     }
 

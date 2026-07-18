@@ -4,10 +4,12 @@
 
 mod code;
 mod diagnostic;
+mod source;
 mod span;
 
 pub use code::{DiagnosticCode, InvalidDiagnosticCode};
 pub use diagnostic::{
     Diagnostic, DiagnosticBundle, DiagnosticLabel, DiagnosticSeverity, GuaranteeClass,
 };
+pub use source::{SourceIndex, SourceLocation};
 pub use span::SourceSpan;

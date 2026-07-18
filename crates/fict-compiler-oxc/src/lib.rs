@@ -27,7 +27,7 @@ pub use emit_codegen::emit_program;
 pub use facts::{
     FictDirectiveKind, FictReturnShape, FrontendDirective, FrontendSourceFacts,
     FrontendSuppression, ParsedFictReturn, PureAnnotation, PureComment, PureCommentKind,
-    PureTargetKind, ReactiveValueKind, SourceLineIndex, SuppressionMode,
+    PureTargetKind, ReactiveValueKind, SuppressionMode,
 };
 pub use frontend::{
     FrontendBinding, FrontendBindingKind, FrontendMacroCall, FrontendMacroImport,

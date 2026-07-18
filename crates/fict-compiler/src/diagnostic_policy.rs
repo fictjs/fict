@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use fict_compiler_oxc::{FrontendSuppression, SourceLineIndex};
-use fict_diagnostics::{Diagnostic, DiagnosticSeverity};
+use fict_compiler_oxc::FrontendSuppression;
+use fict_diagnostics::{Diagnostic, DiagnosticSeverity, SourceIndex};
 
 use crate::{CompilerOptions, WarningLevel, WarningsAsErrors};
 
@@ -70,7 +70,7 @@ pub(crate) fn apply_diagnostic_suppressions(
     if suppressions.is_empty() {
         return;
     }
-    let lines = SourceLineIndex::new(source);
+    let lines = SourceIndex::new(source);
     diagnostics.retain(|diagnostic| {
         if diagnostic.severity == DiagnosticSeverity::Error {
             return true;

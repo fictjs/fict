@@ -8,7 +8,7 @@ use super::typescript_namespace::lower_namespace_compatibility;
 use crate::commonjs::lower_standard_esm_to_commonjs;
 use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
 use fict_diagnostics::{
-    Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
+    Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceIndex, SourceSpan,
 };
 use fict_emit::{
     ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, DomTextSegment,
@@ -799,15 +799,8 @@ struct CreationRewrites {
     derived_bindings: BTreeMap<BindingId, DerivedCreationRewrite>,
 }
 fn devtools_source_label(source: &str, filename: &str, byte_offset: u32) -> String {
-    let mut offset = (byte_offset as usize).min(source.len());
-    while !source.is_char_boundary(offset) {
-        offset = offset.saturating_sub(1);
-    }
-    let prefix = &source[..offset];
-    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
-    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
-    let column = prefix[line_start..].encode_utf16().count();
-    format!("{filename}:{line}:{column}")
+    let location = SourceIndex::new(source).location(byte_offset);
+    format!("{filename}:{}:{}", location.line, location.column)
 }
 #[derive(Debug, Clone)]
 struct PropBindingRewrite {
