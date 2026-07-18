@@ -80,4 +80,21 @@ describe('release strict guarantee scope', () => {
     expect(strictJob).toContain('pnpm test:bundlers:strict-guarantee')
     expect(strictJob).not.toContain('FICT_STRICT_GUARANTEE')
   })
+
+  it('runs native host and package smoke on every audited CI architecture', () => {
+    const ciWorkflow = readProjectFile('.github/workflows/ci.yml')
+    const platformJob = workflowJob(ciWorkflow, 'native-platform')
+    for (const [target, runner] of [
+      ['win32-x64-msvc', 'windows-2025'],
+      ['darwin-x64', 'macos-15-intel'],
+      ['darwin-arm64', 'macos-15'],
+      ['linux-arm64-gnu', 'ubuntu-24.04-arm'],
+    ]) {
+      expect(platformJob).toContain(`target: ${target}`)
+      expect(platformJob).toContain(`runner: ${runner}`)
+    }
+    expect(platformJob).toContain('node-version: 24')
+    expect(platformJob).toContain('pnpm test:compiler:native-host')
+    expect(platformJob).toContain('node scripts/native-compiler-package-smoke.mjs')
+  })
 })

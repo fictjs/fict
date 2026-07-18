@@ -138,6 +138,43 @@ jobs:
         if: matrix.node == '24'
         run: pnpm test:compiler:native-types
 
+  native-platform:
+    name: Native Platform (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64-msvc
+            runner: windows-2025
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+          - target: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.1.1
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build and smoke the host native compiler
+        run: pnpm test:compiler:native-host
+
+      - name: Clean-install the host native package
+        run: >-
+          node scripts/native-compiler-package-smoke.mjs
+          --host-binary target/release/fict_compiler_napi.node
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
