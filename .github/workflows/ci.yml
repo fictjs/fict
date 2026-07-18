@@ -36,17 +36,16 @@ jobs:
           cargo install cargo-fuzz --version 0.13.2 --locked
 
       - name: Verify the independent fuzz dependency lock
-        run: >-
-          cargo +nightly-2026-04-28 metadata
-          --manifest-path fuzz/Cargo.toml
-          --locked --format-version 1 --no-deps
+        run: |
+          node --test scripts/run-locked-fuzz.test.mjs
+          node scripts/run-locked-fuzz.mjs --verify-lock
 
       - name: Build compiler fuzz targets
-        run: cargo +nightly-2026-04-28 fuzz build compiler_pipeline
+        run: node scripts/run-locked-fuzz.mjs build compiler_pipeline
 
       - name: Fuzz parser, HIR, and core passes
         run: >-
-          cargo +nightly-2026-04-28 fuzz run compiler_pipeline --
+          node scripts/run-locked-fuzz.mjs run compiler_pipeline --
           -max_total_time=600 -timeout=10 -rss_limit_mb=4096
 
       - name: Upload fuzz crash artifacts

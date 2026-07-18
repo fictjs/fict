@@ -187,7 +187,6 @@ dependencies = [
  "fict-hir",
  "fict-metadata",
  "fict-reactivity",
- "oxc_sourcemap",
  "serde",
  "serde_json",
  "sha2",
@@ -202,7 +201,10 @@ dependencies = [
  "fict-hir",
  "fict-metadata",
  "oxc",
+ "oxc_sourcemap",
  "oxc_traverse",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
