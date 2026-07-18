@@ -789,6 +789,222 @@ mod tests {
     }
 
     #[test]
+    fn applies_function_pure_dce_cse_and_mutation_barriers() {
+        let source = r#"
+            export function probe(value, target) {
+                "use pure";
+                const unused = sideEffect(value);
+                const first = read(value);
+                const second = read(value);
+                target.value = 2;
+                const third = read(value);
+                return [first, second, third];
+            }
+        "#;
+        let optimized = compile(request(source, "function-pure.ts"));
+        assert!(!optimized.has_errors(), "{:?}", optimized.diagnostics);
+        assert!(!optimized.code.contains("sideEffect"), "{}", optimized.code);
+        assert_eq!(
+            optimized.code.matches("read(value)").count(),
+            2,
+            "{}",
+            optimized.code
+        );
+        assert!(
+            optimized.code.contains("const second = first"),
+            "{}",
+            optimized.code
+        );
+        assert!(
+            optimized.code.contains("target.value = 2"),
+            "{}",
+            optimized.code
+        );
+
+        let mut disabled_request = request(source, "function-pure-disabled.ts");
+        disabled_request.options.optimize = false;
+        let disabled = compile(disabled_request);
+        assert!(!disabled.has_errors(), "{:?}", disabled.diagnostics);
+        assert!(
+            disabled.code.contains("sideEffect(value)"),
+            "{}",
+            disabled.code
+        );
+        assert_eq!(
+            disabled.code.matches("read(value)").count(),
+            3,
+            "{}",
+            disabled.code
+        );
+
+        let ordinary = compile(request(
+            "export function probe(value) { const unused = sideEffect(value); return 1; }",
+            "ordinary-function.ts",
+        ));
+        assert!(!ordinary.has_errors(), "{:?}", ordinary.diagnostics);
+        assert!(
+            ordinary.code.contains("sideEffect(value)"),
+            "{}",
+            ordinary.code
+        );
+
+        let no_side_effects = compile(request(
+            "/* #__NO_SIDE_EFFECTS__ */ function probe(value) { const unused = sideEffect(value); return 1; } export { probe };",
+            "function-no-side-effects.ts",
+        ));
+        assert!(
+            !no_side_effects.has_errors(),
+            "{:?}",
+            no_side_effects.diagnostics
+        );
+        assert!(
+            !no_side_effects.code.contains("sideEffect"),
+            "{}",
+            no_side_effects.code
+        );
+
+        let destructuring_barrier = compile(request(
+            r#"
+                export function probe(object, source) {
+                    "use pure";
+                    const first = object.value;
+                    const { value } = source;
+                    const second = object.value;
+                    return [first, value, second];
+                }
+            "#,
+            "function-pure-destructure.ts",
+        ));
+        assert!(
+            !destructuring_barrier.has_errors(),
+            "{:?}",
+            destructuring_barrier.diagnostics
+        );
+        assert_eq!(
+            destructuring_barrier.code.matches("object.value").count(),
+            2,
+            "{}",
+            destructuring_barrier.code
+        );
+
+        let optional = compile(request(
+            r#"
+                export function probe(maybe, value) {
+                    "use pure";
+                    const first = maybe?.(value);
+                    const second = maybe?.(value);
+                    const firstMember = maybe?.value;
+                    const secondMember = maybe?.value;
+                    return [first, second, firstMember, secondMember];
+                }
+            "#,
+            "function-pure-optional.ts",
+        ));
+        assert!(!optional.has_errors(), "{:?}", optional.diagnostics);
+        assert!(
+            optional.code.contains("const second = first"),
+            "{}",
+            optional.code
+        );
+        assert!(
+            optional.code.contains("const secondMember = firstMember"),
+            "{}",
+            optional.code
+        );
+
+        let loop_initializer = compile(request(
+            r#"
+                export function probe() {
+                    "use pure";
+                    for (let unused = sideEffect(); false;) {}
+                    return 1;
+                }
+            "#,
+            "function-pure-for-init.ts",
+        ));
+        assert!(
+            !loop_initializer.has_errors(),
+            "{:?}",
+            loop_initializer.diagnostics
+        );
+        assert!(
+            loop_initializer.code.contains("sideEffect()"),
+            "{}",
+            loop_initializer.code
+        );
+    }
+
+    #[test]
+    fn keeps_impure_and_coercive_operations_inside_pure_functions() {
+        let coercion = compile(request(
+            r#"
+                export function probe(value) {
+                    "use pure";
+                    const stringValue = String(value);
+                    const numericValue = +value;
+                    const binaryValue = value + 1;
+                    const objectCall = read({ value: 1 });
+                    const repeatedObjectCall = read({ value: 1 });
+                    const spacedString = read("a b");
+                    const compactString = read("ab");
+                    return [objectCall, repeatedObjectCall, spacedString, compactString];
+                }
+            "#,
+            "function-pure-coercion.ts",
+        ));
+        assert!(!coercion.has_errors(), "{:?}", coercion.diagnostics);
+        for preserved in ["String(value)", "+value", "value + 1"] {
+            assert!(
+                coercion.code.contains(preserved),
+                "{preserved}: {}",
+                coercion.code
+            );
+        }
+        assert_eq!(
+            coercion.code.matches("read({").count(),
+            2,
+            "{}",
+            coercion.code
+        );
+        assert!(coercion.code.contains("read(\"a b\")"), "{}", coercion.code);
+        assert!(coercion.code.contains("read(\"ab\")"), "{}", coercion.code);
+
+        let effect = compile(request(
+            r#"
+                import { createEffect } from "@fictjs/runtime";
+                export function probe() {
+                    "use pure";
+                    const unused = createEffect(() => 1);
+                    return 1;
+                }
+            "#,
+            "function-pure-effect.ts",
+        ));
+        assert!(!effect.has_errors(), "{:?}", effect.diagnostics);
+        assert!(
+            effect.code.contains("createEffect(() => 1)"),
+            "{}",
+            effect.code
+        );
+
+        let memo = compile(request(
+            r#"
+                import { $memo } from "fict";
+                export function probe() {
+                    "use pure";
+                    const unused = $memo(() => 1);
+                    return 1;
+                }
+            "#,
+            "function-pure-memo.ts",
+        ));
+        assert!(!memo.has_errors(), "{:?}", memo.diagnostics);
+        assert!(!memo.code.contains("__fictUseMemo"), "{}", memo.code);
+        assert!(!memo.code.contains("__fictUseContext"), "{}", memo.code);
+        assert!(!memo.code.contains("fict/internal"), "{}", memo.code);
+    }
+
+    #[test]
     fn controls_single_use_derived_memo_inlining() {
         let source = "import { $state } from 'fict'; export function Counter() { let count = $state(2); const doubled = count * 2; return doubled; }";
 

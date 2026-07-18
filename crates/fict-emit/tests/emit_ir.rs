@@ -94,6 +94,7 @@ fn program() -> EmitProgram {
         functions: vec![EmitFunction {
             source: FunctionId::new(0),
             kind: FunctionKind::Module,
+            pure: false,
             origin: origin(),
             context: None,
             props: None,

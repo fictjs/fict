@@ -916,6 +916,8 @@ pub struct EmitPreviewPlan {
 pub struct EmitFunction {
     pub source: FunctionId,
     pub kind: FunctionKind,
+    /// Whether authored function policy licenses pure-expression optimization.
+    pub pure: bool,
     pub origin: Origin,
     pub context: Option<EmitContext>,
     pub props: Option<EmitPropsPlan>,

@@ -1616,6 +1616,7 @@ fn lower_function(
     Ok(EmitFunction {
         source: function_id,
         kind: function.kind,
+        pure: function.flags.pure,
         origin: function.origin,
         context,
         props,

@@ -67,6 +67,7 @@ fn effect_program(source: &str) -> EmitProgram {
         functions: vec![EmitFunction {
             source: FunctionId::new(0),
             kind: FunctionKind::Module,
+            pure: false,
             origin,
             context: None,
             props: None,

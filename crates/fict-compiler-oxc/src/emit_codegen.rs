@@ -60,6 +60,7 @@ mod full_optimizer;
 mod getter_cache;
 mod operation_support;
 mod polymorphic_root;
+mod pure_optimizer;
 mod reactive_mutations;
 mod semantic_identity;
 
@@ -485,6 +486,32 @@ pub fn emit_program(
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
+    if emit.optimize {
+        let pure_functions = emit
+            .functions
+            .iter()
+            .filter(|function| function.pure && function.kind != FunctionKind::Module)
+            .filter_map(|function| function.origin.primary_span)
+            .map(|span| (span.start(), span.end()))
+            .collect();
+        let runtime_helpers = emit
+            .imports
+            .iter()
+            .map(|intent| (intent.local.clone(), intent.helper))
+            .collect();
+        let identities = match SemanticIdentities::build(&program) {
+            Ok(identities) => identities,
+            Err(findings) => return failed_output(findings),
+        };
+        let plan = pure_optimizer::analyze(
+            &program,
+            &identities,
+            &pure_functions,
+            &runtime_helpers,
+            source,
+        );
+        pure_optimizer::rewrite(&allocator, &mut program, &identities, &plan);
+    }
     let used_template_factories: BTreeSet<_> = rewriter
         .matched_clones
         .iter()
@@ -503,7 +530,21 @@ pub fn emit_program(
     for statement in template_declarations.into_iter().rev() {
         program.body.insert(0, statement);
     }
-    let (import_source, runtime_helpers) = render_runtime_imports(emit, &inlined_derived);
+    if let Some(preview) = &emit.preview_plan {
+        let preview_source = match render_preview_module_statements(emit, preview) {
+            Ok(source) => source,
+            Err(diagnostic) => return failed_output(vec![*diagnostic]),
+        };
+        let preview_source = allocator.alloc_str(&preview_source);
+        let statements = match parse_generated_module_statements(&allocator, preview_source) {
+            Ok(statements) => statements,
+            Err(findings) => return failed_output(findings),
+        };
+        program.body.extend(statements);
+    }
+    let used_runtime_locals = referenced_identifier_names(&program);
+    let (import_source, runtime_helpers) =
+        render_runtime_imports(emit, &inlined_derived, &used_runtime_locals);
     if !import_source.is_empty() {
         let parsed_imports = Parser::new(&allocator, &import_source, SourceType::mjs()).parse();
         if !parsed_imports.diagnostics.is_empty() {
@@ -517,18 +558,6 @@ pub fn emit_program(
         for statement in import_program.body.into_iter().rev() {
             program.body.insert(0, statement);
         }
-    }
-    if let Some(preview) = &emit.preview_plan {
-        let preview_source = match render_preview_module_statements(emit, preview) {
-            Ok(source) => source,
-            Err(diagnostic) => return failed_output(vec![*diagnostic]),
-        };
-        let preview_source = allocator.alloc_str(&preview_source);
-        let statements = match parse_generated_module_statements(&allocator, preview_source) {
-            Ok(statements) => statements,
-            Err(findings) => return failed_output(findings),
-        };
-        program.body.extend(statements);
     }
     let semantic = SemanticBuilder::new()
         .with_check_syntax_error(true)
@@ -2945,11 +2974,14 @@ fn quote_javascript_string(value: &str) -> String {
 fn render_runtime_imports(
     emit: &EmitProgram,
     inlined_derived: &BTreeSet<BindingId>,
+    used_locals: &BTreeSet<String>,
 ) -> (String, Vec<String>) {
     let mut output = String::new();
     let mut helpers = Vec::new();
     for intent in &emit.imports {
-        if helper_only_used_by_inlined_derived(emit, intent.helper, inlined_derived) {
+        if !used_locals.contains(&intent.local)
+            || helper_only_used_by_inlined_derived(emit, intent.helper, inlined_derived)
+        {
             continue;
         }
         helpers.push(intent.helper.spec().key.to_owned());
@@ -2965,6 +2997,22 @@ fn render_runtime_imports(
     }
     (output, helpers)
 }
+
+fn referenced_identifier_names(program: &Program<'_>) -> BTreeSet<String> {
+    #[derive(Default)]
+    struct Collector {
+        names: BTreeSet<String>,
+    }
+    impl<'a> Visit<'a> for Collector {
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            self.names.insert(identifier.name.to_string());
+        }
+    }
+    let mut collector = Collector::default();
+    collector.visit_program(program);
+    collector.names
+}
+
 fn helper_only_used_by_inlined_derived(
     emit: &EmitProgram,
     helper: RuntimeHelper,

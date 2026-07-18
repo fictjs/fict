@@ -1639,6 +1639,129 @@ test('optimizeLevel full applies opt-in authored algebraic folding safely', asyn
   assert.deepEqual(new Function(`${dynamicScope.code}\nreturn result`)(), [2, 3])
 })
 
+test('use pure drives DCE and CSE while preserving mutation and coercion barriers', async () => {
+  const source = `
+    "use pure"
+
+    export function probe() {
+      const log = []
+      const object = { value: 1 }
+      const read = argument => {
+        log.push(object.value)
+        return object.value + (argument ?? 0)
+      }
+      const first = read()
+      const second = read()
+      object.value = 99
+      const third = read()
+      let written = 0
+      const preserved = read(written = 7)
+      return [first, second, third, preserved, written, log]
+    }
+
+    export function aliasBarrier() {
+      const object = { value: 1 }
+      const alias = object
+      const before = object.value
+      alias.value = 3
+      const after = object.value
+      return [before, after]
+    }
+
+    export function destructuringBarrier() {
+      const object = { value: 1 }
+      const source = {
+        get value() {
+          object.value = 5
+          return 0
+        },
+      }
+      const before = object.value
+      const { value } = source
+      const after = object.value
+      return [before, value, after]
+    }
+
+    export function coercionBarrier() {
+      const value = {
+        toString() {
+          throw new Error('coerced')
+        },
+      }
+      const unused = String(value)
+      return 1
+    }
+
+    export function spreadBarrier() {
+      const source = {
+        get value() {
+          throw new Error('spread getter')
+        },
+      }
+      const unused = { ...source }
+      return 1
+    }
+  `
+  const transformed = binding.transformSync({
+    code: source,
+    filename: '/fixtures/function-pure-runtime.js',
+  })
+  assert.deepEqual(transformed.diagnostics, [])
+  assert.equal(transformed.code.match(/read\(\)/g)?.length, 2)
+  assert.match(transformed.code, /const second = first/)
+  assert.match(transformed.code, /const preserved = read\(written = 7\)/)
+
+  const disabled = binding.transformSync({
+    code: source,
+    filename: '/fixtures/function-pure-runtime-disabled.js',
+    options: { optimize: false },
+  })
+  assert.deepEqual(disabled.diagnostics, [])
+  assert.equal(disabled.code.match(/read\(\)/g)?.length, 3)
+
+  const runtime = await compileAndImport(source, 'function-pure-runtime')
+  assert.deepEqual(runtime.probe(), [1, 1, 99, 106, 7, [1, 99, 99]])
+  assert.deepEqual(runtime.aliasBarrier(), [1, 3])
+  assert.deepEqual(runtime.destructuringBarrier(), [1, 0, 5])
+  assert.throws(() => runtime.coercionBarrier(), /coerced/)
+  assert.throws(() => runtime.spreadBarrier(), /spread getter/)
+
+  const memo = binding.transformSync({
+    code: `
+      import { $memo } from 'fict'
+      export function probe() {
+        "use pure"
+        const unused = $memo(() => 1)
+        return 1
+      }
+    `,
+    filename: '/fixtures/function-pure-memo.js',
+  })
+  assert.deepEqual(
+    memo.diagnostics.map(diagnostic => diagnostic.code),
+    ['FICT-M001'],
+  )
+  assert.doesNotMatch(memo.code, /__fictUse(?:Memo|Context)/)
+  assert.doesNotMatch(memo.code, /fict\/internal/)
+
+  const effect = binding.transformSync({
+    code: `
+      import { createEffect } from '@fictjs/runtime'
+      export function probe() {
+        "use pure"
+        const unused = createEffect(() => 1)
+        return 1
+      }
+    `,
+    filename: '/fixtures/function-pure-effect.js',
+  })
+  assert.deepEqual(
+    effect.diagnostics.map(diagnostic => diagnostic.code),
+    ['FICT-E001'],
+  )
+  assert.match(effect.code, /createEffect\(\(\) => 1\)/)
+})
+
 test('native binding honors derived memo inline policy', () => {
   const source = `
     import { $state } from 'fict'
