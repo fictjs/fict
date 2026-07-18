@@ -332,11 +332,18 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
         }
     }
 
+    let reassigned = reassigned_bindings(&core.hir);
     let annotated_hooks: BTreeMap<_, _> = core
         .hir
         .functions
         .iter()
-        .filter_map(|function| Some((function.binding?, hook_annotation(frontend, function)?)))
+        .filter_map(|function| {
+            let binding = function.binding?;
+            if reassigned.contains(&binding) {
+                return None;
+            }
+            Some((binding, hook_annotation(frontend, function)?))
+        })
         .collect();
     let mut hooks = annotated_hooks.clone();
     for _ in 0..=core.hir.functions.len() {
@@ -345,7 +352,7 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
             let Some(binding) = function.binding else {
                 continue;
             };
-            if annotated_hooks.contains_key(&binding) {
+            if annotated_hooks.contains_key(&binding) || reassigned.contains(&binding) {
                 continue;
             }
             let Some(analysis) = function_analysis(core, function.id) else {
@@ -369,7 +376,7 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
         let Some(binding) = function.binding else {
             continue;
         };
-        if annotated_hooks.contains_key(&binding) {
+        if annotated_hooks.contains_key(&binding) || reassigned.contains(&binding) {
             continue;
         }
         let Some(analysis) = function_analysis(core, function.id) else {
@@ -385,6 +392,36 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
     }
     facts.namespaces = collect_local_namespaces(frontend, &facts.exports, &facts.hooks);
     facts
+}
+
+fn reassigned_bindings(file: &HirFile) -> BTreeSet<BindingId> {
+    file.functions
+        .iter()
+        .flat_map(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .flat_map(|instruction| match &instruction.kind {
+                    HirInstructionKind::Write { place, .. }
+                    | HirInstructionKind::ReadWrite { place, .. }
+                        if place.projections.is_empty() =>
+                    {
+                        match place.base {
+                            PlaceBase::Local(local) => vec![local],
+                            PlaceBase::Ssa(name) => vec![name.local],
+                            PlaceBase::Global(_) | PlaceBase::Value(_) => Vec::new(),
+                        }
+                    }
+                    HirInstructionKind::Iteration { targets, .. } => targets.clone(),
+                    HirInstructionKind::PatternAssignment { writes, .. } => {
+                        writes.iter().map(|write| write.local).collect()
+                    }
+                    _ => Vec::new(),
+                })
+                .filter_map(|local| function.locals.get(local.as_usize())?.binding)
+        })
+        .collect()
 }
 
 fn collect_local_namespaces(

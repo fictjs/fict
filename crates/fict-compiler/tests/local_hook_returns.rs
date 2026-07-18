@@ -117,4 +117,14 @@ fn consumes_structured_member_metadata_from_same_module_hooks() {
         "{}",
         reassigned.code
     );
+
+    let reassigned_hook = compile(request(
+        "import { $memo } from 'fict'; function useThing() { const doubled = $memo(() => 2); return { doubled }; } useThing = () => ({ doubled: 1 }); export function App() { const thing = useThing(); thing.doubled = 2; return thing.doubled; }",
+        "local-hook-reassigned-binding.jsx",
+    ));
+    assert!(
+        !reassigned_hook.has_errors() && reassigned_hook.code.contains("thing.doubled = 2"),
+        "{reassigned_hook:?}"
+    );
+    assert!(!reassigned_hook.code.contains("thing.doubled()"));
 }
