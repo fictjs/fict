@@ -380,6 +380,27 @@ test('maps the Babel delegated-event parity domain to the generated runtime ABI 
   assert.match(packageJson, /guardrails:runtime-abi[^\n]+delegated-events-parity\.test\.ts/)
 })
 
+test('ports the Babel module-metadata safety domain to the native graph host', () => {
+  const safety = read('packages/compiler/test/module-metadata-safety.test.ts')
+  for (const behavior of [
+    'fails closed for malformed, non-canonical, unknown, and over-deep schemas',
+    'preserves reserved names as own data without prototype pollution',
+    'rejects relative escapes, absolute paths, file URLs, /@fs paths, and NULs',
+    'rejects metadata symlinks that leave the declared package root',
+    'ignores invalid package payloads and observes a valid replacement immediately',
+    'normalizes package suffixes but gives exact suffix declarations precedence',
+    'does not cache package misses or stale metadata assets',
+    'never probes source-adjacent or cwd metadata for undeclared imports',
+  ]) {
+    assert.match(safety, new RegExp(behavior))
+  }
+  assert.match(safety, /resolvePackageModuleMetadata/)
+  assert.match(safety, /parseModuleReactiveMetadata/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:metadata-safety/)
+  assert.match(packageJson, /module-metadata-safety\.test\.ts/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
