@@ -227,6 +227,7 @@ fn propagates_shape_state_across_aliases() {
             origin: origin(),
         }],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };
@@ -338,6 +339,7 @@ fn spread_arrays_remain_open_and_have_no_exact_length() {
             origin: origin(),
         }],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };
@@ -478,6 +480,7 @@ fn phi_join_keeps_object_kind_but_opens_different_key_sets() {
             },
         ],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };

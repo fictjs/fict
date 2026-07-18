@@ -51,6 +51,7 @@ fn function(local_count: u32) -> HirFunction {
             origin: origin(),
         }],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     }

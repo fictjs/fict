@@ -430,6 +430,24 @@ impl Verifier<'_> {
             );
         }
 
+        for statement in &function.effect_statements {
+            self.verify_origin(*statement);
+        }
+        if function
+            .effect_statements
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+        {
+            self.error(
+                "FICT-HIR-EFFECT-STATEMENT",
+                format!(
+                    "fn{} effect statement origins must be strictly ordered and unique",
+                    function.id.index()
+                ),
+                Some(function.origin),
+            );
+        }
+
         for (index, local) in function.locals.iter().enumerate() {
             if local.id.as_usize() != index {
                 self.error(

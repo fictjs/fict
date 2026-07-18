@@ -222,6 +222,7 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
             TerminatorKind::Return { value: None },
         )],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };
@@ -338,6 +339,7 @@ fn phi_aliases_only_when_all_reachable_sources_share_one_root() {
             block(3, Vec::new(), TerminatorKind::Return { value: None }),
         ],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };

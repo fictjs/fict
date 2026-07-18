@@ -290,6 +290,13 @@ pub enum EmitOperation {
         cleanup: CleanupOwner,
         origin: Origin,
     },
+    /// Wrap one authored top-level expression statement that reads tracked state in a runtime
+    /// effect. The source result anchors dependency analysis and adapter rewriting.
+    RegisterReactiveStatementEffect {
+        source_result: ValueId,
+        helper: RuntimeHelper,
+        origin: Origin,
+    },
     WriteReactive {
         slot: EmitSlotId,
         source_result: Option<ValueId>,
@@ -498,6 +505,7 @@ impl EmitOperation {
         match self {
             Self::CreateReactive { helper, .. }
             | Self::RegisterEffect { helper, .. }
+            | Self::RegisterReactiveStatementEffect { helper, .. }
             | Self::DeclareTemplate { helper, .. }
             | Self::BindDom { helper, .. }
             | Self::ApplyProps { helper, .. }
@@ -715,6 +723,7 @@ impl EmitOperation {
             }
             Self::Return { value, .. } => value.iter().for_each(visit),
             Self::PreserveHir { .. }
+            | Self::RegisterReactiveStatementEffect { .. }
             | Self::CreateDerived { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::ReadReactive { .. }

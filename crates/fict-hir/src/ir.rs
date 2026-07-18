@@ -1408,6 +1408,9 @@ pub struct HirFunction {
     pub blocks: Vec<HirBlock>,
     /// Entry block.
     pub entry: BlockId,
+    /// Source expression statement candidates for render-effect wrapping. Control-flow-owned
+    /// statements and concise-return bodies are handled by their structured owners instead.
+    pub effect_statements: Vec<Origin>,
     /// Reactive regions assigned by later analysis.
     pub regions: Vec<RegionId>,
     /// Source provenance.

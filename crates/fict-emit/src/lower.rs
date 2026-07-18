@@ -697,6 +697,11 @@ fn lower_function(
         jsx_getter_bindings,
     } = *facts;
     let function = &hir.functions[function_id.as_usize()];
+    let function_contains_jsx = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .any(|instruction| matches!(instruction.kind, HirInstructionKind::Jsx { .. }));
     let declarations_by_value: BTreeMap<_, _> = function
         .blocks
         .iter()
@@ -1161,6 +1166,15 @@ fn lower_function(
     let props = lower_component_props_plan(hir, function, &mut temporary_names)?;
     let mut temporaries = Vec::new();
     let mut value_temporaries = BTreeMap::new();
+    let reactive_statement_sources = collect_reactive_statement_sources(
+        hir,
+        function,
+        props.as_ref(),
+        &slot_by_local,
+        &hook_calls,
+        &structured_hook_locals,
+        structured_hook_roots,
+    );
     let mut operations: Vec<_> = sites[derived_start..]
         .iter()
         .map(|site| EmitOperation::CreateDerived {
@@ -1171,6 +1185,19 @@ fn lower_function(
             origin: reactive_site_origin(function, site.result),
         })
         .collect();
+    if function_contains_jsx && function.kind != FunctionKind::Plain {
+        operations.extend(
+            reactive_statement_sources
+                .into_iter()
+                .map(
+                    |(origin, source_result)| EmitOperation::RegisterReactiveStatementEffect {
+                        source_result,
+                        helper: effect_helper(function.kind),
+                        origin,
+                    },
+                ),
+        );
+    }
     let hook_return_accessor_reads = hook_return_accessor_reads(function);
     let mut declared_templates = BTreeSet::new();
     let cleanup = regions
@@ -1644,6 +1671,99 @@ fn jsx_contains_direct_yield(function: &HirFunction, jsx: &HirInstruction) -> bo
                     jsx_span.start() <= yield_span.start() && yield_span.end() <= jsx_span.end()
                 })
         })
+}
+fn collect_reactive_statement_sources(
+    hir: &HirFile,
+    function: &HirFunction,
+    props: Option<&EmitPropsPlan>,
+    slot_by_local: &BTreeMap<LocalId, EmitSlotId>,
+    hook_calls: &BTreeMap<ValueId, (BindingId, ImportedHookReturn, Origin)>,
+    structured_hook_locals: &BTreeMap<LocalId, ValueId>,
+    structured_hook_roots: &BTreeMap<BindingId, StructuredHookRootSite>,
+) -> BTreeMap<Origin, ValueId> {
+    let component_props_local = (function.kind == FunctionKind::Component
+        && function.parameters.len() == 1)
+        .then(|| function.parameters[0].local);
+    let component_prop_references: BTreeSet<_> = props
+        .iter()
+        .flat_map(|plan| &plan.bindings)
+        .filter(|binding| binding.mode == crate::EmitPropMode::Accessor)
+        .flat_map(|binding| &binding.references)
+        .filter_map(|origin| origin.primary_span)
+        .collect();
+    let tracked_reads: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| {
+            let result = instruction.result?;
+            let HirInstructionKind::Read { place } = &instruction.kind else {
+                return None;
+            };
+            let direct = place_local(place.base).is_some_and(|local| {
+                slot_by_local.contains_key(&local) || component_props_local == Some(local)
+            });
+            let component_prop = instruction
+                .origin
+                .primary_span
+                .is_some_and(|span| component_prop_references.contains(&span));
+            let imported_member = imported_reactive_member(hir, function, place).is_some();
+            let hook_member = hook_member(hook_calls, structured_hook_locals, place).is_some();
+            let captured_hook_member =
+                structured_hook_member_by_binding(function, structured_hook_roots, place).is_some();
+            (direct || component_prop || imported_member || hook_member || captured_hook_member)
+                .then_some(instruction.origin.primary_span.map(|span| (span, result)))
+                .flatten()
+        })
+        .collect();
+    function
+        .effect_statements
+        .iter()
+        .filter_map(|origin| {
+            let span = origin.primary_span?;
+            let mut has_direct_local_or_reactive_write = false;
+            let mut has_observable_expression = false;
+            for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+                let Some(instruction_span) = instruction.origin.primary_span else {
+                    continue;
+                };
+                if instruction_span.start() < span.start() || span.end() < instruction_span.end() {
+                    continue;
+                }
+                match &instruction.kind {
+                    HirInstructionKind::Write { place, .. }
+                    | HirInstructionKind::ReadWrite { place, .. } => {
+                        let compiler_owned = place_local(place.base)
+                            .is_some_and(|local| slot_by_local.contains_key(&local));
+                        has_direct_local_or_reactive_write |= place.is_local() || compiler_owned;
+                    }
+                    HirInstructionKind::PatternAssignment { writes, .. } => {
+                        has_direct_local_or_reactive_write |= !writes.is_empty();
+                    }
+                    _ => {}
+                }
+                has_observable_expression |= instruction.semantics.has_observable_mutation()
+                    || matches!(
+                        &instruction.kind,
+                        HirInstructionKind::Call(_)
+                            | HirInstructionKind::New { .. }
+                            | HirInstructionKind::TaggedTemplate { .. }
+                            | HirInstructionKind::DynamicImport { .. }
+                            | HirInstructionKind::Delete { .. }
+                            | HirInstructionKind::Await { .. }
+                            | HirInstructionKind::Yield { .. }
+                            | HirInstructionKind::SyntaxFragment { .. }
+                    );
+            }
+            if has_direct_local_or_reactive_write || !has_observable_expression {
+                return None;
+            }
+            tracked_reads
+                .iter()
+                .find(|(read, _)| span.start() <= read.start() && read.end() <= span.end())
+                .map(|(_, result)| (*origin, *result))
+        })
+        .collect()
 }
 fn lower_component_props_plan(
     hir: &HirFile,

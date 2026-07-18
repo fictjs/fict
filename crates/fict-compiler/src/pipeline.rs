@@ -4803,6 +4803,84 @@ mod tests {
     }
 
     #[test]
+    fn wraps_tracked_jsx_statement_expressions_in_effects() {
+        let mut input = request(
+            r#"
+                import { $state } from "fict";
+                function useBucket() {
+                    const count = $state(2);
+                    return { count };
+                }
+                export function Component() {
+                    let count = $state(1);
+                    const bucket = useBucket();
+                    const log = [];
+                    const node = <button onClick={() => log.push(count)}>{count}</button>;
+                    log.push("static");
+                    log.push(count);
+                    log.push({ value: bucket.count });
+                    count && log.push(count);
+                    log.push.bind(log, count)();
+                    try {
+                        log.push(count);
+                    } catch {}
+                    node.props.onClick();
+                    return log;
+                }
+                export function PropsComponent(props) {
+                    const log = [];
+                    log[0] = props.value;
+                    log[1] = "value" in props;
+                    props.value && log.push(props.value);
+                    return <div>{log.length}</div>;
+                }
+                export function DestructuredProps({ value }) {
+                    const log = [];
+                    log[0] = value;
+                    return <div>{value}</div>;
+                }
+            "#,
+            "tracked-call-effects.tsx",
+        );
+        input.options.strict_guarantee = false;
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("__fictUseEffect(__fictCtx").count(),
+            10,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("log.push(\"static\")"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => log.push(count())"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => count() && log.push(count())"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => log.push.bind(log, count())()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => node().props.onClick()"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn enforces_nested_state_mutation_guarantees() {
         let source = "import { $state } from 'fict'; function App() { const user = $state({ name: 'Ada' }); user.name = 'Grace'; return user.name; }";
         let strict = compile(request(source, "nested.js"));

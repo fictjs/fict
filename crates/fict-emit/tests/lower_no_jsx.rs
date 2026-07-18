@@ -166,6 +166,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
             origin: origin(),
         }],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };
@@ -235,6 +236,7 @@ fn empty_nested_function(id: u32, scope: u32) -> HirFunction {
             origin: origin(),
         }],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     }

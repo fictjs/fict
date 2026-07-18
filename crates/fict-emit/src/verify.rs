@@ -1044,6 +1044,34 @@ fn verify_operations(
                 }
                 verify_cleanup(function, analysis, *cleanup, diagnostics);
             }
+            EmitOperation::RegisterReactiveStatementEffect {
+                source_result,
+                origin,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                let statement_span = origin.primary_span;
+                let matches_statement = hir_function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .find(|instruction| instruction.result == Some(*source_result))
+                    .is_some_and(|instruction| {
+                        matches!(instruction.kind, fict_hir::HirInstructionKind::Read { .. })
+                            && statement_span
+                                .zip(instruction.origin.primary_span)
+                                .is_some_and(|(statement, read)| {
+                                    statement.start() <= read.start()
+                                        && read.end() <= statement.end()
+                                })
+                    });
+                if !hir_function.effect_statements.contains(origin) || !matches_statement {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-STATEMENT-EFFECT",
+                        "reactive statement effect must match an eligible tracked source read",
+                    ));
+                }
+            }
             EmitOperation::CreateVNode {
                 template,
                 source_result,
@@ -1499,7 +1527,8 @@ fn verify_helper_semantics(
                     })
             })
         }
-        EmitOperation::RegisterEffect { helper, .. } => {
+        EmitOperation::RegisterEffect { helper, .. }
+        | EmitOperation::RegisterReactiveStatementEffect { helper, .. } => {
             matches!(helper, RuntimeHelper::Effect | RuntimeHelper::UseEffect)
         }
         EmitOperation::DeclareTemplate { helper, .. } => *helper == RuntimeHelper::Template,

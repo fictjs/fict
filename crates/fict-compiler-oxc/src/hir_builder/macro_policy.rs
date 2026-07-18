@@ -173,7 +173,8 @@ impl Builder<'_, '_> {
                         continue;
                     }
                     if call.conditional_or_loop
-                        || (!call.immediate_effect_statement && !call.immediate_default_export)
+                        || ((!call.immediate_statement || call.effect_statement != Some(call.span))
+                            && !call.immediate_default_export)
                     {
                         self.diagnostics.push(
                             error(

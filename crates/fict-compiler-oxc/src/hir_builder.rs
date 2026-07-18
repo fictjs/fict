@@ -34,16 +34,16 @@ use oxc::{
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
             AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
             CallExpression, ChainElement, Class, ClassElement, ClassType, ComputedMemberExpression,
-            Decorator, Expression, FormalParameters, Function, FunctionBody, FunctionType,
-            IdentifierReference, ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem,
-            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
-            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
-            JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
-            MetaProperty, NewExpression, ObjectAssignmentTarget,
-            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
-            PropertyKind, ReturnStatement, SimpleAssignmentTarget, Statement, Super,
-            TaggedTemplateExpression, TemplateLiteral, ThisExpression, UpdateExpression,
-            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            Decorator, Expression, ExpressionStatement, FormalParameters, Function, FunctionBody,
+            FunctionType, IdentifierReference, ImportExpression, ImportPhase as OxcImportPhase,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
+            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
+            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            LogicalExpression, MemberExpression, MetaProperty, NewExpression,
+            ObjectAssignmentTarget, ObjectPropertyKind as OxcObjectPropertyKind, Program,
+            PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement, SimpleAssignmentTarget,
+            Statement, Super, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
+            UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -51,8 +51,9 @@ use oxc::{
         Visit,
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
-            walk_call_expression, walk_expression, walk_function, walk_jsx_element,
-            walk_return_statement, walk_variable_declaration, walk_variable_declarator,
+            walk_call_expression, walk_expression, walk_expression_statement, walk_function,
+            walk_jsx_element, walk_return_statement, walk_variable_declaration,
+            walk_variable_declarator,
         },
     },
     parser::{ParseOptions, Parser},
@@ -1922,8 +1923,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             immediate_invocations: &immediate_invocations,
             context: PlacementContext::default(),
             calls: Vec::new(),
+            effect_statements: BTreeMap::new(),
+            concise_arrow_functions: BTreeSet::new(),
         };
         calls.visit_program(program);
+        for (function, statements) in &calls.effect_statements {
+            self.functions[function.as_usize()].effect_statements =
+                statements.iter().copied().map(Origin::source).collect();
+        }
         let mut known_arrays = KnownArrayCollector::default();
         known_arrays.visit_program(program);
         let mut variable_declarations = VariableDeclarationCollector::default();
@@ -3028,6 +3035,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     origin,
                 }],
                 entry: BlockId::new(0),
+                effect_statements: Vec::new(),
                 regions: Vec::<RegionId>::new(),
                 origin,
             });
@@ -7113,7 +7121,7 @@ struct CallFact {
     direct_variable: Option<bool>,
     direct_variable_binding: Option<BindingId>,
     immediate_statement: bool,
-    immediate_effect_statement: bool,
+    effect_statement: Option<SourceSpan>,
     immediate_default_export: bool,
     conditional_or_loop: bool,
     inside_jsx: bool,
@@ -7658,6 +7666,7 @@ struct PlacementContext {
     variables: Vec<VariableContext>,
     expression_statements: Vec<SourceSpan>,
     default_exports: Vec<SourceSpan>,
+    static_block_depth: u32,
 }
 
 impl PlacementContext {
@@ -7698,6 +7707,9 @@ impl PlacementContext {
             AstKind::ExpressionStatement(statement) => self
                 .expression_statements
                 .push(source_span(statement.expression.span())),
+            AstKind::StaticBlock(_) => {
+                self.static_block_depth = self.static_block_depth.saturating_add(1);
+            }
             AstKind::ExportDefaultDeclaration(declaration) => {
                 self.default_exports
                     .push(declaration.declaration.as_expression().map_or_else(
@@ -7727,6 +7739,9 @@ impl PlacementContext {
             AstKind::ExpressionStatement(_) => {
                 self.expression_statements.pop();
             }
+            AstKind::StaticBlock(_) => {
+                self.static_block_depth = self.static_block_depth.saturating_sub(1);
+            }
             AstKind::ExportDefaultDeclaration(_) => {
                 self.default_exports.pop();
             }
@@ -7740,7 +7755,15 @@ impl PlacementContext {
     fn facts(
         &self,
         call: SourceSpan,
-    ) -> (Option<bool>, Option<SymbolId>, bool, bool, bool, bool, bool) {
+    ) -> (
+        Option<bool>,
+        Option<SymbolId>,
+        bool,
+        Option<SourceSpan>,
+        bool,
+        bool,
+        bool,
+    ) {
         let (block_baseline, control_baseline) =
             self.function_baselines.last().copied().unwrap_or_default();
         let conditional_or_loop = self.control_depth > control_baseline;
@@ -7753,15 +7776,14 @@ impl PlacementContext {
                 .then_some(variable.binding)
                 .flatten()
         });
-        let immediate_effect_statement =
-            immediate_statement && self.expression_statements.last().copied() == Some(call);
+        let effect_statement = self.expression_statements.last().copied();
         let immediate_default_export =
             immediate_statement && self.default_exports.last().copied() == Some(call);
         (
             direct_variable,
             direct_variable_binding,
             immediate_statement,
-            immediate_effect_statement,
+            effect_statement,
             immediate_default_export,
             conditional_or_loop,
             self.jsx_depth > 0,
@@ -7817,6 +7839,8 @@ struct CallCollector<'facts, 'semantic> {
     immediate_invocations: &'facts BTreeSet<FunctionId>,
     context: PlacementContext,
     calls: Vec<CallFact>,
+    effect_statements: BTreeMap<FunctionId, BTreeSet<SourceSpan>>,
+    concise_arrow_functions: BTreeSet<FunctionId>,
 }
 
 impl CallCollector<'_, '_> {
@@ -7833,6 +7857,26 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
 
     fn leave_node(&mut self, kind: AstKind<'a>) {
         self.context.leave(kind);
+    }
+
+    fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
+        let (_, control_baseline) = self
+            .context
+            .function_baselines
+            .last()
+            .copied()
+            .unwrap_or_default();
+        let owner = *self.stack.last().expect("module expression owner");
+        if self.context.control_depth == control_baseline
+            && self.context.static_block_depth == 0
+            && !self.concise_arrow_functions.contains(&owner)
+        {
+            self.effect_statements
+                .entry(owner)
+                .or_default()
+                .insert(source_span(statement.expression.span()));
+        }
+        walk_expression_statement(self, statement);
     }
 
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
@@ -7859,6 +7903,9 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
         else {
             return;
         };
+        if function.expression {
+            self.concise_arrow_functions.insert(id);
+        }
         self.stack.push(id);
         self.context
             .next_function_inheritance
@@ -7881,7 +7928,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             direct_variable,
             direct_variable_symbol,
             immediate_statement,
-            immediate_effect_statement,
+            effect_statement,
             immediate_default_export,
             conditional_or_loop,
             inside_jsx,
@@ -7977,7 +8024,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             direct_variable,
             direct_variable_binding,
             immediate_statement,
-            immediate_effect_statement,
+            effect_statement,
             immediate_default_export,
             conditional_or_loop,
             inside_jsx,

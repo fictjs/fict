@@ -37,6 +37,7 @@ pub(super) fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::TrackRuntimeReactive { origin, .. }
         | EmitOperation::ReadReactive { origin, .. }
         | EmitOperation::RegisterEffect { origin, .. }
+        | EmitOperation::RegisterReactiveStatementEffect { origin, .. }
         | EmitOperation::WriteReactive { origin, .. }
         | EmitOperation::WriteReactivePattern { origin, .. }
         | EmitOperation::UpdateReactive { origin, .. }

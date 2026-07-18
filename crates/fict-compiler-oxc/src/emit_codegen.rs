@@ -132,6 +132,7 @@ pub fn emit_program(
     strip_compiler_macro_imports(&mut program);
     strip_consumed_fict_directives(&mut program);
     let (creations, rewrite_diagnostics) = creation_rewrites(emit, source, filename);
+    let (statement_effects, statement_effect_diagnostics) = statement_effect_rewrites(emit);
     let props_rewrites = props_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
@@ -155,6 +156,7 @@ pub fn emit_program(
         .find(|intent| intent.helper == RuntimeHelper::Qrl)
         .map(|intent| intent.local.as_str());
     diagnostics.extend(rewrite_diagnostics);
+    diagnostics.extend(statement_effect_diagnostics);
     diagnostics.extend(props_rewrites.diagnostics);
     diagnostics.extend(read_diagnostics);
     diagnostics.extend(mutation_diagnostics);
@@ -212,6 +214,27 @@ pub fn emit_program(
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
+    let mut statement_effect_rewriter = StatementEffectRewriter {
+        allocator: &allocator,
+        effects: &statement_effects,
+        matched: BTreeSet::new(),
+    };
+    statement_effect_rewriter.visit_program(&mut program);
+    for location in statement_effects.keys() {
+        if !statement_effect_rewriter.matched.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-STATEMENT-EFFECT",
+                    "reactive statement effect origin does not identify its source expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered reactive statement effect location"),
+                ),
+            );
+        }
+    }
     for location in creations.expressions.keys() {
         if !rewriter.matched_creations.contains(location) {
             diagnostics.push(
@@ -798,6 +821,11 @@ struct CreationRewrites {
     expressions: BTreeMap<(u32, u32), CreationRewrite>,
     derived_bindings: BTreeMap<BindingId, DerivedCreationRewrite>,
 }
+#[derive(Debug, Clone)]
+struct StatementEffectRewrite {
+    local: String,
+    context: Option<String>,
+}
 fn devtools_source_label(source: &str, filename: &str, byte_offset: u32) -> String {
     let location = SourceIndex::new(source).location(byte_offset);
     format!("{filename}:{}:{}", location.line, location.column)
@@ -1211,6 +1239,86 @@ fn creation_rewrites(
                     emit_error(
                         "FICT-OXC-EMIT-ORIGIN",
                         "multiple expression creation operations share the same source origin",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+            }
+        }
+    }
+    (rewrites, diagnostics)
+}
+fn statement_effect_rewrites(
+    emit: &EmitProgram,
+) -> (
+    BTreeMap<(u32, u32), StatementEffectRewrite>,
+    Vec<Diagnostic>,
+) {
+    let helper_names: BTreeMap<_, _> = emit
+        .imports
+        .iter()
+        .map(|intent| (intent.helper, intent.local.as_str()))
+        .collect();
+    let mut rewrites = BTreeMap::new();
+    let mut diagnostics = Vec::new();
+    for function in &emit.functions {
+        for operation in &function.operations {
+            let EmitOperation::RegisterReactiveStatementEffect { helper, origin, .. } = operation
+            else {
+                continue;
+            };
+            let Some(span) = origin.primary_span else {
+                diagnostics.push(emit_error(
+                    "FICT-OXC-EMIT-STATEMENT-EFFECT",
+                    "reactive statement effect requires a source origin",
+                    GuaranteeClass::Internal,
+                ));
+                continue;
+            };
+            let Some(local) = helper_names.get(helper).copied() else {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-IMPORT",
+                        "reactive statement effect helper has no runtime import intent",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+                continue;
+            };
+            let context = is_scoped_helper(*helper)
+                .then(|| {
+                    function
+                        .context
+                        .as_ref()
+                        .map(|context| context.local.clone())
+                })
+                .flatten();
+            if is_scoped_helper(*helper) && context.is_none() {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-CONTEXT",
+                        "scoped reactive statement effect has no function context plan",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+                continue;
+            }
+            if rewrites
+                .insert(
+                    (span.start(), span.end()),
+                    StatementEffectRewrite {
+                        local: local.to_owned(),
+                        context,
+                    },
+                )
+                .is_some()
+            {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-STATEMENT-EFFECT",
+                        "multiple reactive statement effects share the same source origin",
                         GuaranteeClass::Internal,
                     )
                     .with_primary_span(span),
@@ -3324,6 +3432,42 @@ struct AstRewriter<'a, 'emit> {
     source_clone_depth: usize,
     await_allowed: bool,
     diagnostics: Vec<Diagnostic>,
+}
+struct StatementEffectRewriter<'a, 'emit> {
+    allocator: &'a Allocator,
+    effects: &'emit BTreeMap<(u32, u32), StatementEffectRewrite>,
+    matched: BTreeSet<(u32, u32)>,
+}
+impl<'a> VisitMut<'a> for StatementEffectRewriter<'a, '_> {
+    fn visit_expression(&mut self, expression: &mut Expression<'a>) {
+        let span = expression.span();
+        let location = (span.start, span.end);
+        let Some(effect) = self.effects.get(&location) else {
+            walk_mut::walk_expression(self, expression);
+            return;
+        };
+        if !self.matched.insert(location) {
+            walk_mut::walk_expression(self, expression);
+            return;
+        }
+        walk_mut::walk_expression(self, expression);
+        let builder = AstBuilder::new(self.allocator);
+        let body = expression.take_in(&self.allocator);
+        let callback = zero_parameter_expression_arrow(self.allocator, body, span);
+        let callee =
+            Expression::new_identifier(span, self.allocator.alloc_str(&effect.local), &builder);
+        let mut arguments = ArenaVec::new_in(&self.allocator);
+        if let Some(context) = &effect.context {
+            arguments.push(Argument::from(Expression::new_identifier(
+                span,
+                self.allocator.alloc_str(context),
+                &builder,
+            )));
+        }
+        arguments.push(Argument::from(callback));
+        *expression =
+            Expression::new_call_expression(span, callee, NONE, arguments, false, &builder);
+    }
 }
 enum VNodeChild<'a> {
     Value(Expression<'a>),

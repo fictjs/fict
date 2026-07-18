@@ -218,6 +218,7 @@ fn tracks_static_dynamic_control_and_escape_paths_with_barriers() {
             ),
         ],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };
@@ -423,6 +424,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
             TerminatorKind::Return { value: None },
         )],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };
@@ -456,6 +458,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
             origin: origin(),
         }],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };

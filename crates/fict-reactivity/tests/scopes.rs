@@ -216,6 +216,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
             block(2, Vec::new(), TerminatorKind::Return { value: None }),
         ],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };

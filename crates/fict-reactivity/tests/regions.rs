@@ -178,6 +178,7 @@ fn splits_regions_at_barriers_and_memoizes_only_safe_derived_ranges() {
             origin: origin(),
         }],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };
@@ -328,6 +329,7 @@ fn assigns_control_flow_to_the_region_containing_the_controlling_read() {
             },
         ],
         entry: BlockId::new(0),
+        effect_statements: Vec::new(),
         regions: Vec::new(),
         origin: origin(),
     };

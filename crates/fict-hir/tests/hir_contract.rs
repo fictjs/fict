@@ -47,6 +47,7 @@ fn empty_file() -> HirFile {
                 origin,
             }],
             entry: BlockId::new(0),
+            effect_statements: Vec::new(),
             regions: Vec::new(),
             origin,
         }],
