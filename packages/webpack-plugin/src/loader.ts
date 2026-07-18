@@ -23,7 +23,6 @@ import {
   createLocalResolutionKey,
   getLoaderBinding,
   normalizeFileName,
-  normalizeWebpackResource,
   registerFictModule,
   storeFictModuleMetadata,
 } from './shared'
@@ -355,7 +354,6 @@ export default function fictWebpackLoader(
   binding.state.metadataSourcesByIdentifier.set(moduleIdentifier, new Set())
   binding.state.metadataRequestMappingsByIdentifier.set(moduleIdentifier, new Map())
 
-  const webpackResource = normalizeWebpackResource(this.resource)
   const compilerFilename = normalizeFileName(this.resourcePath)
   const registerMetadataDependency = (dependency: string): void => {
     const normalized = path.resolve(dependency)
@@ -383,7 +381,7 @@ export default function fictWebpackLoader(
   void nativeCompiler
     .scan({
       code: source,
-      filename: webpackResource,
+      filename: compilerFilename,
       moduleId: moduleIdentifier,
       ...(language ? { language } : {}),
     })
@@ -409,7 +407,7 @@ export default function fictWebpackLoader(
       })
       const request: CompileRequest = {
         code: source,
-        filename: webpackResource,
+        filename: compilerFilename,
         moduleId: moduleIdentifier,
         ...(language ? { language } : {}),
         ...(normalizedInputSourceMap ? { inputSourceMap: normalizedInputSourceMap } : {}),

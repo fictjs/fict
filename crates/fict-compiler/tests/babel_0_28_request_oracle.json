@@ -17,7 +17,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "environment": { "NODE_ENV": "test", "FICT_STRICT_GUARANTEE": "unset" },
-    "requestInputsSha256": "37e77d7a62726aad3f8538054eb7a644753cfb3117101db8611c968a87f93a9b"
+    "requestInputsSha256": "bc22e38263d707bf4985657be40db561926db2a240c2cf13c528f0676a68b19b"
   },
   "fixtures": [
     {
@@ -184,7 +184,7 @@
       "map": null,
       "explain": {
         "version": 1,
-        "fileName": "/matrix/explain.tsx?raw#physical",
+        "fileName": "/matrix/explain.tsx",
         "helpers": [
           "__fictElementNamespaceMatches",
           "__fictReactive",

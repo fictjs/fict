@@ -403,7 +403,7 @@
       "compatibilityPolicy": "source-map-normalization",
       "request": {
         "code": "export const value: number = 1",
-        "filename": "/matrix/intermediate.ts?raw#physical",
+        "filename": "/matrix/intermediate.ts",
         "moduleId": "/@id/intermediate.ts?worker#client",
         "inputSourceMap": {
           "version": 3,
@@ -445,7 +445,7 @@
       "compatibilityPolicy": "explain-normalization",
       "request": {
         "code": "import { $state, $effect } from 'fict'; export function Counter(){ let count=$state(0); $effect(()=>count); return <button>{count}</button> }",
-        "filename": "/matrix/explain.tsx?raw#physical",
+        "filename": "/matrix/explain.tsx",
         "moduleId": "/@id/explain.tsx?worker#client",
         "options": { "explain": true, "strictGuarantee": false }
       },
@@ -453,7 +453,7 @@
         "status": "ok",
         "explain": {
           "version": 1,
-          "fileName": "/matrix/explain.tsx?raw#physical",
+          "fileName": "/matrix/explain.tsx",
           "sourceEventKinds": ["source-signal", "source-effect", "source-jsx"]
         }
       },
@@ -463,6 +463,54 @@
           "version": 1,
           "fileName": "/matrix/explain.tsx",
           "sourceEventKinds": ["source-signal", "source-effect", "source-jsx"]
+        }
+      }
+    },
+    {
+      "id": "physical-question-mark-filename",
+      "domain": "source-identity",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "export const value: number = 1",
+        "filename": "/tmp/a?b.ts",
+        "moduleId": "/@id/a%3Fb.ts?raw#client",
+        "options": { "sourcemap": true, "explain": true, "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["export const value = 1"],
+        "map": {
+          "version": 3,
+          "sources": ["/tmp/a?b.ts"],
+          "mappingsNonEmpty": true
+        },
+        "explain": { "version": 1, "fileName": "/tmp/a?b.ts", "sourceEventKinds": [] }
+      }
+    },
+    {
+      "id": "physical-fragment-filename",
+      "domain": "source-identity",
+      "legacy": false,
+      "compatibilityPolicy": "native-host-protocol",
+      "request": {
+        "code": "export const view = <div />",
+        "filename": "/tmp/a#b.tsx",
+        "moduleId": "/@id/a%23b.tsx?raw#client",
+        "options": { "sourcemap": true, "explain": true, "strictGuarantee": false }
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["template(\"<div></div>\")"],
+        "map": {
+          "version": 3,
+          "sources": ["/tmp/a#b.tsx"],
+          "mappingsNonEmpty": true
+        },
+        "explain": {
+          "version": 1,
+          "fileName": "/tmp/a#b.tsx",
+          "sourceEventKinds": ["source-jsx"]
         }
       }
     },
@@ -576,7 +624,7 @@
       "compatibilityPolicy": "native-host-protocol",
       "request": {
         "code": "import { $state } from 'fict'; export function App() { const count = $state(0); return <button onClick$={() => count++}>{count}</button> }",
-        "filename": "/matrix/physical.tsx?worker#physical",
+        "filename": "/matrix/physical.tsx",
         "moduleId": "/@id/graph.tsx?worker#client",
         "publicModuleId": "fict:module:stable-entry",
         "options": {

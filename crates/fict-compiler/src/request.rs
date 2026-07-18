@@ -347,17 +347,16 @@ impl CompileRequest {
             validate_identity("publicModuleId", public_module_id, false)?;
         }
 
-        let physical_name = strip_query_and_fragment(&self.filename);
-        validate_identity("filename", physical_name, false)?;
+        let source_mode_name = source_mode_filename(&self.filename);
         let language = self
             .language
-            .or_else(|| infer_language(physical_name))
+            .or_else(|| infer_language(source_mode_name))
             .ok_or_else(|| CompileRequestError::CannotInferLanguage(self.filename.clone()))?;
         let module_kind = self
             .module_kind
-            .unwrap_or_else(|| infer_module_kind(physical_name));
+            .unwrap_or_else(|| infer_module_kind(source_mode_name));
         let module_id = self.module_id.unwrap_or_else(|| self.filename.clone());
-        let filename = physical_name.to_owned();
+        let filename = self.filename;
 
         if let Some(source_map) = &self.input_source_map {
             source_map
@@ -425,20 +424,19 @@ impl ScanRequest {
             validate_identity("moduleId", module_id, false)?;
         }
 
-        let physical_name = strip_query_and_fragment(&self.filename);
-        validate_identity("filename", physical_name, false)?;
+        let source_mode_name = source_mode_filename(&self.filename);
         let language = self
             .language
-            .or_else(|| infer_language(physical_name))
+            .or_else(|| infer_language(source_mode_name))
             .ok_or_else(|| CompileRequestError::CannotInferLanguage(self.filename.clone()))?;
         let module_kind = self
             .module_kind
-            .unwrap_or_else(|| infer_module_kind(physical_name));
+            .unwrap_or_else(|| infer_module_kind(source_mode_name));
 
         Ok(NormalizedScanRequest {
             protocol_version: self.protocol_version,
             code: self.code,
-            filename: physical_name.to_owned(),
+            filename: self.filename.clone(),
             module_id: self.module_id.unwrap_or(self.filename),
             language,
             module_kind,
@@ -662,7 +660,10 @@ fn validate_identity(
     Ok(())
 }
 
-fn strip_query_and_fragment(filename: &str) -> &str {
+fn source_mode_filename(filename: &str) -> &str {
+    if infer_language(filename).is_some() {
+        return filename;
+    }
     let query = filename.find('?').unwrap_or(filename.len());
     let fragment = filename.find('#').unwrap_or(filename.len());
     &filename[..query.min(fragment)]
@@ -722,7 +723,7 @@ mod tests {
 
     #[test]
     fn infers_language_and_preserves_complete_module_identity() {
-        let mut input = request("/src/view.tsx?worker#client");
+        let mut input = request("/src/view.tsx");
         input.module_id = Some("/@id/view.tsx?worker#client".to_owned());
         input.public_module_id = Some("fict:module:m0123456789abcdef".to_owned());
         let normalized = input.normalize().expect("normalize request");
@@ -747,11 +748,11 @@ mod tests {
     }
 
     #[test]
-    fn scan_normalization_preserves_graph_identity_and_strips_physical_suffixes() {
+    fn scan_normalization_preserves_separate_physical_and_graph_identities() {
         let normalized = ScanRequest {
             protocol_version: COMPILER_PROTOCOL_VERSION,
             code: "import './dep'".into(),
-            filename: "/src/module.ts?worker#physical".into(),
+            filename: "/src/module.ts".into(),
             module_id: Some("/@id/module.ts?worker#client".into()),
             language: None,
             module_kind: None,
@@ -763,6 +764,37 @@ mod tests {
         assert_eq!(normalized.module_id, "/@id/module.ts?worker#client");
         assert_eq!(normalized.language, SourceLanguage::TypeScript);
         assert_eq!(normalized.module_kind, ModuleKind::Module);
+    }
+
+    #[test]
+    fn preserves_posix_filename_delimiters_across_public_requests() {
+        for filename in ["/tmp/a#b.tsx", "/tmp/a?b.tsx"] {
+            let normalized = request(filename).normalize().expect("normalize compile");
+            assert_eq!(normalized.filename, filename);
+            assert_eq!(normalized.module_id, filename);
+            assert_eq!(normalized.language, SourceLanguage::TypeScriptJsx);
+        }
+
+        let scan: ScanRequest = serde_json::from_value(json!({
+            "code": "import './dep'",
+            "filename": "/tmp/a?b.tsx",
+            "moduleId": "/@id/a%3Fb.tsx?worker#client"
+        }))
+        .expect("deserialize scan request");
+        let normalized = scan.normalize().expect("normalize scan");
+        assert_eq!(normalized.filename, "/tmp/a?b.tsx");
+        assert_eq!(normalized.module_id, "/@id/a%3Fb.tsx?worker#client");
+
+        let analyze: AnalyzeRequest = serde_json::from_value(json!({
+            "code": "export const view = <div />",
+            "filename": "/tmp/a#b.tsx",
+            "moduleId": "/@id/a%23b.tsx?worker#client"
+        }))
+        .expect("deserialize analysis request");
+        let normalized = analyze.normalize().expect("normalize analysis");
+        assert_eq!(normalized.filename, "/tmp/a#b.tsx");
+        assert_eq!(normalized.module_id, "/@id/a%23b.tsx?worker#client");
+        assert_eq!(normalized.language, SourceLanguage::TypeScriptJsx);
     }
 
     #[test]

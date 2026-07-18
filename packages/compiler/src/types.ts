@@ -156,6 +156,7 @@ export interface RawSourceMap {
 export interface CompileRequest {
   protocolVersion?: CompilerProtocolVersion
   code: string
+  /** Physical/source-map identity; put bundler query and fragment identity in `moduleId`. */
   filename: string
   moduleId?: string | null
   /** Stable graph-host identity embedded in Preview QRLs instead of a physical path. */
@@ -174,6 +175,7 @@ export type ScanModuleRequestKind = 'import' | 'reExport' | 'importEquals'
 export interface ScanRequest {
   protocolVersion?: CompilerProtocolVersion
   code: string
+  /** Physical identity; put bundler query and fragment identity in `moduleId`. */
   filename: string
   moduleId?: string | null
   language?: SourceLanguage | null
@@ -212,6 +214,7 @@ export interface NativeAnalyzeOptions {
 export interface AnalyzeRequest {
   protocolVersion?: CompilerProtocolVersion
   code: string
+  /** Physical identity; put editor or bundler graph identity in `moduleId`. */
   filename: string
   moduleId?: string | null
   language?: SourceLanguage | null

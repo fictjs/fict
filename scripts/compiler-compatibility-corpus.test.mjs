@@ -203,7 +203,7 @@ test('retains full request dimensions with an exact Babel preset oracle', () => 
   const oracle = readJson('crates/fict-compiler/tests/babel_0_28_request_oracle.json')
   assert.equal(inputs.schemaVersion, 1)
   assert.equal(oracle.schemaVersion, 1)
-  assert.equal(inputs.cases.length, 28)
+  assert.equal(inputs.cases.length, 30)
   assert.equal(oracle.fixtures.length, 18)
   assert.equal(oracle.provenance.legacyRelease, '0.28.0')
   assert.equal(oracle.provenance.legacyRevision, 'b99ff5b185e3eed701e2d4f3521832dac67c979f')
@@ -265,7 +265,7 @@ test('retains full request dimensions with an exact Babel preset oracle', () => 
       'explain-normalization': 1,
       'feature-parity': 10,
       'jsx-extension-required': 1,
-      'native-host-protocol': 10,
+      'native-host-protocol': 12,
       'rust-capability-expansion': 1,
       'source-map-normalization': 1,
       'strict-policy-parity': 2,
