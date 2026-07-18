@@ -2,19 +2,20 @@ import { createHash } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
-import type {
-  CompileRequest,
-  FictDiagnostic,
-  ModuleReactiveMetadata,
-  NativeCompilerExplainArtifact,
-  NativeCompilerOptions,
-  NativeTypeScriptOptions,
-  RawSourceMap,
-  ResolvedMetadataInput,
-  ScanResult,
-  SourceLanguage,
+import {
+  MODULE_REACTIVE_METADATA_VERSION,
+  resolveStrictGuarantee,
+  type CompileRequest,
+  type FictDiagnostic,
+  type ModuleReactiveMetadata,
+  type NativeCompilerExplainArtifact,
+  type NativeCompilerOptions,
+  type NativeTypeScriptOptions,
+  type RawSourceMap,
+  type ResolvedMetadataInput,
+  type ScanResult,
+  type SourceLanguage,
 } from '@fictjs/compiler'
-import { MODULE_REACTIVE_METADATA_VERSION } from '@fictjs/compiler'
 import { loadNativeCompilerBinding, type NativeCompilerBinding } from '@fictjs/compiler/native'
 
 import { isUnresolvedPackageResolution, readPackageMetadataAtBoundary } from './package-metadata'
@@ -254,10 +255,7 @@ function nativeCompilerOptions(
     optimizeLevel: options.optimizeLevel ?? 'safe',
     inlineDerivedMemos: options.inlineDerivedMemos ?? true,
     strictReactivity: options.strictReactivity ?? false,
-    strictGuarantee:
-      process.env.FICT_STRICT_GUARANTEE === '1' ||
-      process.env.NODE_ENV === 'production' ||
-      options.strictGuarantee !== false,
+    strictGuarantee: resolveStrictGuarantee(options.strictGuarantee),
     warningsAsErrors: options.warningsAsErrors ?? false,
     warningLevels: options.warningLevels ?? {},
     reactiveScopes: options.reactiveScopes ?? [],

@@ -1,5 +1,5 @@
 import type { CompileRequest, CompileResult, ScanResult } from '@fictjs/compiler'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const native = vi.hoisted(() => ({
   load: vi.fn(),
@@ -49,6 +49,49 @@ describe('@fictjs/webpack-plugin compiler options', () => {
     native.scan.mockResolvedValue(scanResult())
     native.transform.mockResolvedValue(compileResult())
     native.load.mockReturnValue({ scan: native.scan, transform: native.transform })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('forces strict guarantees in production through the shared compiler policy', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('FICT_STRICT_GUARANTEE', 'false')
+    const module = {
+      buildInfo: {},
+      identifier: () => '/project/src/strict.ts',
+      resource: '/project/src/strict.ts',
+    }
+    let callback: (error?: Error | null, content?: string) => void = () => undefined
+    const completed = new Promise<string>((resolve, reject) => {
+      callback = (error, content) => {
+        if (error) reject(error)
+        else resolve(content ?? '')
+      }
+    })
+    const loaderContext = {
+      async: () => callback,
+      addDependency: vi.fn(),
+      addMissingDependency: vi.fn(),
+      cacheable: vi.fn(),
+      getOptions: () => ({ strictGuarantee: false }),
+      mode: 'production',
+      resource: '/project/src/strict.ts',
+      resourcePath: '/project/src/strict.ts',
+      rootContext: '/project',
+      sourceMap: true,
+    }
+    attachLoaderBinding(loaderContext, {
+      module: module as never,
+      state: createCompilationState(),
+    })
+
+    fictWebpackLoader.call(loaderContext as never, 'export const value = true')
+    await expect(completed).resolves.toBe('export const value = 1;\n')
+
+    const request = native.transform.mock.calls[0]![0] as CompileRequest
+    expect(request.options?.strictGuarantee).toBe(true)
   })
 
   it('forwards the same complete native TypeScript lowering option shape as Vite', async () => {

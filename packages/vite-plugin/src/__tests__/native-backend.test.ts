@@ -5,7 +5,7 @@ import type {
   ScanRequest,
   ScanResult,
 } from '@fictjs/compiler'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const native = vi.hoisted(() => {
   const info = {
@@ -139,6 +139,33 @@ describe('Rust compiler backend', () => {
     native.scan.mockImplementation(async request => scanResult(request as ScanRequest))
     native.scanSync.mockImplementation(request => scanResult(request as ScanRequest))
     native.load.mockReturnValue(binding())
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('forces strict guarantees in production through the shared compiler policy', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('FICT_STRICT_GUARANTEE', 'false')
+    native.transform.mockResolvedValue(compileResult())
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+      strictGuarantee: false,
+    })
+    plugin.configResolved?.(config as never)
+
+    await plugin.transform?.call(
+      context() as never,
+      'export const value = true',
+      '/project/src/strict.ts',
+    )
+
+    const request = native.transform.mock.calls[0]![0] as CompileRequest
+    expect(request.options?.strictGuarantee).toBe(true)
   })
 
   it('uses Rust for the whole build', async () => {

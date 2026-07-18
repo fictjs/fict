@@ -5,19 +5,20 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type {
-  CompileRequest,
-  CompileResult,
-  CompilerArtifact,
-  CompilerExplainEventKind,
-  FictDiagnostic,
-  ModuleReactiveMetadata,
-  NativeCompilerExplainArtifact,
-  NativeCompilerOptions,
-  NativeTypeScriptOptions,
-  RawSourceMap,
-  ResolvedMetadataInput,
-  ScanResult,
+import {
+  resolveStrictGuarantee,
+  type CompileRequest,
+  type CompileResult,
+  type CompilerArtifact,
+  type CompilerExplainEventKind,
+  type FictDiagnostic,
+  type ModuleReactiveMetadata,
+  type NativeCompilerExplainArtifact,
+  type NativeCompilerOptions,
+  type NativeTypeScriptOptions,
+  type RawSourceMap,
+  type ResolvedMetadataInput,
+  type ScanResult,
 } from '@fictjs/compiler'
 import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
 import {
@@ -4197,7 +4198,6 @@ function nativeCompilerOptions(
   options: FictPluginCompilerOptions,
   tsImportElision: TypeScriptImportElision,
 ): NativeCompilerOptions {
-  const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
   const typescript = options.typescriptOptions
   return {
     dev: options.dev ?? false,
@@ -4210,10 +4210,7 @@ function nativeCompilerOptions(
     optimizeLevel: options.optimizeLevel ?? 'safe',
     inlineDerivedMemos: options.inlineDerivedMemos ?? true,
     strictReactivity: options.strictReactivity ?? false,
-    strictGuarantee:
-      strictGuaranteeFromEnv ||
-      process.env.NODE_ENV === 'production' ||
-      options.strictGuarantee !== false,
+    strictGuarantee: resolveStrictGuarantee(options.strictGuarantee),
     warningsAsErrors: options.warningsAsErrors ?? false,
     warningLevels: options.warningLevels ?? {},
     reactiveScopes: options.reactiveScopes ?? [],
@@ -4505,29 +4502,14 @@ function stableStringify(value: unknown): string {
   return `{${body}}`
 }
 
-function readBooleanEnv(name: string): boolean | undefined {
-  const raw = process.env[name]
-  if (!raw) return undefined
-  const normalized = raw.trim().toLowerCase()
-  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
-    return true
-  }
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
-    return false
-  }
-  return undefined
-}
-
 function compilerEnvironmentCacheInputs(
   options: FictPluginCompilerOptions,
 ): Record<string, unknown> {
-  const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
   const nodeEnv = process.env.NODE_ENV
   return {
     nodeEnv,
     strictGuaranteeEnv: process.env.FICT_STRICT_GUARANTEE,
-    effectiveStrictGuarantee:
-      strictGuaranteeFromEnv || nodeEnv === 'production' || options.strictGuarantee !== false,
+    effectiveStrictGuarantee: resolveStrictGuarantee(options.strictGuarantee),
   }
 }
 

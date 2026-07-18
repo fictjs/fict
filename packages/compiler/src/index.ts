@@ -7,6 +7,12 @@
 export { nativeCompilerInfo, transformSync, transform, scanSync } from './native-loader'
 export { scan, analyzeSync, analyze } from './native-loader'
 export type { NativeCompilerInfo } from './native-loader'
+export {
+  applyCompilerEnvironmentPolicy,
+  applyCompileRequestEnvironmentPolicy,
+  resolveStrictGuarantee,
+} from './environment-policy'
+export type { CompilerEnvironmentPolicyInput } from './environment-policy'
 export { COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION } from './types'
 export type * from './types'
 export type * from './tooling/types'

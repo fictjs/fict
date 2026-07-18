@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { resolveStrictGuarantee } from '../src/environment-policy'
 import {
   NativeCompilerLoadError,
   analyze,
@@ -22,6 +23,7 @@ import type { AnalyzeResult } from '../src/tooling/types'
 import {
   COMPILER_PROTOCOL_VERSION,
   MODULE_REACTIVE_METADATA_VERSION,
+  type CompileRequest,
   type CompileResult,
   type ScanResult,
 } from '../src/types'
@@ -61,6 +63,10 @@ function createAnalyzeResult(): AnalyzeResult {
   }
 }
 
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 function createBinding(nativeTarget = 'aarch64-apple-darwin'): NativeCompilerBinding {
   return {
     nativeCompilerInfo: () => ({
@@ -85,6 +91,61 @@ function createBinding(nativeTarget = 'aarch64-apple-darwin'): NativeCompilerBin
 }
 
 describe('native compiler loader', () => {
+  it.each([
+    [undefined, {}, true],
+    [true, { nodeEnv: 'development' }, true],
+    [false, { nodeEnv: 'development' }, false],
+    [false, { nodeEnv: 'production' }, true],
+    [false, { nodeEnv: 'test', strictGuaranteeEnv: '1' }, true],
+    [false, { nodeEnv: 'test', strictGuaranteeEnv: 'true' }, true],
+    [false, { nodeEnv: 'test', strictGuaranteeEnv: 'yes' }, true],
+    [false, { nodeEnv: 'test', strictGuaranteeEnv: 'on' }, true],
+    [false, { nodeEnv: 'test', strictGuaranteeEnv: 'false' }, false],
+    [false, { nodeEnv: 'test', strictGuaranteeEnv: '0' }, false],
+    [false, { nodeEnv: 'test', strictGuaranteeEnv: 'invalid' }, false],
+  ] as const)(
+    'resolves strictGuarantee=%s with environment %j to %s',
+    (requested, environment, expected) => {
+      expect(resolveStrictGuarantee(requested, environment)).toBe(expected)
+    },
+  )
+
+  it('forces the shared production policy for direct sync and async transforms', async () => {
+    const binding = createBinding()
+    const transformSync = vi.fn(() => createCompileResult())
+    const transform = vi.fn(async () => createCompileResult())
+    binding.transformSync = transformSync
+    binding.transform = transform
+    const facade = createNativeCompilerFacade({
+      nativePath: '/tmp/fict-compiler.node',
+      platform: 'darwin',
+      arch: 'arm64',
+      load: () => binding,
+    })
+    const request: CompileRequest = {
+      code: 'export const value = 1',
+      filename: 'module.ts',
+      options: { strictGuarantee: false },
+    }
+
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('FICT_STRICT_GUARANTEE', 'false')
+    facade.transformSync(request)
+    expect(transformSync).toHaveBeenCalledWith({
+      ...request,
+      options: { strictGuarantee: true },
+    })
+
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('FICT_STRICT_GUARANTEE', '1')
+    await facade.transform(request)
+    expect(transform).toHaveBeenCalledWith({
+      ...request,
+      options: { strictGuarantee: true },
+    })
+    expect(request.options?.strictGuarantee).toBe(false)
+  })
+
   it('exports the complete serializable direct compiler facade', () => {
     expect(typeof nativeCompilerInfo).toBe('function')
     expect(typeof transformSync).toBe('function')
