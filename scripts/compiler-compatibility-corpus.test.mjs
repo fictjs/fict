@@ -366,6 +366,20 @@ test('ports the unrepresented Babel optimizer differential domain through execut
   assert.match(ci, /native-compiler-optimizer-diff\.test\.mjs/)
 })
 
+test('maps the Babel delegated-event parity domain to the generated runtime ABI guard', () => {
+  const parity = read('packages/runtime/test/delegated-events-parity.test.ts')
+  assert.match(parity, /runtime-abi\.json/)
+  assert.match(parity, /DelegatedEvents as RuntimeDelegatedEvents/)
+  assert.match(parity, /expect\(runtimeEvents\)\.toEqual\(compilerEvents\)/)
+  assert.match(parity, /both sets contain the expected core events/)
+
+  const generator = read('scripts/generate-runtime-abi.mjs')
+  assert.match(generator, /DELEGATED_EVENTS/)
+  assert.match(generator, /delegatedEvents must be a unique canonical event-name array/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /guardrails:runtime-abi[^\n]+delegated-events-parity\.test\.ts/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
