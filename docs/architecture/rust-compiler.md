@@ -216,12 +216,21 @@ keeps codegen regression, request-contract, and executable semantic evidence
 separate and records what each asset does and does not prove. The repository
 retains a Rust-only frozen codegen corpus:
 
-- 1,892 unique source-and-option inputs extracted from the 0.28.0 test suite;
+- 1,892 unique audit-baseline source-and-option inputs plus 58
+  source-grounded `strictGuarantee: true` variants, for 1,950 compiled requests;
 - Babel status, diagnostic codes, and output hashes regenerated with the exact
   0.28.0 compiler artifact from revision `b99ff5b185e3eed701e2d4f3521832dac67c979f`;
 - expected Rust status, structured diagnostic class, and output hashes generated
   by one reviewed native build, plus an explicit policy for every reviewed
   audited-Babel-to-Rust status deviation.
+
+The strict variants are not inferred from the normalized audit rows. The
+[request-policy manifest](../../scripts/fixtures/compiler_corpus_request_policy.json)
+parses all 107 original 0.28.0 compiler test files with the pinned Babel parser,
+matches every one of the 1,892 extracted calls, and records 46 explicit strict
+requests plus 12 calls whose compiler-default helper enabled strict mode. Corpus
+generation fails instead of assigning a deviation policy if any of those 58
+requests has different Babel and Rust success/error status.
 
 Status review is not used as a proxy for diagnostic compatibility. The
 [diagnostic deviation review](../../scripts/fixtures/compiler_diagnostic_deviation_reviews.json)
@@ -237,7 +246,10 @@ The corpus records these as separate `sourceSuite*`, `babelAudit*`, and
 `rustAudit*` provenance fields. Its schema binds the 0.28.0 compiler source
 digest, built artifact digest, frozen lockfile, package-manager identity, Babel
 dependency versions, original virtual audit filename, and extraction-input
-digest. The extraction input supplies the 1,892 source/request rows; its
+digest. It also binds the request-policy manifest and the complete legacy test
+source-tree digest. The extraction input supplies the 1,892 baseline
+source/request rows; the policy manifest restores the 58 strict request
+dimensions that normalization removed. The extraction input's
 embedded Babel outcomes are not copied into the corpus. Instead, every freshly
 executed 0.28.0 status, diagnostic-code list, and code hash must independently
 match that audit record before generation can succeed.

@@ -4121,6 +4121,40 @@ mod tests {
     }
 
     #[test]
+    fn accepts_closed_reactive_try_stories_under_strict_guarantees() {
+        for (name, body) in [
+            (
+                "caught-throw",
+                "if (n > 0) { throw new Error('boom'); } label = 'ok:' + n;",
+            ),
+            (
+                "conditional-write",
+                "if (n > 0) { label = 'big'; } else { label = 'ok:' + n; }",
+            ),
+        ] {
+            let source = format!(
+                "import {{ $state }} from 'fict'; export function App() {{ let n = $state(0); let label = 'init'; try {{ {body} }} catch (error) {{ label = 'caught:' + error.message; }} return <span>{{label}}</span>; }}"
+            );
+            let result = compile(request(&source, &format!("try-{name}.tsx")));
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006"),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+            assert!(result.code.contains("try {"), "{name}: {}", result.code);
+            assert!(
+                result.code.contains("catch (error)"),
+                "{name}: {}",
+                result.code
+            );
+        }
+    }
+
+    #[test]
     fn rejects_reactive_try_stories_that_rethrow_from_catch() {
         let source = "import { $state } from 'fict'; export function App() { let count = $state(0); let label = 'init'; try { if (count > 0) throw 'boom'; label = 'ok'; } catch (error) { throw error; } return <span>{label}</span>; }";
         let strict = compile(request(source, "try-rethrow.tsx"));
@@ -4957,6 +4991,54 @@ mod tests {
         assert!(escalated.code.is_empty());
         assert!(escalated.diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "FICT-R002"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+    }
+
+    #[test]
+    fn tracks_local_hook_return_accessors_at_unknown_boundaries() {
+        let source = "import { $state } from 'fict'; function sink(value) { return value; } function useBucket() { const count = $state(0); return { count, plain: 7 }; } function useCount() { const count = $state(1); return count; } export function App() { const bucket = useBucket(); const count = useCount(); sink(() => bucket.count); sink(() => count); sink({ value: bucket.count }); sink([count]); sink(bucket.plain); const values = []; values.push(bucket.count); return <div>{bucket.count}:{values.length}</div>; }";
+        let mut fallback_request = request(source, "local-hook-return-escapes.jsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert_eq!(
+            fallback
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R002")
+                .count(),
+            4,
+            "{:?}",
+            fallback.diagnostics
+        );
+        assert_eq!(
+            fallback
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R005")
+                .count(),
+            4,
+            "{:?}",
+            fallback.diagnostics
+        );
+        assert!(
+            fallback
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
+        );
+
+        let strict = compile(request(source, "local-hook-return-escapes.jsx"));
+        assert!(strict.has_errors(), "{:?}", strict.diagnostics);
+        assert!(strict.code.is_empty());
+        assert!(strict.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R002"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+        assert!(strict.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
                 && diagnostic.severity == DiagnosticSeverity::Error
         }));
     }

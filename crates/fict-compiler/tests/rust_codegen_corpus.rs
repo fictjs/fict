@@ -10,7 +10,9 @@ use fict_diagnostics::{DiagnosticSeverity, GuaranteeClass};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-const EXPECTED_FIXTURES: usize = 1_892;
+const EXPECTED_BASE_FIXTURES: usize = 1_892;
+const EXPECTED_STRICT_FIXTURES: usize = 58;
+const EXPECTED_FIXTURES: usize = EXPECTED_BASE_FIXTURES + EXPECTED_STRICT_FIXTURES;
 const EXPECTED_REPRESENTED_FILES: usize = 73;
 const EXPECTED_AUDIT_SHA256: &str =
     "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f";
@@ -41,8 +43,12 @@ struct CorpusProvenance {
     rust_audit_release: String,
     rust_audit_revision: String,
     audit_input_sha256: String,
+    request_policy_sha256: String,
+    legacy_test_source_sha256: String,
     extracted_calls: usize,
     unique_fixtures: usize,
+    strict_guarantee_true_variants: usize,
+    corpus_fixtures: usize,
     scanned_legacy_test_files: usize,
     represented_legacy_test_files: usize,
     reviewed_revision: String,
@@ -67,6 +73,14 @@ struct FixtureOrigin {
     file: String,
     line: u32,
     callee: String,
+    request_variant: RequestVariant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RequestVariant {
+    AuditBaseline,
+    StrictGuarantee,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -166,7 +180,7 @@ fn replays_the_frozen_rust_codegen_corpus() {
         serde_json::from_str(include_str!("rust_frozen_codegen_corpus.json"))
             .expect("valid frozen Rust codegen corpus");
 
-    assert_eq!(corpus.schema_version, 3);
+    assert_eq!(corpus.schema_version, 4);
     assert_eq!(corpus.provenance.source_suite_release, "0.28.0");
     assert_eq!(
         corpus.provenance.source_suite_revision,
@@ -207,14 +221,35 @@ fn replays_the_frozen_rust_codegen_corpus() {
         corpus.provenance.reviewed_revision
     );
     assert_eq!(corpus.provenance.audit_input_sha256, EXPECTED_AUDIT_SHA256);
+    assert_eq!(
+        corpus.provenance.request_policy_sha256,
+        "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8"
+    );
+    assert_eq!(
+        corpus.provenance.legacy_test_source_sha256,
+        "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb"
+    );
     assert_eq!(corpus.provenance.extracted_calls, 1_974);
-    assert_eq!(corpus.provenance.unique_fixtures, EXPECTED_FIXTURES);
+    assert_eq!(corpus.provenance.unique_fixtures, EXPECTED_BASE_FIXTURES);
+    assert_eq!(
+        corpus.provenance.strict_guarantee_true_variants,
+        EXPECTED_STRICT_FIXTURES
+    );
+    assert_eq!(corpus.provenance.corpus_fixtures, EXPECTED_FIXTURES);
     assert_eq!(corpus.provenance.scanned_legacy_test_files, 107);
     assert_eq!(
         corpus.provenance.represented_legacy_test_files,
         EXPECTED_REPRESENTED_FILES
     );
     assert_sha256(EXPECTED_AUDIT_SHA256, "audit input digest");
+    assert_sha256(
+        &corpus.provenance.request_policy_sha256,
+        "request policy digest",
+    );
+    assert_sha256(
+        &corpus.provenance.legacy_test_source_sha256,
+        "legacy test source digest",
+    );
     assert_eq!(corpus.provenance.reviewed_revision.len(), 40);
     assert!(
         corpus
@@ -230,13 +265,27 @@ fn replays_the_frozen_rust_codegen_corpus() {
 
     let mut ids = BTreeSet::new();
     let mut represented_files = BTreeSet::new();
+    let mut request_variant_counts: BTreeMap<RequestVariant, usize> = BTreeMap::new();
     let mut observed_policy_counts: BTreeMap<String, usize> = BTreeMap::new();
     for fixture in corpus.fixtures {
-        let expected_id = format!(
+        let base_id = format!(
             "{}:{}:{}",
             fixture.origin.file, fixture.origin.line, fixture.origin.callee
         );
+        let expected_id = match fixture.origin.request_variant {
+            RequestVariant::AuditBaseline => base_id,
+            RequestVariant::StrictGuarantee => format!("{base_id}:strictGuarantee=true"),
+        };
         assert_eq!(fixture.id, expected_id);
+        *request_variant_counts
+            .entry(fixture.origin.request_variant)
+            .or_default() += 1;
+        assert_eq!(
+            fixture.options.strict_guarantee,
+            fixture.origin.request_variant == RequestVariant::StrictGuarantee,
+            "{} request policy",
+            fixture.id
+        );
         assert!(
             ids.insert(fixture.id.clone()),
             "duplicate fixture {}",
@@ -261,6 +310,9 @@ fn replays_the_frozen_rust_codegen_corpus() {
             assert_sha256(hash, &format!("{} Babel audit code hash", fixture.id));
         }
         let status_changed = fixture.babel_audit.status != fixture.expected.status;
+        if fixture.origin.request_variant == RequestVariant::StrictGuarantee {
+            assert!(!status_changed, "{} strict status parity", fixture.id);
+        }
         assert_eq!(
             fixture.deviation_policy.is_some(),
             status_changed,
@@ -311,5 +363,12 @@ fn replays_the_frozen_rust_codegen_corpus() {
     }
 
     assert_eq!(represented_files.len(), EXPECTED_REPRESENTED_FILES);
+    assert_eq!(
+        request_variant_counts,
+        BTreeMap::from([
+            (RequestVariant::AuditBaseline, EXPECTED_BASE_FIXTURES),
+            (RequestVariant::StrictGuarantee, EXPECTED_STRICT_FIXTURES),
+        ])
+    );
     assert_eq!(observed_policy_counts, corpus.deviation_policy_counts);
 }

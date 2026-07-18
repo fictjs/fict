@@ -6158,6 +6158,55 @@ fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
     );
 }
 #[test]
+fn classifies_state_array_mutating_methods_by_strict_guarantee_policy() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const items = $state([1, 2]);
+            items.copyWithin(0, 1); items.fill(0); items.pop(); items.push(3);
+            items.reverse(); items.shift(); items.sort(); items.splice(0, 1); items.unshift(0);
+            items.map(item => item * 2);
+            return items.length;
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    let findings = strict
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 9, "{:?}", strict.diagnostics);
+    assert_eq!(
+        findings[0].severity,
+        fict_diagnostics::DiagnosticSeverity::Error
+    );
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    let findings = fallback
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 9, "{:?}", fallback.diagnostics);
+    assert_eq!(
+        findings[0].severity,
+        fict_diagnostics::DiagnosticSeverity::Warning
+    );
+}
+#[test]
 fn classifies_nested_state_deletion_by_strict_guarantee_policy() {
     let source = r#"
         import { $state } from 'fict';

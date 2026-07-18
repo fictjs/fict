@@ -4,17 +4,21 @@
     "rustCodegenCorpus": {
       "artifact": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
       "generator": "scripts/generate-rust-codegen-corpus.mjs",
+      "requestPolicy": "scripts/fixtures/compiler_corpus_request_policy.json",
       "ciTests": [
         "crates/fict-compiler/tests/rust_codegen_corpus.rs",
         "scripts/compiler-compatibility-corpus.test.mjs"
       ],
-      "fixtureCount": 1892,
+      "fixtureCount": 1950,
+      "baselineFixtureCount": 1892,
+      "strictGuaranteeVariantCount": 58,
       "exactBabelCompilerExecutedDuringGeneration": true,
       "frozenBabelOutputExecutedInCi": false,
       "currentRustOutputExecutedInCi": true,
       "assertionLevel": "codegen-regression",
       "proves": [
         "exact-babel-0.28-audit-at-generation",
+        "source-grounded-strict-guarantee-request-restoration",
         "reviewed-status-deviation-accounting",
         "current-rust-output-determinism"
       ],
@@ -27,8 +31,8 @@
       "artifact": "scripts/fixtures/compiler_diagnostic_deviation_reviews.json",
       "generator": "scripts/generate-compiler-diagnostic-deviation-review.mjs",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
-      "deviationCount": 264,
-      "sameStatusDeviationCount": 230,
+      "deviationCount": 290,
+      "sameStatusDeviationCount": 256,
       "assertionLevel": "diagnostic-contract",
       "proves": [
         "reviewed-diagnostic-code-and-severity-deltas",

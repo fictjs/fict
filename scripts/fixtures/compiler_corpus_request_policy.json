@@ -1,0 +1,307 @@
+{
+  "schemaVersion": 1,
+  "sourceAuditSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
+  "legacyRelease": "0.28.0",
+  "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+  "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
+  "scannedLegacyTestFiles": 107,
+  "matchedBaseFixtures": 1892,
+  "baselineStrictFalseFixtures": 1892,
+  "strictTrueVariants": 58,
+  "strictTrueVariantSources": {
+    "explicit-true": 46,
+    "compiler-default-true": 12
+  },
+  "variants": [
+    {
+      "id": "packages/compiler/test/cross-module.test.ts:3356:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/cross-module.test.ts:3356:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/cross-module.test.ts:3391:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/cross-module.test.ts:3391:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/cross-module.test.ts:3403:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/cross-module.test.ts:3403:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/cross-module.test.ts:3430:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/cross-module.test.ts:3430:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/cross-module.test.ts:3445:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/cross-module.test.ts:3445:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/cross-module.test.ts:3474:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/cross-module.test.ts:3474:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/default-options.test.ts:205:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/default-options.test.ts:205:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/default-options.test.ts:220:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/default-options.test.ts:220:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/default-options.test.ts:237:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/default-options.test.ts:237:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/default-options.test.ts:252:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/default-options.test.ts:252:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/diagnostic-suppression.test.ts:122:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/diagnostic-suppression.test.ts:122:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/diagnostic-suppression.test.ts:139:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/diagnostic-suppression.test.ts:139:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/reactivity-guarantee-contract.test.ts:1088:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/reactivity-guarantee-contract.test.ts:1088:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/reactivity-guarantee-contract.test.ts:1114:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/reactivity-guarantee-contract.test.ts:1114:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/reactivity-guarantee-contract.test.ts:1133:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/reactivity-guarantee-contract.test.ts:1133:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/reactivity-torture.test.ts:172:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/reactivity-torture.test.ts:172:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/reactivity-torture.test.ts:191:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/reactivity-torture.test.ts:191:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/scopes-store-macro.test.ts:82:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/scopes-store-macro.test.ts:82:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:168:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:168:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:650:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:650:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:777:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:777:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:809:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:809:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:832:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:832:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:914:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:914:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1623:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:1623:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1638:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:1638:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1650:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:1650:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:2034:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:2034:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:2125:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:2125:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:2168:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:2168:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:2221:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/semantic-validation.test.ts:2221:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:136:compileAndLoad:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:136:compileAndLoad",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:319:compileAndLoad:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:319:compileAndLoad",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:1244:compileAndLoad:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:1244:compileAndLoad",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:1318:compileAndLoad:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:1318:compileAndLoad",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:1359:compileAndLoad:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:1359:compileAndLoad",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:1394:compileAndLoad:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:1394:compileAndLoad",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:1426:compileAndLoad:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:1426:compileAndLoad",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/template-integration.test.ts:3725:transformCommonJS:strictGuarantee=true",
+      "baseId": "packages/compiler/test/template-integration.test.ts:3725:transformCommonJS",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:192:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:192:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:203:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:203:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:223:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:223:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:224:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:224:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:230:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:230:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:236:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:236:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:487:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:487:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:518:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:518:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:530:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:530:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:569:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:569:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:584:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:584:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:597:transformWithCompilerDefaults:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:597:transformWithCompilerDefaults",
+      "source": "compiler-default-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:612:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:612:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:629:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:629:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:649:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:649:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:671:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:671:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:690:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:690:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:700:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:700:transform",
+      "source": "explicit-true"
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:719:transform:strictGuarantee=true",
+      "baseId": "packages/compiler/test/warnings-as-errors.test.ts:719:transform",
+      "source": "explicit-true"
+    }
+  ]
+}

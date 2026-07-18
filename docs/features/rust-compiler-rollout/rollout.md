@@ -60,6 +60,12 @@ code hashes are Rust-generated regression goldens. The former binds the audit
 identity and the latter binds Rust determinism; neither is mislabelled as
 full-runtime semantic equivalence.
 
+The frozen corpus contains 1,892 normalized audit-baseline requests and 58
+additional `strictGuarantee: true` variants recovered from the exact 0.28.0 test
+sources. Their request-policy and source-tree digests are provenance fields, and
+regeneration rejects every strict Babel/Rust status mismatch rather than
+classifying it as an accepted deviation.
+
 The machine-readable
 [compatibility evidence scope](../../../scripts/fixtures/compiler_compatibility_evidence_scope.json)
 keeps those claim boundaries release-visible. It separately identifies the

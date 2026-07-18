@@ -2008,6 +2008,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.classify_component_roles(&calls.calls, &jsx.roots);
         self.validate_class_components(&class_bindings, &jsx.tags);
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
+        self.validate_reactive_mutating_calls(&calls.calls, &reactive_symbols.state);
         self.validate_advisory_diagnostics(program, &calls.calls, &reactive_symbols.reactive);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
@@ -2379,6 +2380,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         };
         dependencies.visit_program(program);
         propagate_reactive_symbols(&mut reactive_symbols, &dependencies.facts);
+        let hook_return_shapes = collect_local_hook_return_shapes(
+            program,
+            self.semantic.scoping(),
+            &self.function_by_span,
+            &self.functions,
+            calls,
+            &binding_to_symbol,
+            &self.macro_bindings,
+        );
         let mut escape_reactive_symbols = source_escape_reactive_symbols;
         // The legacy escape pass propagates state/memo/imported-reactive aliases, but treats
         // component parameters as direct roots only. Propagating every props-derived local would
@@ -2392,7 +2402,32 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             state,
             reactive: reactive_symbols,
             escape_reactive: escape_reactive_symbols,
+            hook_return_shapes,
             dependencies: dependencies.facts,
+        }
+    }
+
+    fn validate_reactive_mutating_calls(
+        &mut self,
+        calls: &[CallFact],
+        state_symbols: &BTreeSet<SymbolId>,
+    ) {
+        for call in calls {
+            let Some(place) = call.callee_reference.as_ref() else {
+                continue;
+            };
+            let PlannedPlaceBase::Binding(symbol) = place.base else {
+                continue;
+            };
+            if !state_symbols.contains(&symbol) {
+                continue;
+            }
+            let Some(PlannedProjection::Static { name, .. }) = place.projections.last() else {
+                continue;
+            };
+            if is_mutating_array_method(name) {
+                self.report_nested_reactive_mutation(call.span);
+            }
         }
     }
 
@@ -2724,6 +2759,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             known_arrays,
             state_symbols: &reactive.state,
             reactive_symbols: &reactive.escape_reactive,
+            hook_return_shapes: &reactive.hook_return_shapes,
             capturing_functions: &capturing_functions,
             callback_captures: &callback_captures,
             callback_property_captures: &callback_property_captures,
@@ -7037,6 +7073,21 @@ fn trusted_array_returning_method(name: &str) -> bool {
     matches!(name, "filter" | "map" | "slice" | "toReversed" | "toSorted")
 }
 
+fn is_mutating_array_method(name: &str) -> bool {
+    matches!(
+        name,
+        "copyWithin"
+            | "fill"
+            | "pop"
+            | "push"
+            | "reverse"
+            | "shift"
+            | "sort"
+            | "splice"
+            | "unshift"
+    )
+}
+
 #[derive(Debug, Clone)]
 struct ArgumentFact {
     span: SourceSpan,
@@ -8060,7 +8111,183 @@ struct ReactiveSymbolAnalysis {
     state: BTreeSet<SymbolId>,
     reactive: BTreeSet<SymbolId>,
     escape_reactive: BTreeSet<SymbolId>,
+    hook_return_shapes: BTreeMap<SymbolId, LocalHookReturnShape>,
     dependencies: Vec<ReactiveBindingDependencyFact>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct LocalHookReturnShape {
+    direct: bool,
+    members: BTreeSet<String>,
+}
+
+impl LocalHookReturnShape {
+    fn has_accessor(&self) -> bool {
+        self.direct || !self.members.is_empty()
+    }
+}
+
+struct LocalHookReturnCollector<'facts, 'semantic, 'reactive> {
+    scoping: &'semantic Scoping,
+    function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
+    hook_functions: &'facts BTreeSet<FunctionId>,
+    accessor_symbols: &'reactive BTreeSet<SymbolId>,
+    stack: Vec<FunctionId>,
+    shapes: BTreeMap<FunctionId, LocalHookReturnShape>,
+}
+
+impl LocalHookReturnCollector<'_, '_, '_> {
+    fn direct_accessor(&self, expression: &Expression<'_>) -> bool {
+        let Expression::Identifier(identifier) = expression.get_inner_expression() else {
+            return false;
+        };
+        identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            .is_some_and(|symbol| self.accessor_symbols.contains(&symbol))
+    }
+
+    fn record_return(&mut self, expression: &Expression<'_>) {
+        let owner = *self.stack.last().expect("local hook return owner");
+        if !self.hook_functions.contains(&owner) {
+            return;
+        }
+        if self.direct_accessor(expression) {
+            self.shapes.entry(owner).or_default().direct = true;
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ObjectExpression(object) => {
+                for property in &object.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        continue;
+                    };
+                    if property.computed || !self.direct_accessor(&property.value) {
+                        continue;
+                    }
+                    let Some(name) = property.key.static_name() else {
+                        continue;
+                    };
+                    self.shapes
+                        .entry(owner)
+                        .or_default()
+                        .members
+                        .insert(name.into_owned());
+                }
+            }
+            Expression::ArrayExpression(array) => {
+                for (index, element) in array.elements.iter().enumerate() {
+                    if matches!(
+                        element,
+                        ArrayExpressionElement::Elision(_)
+                            | ArrayExpressionElement::SpreadElement(_)
+                    ) {
+                        continue;
+                    }
+                    if self.direct_accessor(element.to_expression()) {
+                        self.shapes
+                            .entry(owner)
+                            .or_default()
+                            .members
+                            .insert(index.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<'a> Visit<'a> for LocalHookReturnCollector<'_, '_, '_> {
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        let Some(owner) = self
+            .function_by_span
+            .get(&(function.span.start, function.span.end))
+            .copied()
+        else {
+            walk_function(self, function, flags);
+            return;
+        };
+        self.stack.push(owner);
+        walk_function(self, function, flags);
+        self.stack.pop();
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        let Some(owner) = self
+            .function_by_span
+            .get(&(function.span.start, function.span.end))
+            .copied()
+        else {
+            walk_arrow_function_expression(self, function);
+            return;
+        };
+        self.stack.push(owner);
+        walk_arrow_function_expression(self, function);
+        self.stack.pop();
+    }
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if let Some(argument) = &statement.argument {
+            self.record_return(argument);
+        }
+        walk_return_statement(self, statement);
+    }
+}
+
+fn collect_local_hook_return_shapes(
+    program: &Program<'_>,
+    scoping: &Scoping,
+    function_by_span: &BTreeMap<(u32, u32), FunctionId>,
+    functions: &[HirFunction],
+    calls: &[CallFact],
+    binding_to_symbol: &BTreeMap<BindingId, SymbolId>,
+    macro_bindings: &BTreeMap<BindingId, FictMacroKind>,
+) -> BTreeMap<SymbolId, LocalHookReturnShape> {
+    let hook_functions: BTreeSet<_> = functions
+        .iter()
+        .filter(|function| function.kind == FunctionKind::Hook)
+        .map(|function| function.id)
+        .collect();
+    let accessor_symbols: BTreeSet<_> = calls
+        .iter()
+        .filter(|call| {
+            call.binding
+                .and_then(|binding| macro_bindings.get(&binding))
+                .is_some_and(|kind| matches!(kind, FictMacroKind::State | FictMacroKind::Memo))
+        })
+        .filter_map(|call| call.direct_variable_binding)
+        .filter_map(|binding| binding_to_symbol.get(&binding).copied())
+        .collect();
+    let mut collector = LocalHookReturnCollector {
+        scoping,
+        function_by_span,
+        hook_functions: &hook_functions,
+        accessor_symbols: &accessor_symbols,
+        stack: vec![FunctionId::new(0)],
+        shapes: BTreeMap::new(),
+    };
+    collector.visit_program(program);
+
+    let shapes_by_binding: BTreeMap<_, _> = functions
+        .iter()
+        .filter_map(|function| {
+            let shape = collector.shapes.get(&function.id)?;
+            if function.kind != FunctionKind::Hook || !shape.has_accessor() {
+                return None;
+            }
+            Some((function.binding?, shape.clone()))
+        })
+        .collect();
+    calls
+        .iter()
+        .filter_map(|call| {
+            let shape = shapes_by_binding.get(&call.binding?)?.clone();
+            let result = call.direct_variable_binding?;
+            Some((*binding_to_symbol.get(&result)?, shape))
+        })
+        .collect()
 }
 
 fn propagate_reactive_symbols(
@@ -8666,6 +8893,7 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     known_arrays: &'facts BTreeSet<SymbolId>,
     state_symbols: &'reactive BTreeSet<SymbolId>,
     reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    hook_return_shapes: &'reactive BTreeMap<SymbolId, LocalHookReturnShape>,
     capturing_functions: &'facts [(SourceSpan, BTreeSet<SymbolId>)],
     callback_captures: &'facts BTreeMap<SymbolId, BTreeSet<SymbolId>>,
     callback_property_captures: &'facts BTreeMap<(SymbolId, String), BTreeSet<SymbolId>>,
@@ -8701,6 +8929,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let mut collector = ReactiveArgumentCollector {
             scoping: self.scoping,
             reactive_symbols: self.reactive_symbols,
+            hook_return_shapes: self.hook_return_shapes,
             root_function,
             symbols: BTreeSet::new(),
         };
@@ -8731,6 +8960,11 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 captured.extend(member_captures);
             }
         }
+        captured.extend(
+            self.reactive_references(argument)
+                .into_iter()
+                .filter(|symbol| self.hook_return_shapes.contains_key(symbol)),
+        );
         captured
     }
 
@@ -8787,6 +9021,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             return;
         }
         if self.is_non_escaping_callback_host(&call.callee, binding) {
+            return;
+        }
+        if self.is_non_escaping_hook_accumulator(&call.callee, arguments) {
             return;
         }
 
@@ -8895,6 +9132,50 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         ) {
             return false;
         }
+        self.is_known_array_receiver(receiver)
+    }
+
+    fn is_non_escaping_hook_accumulator(
+        &self,
+        callee: &Expression<'_>,
+        arguments: &[EscapeArgument<'_, '_>],
+    ) -> bool {
+        let receiver = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member)
+                if is_mutating_array_method(member.property.name.as_str()) =>
+            {
+                &member.object
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Expression::StringLiteral(property) = member.expression.get_inner_expression()
+                else {
+                    return false;
+                };
+                if !is_mutating_array_method(property.value.as_str()) {
+                    return false;
+                }
+                &member.object
+            }
+            _ => return false,
+        };
+        if !self.is_known_array_receiver(receiver) {
+            return false;
+        }
+        let mut found_hook_accessor = false;
+        for argument in arguments {
+            let references = self.reactive_references(*argument);
+            if references
+                .iter()
+                .any(|symbol| !self.hook_return_shapes.contains_key(symbol))
+            {
+                return false;
+            }
+            found_hook_accessor |= !references.is_empty();
+        }
+        found_hook_accessor
+    }
+
+    fn is_known_array_receiver(&self, receiver: &Expression<'_>) -> bool {
         match receiver.get_inner_expression() {
             Expression::ArrayExpression(_) => true,
             Expression::Identifier(identifier) => identifier
@@ -8964,6 +9245,7 @@ fn escape_arguments<'node, 'ast>(
 struct ReactiveArgumentCollector<'semantic, 'reactive> {
     scoping: &'semantic Scoping,
     reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    hook_return_shapes: &'reactive BTreeMap<SymbolId, LocalHookReturnShape>,
     root_function: Option<(u32, u32)>,
     symbols: BTreeSet<SymbolId>,
 }
@@ -8986,10 +9268,57 @@ impl<'a> Visit<'a> for ReactiveArgumentCollector<'_, '_> {
             .reference_id
             .get()
             .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
-            && self.reactive_symbols.contains(&symbol)
+            && (self.reactive_symbols.contains(&symbol)
+                || self
+                    .hook_return_shapes
+                    .get(&symbol)
+                    .is_some_and(|shape| shape.direct))
         {
             self.symbols.insert(symbol);
         }
+    }
+
+    fn visit_static_member_expression(
+        &mut self,
+        member: &oxc::ast::ast::StaticMemberExpression<'a>,
+    ) {
+        if let Expression::Identifier(identifier) = member.object.get_inner_expression()
+            && let Some(symbol) = identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            && self
+                .hook_return_shapes
+                .get(&symbol)
+                .is_some_and(|shape| shape.members.contains(member.property.name.as_str()))
+        {
+            self.symbols.insert(symbol);
+            return;
+        }
+        oxc::ast_visit::walk::walk_static_member_expression(self, member);
+    }
+
+    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        let property = match member.expression.get_inner_expression() {
+            Expression::StringLiteral(property) => Some(property.value.to_string()),
+            Expression::NumericLiteral(property) => Some(property.value.to_string()),
+            _ => None,
+        };
+        if let (Expression::Identifier(identifier), Some(property)) =
+            (member.object.get_inner_expression(), property)
+            && let Some(symbol) = identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            && self
+                .hook_return_shapes
+                .get(&symbol)
+                .is_some_and(|shape| shape.members.contains(&property))
+        {
+            self.symbols.insert(symbol);
+            return;
+        }
+        oxc::ast_visit::walk::walk_computed_member_expression(self, member);
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {

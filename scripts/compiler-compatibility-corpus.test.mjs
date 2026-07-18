@@ -16,6 +16,7 @@ const sha256Pattern = /^[0-9a-f]{64}$/
 const revisionPattern = /^[0-9a-f]{40}$/
 const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
 const evidenceScopePath = 'scripts/fixtures/compiler_compatibility_evidence_scope.json'
+const requestPolicyPath = 'scripts/fixtures/compiler_corpus_request_policy.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
 test('keeps codegen, request, and semantic compatibility evidence roles distinct', () => {
@@ -31,11 +32,15 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const codegen = scope.assets.rustCodegenCorpus
   const codegenCorpus = readJson(codegen.artifact)
   assert.equal(codegen.fixtureCount, codegenCorpus.fixtures.length)
+  assert.equal(codegen.baselineFixtureCount, 1892)
+  assert.equal(codegen.strictGuaranteeVariantCount, 58)
+  assert.equal(codegen.requestPolicy, requestPolicyPath)
   assert.equal(codegen.exactBabelCompilerExecutedDuringGeneration, true)
   assert.equal(codegen.frozenBabelOutputExecutedInCi, false)
   assert.equal(codegen.currentRustOutputExecutedInCi, true)
   assert.equal(codegen.assertionLevel, 'codegen-regression')
   assert.ok(codegen.proves.includes('exact-babel-0.28-audit-at-generation'))
+  assert.ok(codegen.proves.includes('source-grounded-strict-guarantee-request-restoration'))
   assert.ok(codegen.proves.includes('current-rust-output-determinism'))
   assert.ok(codegen.doesNotProve.includes('full-cross-implementation-runtime-semantic-equivalence'))
   assert.equal(codegen.generator, 'scripts/generate-rust-codegen-corpus.mjs')
@@ -106,17 +111,17 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   })
   assert.deepEqual(reviewed, observed)
   assert.equal(reviewed.schemaVersion, 1)
-  assert.equal(reviewed.deviationCount, 264)
-  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 264)
+  assert.equal(reviewed.deviationCount, 290)
+  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 290)
   assert.equal(
     reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
-    230,
+    256,
   )
   assert.deepEqual(reviewed.policyCounts, {
-    'rust-structured-rejection-diagnostics': 136,
-    'diagnostic-severity-reclassification': 22,
-    'rust-warning-addition': 28,
-    'rust-warning-removal': 74,
+    'rust-structured-rejection-diagnostics': 168,
+    'diagnostic-severity-reclassification': 23,
+    'rust-warning-addition': 26,
+    'rust-warning-removal': 69,
     'rust-warning-set-change': 4,
   })
   assert.ok(
@@ -147,7 +152,9 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
 
 test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations', () => {
   const corpus = readJson(compileCorpusPath)
-  assert.equal(corpus.schemaVersion, 3)
+  const requestPolicyText = read(requestPolicyPath)
+  const requestPolicy = JSON.parse(requestPolicyText)
+  assert.equal(corpus.schemaVersion, 4)
   assert.deepEqual(
     {
       sourceSuiteRelease: corpus.provenance.sourceSuiteRelease,
@@ -162,8 +169,12 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
       babelDependencies: corpus.provenance.babelDependencies,
       rustAuditRelease: corpus.provenance.rustAuditRelease,
       auditInputSha256: corpus.provenance.auditInputSha256,
+      requestPolicySha256: corpus.provenance.requestPolicySha256,
+      legacyTestSourceSha256: corpus.provenance.legacyTestSourceSha256,
       extractedCalls: corpus.provenance.extractedCalls,
       uniqueFixtures: corpus.provenance.uniqueFixtures,
+      strictGuaranteeTrueVariants: corpus.provenance.strictGuaranteeTrueVariants,
+      corpusFixtures: corpus.provenance.corpusFixtures,
       scannedLegacyTestFiles: corpus.provenance.scannedLegacyTestFiles,
       representedLegacyTestFiles: corpus.provenance.representedLegacyTestFiles,
     },
@@ -184,8 +195,12 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
       },
       rustAuditRelease: '0.31.0',
       auditInputSha256: '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f',
+      requestPolicySha256: sha256(requestPolicyText),
+      legacyTestSourceSha256: '65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb',
       extractedCalls: 1974,
       uniqueFixtures: 1892,
+      strictGuaranteeTrueVariants: 58,
+      corpusFixtures: 1950,
       scannedLegacyTestFiles: 107,
       representedLegacyTestFiles: 73,
     },
@@ -196,19 +211,61 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
     corpus.provenance.reviewedCompilerBuildId,
     /^fict-rust-p1-oxc0\.139\.0-m1-[0-9a-f]{64}$/,
   )
-  assert.equal(corpus.fixtures.length, 1892)
+  assert.deepEqual(
+    {
+      schemaVersion: requestPolicy.schemaVersion,
+      sourceAuditSha256: requestPolicy.sourceAuditSha256,
+      legacyRelease: requestPolicy.legacyRelease,
+      legacyRevision: requestPolicy.legacyRevision,
+      legacyTestSourceSha256: requestPolicy.legacyTestSourceSha256,
+      scannedLegacyTestFiles: requestPolicy.scannedLegacyTestFiles,
+      matchedBaseFixtures: requestPolicy.matchedBaseFixtures,
+      baselineStrictFalseFixtures: requestPolicy.baselineStrictFalseFixtures,
+      strictTrueVariants: requestPolicy.strictTrueVariants,
+      strictTrueVariantSources: requestPolicy.strictTrueVariantSources,
+    },
+    {
+      schemaVersion: 1,
+      sourceAuditSha256: corpus.provenance.auditInputSha256,
+      legacyRelease: '0.28.0',
+      legacyRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+      legacyTestSourceSha256: corpus.provenance.legacyTestSourceSha256,
+      scannedLegacyTestFiles: 107,
+      matchedBaseFixtures: 1892,
+      baselineStrictFalseFixtures: 1892,
+      strictTrueVariants: 58,
+      strictTrueVariantSources: {
+        'explicit-true': 46,
+        'compiler-default-true': 12,
+      },
+    },
+  )
+  assert.equal(corpus.fixtures.length, 1950)
 
   const ids = new Set()
   const inputs = new Set()
   const representedFiles = new Set()
+  const requestVariantCounts = { 'audit-baseline': 0, 'strict-guarantee': 0 }
+  const strictFixtureIds = new Set()
   const policyCounts = Object.fromEntries(
     Object.keys(corpus.deviationPolicies).map(policy => [policy, 0]),
   )
   for (const fixture of corpus.fixtures) {
+    const baseId = `${fixture.origin.file}:${fixture.origin.line}:${fixture.origin.callee}`
+    assert.ok(['audit-baseline', 'strict-guarantee'].includes(fixture.origin.requestVariant))
     assert.equal(
       fixture.id,
-      `${fixture.origin.file}:${fixture.origin.line}:${fixture.origin.callee}`,
+      fixture.origin.requestVariant === 'strict-guarantee'
+        ? `${baseId}:strictGuarantee=true`
+        : baseId,
     )
+    requestVariantCounts[fixture.origin.requestVariant]++
+    assert.equal(
+      fixture.options.strictGuarantee,
+      fixture.origin.requestVariant === 'strict-guarantee',
+      fixture.id,
+    )
+    if (fixture.origin.requestVariant === 'strict-guarantee') strictFixtureIds.add(fixture.id)
     assert.equal(ids.has(fixture.id), false, fixture.id)
     ids.add(fixture.id)
     assert.match(fixture.origin.file, /^packages\/compiler\/test\/.*\.test\.ts$/)
@@ -246,6 +303,9 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
       fixture.id,
     )
     const statusChanged = fixture.babelAudit.status !== fixture.expected.status
+    if (fixture.origin.requestVariant === 'strict-guarantee') {
+      assert.equal(statusChanged, false, `${fixture.id} strict status parity`)
+    }
     assert.equal(fixture.deviationPolicy !== null, statusChanged, fixture.id)
     if (fixture.deviationPolicy !== null) {
       assert.ok(corpus.deviationPolicies[fixture.deviationPolicy], fixture.id)
@@ -253,9 +313,17 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
     }
   }
 
-  assert.equal(ids.size, 1892)
-  assert.equal(inputs.size, 1892)
+  assert.equal(ids.size, 1950)
+  assert.equal(inputs.size, 1950)
   assert.equal(representedFiles.size, 73)
+  assert.deepEqual(requestVariantCounts, {
+    'audit-baseline': 1892,
+    'strict-guarantee': 58,
+  })
+  assert.deepEqual(
+    [...strictFixtureIds].sort(),
+    requestPolicy.variants.map(variant => variant.id).sort(),
+  )
   assert.deepEqual(policyCounts, corpus.deviationPolicyCounts)
   assert.deepEqual(corpus.deviationPolicyCounts, {
     'rust-capability-expansion': 22,
@@ -264,6 +332,13 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
     'namespace-macro-fail-closed': 1,
     'standard-decorator-fail-closed': 3,
   })
+  const corpusGenerator = read('scripts/generate-rust-codegen-corpus.mjs')
+  assert.match(corpusGenerator, /buildCorpusRequestPolicy/)
+  assert.match(corpusGenerator, /legacy request policy drift/)
+  assert.match(corpusGenerator, /strictGuarantee status mismatch/)
+  const requestPolicyGenerator = read('scripts/generate-compiler-corpus-request-policy.mjs')
+  assert.match(requestPolicyGenerator, /buildCorpusRequestPolicy/)
+  assert.match(requestPolicyGenerator, /@babel\/traverse/)
 })
 
 test('retains normalized frontend and analysis compatibility oracles', () => {

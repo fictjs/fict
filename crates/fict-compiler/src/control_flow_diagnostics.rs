@@ -63,13 +63,21 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                     // A throw inside a try is not a function exit: it may enter the associated
                     // catch/finally story. Keep branch-return suppression disabled until that
                     // enclosing exception construct has been proven as one unit.
-                    let has_try_ancestor =
-                        construct_has_try_ancestor(construct, &analysis.structurize.constructs);
+                    let enclosing_try_story = enclosing_try_story_is_closed(
+                        function,
+                        construct,
+                        &analysis.structurize.constructs,
+                    );
+                    let has_try_ancestor = enclosing_try_story.is_some();
                     let branch_return =
                         !has_try_ancestor && is_branch_return_construct(function, construct, *join);
-                    let memoizable_story = !has_try_ancestor
-                        && !function.flags.no_memo
-                        && !construct_has_unsafe_control_work(&core.hir, function, construct);
+                    let memoizable_story = !function.flags.no_memo
+                        && match enclosing_try_story {
+                            Some(closed) => closed,
+                            None => {
+                                !construct_has_unsafe_control_work(&core.hir, function, construct)
+                            }
+                        };
                     if !condition_invokes_user_code && (branch_return || memoizable_story) {
                         continue;
                     }
@@ -297,26 +305,71 @@ fn record_primary_span(primary: &mut Option<SourceSpan>, candidate: Option<Sourc
     }
 }
 
-fn construct_has_try_ancestor(
+fn enclosing_try_story_is_closed(
+    function: &HirFunction,
     construct: &StructuredConstruct,
     constructs: &[StructuredConstruct],
-) -> bool {
+) -> Option<bool> {
     let mut parent = construct.parent;
     let mut remaining = constructs.len();
     while let Some(parent_id) = parent {
         if remaining == 0 {
-            return true;
+            return Some(false);
         }
         let Some(owner) = constructs.get(parent_id as usize) else {
-            return true;
+            return Some(false);
         };
         if matches!(owner.kind, StructuredConstructKind::Try { .. }) {
-            return true;
+            return Some(try_story_handles_abrupt_completion(function, owner));
         }
         parent = owner.parent;
         remaining = remaining.saturating_sub(1);
     }
-    false
+    None
+}
+
+fn try_story_handles_abrupt_completion(
+    function: &HirFunction,
+    construct: &StructuredConstruct,
+) -> bool {
+    let StructuredConstructKind::Try { catch, finally, .. } = construct.kind else {
+        return false;
+    };
+    let clause_span = |entry: Option<BlockId>| {
+        entry
+            .and_then(|entry| function.blocks.get(entry.as_usize()))
+            .and_then(|block| block.source_hint.as_ref())
+            .and_then(|hint| hint.origin.primary_span)
+    };
+    let catch_span = clause_span(catch);
+    let finally_span = clause_span(finally);
+    for block in construct
+        .blocks
+        .iter()
+        .filter_map(|block| function.blocks.get(block.as_usize()))
+    {
+        let abrupt_span = block.terminator.origin.primary_span;
+        match block.terminator.kind {
+            TerminatorKind::Return { .. } => return false,
+            TerminatorKind::Throw { .. } => {
+                let escapes_from_clause = abrupt_span.is_some_and(|span| {
+                    catch_span.is_some_and(|clause| contains(clause, span))
+                        || finally_span.is_some_and(|clause| contains(clause, span))
+                });
+                if catch.is_none() || escapes_from_clause {
+                    return false;
+                }
+            }
+            TerminatorKind::Goto { .. }
+            | TerminatorKind::Branch { .. }
+            | TerminatorKind::ForIn { .. }
+            | TerminatorKind::ForOf { .. }
+            | TerminatorKind::Switch { .. }
+            | TerminatorKind::Try { .. }
+            | TerminatorKind::Unreachable => {}
+        }
+    }
+    true
 }
 
 fn display_names(function: &HirFunction, paths: &BTreeSet<DependencyPath>) -> Vec<String> {

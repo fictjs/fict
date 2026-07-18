@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { format, resolveConfig } from 'prettier'
 
+import { buildCorpusRequestPolicy } from './lib/compiler-corpus-request-policy.mjs'
 import { buildDiagnosticDeviationReview } from './lib/compiler-diagnostic-deviation-review.mjs'
 
 const require = createRequire(import.meta.url)
@@ -19,6 +20,10 @@ const corpusFormatPath = path.join(
 const diagnosticReviewPath = path.join(
   repositoryRoot,
   'scripts/fixtures/compiler_diagnostic_deviation_reviews.json',
+)
+const requestPolicyPath = path.join(
+  repositoryRoot,
+  'scripts/fixtures/compiler_corpus_request_policy.json',
 )
 const expectedAuditSha256 = '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f'
 const expectedExtraction = {
@@ -196,8 +201,13 @@ function compileLegacyFixture(row, legacy) {
   }
 }
 
-function deviationPolicy(babelStatus, currentStatus, currentErrorCodes) {
+function deviationPolicy(babelStatus, currentStatus, currentErrorCodes, requestVariant) {
   if (babelStatus === currentStatus) return null
+  if (requestVariant === 'strict-guarantee') {
+    throw new Error(
+      `strictGuarantee status mismatch: Babel=${babelStatus}, Rust=${currentStatus}; restore the missing guarantee instead of policying the request`,
+    )
+  }
   if (babelStatus === 'error' && currentStatus === 'ok') return 'rust-capability-expansion'
   const codes = currentErrorCodes.join(',')
   if (codes === 'FICT-PLACEMENT-STATE-OWNER') return 'narrow-component-role'
@@ -248,9 +258,10 @@ for (const [name, version] of Object.entries(legacyDependencyVersions)) {
   assert.equal(legacyRequire(`${name}/package.json`).version, version, `${name} version`)
 }
 const legacyCompilerModule = legacyRequire(legacyCompilerArtifact)
+const legacyBabel = legacyRequire('@babel/core')
 const legacy = {
   compiler: legacyCompilerModule.default ?? legacyCompilerModule,
-  transformSync: legacyRequire('@babel/core').transformSync,
+  transformSync: legacyBabel.transformSync,
   transformTypescript: legacyRequire('@babel/plugin-transform-typescript'),
 }
 const inputText = readFileSync(options.input, 'utf8')
@@ -259,6 +270,19 @@ const audit = JSON.parse(inputText)
 assert.equal(audit.summary.extracted, expectedExtraction.extracted)
 assert.equal(audit.summary.unique, expectedExtraction.unique)
 assert.equal(audit.results.length, expectedExtraction.unique)
+const requestPolicyText = readFileSync(requestPolicyPath, 'utf8')
+const requestPolicy = buildCorpusRequestPolicy({
+  audit,
+  legacyRoot: options.legacyRoot,
+  babel: legacyBabel,
+  traverse: legacyBabel.traverse,
+})
+assert.deepEqual(
+  requestPolicy,
+  JSON.parse(requestPolicyText),
+  'legacy request policy drift; regenerate and review compiler_corpus_request_policy.json',
+)
+const strictVariants = new Map(requestPolicy.variants.map(variant => [variant.baseId, variant]))
 
 const binding = require(options.nativePath)
 const compilerInfo = binding.nativeCompilerInfo()
@@ -267,12 +291,11 @@ const diagnosticReviewFixtures = []
 const representedFiles = new Set()
 const uniqueInputs = new Set()
 
-const fixtures = audit.results.map(row => {
-  const { callee, file, line, options: compilerOptions, source } = row.fixture
+function compileCorpusFixture(row, { compilerOptions, id, requestVariant, verifyAudit }) {
+  const { callee, file, line, source } = row.fixture
   const inputIdentity = JSON.stringify([source, compilerOptions])
-  assert.equal(uniqueInputs.has(inputIdentity), false, `${file}:${line} duplicates a corpus input`)
+  assert.equal(uniqueInputs.has(inputIdentity), false, `${id} duplicates a corpus input`)
   uniqueInputs.add(inputIdentity)
-  representedFiles.add(file)
 
   const request = {
     code: source,
@@ -284,32 +307,37 @@ const fixtures = audit.results.map(row => {
   assert.equal(
     JSON.stringify(deterministicResult(second)),
     JSON.stringify(deterministicResult(first)),
-    `${file}:${line}:${callee} is nondeterministic`,
+    `${id} is nondeterministic`,
   )
 
   const status = resultStatus(first.diagnostics)
-  const babelAudit = compileLegacyFixture(row, legacy)
-  assert.deepEqual(
-    {
-      status: babelAudit.status,
-      diagnosticCodes: babelAudit.diagnostics.map(diagnostic => diagnostic.code),
-      codeSha256: babelAudit.codeSha256,
-    },
-    {
-      status: row.legacy.status,
-      diagnosticCodes: row.legacy.diagnostics.map(diagnostic => diagnostic.code),
-      codeSha256: row.legacy.codeHash ?? null,
-    },
-    `${file}:${line}:${callee} exact Babel 0.28 audit drift`,
+  const babelAudit = compileLegacyFixture(
+    { ...row, fixture: { ...row.fixture, options: compilerOptions } },
+    legacy,
   )
+  if (verifyAudit) {
+    assert.deepEqual(
+      {
+        status: babelAudit.status,
+        diagnosticCodes: babelAudit.diagnostics.map(diagnostic => diagnostic.code),
+        codeSha256: babelAudit.codeSha256,
+      },
+      {
+        status: row.legacy.status,
+        diagnosticCodes: row.legacy.diagnostics.map(diagnostic => diagnostic.code),
+        codeSha256: row.legacy.codeHash ?? null,
+      },
+      `${id} exact Babel 0.28 audit drift`,
+    )
+  }
   const errorCodes = first.diagnostics
     .filter(diagnostic => diagnostic.severity === 'error')
     .map(diagnostic => diagnostic.code)
-  const policy = deviationPolicy(babelAudit.status, status, errorCodes)
+  const policy = deviationPolicy(babelAudit.status, status, errorCodes, requestVariant)
   if (policy) policyCounts[policy]++
   const currentDiagnostics = expectedDiagnostics(first.diagnostics)
   diagnosticReviewFixtures.push({
-    id: `${file}:${line}:${callee}`,
+    id,
     babelStatus: babelAudit.status,
     rustStatus: status,
     babelDiagnostics: babelAudit.diagnostics,
@@ -317,8 +345,8 @@ const fixtures = audit.results.map(row => {
   })
 
   return {
-    id: `${file}:${line}:${callee}`,
-    origin: { file, line, callee },
+    id,
+    origin: { file, line, callee, requestVariant },
     source,
     options: compilerOptions,
     babelAudit: {
@@ -333,6 +361,32 @@ const fixtures = audit.results.map(row => {
     },
     deviationPolicy: policy,
   }
+}
+
+const fixtures = audit.results.flatMap(row => {
+  const { callee, file, line, options: compilerOptions } = row.fixture
+  const baseId = `${file}:${line}:${callee}`
+  representedFiles.add(file)
+  const fixturesForCall = [
+    compileCorpusFixture(row, {
+      compilerOptions,
+      id: baseId,
+      requestVariant: 'audit-baseline',
+      verifyAudit: true,
+    }),
+  ]
+  const strictVariant = strictVariants.get(baseId)
+  if (strictVariant) {
+    fixturesForCall.push(
+      compileCorpusFixture(row, {
+        compilerOptions: { ...compilerOptions, strictGuarantee: true },
+        id: strictVariant.id,
+        requestVariant: 'strict-guarantee',
+        verifyAudit: false,
+      }),
+    )
+  }
+  return fixturesForCall
 })
 
 assert.equal(representedFiles.size, 73)
@@ -361,7 +415,7 @@ const reviewedRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).trim()
 const corpus = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   provenance: {
     sourceSuiteRelease: '0.28.0',
     sourceSuiteRevision: legacyRevision,
@@ -376,8 +430,12 @@ const corpus = {
     rustAuditRelease: '0.31.0',
     rustAuditRevision: reviewedRevision,
     auditInputSha256: expectedAuditSha256,
+    requestPolicySha256: sha256(requestPolicyText),
+    legacyTestSourceSha256: requestPolicy.legacyTestSourceSha256,
     extractedCalls: expectedExtraction.extracted,
     uniqueFixtures: expectedExtraction.unique,
+    strictGuaranteeTrueVariants: requestPolicy.strictTrueVariants,
+    corpusFixtures: fixtures.length,
     scannedLegacyTestFiles: 107,
     representedLegacyTestFiles: representedFiles.size,
     reviewedRevision,
