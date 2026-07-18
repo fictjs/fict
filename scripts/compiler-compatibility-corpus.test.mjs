@@ -437,10 +437,24 @@ test('ports the Babel state-machine collision domain to structured native contro
   assert.match(ci, /native-compiler-state-machine-name-collision\.test\.mjs/)
 })
 
+test('ports the Babel template extractor domain through serialized and live DOM paths', () => {
+  const runtime = read('scripts/native-compiler-runtime.test.mjs')
+  assert.match(runtime, /native template extraction preserves static HTML and live binding paths/)
+  assert.match(runtime, /const __fict_tmpl\\d\+ = template/)
+  assert.match(runtime, /resolvePath/)
+  assert.match(runtime, /data-case="dynamic-attr"/)
+  assert.match(runtime, /Text Grace Static/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:native-runtime[^\n]+native-compiler-runtime\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-runtime\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
     'Rust compiler output preserves Core reactive runtime behavior',
+    'native template extraction preserves static HTML and live binding paths',
     'captured reactive aliases remain mutable after an event',
     'projected reactive mutations preserve JavaScript evaluation semantics',
     'reactive conditional returns preserve branch statements and local scope',

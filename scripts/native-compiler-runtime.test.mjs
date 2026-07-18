@@ -219,6 +219,87 @@ test('Rust compiler output preserves Core reactive runtime behavior', async () =
   })
 })
 
+test('native template extraction preserves static HTML and live binding paths', async () => {
+  const result = binding.transformSync({
+    code: `
+      import { $state, render } from 'fict'
+
+      export let api
+
+      function App() {
+        let dynamic = $state('first')
+        let name = $state('Ada')
+        let item = $state('one')
+        api = {
+          update() {
+            dynamic = 'second'
+            name = 'Grace'
+            item = 'two'
+          },
+        }
+        return (
+          <section>
+            <div data-case="static" id="test" class="foo">Hello</div>
+            <button data-case="boolean" disabled>Click</button>
+            <div data-case="dynamic-attr" id={dynamic}></div>
+            <div data-case="child">Text {name} <span>Static</span></div>
+            <ul data-case="nested"><li>{item}</li></ul>
+          </section>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    filename: '/fixtures/template-extractor.tsx',
+    moduleId: '/fixtures/template-extractor.tsx',
+    options: {},
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.match(result.compilerBuildId, /^fict-rust-p1-oxc0\.139\.0-m1-[0-9a-f]{64}$/)
+
+  const template = result.code.match(/const __fict_tmpl\d+ = template\(("(?:\\.|[^"\\])*")\);/)
+  assert.ok(template)
+  assert.equal(
+    JSON.parse(template[1]),
+    '<section><div data-case="static" id="test" class="foo">Hello</div><button data-case="boolean" disabled>Click</button><div data-case="dynamic-attr"></div><div data-case="child">Text <!----> <span>Static</span></div><ul data-case="nested"><li><!----></li></ul></section>',
+  )
+  const paths = [...result.code.matchAll(/resolvePath\([^,]+,\s*(\[[\s\d,]*\])\)/g)].map(match =>
+    JSON.parse(match[1]),
+  )
+  assert.deepEqual(paths, [[2], [3], [3, 1], [4, 0], [4, 0, 0]])
+
+  const compiled = await importCompiledModule(result.code, 'template-extractor')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const staticElement = container.querySelector('[data-case="static"]')
+  const booleanElement = container.querySelector('[data-case="boolean"]')
+  const dynamicElement = container.querySelector('[data-case="dynamic-attr"]')
+  const childElement = container.querySelector('[data-case="child"]')
+  const nestedElement = container.querySelector('[data-case="nested"] li')
+  assert.equal(staticElement?.id, 'test')
+  assert.equal(staticElement?.className, 'foo')
+  assert.equal(staticElement?.textContent, 'Hello')
+  assert.equal(booleanElement?.hasAttribute('disabled'), true)
+  assert.equal(dynamicElement?.id, 'first')
+  assert.equal(childElement?.textContent, 'Text Ada Static')
+  assert.equal(childElement?.querySelector('span')?.textContent, 'Static')
+  assert.equal(nestedElement?.textContent, 'one')
+
+  compiled.api.update()
+  await flushRuntime()
+  assert.equal(dynamicElement?.id, 'second')
+  assert.equal(childElement?.textContent, 'Text Grace Static')
+  assert.equal(nestedElement?.textContent, 'two')
+
+  dispose()
+  container.remove()
+})
+
 test('captured reactive aliases remain mutable after an event', async () => {
   const source = `
     import { $state, render } from 'fict'
