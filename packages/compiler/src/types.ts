@@ -114,7 +114,7 @@ export interface NativeTypeScriptOptions {
 
 /** Serializable options accepted by the native core; callbacks and host I/O are excluded. */
 export interface NativeCompilerOptions {
-  /** Reserved compatibility field. Only `false` is currently implemented. */
+  /** Include source labels for reactive runtime DevTools registrations. */
   dev?: boolean
   sourcemap?: boolean
   explain?: boolean

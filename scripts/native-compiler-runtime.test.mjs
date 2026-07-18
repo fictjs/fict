@@ -1178,9 +1178,39 @@ test('native binding reports the Rust-only compiler protocol', () => {
   assert.equal(info.oxcVersion, '0.139.0')
 })
 
+test('dev compiler mode labels authored reactive creations for DevTools', () => {
+  const source = `
+    import { $effect, $memo, $state } from 'fict'
+
+    export function App() {
+      let count = $state(1)
+      const doubled = $memo(() => count * 2)
+      $effect(() => console.log(doubled))
+      return <div>{doubled}</div>
+    }
+  `
+  const development = binding.transformSync({
+    code: source,
+    filename: '/fixtures/dev-option.tsx',
+    options: { dev: true },
+  })
+  assert.deepEqual(development.diagnostics, [])
+  assert.equal(development.code.match(/devToolsSource/g)?.length, 3)
+  assert.match(development.code, /devToolsSource:\s*"\/fixtures\/dev-option\.tsx:5:\d+"/)
+  assert.match(development.code, /devToolsSource:\s*"\/fixtures\/dev-option\.tsx:6:\d+"/)
+  assert.match(development.code, /devToolsSource:\s*"\/fixtures\/dev-option\.tsx:7:\d+"/)
+
+  const production = binding.transformSync({
+    code: source,
+    filename: '/fixtures/dev-option.tsx',
+    options: { dev: false },
+  })
+  assert.deepEqual(production.diagnostics, [])
+  assert.doesNotMatch(production.code, /devToolsSource/)
+})
+
 test('native binding rejects unimplemented non-default compiler options', () => {
   for (const [name, value] of [
-    ['dev', true],
     ['lazyConditional', false],
     ['getterCache', false],
     ['optimizeLevel', 'full'],

@@ -928,6 +928,8 @@ pub struct EmitFunction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitProgram {
     pub runtime_family: RuntimeFamily,
+    /// Whether creation rewrites attach authored DevTools source labels.
+    pub dev: bool,
     pub preview: bool,
     pub preview_plan: Option<EmitPreviewPlan>,
     pub strict_rejected: bool,

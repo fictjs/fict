@@ -29,6 +29,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct NoJsxLoweringOptions {
     /// Runtime package/import family.
     pub runtime_family: RuntimeFamily,
+    /// Include authored source labels in reactive runtime creation options.
+    pub dev: bool,
     /// Reject non-guaranteed control-flow fallback; derived SCCs are always rejected.
     pub strict_guarantee: bool,
     /// Allow Preview ABI helpers (none are emitted by this phase).
@@ -40,6 +42,7 @@ impl Default for NoJsxLoweringOptions {
     fn default() -> Self {
         Self {
             runtime_family: RuntimeFamily::Fict,
+            dev: false,
             strict_guarantee: true,
             preview: false,
             fine_grained_dom: true,
@@ -346,6 +349,7 @@ fn lower_program(
         .collect();
     let program = EmitProgram {
         runtime_family: options.runtime_family,
+        dev: options.dev,
         preview: options.preview,
         preview_plan: None,
         strict_rejected: false,

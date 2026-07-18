@@ -142,7 +142,7 @@ impl Default for CompilerPreviewOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct CompilerOptions {
-    /// Reserved compatibility field; only `false` is currently implemented.
+    /// Include source labels for reactive runtime DevTools registrations.
     pub dev: bool,
     /// Emit a source map.
     pub sourcemap: bool,
@@ -200,9 +200,7 @@ impl Default for CompilerOptions {
 }
 
 fn validate_implemented_options(options: &CompilerOptions) -> Result<(), CompileRequestError> {
-    let unsupported = if options.dev {
-        Some(("dev", "false"))
-    } else if !options.lazy_conditional {
+    let unsupported = if !options.lazy_conditional {
         Some(("lazyConditional", "true"))
     } else if !options.getter_cache {
         Some(("getterCache", "true"))
@@ -814,7 +812,6 @@ mod tests {
     #[test]
     fn non_default_unimplemented_options_produce_a_stable_diagnostic() {
         for (name, value) in [
-            ("dev", json!(true)),
             ("lazyConditional", json!(false)),
             ("getterCache", json!(false)),
             ("optimizeLevel", json!("full")),

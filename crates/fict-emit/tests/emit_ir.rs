@@ -72,6 +72,7 @@ fn regions() -> Vec<RegionAnalysis> {
 fn program() -> EmitProgram {
     EmitProgram {
         runtime_family: RuntimeFamily::Runtime,
+        dev: false,
         preview: false,
         preview_plan: None,
         strict_rejected: false,

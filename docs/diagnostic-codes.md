@@ -24,8 +24,8 @@ active and producer-backed, and prevents retired codes from returning to officia
 
 **Impact:** Compilation stops without emitting code instead of silently ignoring the option.
 
-**Fix:** Use the currently supported default: `dev: false`, `lazyConditional: true`,
-`getterCache: true`, `optimizeLevel: 'safe'`, or `inlineDerivedMemos: true`.
+**Fix:** Use the currently supported default: `lazyConditional: true`, `getterCache: true`,
+`optimizeLevel: 'safe'`, or `inlineDerivedMemos: true`.
 
 ---
 

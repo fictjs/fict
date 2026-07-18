@@ -45,10 +45,10 @@ fict({
 Use this only to inventory diagnostics in a migration branch. Production builds
 restore fail-closed behavior.
 
-`dev`, `lazyConditional`, `getterCache`, `optimizeLevel`, and
+Set `dev: true` to attach authored source labels to signal, memo, and effect
+DevTools registrations. `lazyConditional`, `getterCache`, `optimizeLevel`, and
 `inlineDerivedMemos` remain in the request schema for compatibility but accept
-only their defaults. Non-default values fail with
-`FICT-OPTION-UNIMPLEMENTED`.
+only their defaults. Non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
 
 ## Direct host
 

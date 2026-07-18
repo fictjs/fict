@@ -45,6 +45,7 @@ fn effect_program(source: &str) -> EmitProgram {
     let origin = Origin::source(SourceSpan::new(start, end).expect("ordered span"));
     EmitProgram {
         runtime_family: RuntimeFamily::Runtime,
+        dev: false,
         preview: false,
         preview_plan: None,
         strict_rejected: false,

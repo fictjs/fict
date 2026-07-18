@@ -117,7 +117,7 @@ pub fn emit_program(
         Err(findings) => return failed_output(findings),
     };
     strip_compiler_macro_imports(&mut program);
-    let (creations, rewrite_diagnostics) = creation_rewrites(emit);
+    let (creations, rewrite_diagnostics) = creation_rewrites(emit, source, filename);
     let props_rewrites = props_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
@@ -688,7 +688,8 @@ fn is_scoped_helper(helper: RuntimeHelper) -> bool {
 struct CreationRewrite {
     local: Option<String>,
     context: Option<String>,
-    signal_name: Option<String>,
+    debug_name: Option<String>,
+    devtools_source: Option<String>,
 }
 #[derive(Debug, Clone)]
 struct DerivedCreationRewrite {
@@ -699,6 +700,17 @@ struct DerivedCreationRewrite {
 struct CreationRewrites {
     expressions: BTreeMap<(u32, u32), CreationRewrite>,
     derived_bindings: BTreeMap<BindingId, DerivedCreationRewrite>,
+}
+fn devtools_source_label(source: &str, filename: &str, byte_offset: u32) -> String {
+    let mut offset = (byte_offset as usize).min(source.len());
+    while !source.is_char_boundary(offset) {
+        offset = offset.saturating_sub(1);
+    }
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+    let column = prefix[line_start..].encode_utf16().count();
+    format!("{filename}:{line}:{column}")
 }
 #[derive(Debug, Clone)]
 struct PropBindingRewrite {
@@ -971,7 +983,11 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
         diagnostics,
     }
 }
-fn creation_rewrites(emit: &EmitProgram) -> (CreationRewrites, Vec<Diagnostic>) {
+fn creation_rewrites(
+    emit: &EmitProgram,
+    source: &str,
+    filename: &str,
+) -> (CreationRewrites, Vec<Diagnostic>) {
     let helper_names: BTreeMap<_, _> = emit
         .imports
         .iter()
@@ -1027,19 +1043,30 @@ fn creation_rewrites(emit: &EmitProgram) -> (CreationRewrites, Vec<Diagnostic>) 
                 );
                 continue;
             }
-            let signal_name = match operation {
+            let debug_name = match operation {
                 EmitOperation::CreateReactive {
                     name,
                     helper: RuntimeHelper::Signal | RuntimeHelper::UseSignal,
                     ..
                 } => name,
+                EmitOperation::CreateReactive {
+                    name,
+                    helper: RuntimeHelper::Memo | RuntimeHelper::UseMemo,
+                    ..
+                } if emit.dev => name,
                 _ => &None,
             }
             .clone();
             let rewrite = CreationRewrite {
                 local: local.map(str::to_owned),
                 context,
-                signal_name,
+                debug_name,
+                devtools_source: (emit.dev
+                    && matches!(
+                        operation,
+                        EmitOperation::CreateReactive { .. } | EmitOperation::RegisterEffect { .. }
+                    ))
+                .then(|| devtools_source_label(source, filename, span.start())),
             };
             if let Some(slot) = derived_slot {
                 let Some(binding) = function
@@ -3593,18 +3620,20 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     }
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {
         let location = (call.span.start, call.span.end);
-        if let Some((local, context, signal_name)) =
+        if let Some((local, context, debug_name, devtools_source)) =
             self.creations.get(&location).and_then(|rewrite| {
-                rewrite
-                    .local
-                    .as_deref()
-                    .map(|local| (local, &rewrite.context, rewrite.signal_name.as_deref()))
+                rewrite.local.as_deref().map(|local| {
+                    (
+                        local,
+                        &rewrite.context,
+                        rewrite.debug_name.as_deref(),
+                        rewrite.devtools_source.as_deref(),
+                    )
+                })
             })
             && rename_callee(&mut call.callee, self.allocator.alloc_str(local))
         {
-            if let Some(name) = signal_name {
-                self.append_signal_name(call, name);
-            }
+            self.append_creation_options(call, debug_name, devtools_source);
             if let Some(context) = context {
                 let builder = AstBuilder::new(self.allocator);
                 let context = Expression::new_identifier(
@@ -5977,26 +6006,45 @@ impl<'a> AstRewriter<'a, '_> {
             &builder,
         )
     }
-    fn append_signal_name(&self, call: &mut CallExpression<'a>, name: &str) {
+    fn append_creation_options(
+        &self,
+        call: &mut CallExpression<'a>,
+        name: Option<&str>,
+        devtools_source: Option<&str>,
+    ) {
+        if name.is_none() && devtools_source.is_none() {
+            return;
+        }
         let span = call.span;
         let builder = AstBuilder::new(self.allocator);
-        let name_property = || {
+        let property = |key: &str, value: &str| {
             self.object_property(
                 span,
-                "name",
+                key,
                 Expression::new_string_literal(
                     span,
-                    self.allocator.alloc_str(name),
+                    self.allocator.alloc_str(value),
                     None,
                     &builder,
                 ),
             )
         };
         if let Some(Argument::ObjectExpression(options)) = call.arguments.get_mut(1) {
-            if !options.properties.iter().any(|property| {
-                matches!(property, ObjectPropertyKind::ObjectProperty(property) if property.key.static_name().is_some_and(|key| key == "name"))
-            }) {
-                options.properties.push(name_property());
+            let existing: BTreeSet<_> = options
+                .properties
+                .iter()
+                .filter_map(|property| match property {
+                    ObjectPropertyKind::ObjectProperty(property) => {
+                        property.key.static_name().map(|name| name.into_owned())
+                    }
+                    ObjectPropertyKind::SpreadProperty(_) => None,
+                })
+                .collect();
+            if let Some(name) = name.filter(|_| !existing.contains("name")) {
+                options.properties.push(property("name", name));
+            }
+            if let Some(source) = devtools_source.filter(|_| !existing.contains("devToolsSource")) {
+                options.properties.push(property("devToolsSource", source));
             }
             return;
         }
@@ -6010,7 +6058,12 @@ impl<'a> AstRewriter<'a, '_> {
                 span, source, &builder,
             ));
         }
-        properties.push(name_property());
+        if let Some(name) = name {
+            properties.push(property("name", name));
+        }
+        if let Some(source) = devtools_source {
+            properties.push(property("devToolsSource", source));
+        }
         let options = Expression::new_object_expression(span, properties, &builder);
         let index = call.arguments.len().min(1);
         call.arguments.insert(index, Argument::from(options));

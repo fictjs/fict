@@ -875,7 +875,7 @@ mod tests {
     #[test]
     fn reports_unimplemented_options_through_the_analysis_protocol() {
         let mut unimplemented = request("export const value = 1", "options.ts");
-        unimplemented.options.compiler_options.dev = true;
+        unimplemented.options.compiler_options.lazy_conditional = false;
         let result = analyze(unimplemented);
         assert!(result.components.is_empty());
         assert_eq!(result.diagnostics.len(), 1);

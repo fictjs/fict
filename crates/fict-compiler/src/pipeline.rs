@@ -237,6 +237,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         &local_hook_returns,
         NoJsxLoweringOptions {
             runtime_family,
+            dev: request.options.dev,
             strict_guarantee: request.options.strict_guarantee,
             preview: request
                 .options

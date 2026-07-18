@@ -20,8 +20,9 @@ Current `@fictjs/compiler` defaults:
 - `strictReactivity: false`
 - `dev: false`
 
-`dev`, `lazyConditional`, `getterCache`, `optimizeLevel`, and
-`inlineDerivedMemos` are compatibility fields that currently accept only the
+Set `dev: true` to attach authored source labels to signal, memo, and effect
+DevTools registrations. `lazyConditional`, `getterCache`, `optimizeLevel`, and
+`inlineDerivedMemos` are compatibility fields that currently accept only their
 defaults above. Non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
 
 Official bundler integrations keep module metadata in their graph and consume
@@ -35,6 +36,7 @@ write source-adjacent or `.fict-cache/metadata` sidecars.
 ```ts
 {
   sourcemap: true,
+  dev: true,
   strictGuarantee: true,
   strictReactivity: false,
 }

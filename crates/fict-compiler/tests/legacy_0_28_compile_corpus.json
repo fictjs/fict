@@ -10,8 +10,8 @@
     "uniqueFixtures": 1892,
     "scannedLegacyTestFiles": 107,
     "representedLegacyTestFiles": 73,
-    "reviewedRevision": "dcad58a0d785e60d61d2c2796e7e10500a5f5ab7",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-d347b1aaae4720ba05bd7bd086a033a655377b0ee44e2c6455db750db5e35ed2"
+    "reviewedRevision": "6d0578b39aba407baac73fa62af90b19a60aa658",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-abc6b660f5a8e24d55740a0948a82c9018aa04b727dd04517588b8a59963805b"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by Babel 0.28.",
@@ -22,7 +22,7 @@
   },
   "deviationPolicyCounts": {
     "rust-capability-expansion": 22,
-    "reserved-option-rejected": 37,
+    "reserved-option-rejected": 36,
     "narrow-component-role": 24,
     "structured-hook-return": 6,
     "namespace-macro-fail-closed": 1
@@ -34687,7 +34687,7 @@
         "status": "error",
         "diagnostics": [
           {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
+            "code": "FICT-R-CYCLE",
             "severity": "error",
             "guaranteeClass": "unsupported"
           }
@@ -36575,17 +36575,11 @@
         "codeSha256": "1cef2cd72cdd018dad0ecedfe156940b9ea80022a4d9977f9c8d2f440de0144f"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "937e735f2a26a93a89c2f9ec9e4633a1d9b1de70ea06444d55ddfaaddc87b6dd"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/state-initializer-order.test.ts:144:transform",
