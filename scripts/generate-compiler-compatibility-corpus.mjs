@@ -34,7 +34,7 @@ const deviationPolicies = {
 }
 const expectedPolicyCounts = {
   'rust-capability-expansion': 22,
-  'reserved-option-rejected': 36,
+  'reserved-option-rejected': 34,
   'narrow-component-role': 24,
   'structured-hook-return': 6,
   'namespace-macro-fail-closed': 1,

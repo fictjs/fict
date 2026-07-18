@@ -238,6 +238,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         NoJsxLoweringOptions {
             runtime_family,
             dev: request.options.dev,
+            lazy_conditional: request.options.lazy_conditional,
             strict_guarantee: request.options.strict_guarantee,
             preview: request
                 .options
@@ -3507,6 +3508,25 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
         );
+    }
+
+    #[test]
+    fn lazy_conditional_option_controls_control_flow_return_lowering() {
+        let source = "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10) return <Big />; return <Small />; }";
+        let enabled = compile(request(source, "lazy-conditional.tsx"));
+        assert!(!enabled.has_errors());
+        assert!(
+            enabled
+                .code
+                .contains("createConditional(() => count() > 10")
+        );
+
+        let mut disabled_request = request(source, "lazy-conditional.tsx");
+        disabled_request.options.lazy_conditional = false;
+        let disabled = compile(disabled_request);
+        assert!(!disabled.has_errors());
+        assert!(!disabled.code.contains("createConditional"));
+        assert!(disabled.code.contains("if (count() > 10)"));
     }
 
     #[test]

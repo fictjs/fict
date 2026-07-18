@@ -46,9 +46,11 @@ Use this only to inventory diagnostics in a migration branch. Production builds
 restore fail-closed behavior.
 
 Set `dev: true` to attach authored source labels to signal, memo, and effect
-DevTools registrations. `lazyConditional`, `getterCache`, `optimizeLevel`, and
-`inlineDerivedMemos` remain in the request schema for compatibility but accept
-only their defaults. Non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
+DevTools registrations. Set `lazyConditional: false` to preserve authored
+control-flow returns instead of installing runtime branch bindings. `getterCache`,
+`optimizeLevel`, and `inlineDerivedMemos` remain in the request schema for
+compatibility but accept only their defaults. Non-default values fail with
+`FICT-OPTION-UNIMPLEMENTED`.
 
 ## Direct host
 

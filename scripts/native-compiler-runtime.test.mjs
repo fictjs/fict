@@ -1209,9 +1209,34 @@ test('dev compiler mode labels authored reactive creations for DevTools', () => 
   assert.doesNotMatch(production.code, /devToolsSource/)
 })
 
+test('lazyConditional false preserves authored control-flow returns', () => {
+  const source = `
+    import { $state } from 'fict'
+    export function App() {
+      const count = $state(0)
+      if (count > 10) return <Big />
+      return <Small />
+    }
+  `
+  const enabled = binding.transformSync({
+    code: source,
+    filename: '/fixtures/lazy-conditional.tsx',
+  })
+  assert.deepEqual(enabled.diagnostics, [])
+  assert.match(enabled.code, /createConditional\(\(\) => count\(\) > 10/)
+
+  const disabled = binding.transformSync({
+    code: source,
+    filename: '/fixtures/lazy-conditional.tsx',
+    options: { lazyConditional: false },
+  })
+  assert.deepEqual(disabled.diagnostics, [])
+  assert.doesNotMatch(disabled.code, /createConditional/)
+  assert.match(disabled.code, /if \(count\(\) > 10\)/)
+})
+
 test('native binding rejects unimplemented non-default compiler options', () => {
   for (const [name, value] of [
-    ['lazyConditional', false],
     ['getterCache', false],
     ['optimizeLevel', 'full'],
     ['inlineDerivedMemos', false],

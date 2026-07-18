@@ -118,7 +118,7 @@ export interface NativeCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
   explain?: boolean
-  /** Reserved compatibility field. Only `true` is currently implemented. */
+  /** Lower supported reactive control-flow returns through lazy runtime branches. */
   lazyConditional?: boolean
   /** Reserved compatibility field. Only `true` is currently implemented. */
   getterCache?: boolean

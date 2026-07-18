@@ -31,6 +31,8 @@ pub struct NoJsxLoweringOptions {
     pub runtime_family: RuntimeFamily,
     /// Include authored source labels in reactive runtime creation options.
     pub dev: bool,
+    /// Lower supported reactive control-flow returns through lazy runtime branches.
+    pub lazy_conditional: bool,
     /// Reject non-guaranteed control-flow fallback; derived SCCs are always rejected.
     pub strict_guarantee: bool,
     /// Allow Preview ABI helpers (none are emitted by this phase).
@@ -43,6 +45,7 @@ impl Default for NoJsxLoweringOptions {
         Self {
             runtime_family: RuntimeFamily::Fict,
             dev: false,
+            lazy_conditional: true,
             strict_guarantee: true,
             preview: false,
             fine_grained_dom: true,
@@ -244,7 +247,7 @@ fn lower_program(
             scopes.map(|scopes| &scopes[function_index]),
             &facts,
             allow_jsx,
-            options.fine_grained_dom,
+            &options,
         )?);
     }
     let helpers: BTreeSet<_> = functions
@@ -666,7 +669,7 @@ fn lower_function(
     scopes: Option<&ReactiveScopeAnalysis>,
     facts: &CrossFunctionFacts<'_>,
     allow_jsx: bool,
-    fine_grained_dom: bool,
+    options: &NoJsxLoweringOptions,
 ) -> Result<EmitFunction, DiagnosticBundle> {
     let CrossFunctionFacts {
         captured_write_bindings,
@@ -1522,7 +1525,8 @@ fn lower_function(
                     });
                 }
                 HirInstructionKind::Jsx { template } if allow_jsx => {
-                    if fine_grained_dom && !jsx_contains_direct_yield(function, instruction) {
+                    if options.fine_grained_dom && !jsx_contains_direct_yield(function, instruction)
+                    {
                         lower_jsx_instruction(
                             hir,
                             function_id,
@@ -1575,13 +1579,15 @@ fn lower_function(
         }
     }
     let control_flow = structurize_cfg(function, &analyze_cfg(function)?)?;
-    crate::conditional_return::lower_conditional_returns(
-        function,
-        &control_flow,
-        &mut temporaries,
-        &mut temporary_names,
-        &mut operations,
-    );
+    if options.lazy_conditional {
+        crate::conditional_return::lower_conditional_returns(
+            function,
+            &control_flow,
+            &mut temporaries,
+            &mut temporary_names,
+            &mut operations,
+        );
+    }
     let context = operations
         .iter()
         .filter_map(EmitOperation::helper)

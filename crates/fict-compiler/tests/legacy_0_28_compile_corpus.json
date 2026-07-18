@@ -10,8 +10,8 @@
     "uniqueFixtures": 1892,
     "scannedLegacyTestFiles": 107,
     "representedLegacyTestFiles": 73,
-    "reviewedRevision": "6d0578b39aba407baac73fa62af90b19a60aa658",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-abc6b660f5a8e24d55740a0948a82c9018aa04b727dd04517588b8a59963805b"
+    "reviewedRevision": "c348c2c9a720d5253a3dc5700ab0bd462abd4fd4",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-fd1577a0d2e9773802805525d24ae7c3128d2b417d60e74dff27907c873b342f"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by Babel 0.28.",
@@ -22,7 +22,7 @@
   },
   "deviationPolicyCounts": {
     "rust-capability-expansion": 22,
-    "reserved-option-rejected": 36,
+    "reserved-option-rejected": 34,
     "narrow-component-role": 24,
     "structured-hook-return": 6,
     "namespace-macro-fail-closed": 1
@@ -20161,17 +20161,11 @@
         "codeSha256": "36190fc49bfa0a2cca9ded8c10954878267b3ce25f449e65696361be537579a8"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "8b407d44e456d59d9e7b38d774a07bea940d184960ddc43f2d4decc8c9eefbb6"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/default-options.test.ts:193:transformWithCompilerDefaults",
@@ -36160,17 +36154,11 @@
         "codeSha256": "36190fc49bfa0a2cca9ded8c10954878267b3ce25f449e65696361be537579a8"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-OPTION-UNIMPLEMENTED",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "8b407d44e456d59d9e7b38d774a07bea940d184960ddc43f2d4decc8c9eefbb6"
       },
-      "deviationPolicy": "reserved-option-rejected"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/spec-rules.test.ts:3575:transformWithGetterCache",

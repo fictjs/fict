@@ -75,6 +75,8 @@ The native options include:
   policy;
 - `dev`: attach authored source labels to signal, memo, and effect DevTools
   registrations;
+- `lazyConditional`: lower supported reactive control-flow returns through
+  runtime branch bindings; `false` preserves the authored control flow;
 - `fineGrainedDom` and `optimize`: lowering controls;
 - `reactiveScopes`: names whose first callback is a compiler-recognized
   reactive scope;
@@ -82,9 +84,8 @@ The native options include:
 - `preview`: default-off resumability controls that are not part of the Core
   1.0 promise.
 
-Four wire-compatibility fields currently accept only their defaults:
-`lazyConditional: true`, `getterCache: true`, `optimizeLevel: 'safe'`, and
-`inlineDerivedMemos: true`. A non-default value
+Three wire-compatibility fields currently accept only their defaults:
+`getterCache: true`, `optimizeLevel: 'safe'`, and `inlineDerivedMemos: true`. A non-default value
 fails with `FICT-OPTION-UNIMPLEMENTED`; it is never silently ignored.
 
 Production integrations force fail-closed guarantees. Use relaxed options only

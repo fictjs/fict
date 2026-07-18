@@ -148,7 +148,7 @@ pub struct CompilerOptions {
     pub sourcemap: bool,
     /// Return a structured explanation artifact.
     pub explain: bool,
-    /// Reserved compatibility field; only `true` is currently implemented.
+    /// Lower supported reactive control-flow returns through lazy runtime branches.
     pub lazy_conditional: bool,
     /// Reserved compatibility field; only `true` is currently implemented.
     pub getter_cache: bool,
@@ -200,9 +200,7 @@ impl Default for CompilerOptions {
 }
 
 fn validate_implemented_options(options: &CompilerOptions) -> Result<(), CompileRequestError> {
-    let unsupported = if !options.lazy_conditional {
-        Some(("lazyConditional", "true"))
-    } else if !options.getter_cache {
+    let unsupported = if !options.getter_cache {
         Some(("getterCache", "true"))
     } else if options.optimize_level != OptimizeLevel::Safe {
         Some(("optimizeLevel", "\"safe\""))
@@ -812,7 +810,6 @@ mod tests {
     #[test]
     fn non_default_unimplemented_options_produce_a_stable_diagnostic() {
         for (name, value) in [
-            ("lazyConditional", json!(false)),
             ("getterCache", json!(false)),
             ("optimizeLevel", json!("full")),
             ("inlineDerivedMemos", json!(false)),

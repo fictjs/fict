@@ -21,9 +21,11 @@ Current `@fictjs/compiler` defaults:
 - `dev: false`
 
 Set `dev: true` to attach authored source labels to signal, memo, and effect
-DevTools registrations. `lazyConditional`, `getterCache`, `optimizeLevel`, and
-`inlineDerivedMemos` are compatibility fields that currently accept only their
-defaults above. Non-default values fail with `FICT-OPTION-UNIMPLEMENTED`.
+DevTools registrations. Set `lazyConditional: false` to preserve authored
+control-flow returns instead of installing runtime branch bindings. `getterCache`,
+`optimizeLevel`, and `inlineDerivedMemos` are compatibility fields that currently
+accept only their defaults above. Non-default values fail with
+`FICT-OPTION-UNIMPLEMENTED`.
 
 Official bundler integrations keep module metadata in their graph and consume
 versioned metadata published by third-party packages. The 0.31 compiler does not
