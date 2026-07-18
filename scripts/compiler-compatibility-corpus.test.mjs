@@ -10,13 +10,15 @@ const sha256Pattern = /^[0-9a-f]{64}$/
 const revisionPattern = /^[0-9a-f]{40}$/
 const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
 
-test('retains the Rust-only frozen codegen corpus and reviewed legacy status deviations', () => {
+test('retains the Rust-only frozen codegen corpus and reviewed Babel audit deviations', () => {
   const corpus = readJson(compileCorpusPath)
-  assert.equal(corpus.schemaVersion, 1)
+  assert.equal(corpus.schemaVersion, 2)
   assert.deepEqual(
     {
-      legacyRelease: corpus.provenance.legacyRelease,
-      legacyRevision: corpus.provenance.legacyRevision,
+      sourceSuiteRelease: corpus.provenance.sourceSuiteRelease,
+      sourceSuiteRevision: corpus.provenance.sourceSuiteRevision,
+      babelAuditRelease: corpus.provenance.babelAuditRelease,
+      babelAuditRevision: corpus.provenance.babelAuditRevision,
       rustAuditRelease: corpus.provenance.rustAuditRelease,
       rustAuditRevision: corpus.provenance.rustAuditRevision,
       auditInputSha256: corpus.provenance.auditInputSha256,
@@ -26,8 +28,10 @@ test('retains the Rust-only frozen codegen corpus and reviewed legacy status dev
       representedLegacyTestFiles: corpus.provenance.representedLegacyTestFiles,
     },
     {
-      legacyRelease: '0.28.0',
-      legacyRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+      sourceSuiteRelease: '0.28.0',
+      sourceSuiteRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+      babelAuditRelease: '0.30.1',
+      babelAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
       rustAuditRelease: '0.30.1',
       rustAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
       auditInputSha256: '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f',
@@ -63,14 +67,14 @@ test('retains the Rust-only frozen codegen corpus and reviewed legacy status dev
     assert.equal(inputs.has(input), false, fixture.id)
     inputs.add(input)
     assert.ok(fixture.source.trim(), fixture.id)
-    assert.ok(['ok', 'error'].includes(fixture.legacy.status), fixture.id)
+    assert.ok(['ok', 'error'].includes(fixture.babelAudit.status), fixture.id)
     assert.ok(['ok', 'error'].includes(fixture.expected.status), fixture.id)
     assert.ok(
-      fixture.legacy.diagnosticCodes.every(code => /^FICT-[A-Z0-9-]+$/.test(code)),
+      fixture.babelAudit.diagnosticCodes.every(code => /^FICT-[A-Z0-9-]+$/.test(code)),
       fixture.id,
     )
-    if (fixture.legacy.codeSha256 !== null) {
-      assert.match(fixture.legacy.codeSha256, sha256Pattern, fixture.id)
+    if (fixture.babelAudit.codeSha256 !== null) {
+      assert.match(fixture.babelAudit.codeSha256, sha256Pattern, fixture.id)
     }
     assert.match(fixture.expected.codeSha256, sha256Pattern, fixture.id)
     assert.ok(
@@ -91,7 +95,7 @@ test('retains the Rust-only frozen codegen corpus and reviewed legacy status dev
         : 'ok',
       fixture.id,
     )
-    const statusChanged = fixture.legacy.status !== fixture.expected.status
+    const statusChanged = fixture.babelAudit.status !== fixture.expected.status
     assert.equal(fixture.deviationPolicy !== null, statusChanged, fixture.id)
     if (fixture.deviationPolicy !== null) {
       assert.ok(corpus.deviationPolicies[fixture.deviationPolicy], fixture.id)

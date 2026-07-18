@@ -206,11 +206,16 @@ separate decision.
 Removing the executable Babel backend does not remove its reviewed behavior
 evidence. The repository retains a Rust-only frozen codegen corpus:
 
-- 1,892 unique source-and-option inputs extracted from 107 legacy test files,
-  with legacy status, diagnostic codes, and output hashes;
+- 1,892 unique source-and-option inputs extracted from the 0.28.0 test suite;
+- Babel status, diagnostic codes, and output hashes captured from the 0.30.1
+  legacy backend during the differential audit;
 - expected Rust status, structured diagnostic class, and output hashes generated
   by one reviewed native build, plus an explicit policy for every reviewed
-  legacy-to-Rust status deviation.
+  audited-Babel-to-Rust status deviation.
+
+The corpus records these as separate `sourceSuite*` and `babelAudit*`
+provenance fields. The 0.28.0 label describes where the test inputs came from;
+it does not relabel 0.30.1 Babel output as 0.28.0 output.
 
 The Rust integration test compiles every input twice, strips timing noise, and
 checks deterministic results against those Rust-owned goldens. This proves

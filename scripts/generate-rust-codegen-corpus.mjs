@@ -22,7 +22,7 @@ const expectedSummary = {
 }
 const deviationPolicies = {
   'rust-capability-expansion':
-    'Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by Babel 0.28.',
+    'Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the audited Babel 0.30.1 legacy backend.',
   'narrow-component-role':
     'Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.',
   'structured-hook-return':
@@ -96,15 +96,15 @@ function deterministicResult(result) {
   }
 }
 
-function deviationPolicy(legacyStatus, currentStatus, currentErrorCodes) {
-  if (legacyStatus === currentStatus) return null
-  if (legacyStatus === 'error' && currentStatus === 'ok') return 'rust-capability-expansion'
+function deviationPolicy(babelStatus, currentStatus, currentErrorCodes) {
+  if (babelStatus === currentStatus) return null
+  if (babelStatus === 'error' && currentStatus === 'ok') return 'rust-capability-expansion'
   const codes = currentErrorCodes.join(',')
   if (codes === 'FICT-PLACEMENT-STATE-OWNER') return 'narrow-component-role'
   if (codes === 'FICT-M') return 'structured-hook-return'
   if (codes === 'FICT-HIR-MACRO-NAMESPACE') return 'namespace-macro-fail-closed'
   throw new Error(
-    `Unreviewed compatibility deviation ${legacyStatus}->${currentStatus}: ${codes || 'no errors'}`,
+    `Unreviewed compatibility deviation ${babelStatus}->${currentStatus}: ${codes || 'no errors'}`,
   )
 }
 
@@ -153,7 +153,7 @@ const fixtures = audit.results.map(row => {
     origin: { file, line, callee },
     source,
     options: compilerOptions,
-    legacy: {
+    babelAudit: {
       status: row.legacy.status,
       diagnosticCodes: row.legacy.diagnostics.map(diagnostic => diagnostic.code),
       codeSha256: row.legacy.codeHash ?? null,
@@ -174,10 +174,12 @@ const reviewedRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).trim()
 const corpus = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   provenance: {
-    legacyRelease: '0.28.0',
-    legacyRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+    sourceSuiteRelease: '0.28.0',
+    sourceSuiteRevision: 'b99ff5b185e3eed701e2d4f3521832dac67c979f',
+    babelAuditRelease: '0.30.1',
+    babelAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
     rustAuditRelease: '0.30.1',
     rustAuditRevision: '8d4008929d46fc5f2c1e578423ff38ef95a5d084',
     auditInputSha256: expectedAuditSha256,

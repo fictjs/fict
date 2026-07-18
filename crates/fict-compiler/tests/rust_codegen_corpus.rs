@@ -28,8 +28,10 @@ struct CompatibilityCorpus {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CorpusProvenance {
-    legacy_release: String,
-    legacy_revision: String,
+    source_suite_release: String,
+    source_suite_revision: String,
+    babel_audit_release: String,
+    babel_audit_revision: String,
     rust_audit_release: String,
     rust_audit_revision: String,
     audit_input_sha256: String,
@@ -48,7 +50,7 @@ struct CompatibilityFixture {
     origin: FixtureOrigin,
     source: String,
     options: CompilerOptions,
-    legacy: LegacyOutcome,
+    babel_audit: BabelAuditOutcome,
     expected: ExpectedOutcome,
     deviation_policy: Option<String>,
 }
@@ -70,7 +72,7 @@ enum OutcomeStatus {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LegacyOutcome {
+struct BabelAuditOutcome {
     status: OutcomeStatus,
     diagnostic_codes: Vec<String>,
     code_sha256: Option<String>,
@@ -158,9 +160,11 @@ fn replays_the_frozen_rust_codegen_corpus() {
         serde_json::from_str(include_str!("rust_frozen_codegen_corpus.json"))
             .expect("valid frozen Rust codegen corpus");
 
-    assert_eq!(corpus.schema_version, 1);
-    assert_eq!(corpus.provenance.legacy_release, "0.28.0");
-    assert_eq!(corpus.provenance.legacy_revision.len(), 40);
+    assert_eq!(corpus.schema_version, 2);
+    assert_eq!(corpus.provenance.source_suite_release, "0.28.0");
+    assert_eq!(corpus.provenance.source_suite_revision.len(), 40);
+    assert_eq!(corpus.provenance.babel_audit_release, "0.30.1");
+    assert_eq!(corpus.provenance.babel_audit_revision.len(), 40);
     assert_eq!(corpus.provenance.rust_audit_release, "0.30.1");
     assert_eq!(corpus.provenance.rust_audit_revision.len(), 40);
     assert_eq!(corpus.provenance.audit_input_sha256, EXPECTED_AUDIT_SHA256);
@@ -207,21 +211,21 @@ fn replays_the_frozen_rust_codegen_corpus() {
         );
         assert!(
             fixture
-                .legacy
+                .babel_audit
                 .diagnostic_codes
                 .iter()
                 .all(|code| code.starts_with("FICT-")),
-            "{} has a malformed legacy diagnostic",
+            "{} has a malformed Babel audit diagnostic",
             fixture.id
         );
-        if let Some(hash) = fixture.legacy.code_sha256.as_deref() {
-            assert_sha256(hash, &format!("{} legacy code hash", fixture.id));
+        if let Some(hash) = fixture.babel_audit.code_sha256.as_deref() {
+            assert_sha256(hash, &format!("{} Babel audit code hash", fixture.id));
         }
-        let status_changed = fixture.legacy.status != fixture.expected.status;
+        let status_changed = fixture.babel_audit.status != fixture.expected.status;
         assert_eq!(
             fixture.deviation_policy.is_some(),
             status_changed,
-            "{} must explicitly classify every legacy status deviation",
+            "{} must explicitly classify every Babel audit status deviation",
             fixture.id
         );
         if let Some(policy) = fixture.deviation_policy.as_deref() {

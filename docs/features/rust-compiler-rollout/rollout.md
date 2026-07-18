@@ -52,10 +52,11 @@ source revision, native build ID, 8-platform by 2-Node certification, semantic
 comparison, performance/RSS measurements, package-size budgets, and human
 review. Those artifacts are retained as historical evidence; the 0.31 tree does
 not keep the differential, shadow, candidate, or rollback execution harnesses.
-It does retain the frozen legacy-derived source corpus, which runs only through
-the Rust compiler and therefore does not restore a second backend. Its expected
-diagnostics and code hashes are Rust-generated regression goldens, not
-independent Babel semantic evidence.
+It does retain the frozen 0.28.0-test-derived source corpus, which runs only
+through the Rust compiler and therefore does not restore a second backend. Its
+Babel audit fields came from the 0.30.1 legacy backend, while its expected
+diagnostics and code hashes are Rust-generated regression goldens; neither is
+mislabelled as exact 0.28.0 semantic output.
 
 M7 approval cannot be reused as M9 approval.
 
