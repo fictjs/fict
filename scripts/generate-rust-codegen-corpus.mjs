@@ -59,7 +59,7 @@ function parseArguments(argv) {
     ),
     output: path.resolve(
       options.output ??
-        path.join(repositoryRoot, 'crates/fict-compiler/tests/legacy_0_28_compile_corpus.json'),
+        path.join(repositoryRoot, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
     ),
   }
 }

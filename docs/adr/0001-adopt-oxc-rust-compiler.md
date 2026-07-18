@@ -145,8 +145,9 @@ review and an ADR update or superseding ADR.
   `pnpm test:api-boundaries`.
 - Preview isolation: `pnpm test:preview-boundaries`.
 - Semantic compatibility: dual-backend differential and runtime suites before
-  the default switch, followed by the frozen implementation-independent corpus
-  after legacy removal.
+  the default switch, followed after legacy removal by the frozen Rust codegen
+  regression plus a distinct Babel-owned semantic oracle. The Rust-generated
+  golden cannot satisfy the second role.
 - Native distribution: clean-install platform tarball tests before release.
 - Completion: the definition and release gates in
   [Fict Rust Compiler Architecture](../architecture/rust-compiler.md) must all

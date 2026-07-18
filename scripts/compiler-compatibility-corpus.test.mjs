@@ -8,9 +8,9 @@ const read = relative => readFileSync(path.join(repositoryRoot, relative), 'utf8
 const readJson = relative => JSON.parse(read(relative))
 const sha256Pattern = /^[0-9a-f]{64}$/
 const revisionPattern = /^[0-9a-f]{40}$/
-const compileCorpusPath = 'crates/fict-compiler/tests/legacy_0_28_compile_corpus.json'
+const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
 
-test('retains the complete frozen 0.28 compile corpus and reviewed deviations', () => {
+test('retains the Rust-only frozen codegen corpus and reviewed legacy status deviations', () => {
   const corpus = readJson(compileCorpusPath)
   assert.equal(corpus.schemaVersion, 1)
   assert.deepEqual(
@@ -133,11 +133,11 @@ test('retains normalized frontend and analysis compatibility oracles', () => {
 
   const frontendTest = read('crates/fict-compiler-oxc/tests/frontend_compatibility.rs')
   const analysisTest = read('crates/fict-compiler/tests/analysis_compatibility.rs')
-  const compileTest = read('crates/fict-compiler/tests/compatibility_corpus.rs')
+  const compileTest = read('crates/fict-compiler/tests/rust_codegen_corpus.rs')
   assert.match(frontendTest, /include_str!\("frontend_compatibility\.json"\)/)
   assert.match(analysisTest, /include_str!\("analysis_compatibility\.json"\)/)
-  assert.match(compileTest, /include_str!\(\s*"legacy_0_28_compile_corpus\.json"\s*\)/)
-  assert.match(compileTest, /without_a_legacy_backend/)
+  assert.match(compileTest, /include_str!\(\s*"rust_frozen_codegen_corpus\.json"\s*\)/)
+  assert.match(compileTest, /frozen_rust_codegen_corpus/)
 })
 
 test('retains native runtime and option compatibility outcomes', () => {
@@ -164,7 +164,7 @@ test('retains native runtime and option compatibility outcomes', () => {
 })
 
 test('keeps corpus regeneration bound to the audited input digest', () => {
-  const generator = read('scripts/generate-compiler-compatibility-corpus.mjs')
+  const generator = read('scripts/generate-rust-codegen-corpus.mjs')
   assert.match(generator, /676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f/)
   assert.match(generator, /Unreviewed compatibility deviation/)
   assert.doesNotMatch(generator, /@babel\/|compiler\/legacy/)

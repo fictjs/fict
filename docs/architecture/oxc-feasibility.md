@@ -87,8 +87,9 @@ compatibility design and therefore do not trigger the M0 feasibility veto.
 
 This conclusion applies only to the executable probes and current compiler
 contracts. It does not prove full language parity. After the completed switch,
-the frozen 0.28 source/golden corpus is the permanent compatibility gate and
-runs without an executable legacy backend.
+the frozen Rust source/golden corpus remains a permanent determinism and drift
+gate that runs without an executable legacy backend; its Rust-generated
+expected values are not an independent Babel equivalence oracle.
 
 ## Human review requirements
 
@@ -120,8 +121,8 @@ pnpm test:compiler:compatibility-corpus
 
 The executable source for every row is
 `crates/fict-compiler-oxc/tests/feasibility.rs`. Existing TypeScript
-namespace/CTS/compiler suites remain the final behavior authority until they
-run through the implementation-independent compatibility corpus.
+namespace/CTS/compiler suites remain the final behavior authority until the
+same domains are covered by Babel-owned semantic evidence.
 
 # Citations
 

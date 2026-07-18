@@ -201,23 +201,30 @@ The coordinated scope change is defined by
 [ADR-0003](../adr/0003-retire-babel-preset.md). Preview graduation remains a
 separate decision.
 
-### Frozen compatibility oracle
+### Frozen regression evidence
 
 Removing the executable Babel backend does not remove its reviewed behavior
-evidence. The repository retains an implementation-independent 0.28 corpus:
+evidence. The repository retains a Rust-only frozen codegen corpus:
 
 - 1,892 unique source-and-option inputs extracted from 107 legacy test files,
   with legacy status, diagnostic codes, and output hashes;
-- current Rust status, structured diagnostic class, and output hashes, plus an
-  explicit policy for every reviewed status deviation;
-- 13 frontend outcome fixtures and seven normalized analysis snapshots;
-- native runtime behavior and the five non-default option rejection contracts.
+- expected Rust status, structured diagnostic class, and output hashes generated
+  by one reviewed native build, plus an explicit policy for every reviewed
+  legacy-to-Rust status deviation.
 
 The Rust integration test compiles every input twice, strips timing noise, and
-checks deterministic results against the frozen goldens. It does not import
-Babel, a legacy compiler, or a second backend. The Rust guardrail also verifies
-the corpus size, provenance, deviation counts, test wiring, and retained native
-runtime cases so deleting the oracle cannot silently leave CI green.
+checks deterministic results against those Rust-owned goldens. This proves
+determinism and detects native output or diagnostic drift; because the expected
+values were produced by Rust, it does not independently prove Babel semantic
+equivalence. The 13 frontend outcomes, seven normalized analysis snapshots,
+and native runtime tests are separate evidence rather than outputs of this
+corpus.
+
+The guardrail verifies corpus size, provenance, deviation counts, test wiring,
+and retained native runtime cases so deleting the regression asset cannot
+silently leave CI green. Independent Babel semantic evidence must use
+Babel-owned output or behavior as its oracle instead of copying this corpus's
+Rust `expected` field.
 
 Run the focused gate with:
 

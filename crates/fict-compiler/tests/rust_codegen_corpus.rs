@@ -153,10 +153,10 @@ fn assert_sha256(value: &str, context: &str) {
 }
 
 #[test]
-fn replays_the_frozen_0_28_compile_corpus_without_a_legacy_backend() {
+fn replays_the_frozen_rust_codegen_corpus() {
     let corpus: CompatibilityCorpus =
-        serde_json::from_str(include_str!("legacy_0_28_compile_corpus.json"))
-            .expect("valid frozen compiler compatibility corpus");
+        serde_json::from_str(include_str!("rust_frozen_codegen_corpus.json"))
+            .expect("valid frozen Rust codegen corpus");
 
     assert_eq!(corpus.schema_version, 1);
     assert_eq!(corpus.provenance.legacy_release, "0.28.0");
