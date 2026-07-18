@@ -53,10 +53,10 @@ pub(super) fn unsupported_macro_diagnostics(frontend: &FrontendSummary) -> Vec<D
 
 impl Builder<'_, '_> {
     pub(super) fn call_reactive_scope_kind(&self, call: &CallFact) -> Option<ReactiveScopeKind> {
-        let binding = call.binding?;
-        if self.configured_bindings.contains(&binding) {
+        if call.configured_reactive_scope {
             return Some(ReactiveScopeKind::Configured);
         }
+        let binding = call.binding?;
         match self.macro_bindings.get(&binding) {
             Some(FictMacroKind::Effect) => Some(ReactiveScopeKind::EffectCallback),
             Some(FictMacroKind::Memo) => Some(ReactiveScopeKind::MemoCallback),

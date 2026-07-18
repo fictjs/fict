@@ -892,7 +892,7 @@ pub enum ReactiveCallKind {
 /// Configured reactive callback category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReactiveScopeKind {
-    /// User-configured direct-call host.
+    /// User-configured identifier or static-member call host.
     Configured,
     /// Component render callback.
     ComponentRender,
@@ -904,11 +904,14 @@ pub enum ReactiveScopeKind {
     MemoCallback,
 }
 
-/// Binding-aware reactive callback host classification.
+/// Reactive callback host classification with optional lexical identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReactiveScopeHost {
-    /// Resolved callee binding.
-    pub callee: BindingId,
+    /// Resolved callee/root binding when the configured host is lexical.
+    ///
+    /// Configured global hosts and property-name matched member calls do not
+    /// necessarily have a binding for the callable itself.
+    pub callee: Option<BindingId>,
     /// Zero-based callback argument position.
     pub callback_index: u16,
     /// Host category.

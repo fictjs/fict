@@ -89,6 +89,7 @@ function legacyPresetOptions(request, warnings) {
     'lazyConditional',
     'optimize',
     'optimizeLevel',
+    'reactiveScopes',
     'sourcemap',
     'strictGuarantee',
     'strictReactivity',

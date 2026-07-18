@@ -5321,6 +5321,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn configured_member_optional_and_global_scopes_preserve_strict_boundaries() {
+        let cases = [
+            (
+                "configured-member-scope.js",
+                "import { $state } from 'fict'; import * as utils from './host'; utils.renderHook(() => { const count = $state(1); return count; });",
+            ),
+            (
+                "configured-optional-member-scope.js",
+                "import { $state } from 'fict'; import * as utils from './host'; utils?.renderHook(() => { const count = $state(1); return count; });",
+            ),
+            (
+                "configured-global-scope.js",
+                "import { $state } from 'fict'; globalRenderHook(() => { const count = $state(1); return count; });",
+            ),
+        ];
+        for (filename, source) in cases {
+            let mut input = request(source, filename);
+            input.options.reactive_scopes = vec!["renderHook".into(), "globalRenderHook".into()];
+            let result = compile(input);
+            assert!(!result.has_errors(), "{filename}: {:?}", result.diagnostics);
+            assert!(
+                result.diagnostics.iter().all(|diagnostic| !matches!(
+                    diagnostic.code.as_str(),
+                    "FICT-R002" | "FICT-R005"
+                )),
+                "{filename}: {:?}",
+                result.diagnostics
+            );
+            assert!(
+                result.code.contains("__fictUseSignal"),
+                "{filename}: {}",
+                result.code
+            );
+        }
+    }
+
     #[cfg(not(feature = "preview"))]
     #[test]
     fn rejects_preview_options_until_the_optional_pass_graph_is_connected() {

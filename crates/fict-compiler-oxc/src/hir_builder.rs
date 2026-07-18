@@ -95,10 +95,10 @@ use macro_policy::unsupported_macro_diagnostics;
 /// Binding-aware frontend controls that affect HIR classification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirBuildOptions {
-    /// Direct-call hosts whose first callback is a reactive scope.
+    /// Direct identifier or static-member hosts whose first callback is a reactive scope.
     ///
-    /// Names are resolved once in the file root. Every HIR call and callback
-    /// then carries the resolved [`BindingId`], never the spelling.
+    /// Lexical identifiers are matched against their root binding, unresolved
+    /// globals by name, and member calls by their non-computed property name.
     pub reactive_scopes: Vec<String>,
     /// Reject non-guaranteed nested state mutations instead of emitting a fallback warning.
     pub strict_guarantee: bool,
@@ -1571,6 +1571,7 @@ struct Builder<'source, 'semantic> {
     reactive_bindings: BTreeMap<BindingId, RuntimeReactiveClassification>,
     reactive_namespace_sources: BTreeMap<BindingId, String>,
     unavailable_metadata_sources: BTreeSet<String>,
+    configured_scope_names: BTreeSet<String>,
     configured_bindings: BTreeSet<BindingId>,
     reactive_value_bindings: BTreeSet<BindingId>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
@@ -1813,6 +1814,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             reactive_bindings,
             reactive_namespace_sources,
             unavailable_metadata_sources,
+            configured_scope_names: option_names,
             configured_bindings,
             reactive_value_bindings: BTreeSet::new(),
             reactive_functions: BTreeMap::new(),
@@ -1850,6 +1852,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let symbol_to_binding = self.symbol_to_binding.clone();
         let reactive_bindings = self.reactive_bindings.clone();
         let reactive_namespace_sources = self.reactive_namespace_sources.clone();
+        let configured_scope_names = self.configured_scope_names.clone();
+        let configured_bindings = self.configured_bindings.clone();
         let hook_bindings: BTreeSet<_> = self
             .functions
             .iter()
@@ -1913,6 +1917,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             imported_hook_member_paths: &imported_hook_member_paths,
             reactive_bindings: &reactive_bindings,
             reactive_namespace_sources: &reactive_namespace_sources,
+            configured_scope_names: &configured_scope_names,
+            configured_bindings: &configured_bindings,
             immediate_invocations: &immediate_invocations,
             context: PlacementContext::default(),
             calls: Vec::new(),
@@ -2713,7 +2719,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             scoping: self.semantic.scoping(),
             call_facts: &call_facts,
             macro_bindings: &self.macro_bindings,
-            configured_bindings: &self.configured_bindings,
             local_hook_bindings: &local_hook_bindings,
             imports: &imports,
             known_arrays,
@@ -3492,6 +3497,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             call.span,
                             &opaque_patterns,
                         ) || call.reactive_kind.is_some()
+                            || call.configured_reactive_scope
                             || call.binding.is_some_and(|binding| {
                                 self.macro_bindings.contains_key(&binding)
                                     || self.configured_bindings.contains(&binding)
@@ -4684,15 +4690,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 spread: argument.spread,
             });
         }
-        let host = if let Some(binding) = call.binding {
-            self.call_reactive_scope_kind(call)
-                .map_or(CallHost::Binding(binding), |kind| {
-                    CallHost::ReactiveScope(ReactiveScopeHost {
-                        callee: binding,
-                        callback_index: 0,
-                        kind,
-                    })
-                })
+        let host = if let Some(kind) = self.call_reactive_scope_kind(call) {
+            CallHost::ReactiveScope(ReactiveScopeHost {
+                callee: call.binding,
+                callback_index: 0,
+                kind,
+            })
+        } else if let Some(binding) = call.binding {
+            CallHost::Binding(binding)
         } else {
             CallHost::Unknown
         };
@@ -7049,6 +7054,7 @@ struct CallFact {
     callee_has_effects: bool,
     callee_reference: Option<PlannedPlace>,
     binding: Option<BindingId>,
+    configured_reactive_scope: bool,
     reactive_kind: Option<ReactiveCallKind>,
     runtime_creation_kind: Option<RuntimeReactiveCreationKind>,
     arguments: Vec<ArgumentFact>,
@@ -7755,6 +7761,8 @@ struct CallCollector<'facts, 'semantic> {
     imported_hook_member_paths: &'facts BTreeMap<BindingId, BTreeSet<Vec<String>>>,
     reactive_bindings: &'facts BTreeMap<BindingId, RuntimeReactiveClassification>,
     reactive_namespace_sources: &'facts BTreeMap<BindingId, String>,
+    configured_scope_names: &'facts BTreeSet<String>,
+    configured_bindings: &'facts BTreeSet<BindingId>,
     immediate_invocations: &'facts BTreeSet<FunctionId>,
     context: PlacementContext,
     calls: Vec<CallFact>,
@@ -7831,6 +7839,13 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             direct_variable_symbol.and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
         let direct_binding = resolved_callee_symbol(self.scoping, &call.callee)
             .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
+        let configured_reactive_scope = configured_reactive_scope_call(
+            self.scoping,
+            &call.callee,
+            direct_binding,
+            self.configured_scope_names,
+            self.configured_bindings,
+        );
         let callee_reference = planned_invocation_reference(self.scoping, &call.callee);
         let namespace_reactive = namespace_reactive_call_classification(
             self.scoping,
@@ -7904,6 +7919,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             callee_has_effects: structured_control_flow::expression_has_effects(&call.callee),
             callee_reference,
             binding,
+            configured_reactive_scope,
             reactive_kind,
             runtime_creation_kind,
             callback: arguments.first().and_then(|argument| argument.function),
@@ -8645,7 +8661,6 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     scoping: &'semantic Scoping,
     call_facts: &'facts BTreeMap<(u32, u32), &'facts CallFact>,
     macro_bindings: &'facts BTreeMap<BindingId, FictMacroKind>,
-    configured_bindings: &'facts BTreeSet<BindingId>,
     local_hook_bindings: &'facts BTreeSet<BindingId>,
     imports: &'facts BTreeMap<BindingId, EscapeImportIdentity>,
     known_arrays: &'facts BTreeSet<SymbolId>,
@@ -8775,7 +8790,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             return;
         }
 
-        let configured = binding.is_some_and(|binding| self.configured_bindings.contains(&binding));
+        let configured = fact.configured_reactive_scope;
         if !local_hook {
             for (index, argument) in arguments.iter().enumerate() {
                 if (configured && index == 0) || self.direct_state_symbol(*argument).is_some() {
@@ -9850,6 +9865,48 @@ fn resolved_callee_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Opt
     };
     let reference = scoping.get_reference(identifier.reference_id.get()?);
     reference.symbol_id()
+}
+
+fn configured_reactive_scope_call(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+    direct_binding: Option<BindingId>,
+    configured_names: &BTreeSet<String>,
+    configured_bindings: &BTreeSet<BindingId>,
+) -> bool {
+    if configured_names.is_empty() {
+        return false;
+    }
+    match expression.get_inner_expression() {
+        Expression::Identifier(identifier) => {
+            if !configured_names.contains(identifier.name.as_str()) {
+                return false;
+            }
+            let Some(reference) = identifier.reference_id.get() else {
+                return false;
+            };
+            let reference = scoping.get_reference(reference);
+            match reference.symbol_id() {
+                Some(_) => {
+                    direct_binding.is_some_and(|binding| configured_bindings.contains(&binding))
+                }
+                None => !reference_is_inside_with(scoping, reference.scope_id()),
+            }
+        }
+        Expression::StaticMemberExpression(member) => {
+            configured_names.contains(member.property.name.as_str())
+        }
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::StaticMemberExpression(member) => {
+                configured_names.contains(member.property.name.as_str())
+            }
+            ChainElement::CallExpression(_)
+            | ChainElement::ComputedMemberExpression(_)
+            | ChainElement::PrivateFieldExpression(_)
+            | ChainElement::TSNonNullExpression(_) => false,
+        },
+        _ => false,
+    }
 }
 
 fn namespace_reactive_call_classification(

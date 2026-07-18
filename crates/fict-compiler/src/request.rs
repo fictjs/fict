@@ -168,7 +168,7 @@ pub struct CompilerOptions {
     pub warnings_as_errors: WarningsAsErrors,
     /// Per-code/prefix warning policy.
     pub warning_levels: BTreeMap<String, WarningLevel>,
-    /// Direct-call functions whose first callback is a reactive scope.
+    /// Direct identifier or static-member hosts whose first callback is a reactive scope.
     pub reactive_scopes: Vec<String>,
     /// TypeScript lowering compatibility controls.
     pub typescript: CompilerTypeScriptOptions,

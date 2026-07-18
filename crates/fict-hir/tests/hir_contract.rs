@@ -1,14 +1,14 @@
 use fict_hir::{
-    Binding, BindingId, BindingKind, BlockId, CallHost, CallInstruction, DeclarationKind,
-    DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, GlobalId, HirBlock, HirFile,
-    HirFunction, HirGlobal, HirInstruction, HirInstructionKind, HirLocal, HirPatternWrite,
-    HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics, JavaScriptString,
-    LiteralValue, LocalId, LocalKind, ModuleExport, ModuleLocalExport, ModulePlan, NumberLiteral,
-    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, Place, PlaceBase, Projection,
-    PropertyKey, ScopeId, ScopeKind, StructuredSourceHint, StructuredSourceKind,
-    StructuredSwitchCaseHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
-    TaggedTemplateQuasi, TerminatorKind, ValueId, ValueKind, print_hir, verify_hir,
-    verify_module_plan,
+    Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
+    DeclarationKind, DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, GlobalId,
+    HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind, HirLocal,
+    HirPatternWrite, HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics,
+    JavaScriptString, LiteralValue, LocalId, LocalKind, ModuleExport, ModuleLocalExport,
+    ModulePlan, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, Place,
+    PlaceBase, Projection, PropertyKey, ReactiveScopeHost, ReactiveScopeKind, ScopeId, ScopeKind,
+    StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, SyntaxFragment,
+    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TerminatorKind,
+    ValueId, ValueKind, print_hir, verify_hir, verify_module_plan,
 };
 
 fn empty_file() -> HirFile {
@@ -107,6 +107,68 @@ fn verifier_rejects_non_canonical_function_parent_ownership() {
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic.code.as_str() == "FICT-HIR-FUNCTION"
             && diagnostic.message.contains("lexical parent")
+    }));
+}
+
+#[test]
+fn verifier_only_allows_configured_reactive_hosts_without_lexical_bindings() {
+    let mut file = empty_file();
+    let origin = file.functions[0].origin;
+    file.functions[0].values.extend([
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::Literal(LiteralValue::Undefined),
+            origin,
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin,
+        },
+    ]);
+    file.functions[0].blocks[0].instructions.extend([
+        HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::Literal(LiteralValue::Undefined),
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin,
+        },
+        HirInstruction {
+            result: Some(ValueId::new(1)),
+            kind: HirInstructionKind::Call(CallInstruction {
+                callee: ValueId::new(0),
+                callee_reference: None,
+                arguments: vec![CallArgument {
+                    value: ValueId::new(0),
+                    spread: false,
+                }],
+                host: CallHost::ReactiveScope(ReactiveScopeHost {
+                    callee: None,
+                    callback_index: 0,
+                    kind: ReactiveScopeKind::Configured,
+                }),
+                macro_kind: None,
+                reactive_kind: None,
+                optional: false,
+            }),
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        },
+    ]);
+    verify_hir(&file).expect("configured global reactive host");
+
+    let HirInstructionKind::Call(call) = &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("call fixture")
+    };
+    let CallHost::ReactiveScope(host) = &mut call.host else {
+        panic!("reactive host fixture")
+    };
+    host.kind = ReactiveScopeKind::EffectCallback;
+    let diagnostics = verify_hir(&file).expect_err("runtime reactive host must retain a binding");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-CALL-HOST"
+            && diagnostic.message.contains("callee binding")
     }));
 }
 

@@ -203,8 +203,8 @@ test('retains full request dimensions with an exact Babel preset oracle', () => 
   const oracle = readJson('crates/fict-compiler/tests/babel_0_28_request_oracle.json')
   assert.equal(inputs.schemaVersion, 1)
   assert.equal(oracle.schemaVersion, 1)
-  assert.equal(inputs.cases.length, 26)
-  assert.equal(oracle.fixtures.length, 16)
+  assert.equal(inputs.cases.length, 27)
+  assert.equal(oracle.fixtures.length, 17)
   assert.equal(oracle.provenance.legacyRelease, '0.28.0')
   assert.equal(oracle.provenance.legacyRevision, 'b99ff5b185e3eed701e2d4f3521832dac67c979f')
   for (const field of [
@@ -263,7 +263,7 @@ test('retains full request dimensions with an exact Babel preset oracle', () => 
     ),
     {
       'explain-normalization': 1,
-      'feature-parity': 8,
+      'feature-parity': 9,
       'jsx-extension-required': 1,
       'native-host-protocol': 10,
       'rust-capability-expansion': 1,
@@ -279,6 +279,7 @@ test('retains full request dimensions with an exact Babel preset oracle', () => 
   const generator = read('scripts/generate-babel-request-oracle.mjs')
   assert.match(generator, /packages\/babel-preset/)
   assert.match(generator, /presetArtifactSha256/)
+  assert.match(generator, /'reactiveScopes'/)
   const packageJson = read('package.json')
   assert.match(packageJson, /test:compiler:request-matrix/)
   assert.match(packageJson, /native-compiler-request-matrix\.test\.mjs/)

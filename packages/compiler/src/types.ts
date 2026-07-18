@@ -132,6 +132,11 @@ export interface NativeCompilerOptions {
   strictGuarantee?: boolean
   warningsAsErrors?: boolean | string[]
   warningLevels?: Record<string, NativeWarningLevel>
+  /**
+   * Direct identifier or static-member names whose first callback argument is
+   * a reactive scope (for example, `renderHook(...)` or `utils.renderHook(...)`).
+   * Computed and aliased calls are intentionally not matched.
+   */
   reactiveScopes?: string[]
   typescript?: NativeTypeScriptOptions
   preview?: CompilerPreviewOptions | null

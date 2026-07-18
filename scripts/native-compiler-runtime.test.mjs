@@ -1762,6 +1762,35 @@ test('use pure drives DCE and CSE while preserving mutation and coercion barrier
   assert.match(effect.code, /createEffect\(\(\) => 1\)/)
 })
 
+test('configured reactive scopes accept member, optional member, and global hosts', () => {
+  const result = binding.transformSync({
+    code: `
+      import { $state } from 'fict'
+      import * as utils from './host.js'
+
+      utils.renderHook(() => {
+        const member = $state(1)
+        return member
+      })
+      utils?.renderHook(() => {
+        const optional = $state(2)
+        return optional
+      })
+      globalRenderHook(() => {
+        const global = $state(3)
+        return global
+      })
+    `,
+    filename: '/fixtures/configured-reactive-scopes.js',
+    options: { reactiveScopes: ['renderHook', 'globalRenderHook'] },
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.match(result.code, /utils\.renderHook\(\(\) =>/)
+  assert.match(result.code, /utils\?\.renderHook\(\(\) =>/)
+  assert.match(result.code, /globalRenderHook\(\(\) =>/)
+  assert.equal(result.code.match(/__fictUseSignal\(/g)?.length, 3)
+})
+
 test('native binding honors derived memo inline policy', () => {
   const source = `
     import { $state } from 'fict'

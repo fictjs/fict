@@ -594,7 +594,7 @@ fn classify_call_with_import(
     }
     let binding = match call.host {
         CallHost::Binding(binding) => binding,
-        CallHost::ReactiveScope(host) => host.callee,
+        CallHost::ReactiveScope(host) => host.callee?,
         CallHost::Function(_) | CallHost::Unknown => return None,
     };
     let import = file.bindings.get(binding.as_usize())?.import.as_ref()?;
@@ -1346,7 +1346,7 @@ fn hook_info_for_call(
     let binding = match call.host {
         CallHost::Function(function) => file.functions.get(function.as_usize())?.binding?,
         CallHost::Binding(binding) => binding,
-        CallHost::ReactiveScope(host) => host.callee,
+        CallHost::ReactiveScope(host) => host.callee?,
         CallHost::Unknown => return None,
     };
     if let Some(info) = known_hooks.get(&binding) {

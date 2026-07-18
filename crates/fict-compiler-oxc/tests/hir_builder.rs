@@ -6270,6 +6270,101 @@ fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
 }
 
 #[test]
+fn matches_configured_reactive_scope_callee_forms_without_alias_or_shadow_leaks() {
+    let source = r#"
+        import { renderHook, renderHook as importedAlias } from './host';
+        import * as utils from './host';
+
+        renderHook(() => {});
+        utils.renderHook(() => {});
+        utils?.renderHook(() => {});
+        utils.renderHook?.(() => {});
+        globalRenderHook(() => {});
+
+        utils['renderHook'](() => {});
+        const alias = renderHook;
+        alias(() => {});
+        importedAlias(() => {});
+        function shadow(renderHook) {
+            renderHook(() => {});
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            reactive_scopes: vec!["renderHook".into(), "globalRenderHook".into()],
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let calls: Vec<_> = hir
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => instruction
+                .origin
+                .primary_span
+                .map(|span| (&source[span.start() as usize..span.end() as usize], call)),
+            _ => None,
+        })
+        .collect();
+    let configured: Vec<_> = calls
+        .iter()
+        .filter_map(|(authored, call)| match call.host {
+            CallHost::ReactiveScope(host) => Some((*authored, host)),
+            CallHost::Unknown | CallHost::Binding(_) | CallHost::Function(_) => None,
+        })
+        .collect();
+    assert_eq!(configured.len(), 5, "{configured:#?}");
+    for expected in [
+        "renderHook(() => {})",
+        "utils.renderHook(() => {})",
+        "utils?.renderHook(() => {})",
+        "utils.renderHook?.(() => {})",
+        "globalRenderHook(() => {})",
+    ] {
+        let host = configured
+            .iter()
+            .find_map(|(authored, host)| (*authored == expected).then_some(host))
+            .unwrap_or_else(|| panic!("missing configured host {expected}: {configured:#?}"));
+        assert_eq!(host.kind, ReactiveScopeKind::Configured);
+    }
+    assert!(
+        configured
+            .iter()
+            .find(|(authored, _)| *authored == "renderHook(() => {})")
+            .is_some_and(|(_, host)| host.callee.is_some())
+    );
+    assert!(
+        configured
+            .iter()
+            .filter(|(authored, _)| *authored != "renderHook(() => {})")
+            .all(|(_, host)| host.callee.is_none())
+    );
+    for rejected in [
+        "utils['renderHook'](() => {})",
+        "alias(() => {})",
+        "importedAlias(() => {})",
+        "renderHook(() => {})",
+    ] {
+        assert!(calls.iter().any(|(authored, call)| {
+            *authored == rejected && !matches!(call.host, CallHost::ReactiveScope(_))
+        }));
+    }
+    assert_eq!(
+        hir.functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::ReactiveScope)
+            .count(),
+        5
+    );
+}
+
+#[test]
 fn classifies_named_function_expressions_by_their_public_binding() {
     let source = r#"
         import { $state } from 'fict';

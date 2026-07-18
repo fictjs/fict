@@ -17,7 +17,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "environment": { "NODE_ENV": "test", "FICT_STRICT_GUARANTEE": "unset" },
-    "requestInputsSha256": "676f7e04dcf14305241fe7de6753e5ae675838948b83478eadc0e785db6b65e3"
+    "requestInputsSha256": "26a38ce041f9e0b1394b0ebd4565f4e3d88d0dd1aafc4e9fda1d853f056147b8"
   },
   "fixtures": [
     {
@@ -277,6 +277,15 @@
           }
         ]
       }
+    },
+    {
+      "id": "configured-reactive-scope-member",
+      "status": "ok",
+      "diagnostics": [],
+      "babelCodeSha256": "51c71ba3df7b263041265cdffa24b0de632d077c09ac0cbbce041b22710ab618",
+      "babelCode": "import { __fictUseSignal, __fictUseContext } from \"fict/internal\";\nimport * as utils from './host';\nutils.renderHook(() => {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, 1, {\n    name: \"count\"\n  });\n  return count;\n});",
+      "map": null,
+      "explain": null
     }
   ]
 }

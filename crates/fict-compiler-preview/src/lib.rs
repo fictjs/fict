@@ -1713,7 +1713,7 @@ impl HandlerBindingCollector<'_> {
             }
             fict_hir::CallHost::Function(function) => self.function(function),
             fict_hir::CallHost::ReactiveScope(host) => {
-                self.bindings.insert(host.callee);
+                self.bindings.extend(host.callee);
             }
             fict_hir::CallHost::Unknown => {}
         }

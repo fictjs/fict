@@ -9,8 +9,8 @@ use crate::{
     HirFunction, HirInstruction, HirInstructionKind, HirTerminator, ImportKind, JsxAttribute,
     JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LiteralValue, LocalId, LocalKind,
     MutationEffect, ObjectEntry, Origin, OriginKind, Place, PlaceBase, Projection, Purity,
-    ScopeKind, SsaName, StructuredSourceHint, StructuredSourceKind, SyntaxFragmentKind,
-    TerminatorKind, ValueId, ValueKind,
+    ReactiveScopeKind, ScopeKind, SsaName, StructuredSourceHint, StructuredSourceKind,
+    SyntaxFragmentKind, TerminatorKind, ValueId, ValueKind,
 };
 
 const MAX_DIAGNOSTICS: usize = 128;
@@ -1043,14 +1043,7 @@ impl Verifier<'_> {
                         Some(instruction.origin),
                     );
                 }
-                match host {
-                    CallHost::Binding(binding) => self.binding(*binding, instruction.origin),
-                    CallHost::Function(nested) => self.function(*nested, instruction.origin),
-                    CallHost::ReactiveScope(host) => {
-                        self.binding(host.callee, instruction.origin);
-                    }
-                    CallHost::Unknown => {}
-                }
+                self.call_host(*host, instruction.origin);
             }
             HirInstructionKind::DynamicImport {
                 specifier, options, ..
@@ -1089,12 +1082,7 @@ impl Verifier<'_> {
                         Some(instruction.origin),
                     );
                 }
-                match call.host {
-                    CallHost::Binding(binding) => self.binding(binding, instruction.origin),
-                    CallHost::Function(nested) => self.function(nested, instruction.origin),
-                    CallHost::ReactiveScope(host) => self.binding(host.callee, instruction.origin),
-                    CallHost::Unknown => {}
-                }
+                self.call_host(call.host, instruction.origin);
             }
             HirInstructionKind::New { callee, arguments } => {
                 self.value(function, *callee, instruction.origin);
@@ -1636,6 +1624,23 @@ impl Verifier<'_> {
                 format!("binding{} is outside the binding arena", binding.index()),
                 Some(origin),
             );
+        }
+    }
+
+    fn call_host(&mut self, host: CallHost, origin: Origin) {
+        match host {
+            CallHost::Binding(binding) => self.binding(binding, origin),
+            CallHost::Function(function) => self.function(function, origin),
+            CallHost::ReactiveScope(host) => match host.callee {
+                Some(binding) => self.binding(binding, origin),
+                None if host.kind != ReactiveScopeKind::Configured => self.error(
+                    "FICT-HIR-CALL-HOST",
+                    "an inferred runtime reactive scope must retain its callee binding",
+                    Some(origin),
+                ),
+                None => {}
+            },
+            CallHost::Unknown => {}
         }
     }
 

@@ -467,6 +467,28 @@
       }
     },
     {
+      "id": "configured-reactive-scope-member",
+      "domain": "semantic-validation",
+      "legacy": true,
+      "compatibilityPolicy": "feature-parity",
+      "request": {
+        "code": "import { $state } from 'fict'; import * as utils from './host'; utils.renderHook(() => { const count = $state(1); return count; });",
+        "filename": "/matrix/configured-reactive-scope.js",
+        "options": {
+          "reactiveScopes": ["renderHook"],
+          "strictGuarantee": true
+        }
+      },
+      "legacyExpected": {
+        "status": "ok",
+        "codeIncludes": ["utils.renderHook", "__fictUseSignal"]
+      },
+      "currentExpected": {
+        "status": "ok",
+        "codeIncludes": ["utils.renderHook", "__fictUseSignal"]
+      }
+    },
+    {
       "id": "resolved-metadata-snapshot",
       "domain": "structured-results",
       "legacy": false,

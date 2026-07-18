@@ -402,7 +402,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
                 call(
                     4,
                     CallHost::ReactiveScope(ReactiveScopeHost {
-                        callee: BindingId::new(0),
+                        callee: Some(BindingId::new(0)),
                         callback_index: 0,
                         kind: ReactiveScopeKind::Configured,
                     }),
