@@ -254,6 +254,19 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
         },
     );
     let mut diagnostics = build.diagnostics;
+    if build
+        .frontend
+        .as_ref()
+        .is_some_and(|frontend| frontend.program_compiler_disabled())
+    {
+        result.diagnostics = normalize_diagnostics(
+            diagnostics,
+            &request.compiler_options,
+            &source_index,
+            request.include_diagnostics,
+        );
+        return result;
+    }
     let Some(hir) = build.hir else {
         if diagnostics.is_empty() {
             diagnostics.push(internal_diagnostic(
@@ -877,6 +890,21 @@ mod tests {
         let mut input = request("export const value = 1", "options.ts");
         input.options.compiler_options.inline_derived_memos = false;
         let result = analyze(input);
+        assert!(result.components.is_empty());
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn program_compiler_disable_returns_an_empty_analysis_without_internal_errors() {
+        let result = analyze(request(
+            concat!(
+                "'use fict-compiler-disable';\n",
+                "import { $state } from 'fict';\n",
+                "export function App() { const count = $state(0); return <div>{count}</div>; }",
+            ),
+            "disabled.tsx",
+        ));
+
         assert!(result.components.is_empty());
         assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
     }

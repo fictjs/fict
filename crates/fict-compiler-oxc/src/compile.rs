@@ -96,6 +96,25 @@ pub fn compile_passthrough(
     filename: &str,
     options: OxcCompileOptions,
 ) -> OxcCompileOutput {
+    compile_syntax(source, filename, options, false)
+}
+
+/// Parse, strip ordinary TypeScript, and preserve authored JSX when Fict compilation is disabled.
+#[must_use]
+pub fn compile_disabled(
+    source: &str,
+    filename: &str,
+    options: OxcCompileOptions,
+) -> OxcCompileOutput {
+    compile_syntax(source, filename, options, true)
+}
+
+fn compile_syntax(
+    source: &str,
+    filename: &str,
+    options: OxcCompileOptions,
+    preserve_jsx: bool,
+) -> OxcCompileOutput {
     let allocator = Allocator::default();
     let source_type = source_type(options);
     let parsed = Parser::new(&allocator, source, source_type)
@@ -120,7 +139,7 @@ pub fn compile_passthrough(
         return failed_output(semantic_diagnostics);
     }
 
-    if source_type.is_jsx() {
+    if source_type.is_jsx() && !preserve_jsx {
         let mut diagnostics = semantic_diagnostics;
         diagnostics.push(
             Diagnostic::new(

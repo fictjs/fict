@@ -21,7 +21,7 @@ mod typescript_namespace;
 
 pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcHandlerArtifact, OxcModuleKind, OxcSourceLanguage,
-    compile_passthrough,
+    compile_disabled, compile_passthrough,
 };
 pub use emit_codegen::emit_program;
 pub use facts::{

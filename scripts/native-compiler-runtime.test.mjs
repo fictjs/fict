@@ -1297,6 +1297,31 @@ test('native pipeline follows the authored runtime helper package family', () =>
   }
 })
 
+test('program compiler-disable preserves authored Fict syntax and wins over enable', () => {
+  const result = binding.transformSync({
+    code: `
+      'use fict-compiler'
+      'use fict-compiler-disable'
+      import { $state } from 'fict'
+      export enum Color { Red = 1 }
+      export function App() {
+        const count = $state(0)
+        return <div>{count}</div>
+      }
+    `,
+    filename: '/fixtures/compiler-disabled.tsx',
+  })
+
+  assert.deepEqual(result.diagnostics, [])
+  assert.match(result.code.trimStart(), /^['"]use fict-compiler['"];/)
+  assert.match(result.code, /['"]use fict-compiler-disable['"];/)
+  assert.match(result.code, /\$state\(0\)/)
+  assert.match(result.code, /<div>\{count\}<\/div>/)
+  assert.match(result.code, /export let Color/)
+  assert.doesNotMatch(result.code, /__fict|template\(/)
+  assert.deepEqual(result.moduleMetadata, { exports: {}, version: 1 })
+})
+
 test('dev compiler mode labels authored reactive creations for DevTools', () => {
   const source = `
     import { $effect, $memo, $state } from 'fict'

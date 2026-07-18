@@ -165,6 +165,16 @@ pub fn build_hir(
         };
     };
 
+    if frontend.program_compiler_disabled() {
+        return HirBuildOutput {
+            hir: None,
+            frontend: Some(frontend),
+            module_plan: None,
+            syntax_fragments: Vec::new(),
+            diagnostics: frontend_output.diagnostics,
+        };
+    }
+
     let policy_diagnostics = unsupported_macro_diagnostics(&frontend);
     if !policy_diagnostics.is_empty() {
         return HirBuildOutput {

@@ -11,7 +11,7 @@ use crate::{
 };
 use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions,
-    build_hir, emit_program,
+    build_hir, compile_disabled, emit_program,
 };
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
@@ -107,6 +107,13 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         },
     );
     result.diagnostics.extend(build.diagnostics);
+    if build
+        .frontend
+        .as_ref()
+        .is_some_and(|frontend| frontend.program_compiler_disabled())
+    {
+        return emit_disabled_result(result, &request, oxc_options);
+    }
     let Some(hir) = build.hir else {
         finalize_diagnostics(&mut result, &request.options);
         if !result.has_errors() {
@@ -353,6 +360,36 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         result.artifacts.clear();
     }
     attach_explain_if_requested(&mut result, &request, &source_events, &helpers);
+    result
+}
+
+fn emit_disabled_result(
+    mut result: CompileResult,
+    request: &NormalizedCompileRequest,
+    options: OxcCompileOptions,
+) -> CompileResult {
+    let output = compile_disabled(&request.code, &request.filename, options);
+    result.diagnostics.extend(output.diagnostics);
+    finalize_diagnostics(&mut result, &request.options);
+    if !result.has_errors() {
+        result.code = output.code;
+        if let Some(source_map_json) = output.source_map_json {
+            match decode_native_source_map(
+                &source_map_json,
+                request.input_source_map.as_ref(),
+                "disabled output",
+            ) {
+                Ok(map) => result.map = Some(map),
+                Err(diagnostic) => result.diagnostics.push(*diagnostic),
+            }
+        }
+    }
+    finalize_diagnostics(&mut result, &request.options);
+    if result.has_errors() {
+        result.code.clear();
+        result.map = None;
+    }
+    attach_explain_if_requested(&mut result, request, &[], &[]);
     result
 }
 
@@ -627,6 +664,31 @@ mod tests {
         assert!(!typescript.has_errors());
         assert!(typescript.code.contains("export const value = 1"));
         assert!(!typescript.code.contains(": number"));
+    }
+
+    #[test]
+    fn honors_program_compiler_disable_before_fict_and_typescript_policy() {
+        let result = compile(request(
+            concat!(
+                "'use fict-compiler';\n",
+                "'use fict-compiler-disable';\n",
+                "import { $state } from 'fict';\n",
+                "export enum Color { Red = 1 }\n",
+                "export function App() { const count = $state(0); return <div>{count}</div>; }",
+            ),
+            "disabled.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("use fict-compiler-disable"));
+        assert!(result.code.contains("$state(0)"));
+        assert!(result.code.contains("<div>{count}</div>"));
+        assert!(result.code.contains("export let Color"));
+        assert!(!result.code.contains("__fict"));
+        assert!(!result.code.contains("template("));
+        assert!(result.module_metadata.exports.is_empty());
+        assert!(result.module_metadata.hooks.is_empty());
+        assert!(result.module_metadata.namespaces.is_empty());
     }
 
     #[test]

@@ -37,7 +37,7 @@ use oxc::{
 use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage};
 
 use super::compile::{convert_diagnostics, sorted, source_type};
-use super::facts::{FrontendSourceFacts, collect_source_facts};
+use super::facts::{FictDirectiveKind, FrontendSourceFacts, collect_source_facts};
 
 const FICT_MACRO_MODULES: &[&str] = &["fict", "fict/slim"];
 const MEMO_MACRO_MODULES: &[&str] = &["fict", "fict/slim", "fict/plus"];
@@ -275,6 +275,22 @@ pub struct FrontendSummary {
     pub macro_value_uses: Vec<FrontendMacroValueUse>,
     /// Unsupported namespace macro-shaped calls in source order.
     pub namespace_macro_calls: Vec<NamespaceMacroCall>,
+}
+
+impl FrontendSummary {
+    /// Whether the file-root directive prologue explicitly disables Fict compilation.
+    #[must_use]
+    pub fn program_compiler_disabled(&self) -> bool {
+        let root_scope = self
+            .scopes
+            .iter()
+            .find(|scope| scope.parent.is_none() && scope.kind == FrontendScopeKind::Module)
+            .map(|scope| scope.id);
+        self.source_facts.directives.iter().any(|directive| {
+            Some(directive.scope) == root_scope
+                && directive.kind == FictDirectiveKind::DisableFictCompiler
+        })
+    }
 }
 
 /// Frontend result. `summary` is absent whenever parser or semantic errors exist.
