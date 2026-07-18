@@ -23,6 +23,19 @@
         "full-cross-implementation-runtime-semantic-equivalence"
       ]
     },
+    "diagnosticDeviationReview": {
+      "artifact": "scripts/fixtures/compiler_diagnostic_deviation_reviews.json",
+      "generator": "scripts/generate-compiler-diagnostic-deviation-review.mjs",
+      "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
+      "deviationCount": 264,
+      "sameStatusDeviationCount": 230,
+      "assertionLevel": "diagnostic-contract",
+      "proves": [
+        "reviewed-diagnostic-code-and-severity-deltas",
+        "reviewed-rust-guarantee-class-deltas"
+      ],
+      "doesNotProve": ["runtime-semantic-equivalence"]
+    },
     "babelSemanticOracle": {
       "inputs": "scripts/fixtures/babel_0_28_semantic_inputs.json",
       "artifact": "crates/fict-compiler/tests/babel_0_28_semantic_oracle.json",

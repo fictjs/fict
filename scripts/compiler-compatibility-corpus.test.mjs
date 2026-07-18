@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 
+import {
+  buildDiagnosticDeviationReview,
+  corpusDiagnosticReviewFixtures,
+} from './lib/compiler-diagnostic-deviation-review.mjs'
+
 const repositoryRoot = path.resolve(import.meta.dirname, '..')
 const read = relative => readFileSync(path.join(repositoryRoot, relative), 'utf8')
 const readJson = relative => JSON.parse(read(relative))
@@ -19,6 +24,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.deepEqual(Object.keys(scope.assets).sort(), [
     'babelRequestOracle',
     'babelSemanticOracle',
+    'diagnosticDeviationReview',
     'rustCodegenCorpus',
   ])
 
@@ -70,10 +76,73 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(read(request.ciTest), /binding\.transformSync\(fixture\.request\)/)
   assert.ok(read(request.generator).length > 0)
 
+  const diagnostics = scope.assets.diagnosticDeviationReview
+  const diagnosticReview = readJson(diagnostics.artifact)
+  assert.equal(diagnostics.deviationCount, diagnosticReview.deviationCount)
+  assert.equal(
+    diagnostics.sameStatusDeviationCount,
+    diagnosticReview.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus)
+      .length,
+  )
+  assert.equal(diagnostics.assertionLevel, 'diagnostic-contract')
+  assert.ok(diagnostics.proves.includes('reviewed-diagnostic-code-and-severity-deltas'))
+  assert.ok(diagnostics.proves.includes('reviewed-rust-guarantee-class-deltas'))
+  assert.ok(diagnostics.doesNotProve.includes('runtime-semantic-equivalence'))
+  assert.ok(read(diagnostics.generator).length > 0)
+  assert.ok(read(diagnostics.ciTest).length > 0)
+
   const architecture = read('docs/architecture/rust-compiler.md')
   const rollout = read('docs/features/rust-compiler-rollout/rollout.md')
   assert.match(architecture, /compiler_compatibility_evidence_scope\.json/)
   assert.match(rollout, /compiler_compatibility_evidence_scope\.json/)
+})
+
+test('requires an exact review for every Babel-to-Rust diagnostic deviation', () => {
+  const corpus = readJson(compileCorpusPath)
+  const reviewed = readJson('scripts/fixtures/compiler_diagnostic_deviation_reviews.json')
+  const observed = buildDiagnosticDeviationReview({
+    sourceAuditSha256: corpus.provenance.auditInputSha256,
+    fixtures: corpusDiagnosticReviewFixtures(corpus),
+  })
+  assert.deepEqual(reviewed, observed)
+  assert.equal(reviewed.schemaVersion, 1)
+  assert.equal(reviewed.deviationCount, 264)
+  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 264)
+  assert.equal(
+    reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
+    230,
+  )
+  assert.deepEqual(reviewed.policyCounts, {
+    'rust-structured-rejection-diagnostics': 136,
+    'diagnostic-severity-reclassification': 22,
+    'rust-warning-addition': 28,
+    'rust-warning-removal': 74,
+    'rust-warning-set-change': 4,
+  })
+  assert.ok(
+    reviewed.deviations.every(
+      deviation =>
+        reviewed.policies[deviation.policy] &&
+        deviation.babelDiagnostics.every(
+          diagnostic =>
+            /^FICT-[A-Z0-9-]+$/.test(diagnostic.code) &&
+            ['error', 'warning', 'info'].includes(diagnostic.severity),
+        ) &&
+        deviation.rustDiagnostics.every(
+          diagnostic =>
+            /^FICT-[A-Z0-9-]+$/.test(diagnostic.code) &&
+            ['error', 'warning', 'info'].includes(diagnostic.severity) &&
+            ['notApplicable', 'advisory', 'fallback', 'unsupported', 'internal'].includes(
+              diagnostic.guaranteeClass,
+            ),
+        ),
+    ),
+  )
+
+  const corpusGenerator = read('scripts/generate-rust-codegen-corpus.mjs')
+  assert.match(corpusGenerator, /buildDiagnosticDeviationReview/)
+  assert.match(corpusGenerator, /unreviewed diagnostic deviation/)
+  assert.match(corpusGenerator, /diagnostic-review-output/)
 })
 
 test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations', () => {

@@ -223,6 +223,16 @@ retains a Rust-only frozen codegen corpus:
   by one reviewed native build, plus an explicit policy for every reviewed
   audited-Babel-to-Rust status deviation.
 
+Status review is not used as a proxy for diagnostic compatibility. The
+[diagnostic deviation review](../../scripts/fixtures/compiler_diagnostic_deviation_reviews.json)
+binds the exact ordered Babel code/severity sequence and Rust
+code/severity/guarantee-class sequence for every differing fixture, including
+same-status differences. Its policies separately identify structured Rust
+rejection diagnostics, severity changes, warning additions, warning removals,
+and warning-set replacements. Corpus regeneration fails on any unreviewed
+diagnostic delta and can emit a candidate review for inspection without silently
+accepting it.
+
 The corpus records these as separate `sourceSuite*`, `babelAudit*`, and
 `rustAudit*` provenance fields. Its schema binds the 0.28.0 compiler source
 digest, built artifact digest, frozen lockfile, package-manager identity, Babel
@@ -240,9 +250,9 @@ equivalence. The 13 frontend outcomes, seven normalized analysis snapshots,
 and native runtime tests are separate evidence rather than outputs of this
 corpus.
 
-The guardrail verifies corpus size, provenance, deviation counts, test wiring,
-and retained native runtime cases so deleting the regression asset cannot
-silently leave CI green.
+The guardrail verifies corpus size, provenance, status and diagnostic deviation
+reviews, test wiring, and retained native runtime cases so deleting or changing
+the regression evidence cannot silently leave CI green.
 
 The distinct Babel 0.28 semantic oracle freezes compiled CommonJS output,
 structured warnings, and observable results for 12 runtime probes. Its

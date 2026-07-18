@@ -8,11 +8,17 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { format, resolveConfig } from 'prettier'
 
+import { buildDiagnosticDeviationReview } from './lib/compiler-diagnostic-deviation-review.mjs'
+
 const require = createRequire(import.meta.url)
 const repositoryRoot = path.resolve(import.meta.dirname, '..')
 const corpusFormatPath = path.join(
   repositoryRoot,
   'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json',
+)
+const diagnosticReviewPath = path.join(
+  repositoryRoot,
+  'scripts/fixtures/compiler_diagnostic_deviation_reviews.json',
 )
 const expectedAuditSha256 = '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f'
 const expectedExtraction = {
@@ -61,7 +67,8 @@ function parseArguments(argv) {
     options[name.slice(2)] = value
   }
   const unknown = Object.keys(options).filter(
-    name => !['input', 'legacy-root', 'native-path', 'output'].includes(name),
+    name =>
+      !['diagnostic-review-output', 'input', 'legacy-root', 'native-path', 'output'].includes(name),
   )
   if (unknown.length > 0) throw new Error(`Unknown argument(s): ${unknown.join(', ')}`)
   if (!options.input) throw new Error('--input is required')
@@ -73,6 +80,9 @@ function parseArguments(argv) {
       options['native-path'] ?? path.join(repositoryRoot, 'target/release/fict_compiler_napi.node'),
     ),
     output: path.resolve(options.output ?? corpusFormatPath),
+    diagnosticReviewOutput: options['diagnostic-review-output']
+      ? path.resolve(options['diagnostic-review-output'])
+      : null,
   }
 }
 
@@ -253,6 +263,7 @@ assert.equal(audit.results.length, expectedExtraction.unique)
 const binding = require(options.nativePath)
 const compilerInfo = binding.nativeCompilerInfo()
 const policyCounts = Object.fromEntries(Object.keys(deviationPolicies).map(policy => [policy, 0]))
+const diagnosticReviewFixtures = []
 const representedFiles = new Set()
 const uniqueInputs = new Set()
 
@@ -296,6 +307,14 @@ const fixtures = audit.results.map(row => {
     .map(diagnostic => diagnostic.code)
   const policy = deviationPolicy(babelAudit.status, status, errorCodes)
   if (policy) policyCounts[policy]++
+  const currentDiagnostics = expectedDiagnostics(first.diagnostics)
+  diagnosticReviewFixtures.push({
+    id: `${file}:${line}:${callee}`,
+    babelStatus: babelAudit.status,
+    rustStatus: status,
+    babelDiagnostics: babelAudit.diagnostics,
+    rustDiagnostics: currentDiagnostics,
+  })
 
   return {
     id: `${file}:${line}:${callee}`,
@@ -309,7 +328,7 @@ const fixtures = audit.results.map(row => {
     },
     expected: {
       status,
-      diagnostics: expectedDiagnostics(first.diagnostics),
+      diagnostics: currentDiagnostics,
       codeSha256: sha256(first.code),
     },
     deviationPolicy: policy,
@@ -318,6 +337,25 @@ const fixtures = audit.results.map(row => {
 
 assert.equal(representedFiles.size, 73)
 assert.deepEqual(policyCounts, expectedPolicyCounts)
+const diagnosticReview = buildDiagnosticDeviationReview({
+  sourceAuditSha256: expectedAuditSha256,
+  fixtures: diagnosticReviewFixtures,
+})
+if (options.diagnosticReviewOutput) {
+  writeFileSync(
+    options.diagnosticReviewOutput,
+    await format(JSON.stringify(diagnosticReview, null, 2), {
+      ...(await resolveConfig(diagnosticReviewPath)),
+      filepath: diagnosticReviewPath,
+      parser: 'json',
+    }),
+  )
+}
+assert.deepEqual(
+  diagnosticReview,
+  JSON.parse(readFileSync(diagnosticReviewPath, 'utf8')),
+  `unreviewed diagnostic deviation; inspect a candidate with --diagnostic-review-output ${diagnosticReviewPath}.candidate`,
+)
 const reviewedRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
   cwd: repositoryRoot,
   encoding: 'utf8',

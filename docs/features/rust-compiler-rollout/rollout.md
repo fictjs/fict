@@ -65,7 +65,9 @@ The machine-readable
 keeps those claim boundaries release-visible. It separately identifies the
 frozen codegen corpus, the executable semantic oracle, and the request-contract
 oracle, including whether exact Babel output and current Rust output execute in
-CI.
+CI. A separate diagnostic review binds every differing code/severity sequence,
+including same-status outcomes, and records the Rust guarantee class instead of
+treating success/error parity as sufficient diagnostic compatibility.
 
 Exact 0.28.0 behavior evidence is retained separately as frozen Babel output
 with source, artifact, dependency, and input digests. CI executes that output
