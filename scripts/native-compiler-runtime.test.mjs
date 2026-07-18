@@ -708,6 +708,29 @@ test('derived cycles fail closed even when strict guarantees are disabled', () =
   )
 })
 
+test('standard decorators fail closed before emitting unsupported syntax', () => {
+  const result = binding.transformSync({
+    code: `
+      function sealed(value: unknown) { return value }
+      @sealed
+      export class Service {}
+    `,
+    filename: '/fixtures/standard-decorator.ts',
+  })
+
+  assert.equal(result.code, '')
+  assert.deepEqual(
+    result.diagnostics.map(({ code, help, severity }) => ({ code, help, severity })),
+    [
+      {
+        code: 'FICT-TS-DECORATOR-STANDARD',
+        help: 'lower standard decorators with a target-compatible transform, or remove them, before native Fict compilation',
+        severity: 'error',
+      },
+    ],
+  )
+})
+
 test('reserved compiler macros fail closed without direct Fict imports', () => {
   for (const [name, source, expectedCode] of [
     [

@@ -556,6 +556,16 @@ that cannot be synchronized through the namespace object safely. Export the
 shared binding, or keep its declaration and all uses in the same namespace
 segment.
 
+### FICT-TS-DECORATOR-STANDARD: Standard decorators require lowering
+
+**Severity:** Error
+
+The pinned OXC transform preserves standard decorator syntax instead of
+producing JavaScript that Fict's supported Node targets can execute. Lower the
+decorators with a target-compatible transform, or remove them, before native
+Fict compilation. Legacy TypeScript parameter decorators remain supported by
+the explicit legacy lowering path.
+
 ### FICT-USING-UNSUPPORTED: Explicit resource management is not modeled
 
 **Severity:** Error

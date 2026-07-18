@@ -12,20 +12,22 @@
     "uniqueFixtures": 1892,
     "scannedLegacyTestFiles": 107,
     "representedLegacyTestFiles": 73,
-    "reviewedRevision": "db1ba48ece994633a726f9b053493d5f316788c7",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-ef7aa48fbf6bf9472e6525372b408f5561df44ab561ac1b789b8e415fb74821b"
+    "reviewedRevision": "5ef8af44cff318de165a3935541709dd17fefd38",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-436187dbff93f47495b8570257422fc14636bb0222c5c94d57fe78c0f0c783d2"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the audited Babel 0.30.1 legacy backend.",
     "narrow-component-role": "Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.",
     "structured-hook-return": "Rust 0.31 enforces readonly and setter rules for structured same-module hook return accessors.",
-    "namespace-macro-fail-closed": "Rust 0.31 rejects compiler macros invoked through a Fict namespace instead of leaving an uncompiled runtime call."
+    "namespace-macro-fail-closed": "Rust 0.31 rejects compiler macros invoked through a Fict namespace instead of leaving an uncompiled runtime call.",
+    "standard-decorator-fail-closed": "Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript."
   },
   "deviationPolicyCounts": {
     "rust-capability-expansion": 22,
     "narrow-component-role": 24,
     "structured-hook-return": 6,
-    "namespace-macro-fail-closed": 1
+    "namespace-macro-fail-closed": 1,
+    "standard-decorator-fail-closed": 3
   },
   "fixtures": [
     {
@@ -3809,11 +3811,17 @@
         "codeSha256": "d261a7bf7356f8e7d50dd5c780e713fe8aca7792209a550b565772504b6bcdf0"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "a179cc2b9041d2815b4575b253ec8194fc0f92e5de0d884d05cc8de8e05f43b1"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-TS-DECORATOR-STANDARD",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": null
+      "deviationPolicy": "standard-decorator-fail-closed"
     },
     {
       "id": "packages/compiler/test/class-decorators.test.ts:46:compile",
@@ -3832,11 +3840,17 @@
         "codeSha256": "e6bc69632fad57d3c3d3d47d453272fa4e29454353aeb1bc104624977c41790d"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "922ff0e71e06b387ebc08d266ab77e51634ded3104c110cbc4f00683d966d9ee"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-TS-DECORATOR-STANDARD",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": null
+      "deviationPolicy": "standard-decorator-fail-closed"
     },
     {
       "id": "packages/compiler/test/class-decorators.test.ts:59:compile",
@@ -3855,11 +3869,22 @@
         "codeSha256": "6db01cae64ca6ee18ae2c156974118cce7e09315686a7789d919f636971cc46a"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "800253975e30daa394482c44e01cf7976defcfc7c021300079f1ccb4d0632182"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-TS-DECORATOR-STANDARD",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          },
+          {
+            "code": "FICT-TS-DECORATOR-STANDARD",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": null
+      "deviationPolicy": "standard-decorator-fail-closed"
     },
     {
       "id": "packages/compiler/test/class-static-order-runtime.test.ts:36:compileModule",

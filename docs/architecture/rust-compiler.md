@@ -181,6 +181,12 @@ cannot be delegated safely, including merged/nested namespaces, mutable
 namespace exports, CTS import-equals/export-assignment, decorators, source
 extension rewriting, and query/fragment identity.
 
+Legacy TypeScript parameter decorators are lowered through OXC's explicit
+legacy mode. Standard decorators fail closed with
+`FICT-TS-DECORATOR-STANDARD` until a target-compatible lowering is connected;
+the compiler MUST NOT return success while preserving raw decorator syntax in
+JavaScript output.
+
 The compatibility pass MUST build an explicit namespace plan with declaration
 segments, exported/internal binding ownership, mutable export synchronization,
 metadata paths, source order, and origins. A verifier MUST reject an unresolved

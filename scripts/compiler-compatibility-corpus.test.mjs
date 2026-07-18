@@ -114,6 +114,7 @@ test('retains the Rust-only frozen codegen corpus and reviewed Babel audit devia
     'narrow-component-role': 24,
     'structured-hook-return': 6,
     'namespace-macro-fail-closed': 1,
+    'standard-decorator-fail-closed': 3,
   })
 })
 

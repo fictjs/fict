@@ -62,8 +62,6 @@ pub enum TypeScriptLoweringOwner {
     Oxc,
     /// Requires Fict compatibility lowering before the OXC pass.
     FictCompatibility,
-    /// Preserved as controlled syntax for a later emitter/tool.
-    Preserve,
     /// Erased as type-only syntax.
     Erase,
     /// Unsupported for the selected module/decorator profile.
@@ -141,7 +139,7 @@ pub struct TypeScriptCompatibilityPlan {
     pub requires_fict_lowering: bool,
     /// Whether legacy parameter decorator transformation is required.
     pub has_legacy_parameter_decorators: bool,
-    /// Whether standard decorators must remain preserved.
+    /// Whether standard decorators require a target-compatible lowering.
     pub has_standard_decorators: bool,
     /// Whether both decorator profiles occur and therefore require compatibility handling.
     pub has_mixed_decorator_profiles: bool,
@@ -357,12 +355,22 @@ fn unsupported_diagnostics(plan: &TypeScriptCompatibilityPlan) -> Vec<Diagnostic
                 "FICT-TS-NAMESPACE-DISABLED",
                 "runtime TypeScript namespaces are disabled by compiler options",
             ),
+            TypeScriptFeatureKind::StandardDecorator => (
+                "FICT-TS-DECORATOR-STANDARD",
+                "standard decorators require a runnable lowering before native emission",
+            ),
             _ => (
                 "FICT-TS-UNSUPPORTED",
                 "unsupported TypeScript source profile",
             ),
         };
-        diagnostics.push(unsupported(code, message, feature.span));
+        let mut diagnostic = unsupported(code, message, feature.span);
+        if code == "FICT-TS-DECORATOR-STANDARD" {
+            diagnostic = diagnostic.with_help(
+                "lower standard decorators with a target-compatible transform, or remove them, before native Fict compilation",
+            );
+        }
+        diagnostics.push(diagnostic);
     }
     if plan.has_mixed_decorator_profiles {
         let span = plan
@@ -579,7 +587,7 @@ impl<'a> Visit<'a> for CompatibilityCollector {
             self.has_standard_decorators = true;
             self.add(
                 TypeScriptFeatureKind::StandardDecorator,
-                TypeScriptLoweringOwner::Preserve,
+                TypeScriptLoweringOwner::Unsupported,
                 decorator.span,
             );
         }

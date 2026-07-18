@@ -7872,12 +7872,10 @@ fn diagnoses_shallow_inline_non_event_jsx_function_props() {
     );
 }
 #[test]
-fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing() {
+fn retains_classes_with_exact_definition_and_initializer_timing() {
     let source = r#"
-        function build(base, key, decorate, staticValue, instanceValue, methodValue) {
-            @decorate('class')
+        function build(base, key, staticValue, instanceValue, methodValue) {
             class Example extends base() {
-                @decorate('field')
                 [key()] = instanceValue();
                 accessor current = instanceValue();
                 static [key()] = staticValue();
@@ -7944,28 +7942,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
         .copied()
         .find(|instruction| !authored(instruction).contains("class Example"))
         .expect("class expression fragment");
-    let decorator_instructions: Vec<_> = instructions
-        .iter()
-        .copied()
-        .filter(|instruction| {
-            matches!(
-                instruction.kind,
-                HirInstructionKind::SyntaxFragment { fragment, .. }
-                    if fragment_kind(fragment) == SyntaxFragmentKind::Decorator
-            )
-        })
-        .collect();
-    assert_eq!(decorator_instructions.len(), 2);
-    assert!(
-        decorator_instructions
-            .iter()
-            .any(|instruction| authored(instruction).contains("decorate('class')"))
-    );
-    assert!(
-        decorator_instructions
-            .iter()
-            .any(|instruction| authored(instruction).contains("decorate('field')"))
-    );
     let HirInstructionKind::SyntaxFragment {
         fragment: declaration_fragment,
         inputs: declaration_inputs,
@@ -7989,7 +7965,7 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
         authored(expression_class)
     );
     assert!(
-        hir.syntax_fragments[declaration_fragment.as_usize()]
+        !hir.syntax_fragments[declaration_fragment.as_usize()]
             .summary
             .contains_decorators
     );
@@ -7998,9 +7974,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
             .summary
             .contains_decorators
     );
-    for decorator in &decorator_instructions {
-        assert!(declaration_inputs.contains(&decorator.result.expect("decorator value")));
-    }
     let summary_names = |fragment: fict_hir::SyntaxFragmentId| {
         hir.syntax_fragments[fragment.as_usize()]
             .summary
@@ -8012,7 +7985,6 @@ fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing()
     let declaration_references = summary_names(*declaration_fragment);
     assert!(declaration_references.contains(&"base"));
     assert!(declaration_references.contains(&"key"));
-    assert!(declaration_references.contains(&"decorate"));
     assert!(declaration_references.contains(&"staticValue"));
     assert!(!declaration_references.contains(&"instanceValue"));
     assert!(!declaration_references.contains(&"methodValue"));

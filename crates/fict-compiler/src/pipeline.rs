@@ -739,6 +739,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_standard_decorators_before_emitting_unrunnable_javascript() {
+        let result = compile(request(
+            "function sealed(value: unknown) { return value; } @sealed export class Service {}",
+            "decorator.ts",
+        ));
+
+        assert!(result.has_errors());
+        assert!(result.code.is_empty());
+        let diagnostic = result
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-TS-DECORATOR-STANDARD")
+            .unwrap_or_else(|| panic!("{:?}", result.diagnostics));
+        assert!(
+            diagnostic
+                .help
+                .as_deref()
+                .is_some_and(|help| help.contains("target-compatible transform"))
+        );
+    }
+
+    #[test]
     fn emits_reactive_tsx_modules_as_commonjs() {
         let mut input = request(
             "import { $state } from 'fict'; export default function App() { let count = $state(0); return <button onClick={() => count++}>{count}</button>; }",

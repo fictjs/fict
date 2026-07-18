@@ -305,19 +305,27 @@ fn import_equals_and_export_assignment_require_commonjs_mode() {
 }
 
 #[test]
-fn preserves_standard_decorators_and_lowers_legacy_parameter_decorators() {
+fn rejects_unlowered_standard_decorators_and_lowers_legacy_parameter_decorators() {
     let standard = compile_passthrough(
         "@sealed class Service { @logged accessor value: number = 1; }",
         "standard.ts",
         options(OxcModuleKind::Module),
     );
-    assert!(
-        standard.diagnostics.is_empty(),
-        "{:?}",
-        standard.diagnostics
+    assert!(standard.code.is_empty());
+    assert_eq!(
+        standard
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        ["FICT-TS-DECORATOR-STANDARD", "FICT-TS-DECORATOR-STANDARD"]
     );
-    assert!(standard.code.contains("@sealed"));
-    assert!(standard.code.contains("@logged"));
+    assert!(standard.diagnostics.iter().all(|diagnostic| {
+        diagnostic
+            .help
+            .as_deref()
+            .is_some_and(|help| help.contains("target-compatible transform"))
+    }));
 
     let legacy = compile_passthrough(
         "class Service { constructor(@inject dependency: Dependency) {} }",

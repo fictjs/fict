@@ -121,7 +121,7 @@ fn lowers_cts_import_equals_and_export_assignment() {
 }
 
 #[test]
-fn preserves_standard_decorators_and_lowers_legacy_parameter_decorators() {
+fn pinned_oxc_preserves_standard_decorators_and_lowers_legacy_parameter_decorators() {
     let standard = transform(
         "@sealed class Service { @logged accessor value: number = 1; }",
         "standard-decorator.ts",

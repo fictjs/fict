@@ -151,19 +151,20 @@ does not graduate it or make it a Core default.
 ### Audited Babel 0.28 behavior differences
 
 The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,892-case
-compile corpus currently has 53 intentional success/error status differences:
-31 inputs accepted by Babel are rejected by Rust, and 22 inputs rejected by
+compile corpus currently has 56 intentional success/error status differences:
+34 inputs accepted by Babel are rejected by Rust, and 22 inputs rejected by
 Babel are accepted by Rust. These are upgrade policies, not an automatic claim
 that every newly accepted case has identical runtime behavior.
 
-| Compatibility policy          | Count | 0.31 behavior and migration action                                                                                                                                                                    |
-| ----------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `narrow-component-role`       |    24 | Component-context macros require an explicit component owner. Move macros out of anonymous, indirect, assigned, wrapped, registry, or object-member functions into a directly declared component.     |
-| `structured-hook-return`      |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor. |
-| `namespace-macro-fail-closed` |     1 | Compiler macros called through a Fict namespace are rejected. Import `$state`, `$memo`, and other compiler macros by name.                                                                            |
-| `rust-capability-expansion`   |    22 | Rust accepts reviewed TypeScript, control-flow, or analysis inputs that Babel rejected. Add a runtime regression before relying on a newly accepted construct.                                        |
+| Compatibility policy             | Count | 0.31 behavior and migration action                                                                                                                                                                    |
+| -------------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `narrow-component-role`          |    24 | Component-context macros require an explicit component owner. Move macros out of anonymous, indirect, assigned, wrapped, registry, or object-member functions into a directly declared component.     |
+| `structured-hook-return`         |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor. |
+| `namespace-macro-fail-closed`    |     1 | Compiler macros called through a Fict namespace are rejected. Import `$state`, `$memo`, and other compiler macros by name.                                                                            |
+| `standard-decorator-fail-closed` |     3 | Standard decorators must be lowered by a target-compatible transform before native Fict compilation, or removed; raw decorator syntax is never emitted as successful JavaScript.                      |
+| `rust-capability-expansion`      |    22 | Rust accepts reviewed TypeScript, control-flow, or analysis inputs that Babel rejected. Add a runtime regression before relying on a newly accepted construct.                                        |
 
-The three Rust-rejection policies have direct source migrations:
+The four Rust-rejection policies have direct source migrations:
 
 ```tsx
 // narrow-component-role: give the reactive owner a direct declaration.
@@ -191,11 +192,15 @@ counter.count(1) // or counter.setCount(1), not counter.count = 1
 // namespace-macro-fail-closed: import compiler macros by name.
 import { $memo } from 'fict'
 const doubled = $memo(() => count * 2) // not Fict.$memo(...)
+
+// standard-decorator-fail-closed: feed Fict decorator-free JavaScript/TypeScript.
+// Before native compilation, run your target decorator transform or remove @sealed.
+class Service {}
 ```
 
 The emitted diagnostics preserve these actions as structured `help`: declare a
-component or hook directly, call/expose a Hook setter, or replace a namespace
-macro access with a named import. Do not suppress these errors; doing so would
+component or hook directly, call/expose a Hook setter, replace a namespace
+macro access with a named import, or pre-lower standard decorators. Do not suppress these errors; doing so would
 leave compiler-only syntax or accessor writes with no supported runtime
 meaning.
 
