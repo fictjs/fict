@@ -4,11 +4,17 @@ use oxc::{
     ast::{
         AstBuilder, NONE,
         ast::{
-            Argument, BindingPattern, Expression, FormalParameter, FormalParameterKind,
-            FormalParameters, FunctionBody, IdentifierName, IfStatement, Statement,
+            Argument, ArrowFunctionExpression, AssignmentTarget, AssignmentTargetMaybeDefault,
+            AssignmentTargetProperty, AssignmentTargetRest, BindingPattern, Class, Expression,
+            ForInStatement, ForOfStatement, ForStatement, ForStatementInit, ForStatementLeft,
+            FormalParameter, FormalParameterKind, FormalParameters, Function, FunctionBody,
+            IdentifierName, IfStatement, Statement, VariableDeclaration, VariableDeclarationKind,
+            VariableDeclarator,
         },
     },
+    ast_visit::{VisitMut, walk_mut},
     span::Span,
+    syntax::{operator::AssignmentOperator, scope::ScopeFlags},
 };
 use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Clone)]
@@ -86,22 +92,27 @@ pub(super) fn lower_statements<'a>(
             };
             count
         };
+        let statement_span = statement.span;
         let test = statement.test.clone_in(allocator);
-        let dispatcher = statement_dispatcher_expression(
+        let (dispatcher, hoisted_vars) = statement_dispatcher_expression(
             allocator,
             rewrite,
             statement,
             &statements[index + 1..index + 1 + remove_count],
         );
         let replacement =
-            dispatcher_binding_expression(allocator, rewrite, test, dispatcher, statement.span);
+            dispatcher_binding_expression(allocator, rewrite, test, dispatcher, statement_span);
         statements[index] = Statement::new_return_statement(
-            statement.span,
+            statement_span,
             Some(replacement),
             &AstBuilder::new(allocator),
         );
         for _ in 0..remove_count {
             statements.remove(index + 1);
+        }
+        if let Some(declaration) = hoisted_var_statement(allocator, hoisted_vars, statement_span) {
+            statements.insert(index, declaration);
+            index += 1;
         }
         matched.insert(location);
         index += 1;
@@ -120,7 +131,7 @@ fn statement_dispatcher_expression<'a>(
     rewrite: &ConditionalReturnRewrite,
     statement: &IfStatement<'a>,
     fallthrough: &[Statement<'a>],
-) -> Expression<'a> {
+) -> (Expression<'a>, Vec<(String, Span)>) {
     let builder = AstBuilder::new(allocator);
     let selector = allocator.alloc_str(&rewrite.target);
     let mut statements = ArenaVec::new_in(&allocator);
@@ -136,6 +147,10 @@ fn statement_dispatcher_expression<'a>(
             .iter()
             .map(|statement| statement.clone_in(allocator)),
     );
+    let mut hoister = DispatcherVarHoister::new(allocator);
+    for statement in &mut statements {
+        hoister.visit_statement(statement);
+    }
     let pattern = BindingPattern::new_binding_identifier(statement.span, selector, &builder);
     let parameter = FormalParameter::new(
         statement.span,
@@ -162,16 +177,254 @@ fn statement_dispatcher_expression<'a>(
         statements,
         &builder,
     );
-    Expression::new_arrow_function_expression(
-        statement.span,
-        false,
-        false,
-        NONE,
-        parameters,
-        NONE,
-        body,
-        &builder,
+    (
+        Expression::new_arrow_function_expression(
+            statement.span,
+            false,
+            false,
+            NONE,
+            parameters,
+            NONE,
+            body,
+            &builder,
+        ),
+        hoister.bindings,
     )
+}
+
+struct DispatcherVarHoister<'a> {
+    allocator: &'a Allocator,
+    bindings: Vec<(String, Span)>,
+    seen: BTreeSet<String>,
+}
+
+impl<'a> DispatcherVarHoister<'a> {
+    fn new(allocator: &'a Allocator) -> Self {
+        Self {
+            allocator,
+            bindings: Vec::new(),
+            seen: BTreeSet::new(),
+        }
+    }
+
+    fn record_pattern(&mut self, pattern: &BindingPattern<'a>) {
+        for identifier in pattern.get_binding_identifiers() {
+            let name = identifier.name.to_string();
+            if self.seen.insert(name.clone()) {
+                self.bindings.push((name, identifier.span));
+            }
+        }
+    }
+
+    fn declaration_expression(
+        &mut self,
+        declaration: &VariableDeclaration<'a>,
+    ) -> Option<Expression<'a>> {
+        let mut assignments = ArenaVec::new_in(&self.allocator);
+        for declarator in &declaration.declarations {
+            self.record_pattern(&declarator.id);
+            let Some(initializer) = &declarator.init else {
+                continue;
+            };
+            let target = binding_pattern_assignment_target(
+                self.allocator,
+                declarator.id.clone_in(self.allocator),
+            );
+            assignments.push(Expression::new_assignment_expression(
+                declarator.span,
+                AssignmentOperator::Assign,
+                target,
+                initializer.clone_in(self.allocator),
+                &AstBuilder::new(self.allocator),
+            ));
+        }
+        match assignments.len() {
+            0 => None,
+            1 => assignments.pop(),
+            _ => Some(Expression::new_sequence_expression(
+                declaration.span,
+                assignments,
+                &AstBuilder::new(self.allocator),
+            )),
+        }
+    }
+
+    fn rewrite_loop_left(&mut self, left: &mut ForStatementLeft<'a>) {
+        let ForStatementLeft::VariableDeclaration(declaration) = left else {
+            return;
+        };
+        if declaration.kind != VariableDeclarationKind::Var || declaration.declarations.len() != 1 {
+            return;
+        }
+        let declarator = &declaration.declarations[0];
+        self.record_pattern(&declarator.id);
+        *left = ForStatementLeft::from(binding_pattern_assignment_target(
+            self.allocator,
+            declarator.id.clone_in(self.allocator),
+        ));
+    }
+}
+
+impl<'a> VisitMut<'a> for DispatcherVarHoister<'a> {
+    fn visit_statement(&mut self, statement: &mut Statement<'a>) {
+        if let Statement::VariableDeclaration(declaration) = statement
+            && declaration.kind == VariableDeclarationKind::Var
+        {
+            let span = declaration.span;
+            *statement = self.declaration_expression(declaration).map_or_else(
+                || Statement::new_empty_statement(span, &AstBuilder::new(self.allocator)),
+                |expression| {
+                    Statement::new_expression_statement(
+                        span,
+                        expression,
+                        &AstBuilder::new(self.allocator),
+                    )
+                },
+            );
+            return;
+        }
+        walk_mut::walk_statement(self, statement);
+    }
+
+    fn visit_for_statement(&mut self, statement: &mut ForStatement<'a>) {
+        if let Some(ForStatementInit::VariableDeclaration(declaration)) = &statement.init
+            && declaration.kind == VariableDeclarationKind::Var
+        {
+            statement.init = self
+                .declaration_expression(declaration)
+                .map(ForStatementInit::from);
+        }
+        walk_mut::walk_for_statement(self, statement);
+    }
+
+    fn visit_for_in_statement(&mut self, statement: &mut ForInStatement<'a>) {
+        self.rewrite_loop_left(&mut statement.left);
+        walk_mut::walk_for_in_statement(self, statement);
+    }
+
+    fn visit_for_of_statement(&mut self, statement: &mut ForOfStatement<'a>) {
+        self.rewrite_loop_left(&mut statement.left);
+        walk_mut::walk_for_of_statement(self, statement);
+    }
+
+    fn visit_function(&mut self, _function: &mut Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &mut ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _class: &mut Class<'a>) {}
+}
+
+fn binding_pattern_assignment_target<'a>(
+    allocator: &'a Allocator,
+    pattern: BindingPattern<'a>,
+) -> AssignmentTarget<'a> {
+    let builder = AstBuilder::new(allocator);
+    match pattern {
+        BindingPattern::BindingIdentifier(identifier) => {
+            AssignmentTarget::new_assignment_target_identifier(
+                identifier.span,
+                identifier.name,
+                &builder,
+            )
+        }
+        BindingPattern::AssignmentPattern(pattern) => {
+            binding_pattern_assignment_target(allocator, pattern.unbox().left)
+        }
+        BindingPattern::ArrayPattern(pattern) => {
+            let pattern = pattern.unbox();
+            let elements = ArenaVec::from_iter_in(
+                pattern.elements.into_iter().map(|element| {
+                    element.map(|element| binding_pattern_assignment_value(allocator, element))
+                }),
+                &allocator,
+            );
+            let rest = pattern.rest.map(|rest| {
+                let rest = rest.unbox();
+                AssignmentTargetRest::boxed(
+                    rest.span,
+                    binding_pattern_assignment_target(allocator, rest.argument),
+                    &builder,
+                )
+            });
+            AssignmentTarget::new_array_assignment_target(pattern.span, elements, rest, &builder)
+        }
+        BindingPattern::ObjectPattern(pattern) => {
+            let pattern = pattern.unbox();
+            let properties = ArenaVec::from_iter_in(
+                pattern.properties.into_iter().map(|property| {
+                    AssignmentTargetProperty::new_assignment_target_property_property(
+                        property.span,
+                        property.key,
+                        binding_pattern_assignment_value(allocator, property.value),
+                        property.computed,
+                        &builder,
+                    )
+                }),
+                &allocator,
+            );
+            let rest = pattern.rest.map(|rest| {
+                let rest = rest.unbox();
+                AssignmentTargetRest::boxed(
+                    rest.span,
+                    binding_pattern_assignment_target(allocator, rest.argument),
+                    &builder,
+                )
+            });
+            AssignmentTarget::new_object_assignment_target(pattern.span, properties, rest, &builder)
+        }
+    }
+}
+
+fn binding_pattern_assignment_value<'a>(
+    allocator: &'a Allocator,
+    pattern: BindingPattern<'a>,
+) -> AssignmentTargetMaybeDefault<'a> {
+    if let BindingPattern::AssignmentPattern(pattern) = pattern {
+        let pattern = pattern.unbox();
+        return AssignmentTargetMaybeDefault::new_assignment_target_with_default(
+            pattern.span,
+            binding_pattern_assignment_target(allocator, pattern.left),
+            pattern.right,
+            &AstBuilder::new(allocator),
+        );
+    }
+    AssignmentTargetMaybeDefault::from(binding_pattern_assignment_target(allocator, pattern))
+}
+
+fn hoisted_var_statement<'a>(
+    allocator: &'a Allocator,
+    bindings: Vec<(String, Span)>,
+    span: Span,
+) -> Option<Statement<'a>> {
+    if bindings.is_empty() {
+        return None;
+    }
+    let builder = AstBuilder::new(allocator);
+    let declarations = ArenaVec::from_iter_in(
+        bindings.into_iter().map(|(name, binding_span)| {
+            VariableDeclarator::new(
+                binding_span,
+                VariableDeclarationKind::Var,
+                BindingPattern::new_binding_identifier(
+                    binding_span,
+                    allocator.alloc_str(&name),
+                    &builder,
+                ),
+                NONE,
+                None,
+                false,
+                &builder,
+            )
+        }),
+        &allocator,
+    );
+    Some(Statement::new_variable_declaration(
+        span,
+        VariableDeclarationKind::Var,
+        declarations,
+        false,
+        &builder,
+    ))
 }
 
 fn statement_returns_value(statement: &Statement<'_>) -> bool {

@@ -400,13 +400,32 @@ test('reactive conditional returns preserve branch statements and local scope', 
         show = !show
         count++
       }
+      __fictMig004Hoisted = 'BEFORE'
+      events.push('before:' + __fictMig004Hoisted)
       if (show) {
         {
-          events.push('on')
           const label = count + 1
           var __fictMig004Hoisted = 'LOCAL'
-          events.push('on:' + __fictMig004Hoisted)
-          return <p data-id="conditional-return">{label}</p>
+          var { seed = 2, ...details } = { seed: 1, extra: 'REST' }
+          var [first, ...tail] = [1, 2]
+          var total = tail[0] + 1
+          events.push(
+            'on:' +
+              __fictMig004Hoisted +
+              ':' +
+              seed +
+              ':' +
+              first +
+              ':' +
+              total +
+              ':' +
+              details.extra,
+          )
+          return (
+            <p data-id="conditional-return">
+              {label}:{seed}:{first}:{total}:{details.extra}
+            </p>
+          )
         }
       }
       const label = count + 10
@@ -414,7 +433,15 @@ test('reactive conditional returns preserve branch statements and local scope', 
         'off:' +
           typeof __fictMig004Hoisted +
           ':' +
-          (__fictMig004Hoisted ?? 'local-undefined'),
+          (__fictMig004Hoisted ?? 'local-undefined') +
+          ':' +
+          seed +
+          ':' +
+          first +
+          ':' +
+          total +
+          ':' +
+          details.extra,
       )
       return <p data-id="conditional-return">{label}</p>
     }
@@ -426,6 +453,10 @@ test('reactive conditional returns preserve branch statements and local scope', 
     export function update() {
       toggle()
     }
+
+    export function globalValue() {
+      return globalThis.__fictMig004Hoisted
+    }
   `
   const compiled = await compileAndImport(source, 'conditional-return-statements')
   const container = document.createElement('div')
@@ -433,23 +464,33 @@ test('reactive conditional returns preserve branch statements and local scope', 
   const dispose = compiled.mount(container)
   await flushRuntime()
 
-  assert.equal(container.querySelector('[data-id="conditional-return"]')?.textContent, '2')
-  assert.deepEqual(compiled.events, ['on', 'on:LOCAL'])
+  assert.equal(
+    container.querySelector('[data-id="conditional-return"]')?.textContent,
+    '2:1:1:3:REST',
+  )
+  assert.equal(compiled.globalValue(), 'GLOBAL')
+  assert.deepEqual(compiled.events, ['before:BEFORE', 'on:LOCAL:1:1:3:REST'])
 
   compiled.update()
   await flushRuntime()
   assert.equal(container.querySelector('[data-id="conditional-return"]')?.textContent, '12')
-  assert.deepEqual(compiled.events, ['on', 'on:LOCAL', 'off:undefined:local-undefined'])
+  assert.deepEqual(compiled.events, [
+    'before:BEFORE',
+    'on:LOCAL:1:1:3:REST',
+    'off:string:LOCAL:1:1:3:REST',
+  ])
 
   compiled.update()
   await flushRuntime()
-  assert.equal(container.querySelector('[data-id="conditional-return"]')?.textContent, '4')
+  assert.equal(
+    container.querySelector('[data-id="conditional-return"]')?.textContent,
+    '4:1:1:3:REST',
+  )
   assert.deepEqual(compiled.events, [
-    'on',
-    'on:LOCAL',
-    'off:undefined:local-undefined',
-    'on',
-    'on:LOCAL',
+    'before:BEFORE',
+    'on:LOCAL:1:1:3:REST',
+    'off:string:LOCAL:1:1:3:REST',
+    'on:LOCAL:1:1:3:REST',
   ])
 
   dispose()
