@@ -12,6 +12,7 @@
     "src/**/*.ts",
     "test/list-helpers.test.ts",
     "test/binding-edge-cases.test.ts",
+    "test/runtime-abi.test.ts",
     "../compiler/src/types/**/*.d.ts"
   ],
   "exclude": ["node_modules", "dist"]

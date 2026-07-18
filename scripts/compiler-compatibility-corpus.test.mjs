@@ -380,6 +380,24 @@ test('maps the Babel delegated-event parity domain to the generated runtime ABI 
   assert.match(packageJson, /guardrails:runtime-abi[^\n]+delegated-events-parity\.test\.ts/)
 })
 
+test('ports the Babel runtime ABI domain to live generated-manifest exports', () => {
+  const runtimeAbi = read('packages/runtime/test/runtime-abi.test.ts')
+  for (const behavior of [
+    'exports every manifest helper from its declared runtime subpath',
+    'exports callable compiler helpers with the declared value shape',
+    'keeps signal, memo, and effect helper contracts usable',
+  ]) {
+    assert.match(runtimeAbi, new RegExp(behavior))
+  }
+  assert.match(runtimeAbi, /runtime-abi\.json/)
+  assert.match(runtimeAbi, /Object\.prototype\.hasOwnProperty\.call/)
+  assert.match(runtimeAbi, /__resetReactiveState/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /guardrails:runtime-abi[^\n]+test\/runtime-abi\.test\.ts/)
+  const testConfig = read('packages/runtime/tsconfig.test.json')
+  assert.match(testConfig, /test\/runtime-abi\.test\.ts/)
+})
+
 test('ports the Babel module-metadata safety domain to the native graph host', () => {
   const safety = read('packages/compiler/test/module-metadata-safety.test.ts')
   for (const behavior of [
