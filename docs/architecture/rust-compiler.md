@@ -210,7 +210,11 @@ separate decision.
 ### Frozen regression evidence
 
 Removing the executable Babel backend does not remove its reviewed behavior
-evidence. The repository retains a Rust-only frozen codegen corpus:
+evidence. The machine-readable
+[compatibility evidence scope](../../scripts/fixtures/compiler_compatibility_evidence_scope.json)
+keeps codegen regression, request-contract, and executable semantic evidence
+separate and records what each asset does and does not prove. The repository
+retains a Rust-only frozen codegen corpus:
 
 - 1,892 unique source-and-option inputs extracted from the 0.28.0 test suite;
 - Babel status, diagnostic codes, and output hashes regenerated with the exact
@@ -255,7 +259,7 @@ dependencies, update-expression order, and numeric edge cases. It is a real
 semantic gate for those domains, not a claim of full language equivalence.
 
 A second full-request matrix prevents the semantic probes from collapsing every
-input to `.tsx`/CommonJS. Sixteen of its 26 reviewed requests freeze output from
+input to `.tsx`/CommonJS. Eighteen of its 30 reviewed requests freeze output from
 the exact 0.28.0 Babel preset build, including its own source and artifact
 digests. The matrix covers `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`,
 and `.cjs`; explicit language and module-kind overrides; strict-default and
@@ -267,7 +271,7 @@ intentional status differences rather than hiding them: Rust accepts CTS
 top-level returns that Babel rejected, while JSX in a `.js` file now requires a
 `.jsx` filename or explicit `language: "jsx"`. Source maps compare normalized
 authored identities because Babel resolves `sourceRoot` into `sources`, whereas
-the native response preserves the original structured fields. The ten
+the native response preserves the original structured fields. The twelve
 native-only host-protocol rows are explicitly marked and are not presented as
 Babel equivalence evidence.
 

@@ -10,7 +10,71 @@ const readJson = relative => JSON.parse(read(relative))
 const sha256Pattern = /^[0-9a-f]{64}$/
 const revisionPattern = /^[0-9a-f]{40}$/
 const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
+const evidenceScopePath = 'scripts/fixtures/compiler_compatibility_evidence_scope.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
+
+test('keeps codegen, request, and semantic compatibility evidence roles distinct', () => {
+  const scope = readJson(evidenceScopePath)
+  assert.equal(scope.schemaVersion, 1)
+  assert.deepEqual(Object.keys(scope.assets).sort(), [
+    'babelRequestOracle',
+    'babelSemanticOracle',
+    'rustCodegenCorpus',
+  ])
+
+  const codegen = scope.assets.rustCodegenCorpus
+  const codegenCorpus = readJson(codegen.artifact)
+  assert.equal(codegen.fixtureCount, codegenCorpus.fixtures.length)
+  assert.equal(codegen.exactBabelCompilerExecutedDuringGeneration, true)
+  assert.equal(codegen.frozenBabelOutputExecutedInCi, false)
+  assert.equal(codegen.currentRustOutputExecutedInCi, true)
+  assert.equal(codegen.assertionLevel, 'codegen-regression')
+  assert.ok(codegen.proves.includes('exact-babel-0.28-audit-at-generation'))
+  assert.ok(codegen.proves.includes('current-rust-output-determinism'))
+  assert.ok(codegen.doesNotProve.includes('full-cross-implementation-runtime-semantic-equivalence'))
+  assert.equal(codegen.generator, 'scripts/generate-rust-codegen-corpus.mjs')
+  for (const ciTest of codegen.ciTests) assert.ok(read(ciTest).length > 0, ciTest)
+
+  const semantic = scope.assets.babelSemanticOracle
+  const semanticInputs = readJson(semantic.inputs)
+  const semanticOracle = readJson(semantic.artifact)
+  assert.equal(semantic.fixtureCount, semanticInputs.fixtures.length)
+  assert.equal(semantic.fixtureCount, semanticOracle.fixtures.length)
+  assert.equal(semantic.exactBabelCompilerExecutedDuringGeneration, true)
+  assert.equal(semantic.frozenBabelOutputExecutedInCi, true)
+  assert.equal(semantic.currentRustOutputExecutedInCi, true)
+  assert.equal(semantic.assertionLevel, 'runtime-semantics')
+  assert.ok(semantic.proves.includes('reviewed-cross-implementation-runtime-semantics'))
+  assert.ok(semantic.doesNotProve.includes('full-language-runtime-semantic-equivalence'))
+  const semanticTest = read(semantic.ciTest)
+  assert.match(semanticTest, /executeCommonJs\(expected\.babelCode/)
+  assert.match(semanticTest, /executeCommonJs\(result\.code/)
+  assert.ok(read(semantic.generator).length > 0)
+
+  const request = scope.assets.babelRequestOracle
+  const requestInputs = readJson(request.inputs)
+  const requestOracle = readJson(request.artifact)
+  assert.equal(request.requestCount, requestInputs.cases.length)
+  assert.equal(request.exactBabelRequestCount, requestOracle.fixtures.length)
+  assert.equal(
+    request.nativeOnlyRequestCount,
+    requestInputs.cases.filter(fixture => !fixture.legacy).length,
+  )
+  assert.equal(
+    request.exactBabelRequestCount + request.nativeOnlyRequestCount,
+    request.requestCount,
+  )
+  assert.equal(request.assertionLevel, 'request-contract')
+  assert.ok(request.doesNotProve.includes('runtime-semantic-equivalence'))
+  assert.ok(request.doesNotProve.includes('babel-equivalence-for-native-only-requests'))
+  assert.match(read(request.ciTest), /binding\.transformSync\(fixture\.request\)/)
+  assert.ok(read(request.generator).length > 0)
+
+  const architecture = read('docs/architecture/rust-compiler.md')
+  const rollout = read('docs/features/rust-compiler-rollout/rollout.md')
+  assert.match(architecture, /compiler_compatibility_evidence_scope\.json/)
+  assert.match(rollout, /compiler_compatibility_evidence_scope\.json/)
+})
 
 test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations', () => {
   const corpus = readJson(compileCorpusPath)

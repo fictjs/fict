@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "assets": {
+    "rustCodegenCorpus": {
+      "artifact": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
+      "generator": "scripts/generate-rust-codegen-corpus.mjs",
+      "ciTests": [
+        "crates/fict-compiler/tests/rust_codegen_corpus.rs",
+        "scripts/compiler-compatibility-corpus.test.mjs"
+      ],
+      "fixtureCount": 1892,
+      "exactBabelCompilerExecutedDuringGeneration": true,
+      "frozenBabelOutputExecutedInCi": false,
+      "currentRustOutputExecutedInCi": true,
+      "assertionLevel": "codegen-regression",
+      "proves": [
+        "exact-babel-0.28-audit-at-generation",
+        "reviewed-status-deviation-accounting",
+        "current-rust-output-determinism"
+      ],
+      "doesNotProve": [
+        "babel-compiler-execution-in-ci",
+        "full-cross-implementation-runtime-semantic-equivalence"
+      ]
+    },
+    "babelSemanticOracle": {
+      "inputs": "scripts/fixtures/babel_0_28_semantic_inputs.json",
+      "artifact": "crates/fict-compiler/tests/babel_0_28_semantic_oracle.json",
+      "generator": "scripts/generate-babel-semantic-oracle.mjs",
+      "ciTest": "scripts/babel-compiler-semantic-oracle.test.mjs",
+      "fixtureCount": 12,
+      "exactBabelCompilerExecutedDuringGeneration": true,
+      "frozenBabelOutputExecutedInCi": true,
+      "currentRustOutputExecutedInCi": true,
+      "assertionLevel": "runtime-semantics",
+      "proves": ["reviewed-cross-implementation-runtime-semantics"],
+      "doesNotProve": ["full-language-runtime-semantic-equivalence"]
+    },
+    "babelRequestOracle": {
+      "inputs": "scripts/fixtures/compiler_request_matrix.json",
+      "artifact": "crates/fict-compiler/tests/babel_0_28_request_oracle.json",
+      "generator": "scripts/generate-babel-request-oracle.mjs",
+      "ciTest": "scripts/native-compiler-request-matrix.test.mjs",
+      "requestCount": 30,
+      "exactBabelRequestCount": 18,
+      "nativeOnlyRequestCount": 12,
+      "exactBabelCompilerExecutedDuringGeneration": true,
+      "frozenBabelOutputExecutedInCi": false,
+      "currentRustOutputExecutedInCi": true,
+      "assertionLevel": "request-contract",
+      "proves": ["reviewed-request-and-structural-compatibility"],
+      "doesNotProve": ["runtime-semantic-equivalence", "babel-equivalence-for-native-only-requests"]
+    }
+  }
+}

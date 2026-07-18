@@ -54,9 +54,18 @@ review. Those artifacts are retained as historical evidence; the 0.31 tree does
 not keep the differential, shadow, candidate, or rollback execution harnesses.
 It does retain the frozen 0.28.0-test-derived source corpus, which runs only
 through the Rust compiler and therefore does not restore a second backend. Its
-Babel audit fields came from the 0.30.1 legacy backend, while its expected
-diagnostics and code hashes are Rust-generated regression goldens; neither is
-mislabelled as exact 0.28.0 semantic output.
+Babel audit fields are regenerated with the exact 0.28.0 compiler artifact and
+must match the original extraction audit, while its expected diagnostics and
+code hashes are Rust-generated regression goldens. The former binds the audit
+identity and the latter binds Rust determinism; neither is mislabelled as
+full-runtime semantic equivalence.
+
+The machine-readable
+[compatibility evidence scope](../../../scripts/fixtures/compiler_compatibility_evidence_scope.json)
+keeps those claim boundaries release-visible. It separately identifies the
+frozen codegen corpus, the executable semantic oracle, and the request-contract
+oracle, including whether exact Babel output and current Rust output execute in
+CI.
 
 Exact 0.28.0 behavior evidence is retained separately as frozen Babel output
 with source, artifact, dependency, and input digests. CI executes that output
