@@ -76,6 +76,6 @@
     "@fictjs/compiler-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
-    "tsdown": "^0.22.3"
+    "tsdown": "^0.22.9"
   }
 }

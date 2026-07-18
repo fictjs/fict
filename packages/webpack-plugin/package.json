@@ -59,8 +59,8 @@
   "devDependencies": {
     "@jridgewell/trace-mapping": "^0.3.31",
     "fict": "workspace:*",
-    "tsdown": "^0.22.3",
-    "webpack": "^5.105.2"
+    "tsdown": "^0.22.9",
+    "webpack": "^5.108.4"
   },
   "keywords": [
     "fict",
