@@ -4,9 +4,11 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { readLoadedPluginArtifact } from '../cache-fingerprint'
+import { getLoadedModulePathFromStack, readLoadedPluginArtifact } from '../cache-fingerprint'
 
 const tempRoots: string[] = []
+
+const slashes = (value: string | null) => value?.replace(/\\/g, '/') ?? null
 
 afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -108,6 +110,58 @@ describe('vite plugin cache fingerprint artifact resolution', () => {
     const second = readLoadedPluginArtifact(remappedStack(secondRoot))
 
     expect(first).not.toBe(second)
+  })
+})
+
+describe('vite plugin cache fingerprint stack parsing', () => {
+  it('extracts POSIX paths from stack frames', () => {
+    const stack = [
+      'Error',
+      '    at readLoadedPluginArtifact (/repo/packages/vite-plugin/dist/index.js:10:5)',
+    ].join('\n')
+
+    expect(getLoadedModulePathFromStack(stack)).toBe('/repo/packages/vite-plugin/dist/index.js')
+  })
+
+  it('extracts POSIX file URLs from stack frames', () => {
+    const stack = [
+      'Error',
+      '    at readLoadedPluginArtifact (file:///repo/packages/vite-plugin/dist/index.js:10:5)',
+    ].join('\n')
+
+    expect(getLoadedModulePathFromStack(stack)).toBe('/repo/packages/vite-plugin/dist/index.js')
+  })
+
+  it('extracts Windows drive-letter paths from stack frames', () => {
+    const stack = [
+      'Error',
+      '    at readLoadedPluginArtifact (C:\\repo\\packages\\vite-plugin\\dist\\index.cjs:10:5)',
+    ].join('\n')
+
+    expect(getLoadedModulePathFromStack(stack)).toBe(
+      'C:\\repo\\packages\\vite-plugin\\dist\\index.cjs',
+    )
+  })
+
+  it('extracts Windows file URLs from stack frames', () => {
+    const stack = [
+      'Error',
+      '    at readLoadedPluginArtifact (file:///C:/repo/packages/vite-plugin/dist/index.js:10:5)',
+    ].join('\n')
+
+    expect(slashes(getLoadedModulePathFromStack(stack))).toContain(
+      'C:/repo/packages/vite-plugin/dist/index.js',
+    )
+  })
+
+  it('skips node internal frames before choosing a module path', () => {
+    const stack = [
+      'Error',
+      '    at run (node:internal/modules/esm/module_job:10:5)',
+      '    at readLoadedPluginArtifact (/repo/packages/vite-plugin/dist/index.js:10:5)',
+    ].join('\n')
+
+    expect(getLoadedModulePathFromStack(stack)).toBe('/repo/packages/vite-plugin/dist/index.js')
   })
 })
 
