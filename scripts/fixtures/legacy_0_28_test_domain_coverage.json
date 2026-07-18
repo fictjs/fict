@@ -1,0 +1,552 @@
+{
+  "schemaVersion": 1,
+  "baseline": "@fictjs/compiler@0.28.0",
+  "unrepresentedFileCount": 34,
+  "domains": [
+    {
+      "name": "api-type-contract",
+      "legacyFile": "packages/compiler/test/api-type-contract.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "The serializable native ESM and CommonJS facades replace the Babel plugin type surface and are compiled as one gate.",
+      "evidence": [
+        {
+          "path": "scripts/fixtures/native-compiler-types/esm.mts",
+          "markers": ["const analysis: AnalyzeResult", "nativeCompilerInfo().compilerBuildId"]
+        },
+        {
+          "path": "scripts/fixtures/native-compiler-types/cjs.cts",
+          "markers": ["const analysis: AnalyzeResult", "nativeCompilerInfo().compilerBuildId"]
+        },
+        { "path": "package.json", "markers": ["test:compiler:native-types"] }
+      ]
+    },
+    {
+      "name": "cache-fingerprint-path",
+      "legacyFile": "packages/compiler/test/cache-fingerprint-path.test.ts",
+      "disposition": "host-migration",
+      "summary": "Artifact-path fingerprinting moved to the Vite host and retains POSIX, Windows, file URL, and source-map-remapped coverage.",
+      "evidence": [
+        {
+          "path": "packages/vite-plugin/src/__tests__/cache-fingerprint-path.test.ts",
+          "markers": [
+            "extracts POSIX paths from stack frames",
+            "extracts Windows drive-letter paths from stack frames",
+            "reads source and dist artifacts for source-map-remapped source frames"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cache-fingerprint",
+      "legacyFile": "packages/compiler/test/cache-fingerprint.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "The native compiler build ID replaces the JavaScript artifact fingerprint and is checked against every declared Rust input.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-build-id.test.mjs",
+          "markers": [
+            "native build identity matches every declared Rust build input",
+            "native build identity changes when a compiler source input changes"
+          ]
+        },
+        {
+          "path": "crates/fict-compiler/build.rs",
+          "markers": ["fict-compiler-build-id-v1", "normalize_source_bytes"]
+        }
+      ]
+    },
+    {
+      "name": "codegen-auto-extract",
+      "legacyFile": "packages/compiler/test/codegen-auto-extract.test.ts",
+      "disposition": "behavior-port",
+      "summary": "Preview handler auto-extraction is exercised through native compilation and emitted artifact behavior.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-auto-extract.test.mjs",
+          "markers": [
+            "Preview honors the auto-extraction opt-out",
+            "Preview extracts only stable bare handler bindings",
+            "automatic extraction stays eager when a selected handler cannot be restored"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "codegen-expression-deps",
+      "legacyFile": "packages/compiler/test/codegen-expression-deps.test.ts",
+      "disposition": "behavior-port",
+      "summary": "Preview dependency restoration is verified with executable artifacts across expression families, closures, generators, and computed members.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-expression-deps.test.mjs",
+          "markers": [
+            "Preview restores dependencies from every supported expression family",
+            "yield expressions restore their argument in generator handlers",
+            "block-bodied function closures include branch, phi-source, and return dependencies"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "codegen-reactive-accessors",
+      "legacyFile": "packages/compiler/test/codegen-reactive-accessors.test.ts",
+      "disposition": "behavior-port",
+      "summary": "Lazy and eager accessor boundaries are executed after native code generation, including IIFEs and class bodies.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-reactive-accessors.test.mjs",
+          "markers": [
+            "object and array function entries remain lazy while eager entries run at creation",
+            "IIFEs do not pull returned function bodies across the lazy boundary",
+            "class definitions track eager dependencies but exclude method and instance bodies"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "compiler-complexity-report",
+      "legacyFile": "packages/compiler/test/compiler-complexity-report.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Rust crate and file budgets replace the removed TypeScript compiler LOC report while preserving fail-closed schema and accounting tests.",
+      "evidence": [
+        {
+          "path": "scripts/rust-compiler-complexity-report.test.mjs",
+          "markers": [
+            "counts empty, terminated, and unterminated Rust source lines",
+            "Missing Rust crate complexity budget",
+            "Rust file budget references a missing source file"
+          ]
+        },
+        { "path": "package.json", "markers": ["guardrails:rust-crates"] }
+      ]
+    },
+    {
+      "name": "conformance-matrix",
+      "legacyFile": "packages/compiler/test/conformance-matrix.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Native request normalization and compiler policy tests replace the Babel-only guaranteed, fallback, and unsupported surface matrix.",
+      "evidence": [
+        {
+          "path": "crates/fict-compiler/src/pipeline.rs",
+          "markers": [
+            "applies_native_diagnostic_policy_precedence",
+            "enforces_strict_guarantee_configuration_and_suppression_rules"
+          ]
+        },
+        {
+          "path": "scripts/native-compiler-request-matrix.test.mjs",
+          "markers": [
+            "request matrix covers every source identity and structured request dimension"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "delegated-events-parity",
+      "legacyFile": "packages/compiler/test/delegated-events-parity.test.ts",
+      "disposition": "behavior-port",
+      "summary": "The runtime and generated Rust compiler ABI are compared from their live manifests.",
+      "evidence": [
+        {
+          "path": "packages/runtime/test/delegated-events-parity.test.ts",
+          "markers": [
+            "runtime and generated compiler ABI have the same delegated events",
+            "runtime delegated events are non-empty"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dependency-key",
+      "legacyFile": "packages/compiler/test/dependency-key.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Typed LocalId, SsaVersion, and SsaName identities replace lossy string suffix normalization and are verifier checked.",
+      "evidence": [
+        { "path": "crates/fict-hir/src/ids.rs", "markers": ["pub struct SsaName"] },
+        {
+          "path": "crates/fict-reactivity/tests/ssa.rs",
+          "markers": [
+            "inserts_structural_phi_for_diamond_and_materializes_verified_hir",
+            "verifier_rejects_unknown_and_non_dominating_versions"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "diagnostic-docs",
+      "legacyFile": "packages/compiler/test/diagnostic-docs.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "A generated registry guard now checks active, alias, retired, producer, documentation, and integration states together.",
+      "evidence": [
+        {
+          "path": "scripts/check-native-diagnostic-producers.test.mjs",
+          "markers": [
+            "validates active, alias, retired, documentation, and integration registry states",
+            "rejects retired diagnostic use in integrations"
+          ]
+        },
+        { "path": "docs/diagnostic-codes.md", "markers": ["Diagnostic"] }
+      ]
+    },
+    {
+      "name": "directives",
+      "legacyFile": "packages/compiler/test/directives.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "OXC frontend facts and verified HIR own directive parsing, scope identity, and function policy.",
+      "evidence": [
+        {
+          "path": "crates/fict-compiler-oxc/tests/frontend.rs",
+          "markers": ["collects_program_and_function_directive_prologues_by_scope"]
+        },
+        {
+          "path": "crates/fict-compiler-oxc/tests/hir_builder.rs",
+          "markers": ["applies_function_directives_and_erases_type_only_binding_ids"]
+        }
+      ]
+    },
+    {
+      "name": "fine-grained-dom",
+      "legacyFile": "packages/compiler/test/fine-grained-dom.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Typed native dependency identities and EmitIR replace JavaScript region override maps; native output is checked for authored spread and prop order.",
+      "evidence": [
+        {
+          "path": "crates/fict-compiler/src/pipeline.rs",
+          "markers": ["preserves_authored_fine_grained_spread_and_static_prop_order"]
+        },
+        {
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": ["Rust compiler output preserves Core reactive runtime behavior"]
+        }
+      ]
+    },
+    {
+      "name": "hir-builder",
+      "legacyFile": "packages/compiler/test/hir-builder.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "The OXC HIR builder has direct Rust coverage for verified binding identity and structured control flow.",
+      "evidence": [
+        {
+          "path": "crates/fict-compiler-oxc/tests/hir_builder.rs",
+          "markers": [
+            "builds_verified_binding_aware_hir_for_tsx_components_and_macros",
+            "lowers_if_returns_into_real_hir_blocks_with_control_dependencies",
+            "lowers_try_catch_finally_and_catch_patterns_into_structured_cfg"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "hir-fuzzing",
+      "legacyFile": "packages/compiler/test/hir-fuzzing.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Deterministic generated-program invariants cover the Rust pass pipeline and the cargo-fuzz target supplies longer-running mutation coverage.",
+      "evidence": [
+        {
+          "path": "crates/fict-compiler/tests/pass_properties.rs",
+          "markers": [
+            "generated_programs_preserve_verified_deterministic_analysis_invariants",
+            "for seed in 0_u64..96"
+          ]
+        },
+        { "path": "package.json", "markers": ["test:compiler:fuzz-smoke"] }
+      ]
+    },
+    {
+      "name": "module-metadata-safety",
+      "legacyFile": "packages/compiler/test/module-metadata-safety.test.ts",
+      "disposition": "behavior-port",
+      "summary": "The native graph host retains malformed schema, prototype pollution, path escape, symlink, and stale-cache safety regressions.",
+      "evidence": [
+        {
+          "path": "packages/compiler/test/module-metadata-safety.test.ts",
+          "markers": [
+            "fails closed for malformed, non-canonical, unknown, and over-deep schemas",
+            "preserves reserved names as own data without prototype pollution",
+            "rejects metadata symlinks that leave the declared package root"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "optimizer-bench-cli",
+      "legacyFile": "packages/compiler/test/optimizer-bench-cli.test.ts",
+      "disposition": "intentional-removal",
+      "summary": "The private Babel HIR optimizer benchmark CLI was retired with the legacy compiler rather than exposed as a native compatibility API.",
+      "evidence": [
+        {
+          "path": "docs/adr/0003-retire-babel-preset.md",
+          "markers": ["legacy-only harness", "compatibility harnesses"]
+        },
+        {
+          "path": "crates/fict-reactivity/tests/optimize_constants.rs",
+          "markers": ["cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier"]
+        }
+      ],
+      "retiredArtifacts": ["scripts/optimizer-bench.mjs"]
+    },
+    {
+      "name": "optimizer-bench-sampling",
+      "legacyFile": "packages/compiler/test/optimizer-bench-sampling.test.ts",
+      "disposition": "intentional-removal",
+      "summary": "The sampling and baseline protocol existed only for the retired Babel HIR benchmark and has no public 0.31 contract.",
+      "evidence": [
+        {
+          "path": "docs/adr/0003-retire-babel-preset.md",
+          "markers": ["legacy-only harness", "Published historical versions are not"]
+        }
+      ],
+      "retiredArtifacts": ["scripts/optimizer-bench-sampling.mjs"]
+    },
+    {
+      "name": "optimizer-diff",
+      "legacyFile": "packages/compiler/test/optimizer-diff.test.ts",
+      "disposition": "behavior-port",
+      "summary": "Executable native differential tests compare optimization off/on and safe/full results rather than code text alone.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-optimizer-diff.test.mjs",
+          "markers": ["optimization on/off and safe/full profiles preserve observable semantics"]
+        }
+      ]
+    },
+    {
+      "name": "optimizer",
+      "legacyFile": "packages/compiler/test/optimizer.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Rust reactivity tests directly verify constant propagation, CSE, DCE, barriers, SSA reads, and fixed-point failure policy.",
+      "evidence": [
+        {
+          "path": "crates/fict-reactivity/tests/optimize_constants.rs",
+          "markers": [
+            "folds_through_ssa_reads_and_preserves_negative_zero_and_nan",
+            "fails_closed_when_the_fixed_point_budget_is_exhausted",
+            "cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "regions",
+      "legacyFile": "packages/compiler/test/regions.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Rust region analysis tests cover barrier splits, safe derived memoization, and control-flow ownership.",
+      "evidence": [
+        {
+          "path": "crates/fict-reactivity/tests/regions.rs",
+          "markers": [
+            "splits_regions_at_barriers_and_memoizes_only_safe_derived_ranges",
+            "assigns_control_flow_to_the_region_containing_the_controlling_read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "release-strict-scope",
+      "legacyFile": "packages/compiler/test/release-strict-scope.test.ts",
+      "disposition": "behavior-port",
+      "summary": "The surviving release gate verifies root scripts, behavior-first entrypoints, release composition, and workflow scope.",
+      "evidence": [
+        {
+          "path": "packages/compiler/test/release-strict-scope.test.ts",
+          "markers": [
+            "owns strict compiler gates in explicit root scripts",
+            "keeps workflow-level release and CI scope aligned with root scripts"
+          ]
+        },
+        { "path": "package.json", "markers": ["test:compiler:release-strict-scope"] }
+      ]
+    },
+    {
+      "name": "runtime-abi",
+      "legacyFile": "packages/compiler/test/runtime-abi.test.ts",
+      "disposition": "behavior-port",
+      "summary": "Generated ABI helpers are resolved from live runtime subpaths and core signal, memo, and effect contracts are executed.",
+      "evidence": [
+        {
+          "path": "packages/runtime/test/runtime-abi.test.ts",
+          "markers": [
+            "exports every manifest helper from its declared runtime subpath",
+            "keeps signal, memo, and effect helper contracts usable"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "scopes",
+      "legacyFile": "packages/compiler/test/scopes.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Rust scope analysis owns reactive propagation from state through derived bindings and active blocks.",
+      "evidence": [
+        {
+          "path": "crates/fict-reactivity/tests/scopes.rs",
+          "markers": ["propagates_state_into_pure_derived_bindings_and_active_blocks"]
+        }
+      ]
+    },
+    {
+      "name": "shapes",
+      "legacyFile": "packages/compiler/test/shapes.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "The Rust shape lattice is tested across aliases, open arrays, and phi joins with differing key sets.",
+      "evidence": [
+        {
+          "path": "crates/fict-reactivity/tests/shapes.rs",
+          "markers": [
+            "propagates_shape_state_across_aliases",
+            "spread_arrays_remain_open_and_have_no_exact_length",
+            "phi_join_keeps_object_kind_but_opens_different_key_sets"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ssa",
+      "legacyFile": "packages/compiler/test/ssa.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Typed structural SSA tests cover diamonds, loop-carried versions, projected writes, and verifier rejection.",
+      "evidence": [
+        {
+          "path": "crates/fict-reactivity/tests/ssa.rs",
+          "markers": [
+            "inserts_structural_phi_for_diamond_and_materializes_verified_hir",
+            "loop_phi_uses_preheader_and_back_edge_versions",
+            "verifier_rejects_unknown_and_non_dominating_versions"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "state-machine-name-collision",
+      "legacyFile": "packages/compiler/test/state-machine-name-collision.test.ts",
+      "disposition": "behavior-port",
+      "summary": "Structured native control flow and generated helper allocation are executed against legacy and newly found name-capture cases.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-state-machine-name-collision.test.mjs",
+          "markers": [
+            "legacy state-machine collision scenarios stay structured and preserve authored bindings",
+            "current context helper allocation avoids authored parameter collisions",
+            "logical reactive updates do not capture user locals or parameters"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "structurize",
+      "legacyFile": "packages/compiler/test/structurize.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Rust structurization tests cover reducible diamonds, natural loops, switch chains, try/catch/finally, and irreducible fallback.",
+      "evidence": [
+        {
+          "path": "crates/fict-reactivity/tests/structurize.rs",
+          "markers": [
+            "recovers_diamond_condition_and_shared_join",
+            "recovers_a_reducible_natural_loop_and_source_kind",
+            "recovers_try_catch_finally_with_one_continuation",
+            "falls_back_for_a_multi_entry_irreducible_scc"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "template-extractor",
+      "legacyFile": "packages/compiler/test/template-extractor.test.ts",
+      "disposition": "behavior-port",
+      "summary": "Native template extraction checks exact serialized HTML, binding paths, and live DOM updates.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": [
+            "native template extraction preserves static HTML and live binding paths",
+            "resolvePath"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tooling-export-surface",
+      "legacyFile": "packages/compiler/test/tooling-export-surface.test.ts",
+      "disposition": "host-migration",
+      "summary": "The legacy analyze and trace helpers were replaced by serializable analyzeSync and analyze results on the native root.",
+      "evidence": [
+        {
+          "path": "packages/compiler/test/native-root.test.ts",
+          "markers": ["exposes the native request API without the legacy Babel plugin"]
+        },
+        {
+          "path": "docs/migration-guide.md",
+          "markers": ["analyzeFictFile", "Use `analyzeSync` or `analyze` with an `AnalyzeRequest`"]
+        }
+      ]
+    },
+    {
+      "name": "tooling-minimize",
+      "legacyFile": "packages/compiler/test/tooling-minimize.test.ts",
+      "disposition": "intentional-removal",
+      "summary": "The backend-aware in-process minimizer was removed; callers must run an external reducer against the native request API.",
+      "evidence": [
+        {
+          "path": "docs/migration-guide.md",
+          "markers": [
+            "minimizeSourceByLines",
+            "There is no native compiler equivalent",
+            "Run an external reducer"
+          ]
+        }
+      ],
+      "retiredArtifacts": ["packages/compiler/src/legacy"]
+    },
+    {
+      "name": "using-declaration",
+      "legacyFile": "packages/compiler/test/using-declaration.test.ts",
+      "disposition": "behavior-port",
+      "summary": "The native frontend retains fail-closed rejection for normal, throw, abrupt loop, nested, and await using declarations.",
+      "evidence": [
+        {
+          "path": "crates/fict-compiler-oxc/tests/resource_declarations.rs",
+          "markers": [
+            "rejects_resource_declarations_until_disposal_is_modeled",
+            "await using resource"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "validation",
+      "legacyFile": "packages/compiler/test/validation.test.ts",
+      "disposition": "architecture-replacement",
+      "summary": "Native registry and producer tests replace the Babel diagnostic enum and validator while checking every registered advisory and supported counterexample.",
+      "evidence": [
+        {
+          "path": "crates/fict-compiler/tests/diagnostic_producers.rs",
+          "markers": [
+            "native_compiler_produces_every_advisory_diagnostic_it_registers",
+            "advisory_producers_do_not_flag_supported_shapes"
+          ]
+        },
+        {
+          "path": "scripts/check-native-diagnostic-producers.test.mjs",
+          "markers": ["extracts the reviewed configurable diagnostic registry"]
+        }
+      ]
+    },
+    {
+      "name": "vnode-props-order",
+      "legacyFile": "packages/compiler/test/vnode-props-order.test.ts",
+      "disposition": "behavior-port",
+      "summary": "The native CommonJS fallback executes all five legacy explicit/spread/children precedence cases.",
+      "evidence": [
+        {
+          "path": "scripts/native-compiler-vnode-props-order.test.mjs",
+          "markers": [
+            "later spreads override earlier explicit props",
+            "later explicit props override earlier spreads",
+            "explicit JSX children override spread children",
+            "use no memo functions preserve prop precedence"
+          ]
+        }
+      ]
+    }
+  ]
+}
