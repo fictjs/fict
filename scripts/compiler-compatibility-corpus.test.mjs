@@ -467,6 +467,26 @@ test('maps the Babel release strict-scope domain to the explicit release gate', 
   assert.match(ci, /pnpm test:compiler:release-strict-scope/)
 })
 
+test('ports the Babel VNode prop-order domain through executable native output', () => {
+  const runtime = read('scripts/native-compiler-vnode-props-order.test.mjs')
+  for (const behavior of [
+    'later spreads override earlier explicit props',
+    'later explicit props override earlier spreads',
+    'multiple spreads and explicit props retain authored precedence',
+    'explicit JSX children override spread children',
+    'use no memo functions preserve prop precedence',
+  ]) {
+    assert.match(runtime, new RegExp(behavior))
+  }
+  assert.match(runtime, /executeCommonJs/)
+  assert.match(runtime, /fineGrainedDom: false/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:vnode-props-order/)
+  assert.match(packageJson, /native-compiler-vnode-props-order\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /native-compiler-vnode-props-order\.test\.mjs/)
+})
+
 test('retains native runtime and option compatibility outcomes', () => {
   const runtime = read('scripts/native-compiler-runtime.test.mjs')
   for (const name of [
