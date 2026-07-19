@@ -221,6 +221,7 @@ pub fn emit_program(
         active_vnode_reactive_local: None,
         source_clone_depth: 0,
         await_allowed: effective_module_kind == OxcModuleKind::Module,
+        generated_names: emit.module.reserved_names.iter().cloned().collect(),
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
@@ -3633,6 +3634,7 @@ struct AstRewriter<'a, 'emit> {
     active_vnode_reactive_local: Option<String>,
     source_clone_depth: usize,
     await_allowed: bool,
+    generated_names: BTreeSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 struct StatementEffectRewriter<'a, 'emit> {
@@ -4257,6 +4259,33 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     }
 }
 impl<'a> AstRewriter<'a, '_> {
+    fn materialize_awaited_getter_value(
+        &mut self,
+        value: Expression<'a>,
+        statements: &mut ArenaVec<'a, Statement<'a>>,
+    ) -> Expression<'a> {
+        // DOM binding helpers require synchronous getters. Keep authored await in the surrounding
+        // module/async-function IIFE, snapshot its resolved value once, and let the getter capture
+        // that snapshot. DirectAwaitFinder deliberately ignores nested function bodies.
+        if !expression_contains_direct_await(&value) {
+            return value;
+        }
+        let span = value.span();
+        let preferred = format!("__fict_await_{}", span.start);
+        let mut name = preferred.clone();
+        let mut suffix = 1_u32;
+        while !self.generated_names.insert(name.clone()) {
+            name = format!("{preferred}_{suffix}");
+            suffix = suffix.saturating_add(1);
+        }
+        statements.push(const_statement(self.allocator, &name, value, span));
+        Expression::new_identifier(
+            span,
+            self.allocator.alloc_str(&name),
+            &AstBuilder::new(self.allocator),
+        )
+    }
+
     fn has_props_plan(&self, parameters: &FormalParameters<'_>) -> bool {
         parameters.items.first().is_some_and(|parameter| {
             self.props
@@ -4844,6 +4873,7 @@ impl<'a> AstRewriter<'a, '_> {
                     self.visit_expression(&mut value);
                     self.vnode_depth -= usize::from(text_content);
                     if reactive {
+                        value = self.materialize_awaited_getter_value(value, &mut statements);
                         value = zero_parameter_expression_arrow(self.allocator, value, span);
                     }
                     let callee = Expression::new_identifier(
@@ -4911,6 +4941,7 @@ impl<'a> AstRewriter<'a, '_> {
                         continue;
                     };
                     self.visit_expression(&mut value);
+                    let value = self.materialize_awaited_getter_value(value, &mut statements);
                     let getter = zero_parameter_expression_arrow(self.allocator, value, span);
                     let callee = Expression::new_identifier(
                         span,
@@ -5186,6 +5217,7 @@ impl<'a> AstRewriter<'a, '_> {
                     self.visit_expression(&mut value);
                     self.vnode_depth -= 1;
                     self.active_fragment_local = previous_fragment;
+                    let value = self.materialize_awaited_getter_value(value, &mut statements);
                     let getter = zero_parameter_expression_arrow(self.allocator, value, span);
                     let callee = Expression::new_identifier(
                         span,
@@ -5291,16 +5323,86 @@ impl<'a> AstRewriter<'a, '_> {
                     let alternate = alternate.map(|alternate| {
                         self.lower_conditional_branch(alternate, fragment_local.as_deref())
                     });
+                    let contains_await = expression_contains_direct_await(&test)
+                        || expression_contains_direct_await(&consequent)
+                        || alternate
+                            .as_ref()
+                            .is_some_and(expression_contains_direct_await);
+                    if contains_await {
+                        // A conditional binding cannot rerun an async test or branch through its
+                        // synchronous runtime callbacks. Rebuild the authored short-circuit shape,
+                        // await only the selected branch, then insert the resolved snapshot once.
+                        let source_span = Span::new(value_origin.start(), value_origin.end());
+                        let value = match kind {
+                            ConditionalKind::Ternary => Expression::new_conditional_expression(
+                                source_span,
+                                test,
+                                consequent,
+                                alternate.expect("validated ternary alternate"),
+                                &builder,
+                            ),
+                            ConditionalKind::LogicalAnd => Expression::new_logical_expression(
+                                source_span,
+                                test,
+                                OxcLogicalOperator::And,
+                                consequent,
+                                &builder,
+                            ),
+                        };
+                        let value = self.materialize_awaited_getter_value(value, &mut statements);
+                        let create = insertion_create_callback(
+                            self.allocator,
+                            &create_helper,
+                            namespace,
+                            &parent,
+                            span,
+                        );
+                        let mut create_arguments = ArenaVec::new_in(&self.allocator);
+                        create_arguments.push(Argument::from(value));
+                        let created = Expression::new_call_expression(
+                            span,
+                            create,
+                            NONE,
+                            create_arguments,
+                            false,
+                            &builder,
+                        );
+                        let parent = Expression::new_identifier(
+                            span,
+                            self.allocator.alloc_str(&parent),
+                            &builder,
+                        );
+                        let insert_before = Expression::new_static_member_expression(
+                            span,
+                            parent,
+                            IdentifierName::new(span, "insertBefore", &builder),
+                            false,
+                            &builder,
+                        );
+                        let mut insert_arguments = ArenaVec::new_in(&self.allocator);
+                        insert_arguments.extend([
+                            Argument::from(created),
+                            Argument::from(Expression::new_identifier(
+                                span,
+                                self.allocator.alloc_str(&end),
+                                &builder,
+                            )),
+                        ]);
+                        let insert = Expression::new_call_expression(
+                            span,
+                            insert_before,
+                            NONE,
+                            insert_arguments,
+                            false,
+                            &builder,
+                        );
+                        statements
+                            .push(Statement::new_expression_statement(span, insert, &builder));
+                        continue;
+                    }
                     let condition = zero_parameter_expression_arrow(self.allocator, test, span);
                     let consequent =
                         zero_parameter_expression_arrow(self.allocator, consequent, span);
-                    let create = insertion_create_callback(
-                        self.allocator,
-                        &create_helper,
-                        namespace,
-                        &parent,
-                        span,
-                    );
                     let alternate = alternate.map_or_else(
                         || {
                             Expression::new_unary_expression(
@@ -5319,6 +5421,13 @@ impl<'a> AstRewriter<'a, '_> {
                         |alternate| {
                             zero_parameter_expression_arrow(self.allocator, alternate, span)
                         },
+                    );
+                    let create = insertion_create_callback(
+                        self.allocator,
+                        &create_helper,
+                        namespace,
+                        &parent,
+                        span,
                     );
                     let callee = Expression::new_identifier(
                         span,
@@ -7567,6 +7676,11 @@ fn statements_contain_direct_await(statements: &[Statement<'_>]) -> bool {
         }
     }
     false
+}
+fn expression_contains_direct_await(expression: &Expression<'_>) -> bool {
+    let mut finder = DirectAwaitFinder { found: false };
+    finder.visit_expression(expression);
+    finder.found
 }
 struct DirectAwaitFinder {
     found: bool,

@@ -79,6 +79,7 @@ async function compileAndImport(source, name, settings = {}) {
     code: source,
     filename: `/fixtures/${name}.tsx`,
     moduleId: `/fixtures/${name}.tsx`,
+    ...(settings.moduleKind ? { moduleKind: settings.moduleKind } : {}),
     options: settings.options ?? {},
   })
   assert.deepEqual(
@@ -2883,4 +2884,98 @@ test('native binding honors derived memo inline policy', () => {
   assert.deepEqual(generated.diagnostics, [])
   assert.match(generated.code, /return count\(\) \* 2/)
   assert.doesNotMatch(generated.code, /__fictUseMemo/)
+})
+
+test('authored JSX awaits resolve before synchronous fine-grained DOM bindings', async () => {
+  const source = `
+    export const calls = []
+    let referenced
+
+    async function resolveValue(kind, value) {
+      calls.push(kind)
+      await Promise.resolve()
+      return value
+    }
+
+    export async function renderNode() {
+      const node = <div
+        title={await resolveValue('attribute', 'resolved title')}
+        {...await resolveValue('spread', { 'data-spread': 'resolved spread' })}
+        ref={await resolveValue('ref', element => { referenced = element })}
+      >{await resolveValue('child', 'resolved child')}</div>
+      return { node, referenced }
+    }
+
+    export async function renderConditional(flag) {
+      return <section>{flag
+        ? await resolveValue('consequent', 'yes')
+        : await resolveValue('alternate', 'no')}</section>
+    }
+
+    export async function renderAwaitedCondition(flag) {
+      return <section>{(await resolveValue('condition', flag)) ? 'yes' : 'no'}</section>
+    }
+  `
+
+  for (const moduleKind of ['module', 'unambiguous']) {
+    const runtime = await compileAndImport(source, `jsx-await-${moduleKind}`, {
+      moduleKind,
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-J003'],
+    })
+    const { node, referenced } = await runtime.renderNode()
+
+    assert.equal(node.getAttribute('title'), 'resolved title')
+    assert.equal(node.getAttribute('data-spread'), 'resolved spread')
+    assert.equal(node.textContent, 'resolved child')
+    assert.equal(referenced, node)
+    assert.deepEqual(runtime.calls, ['attribute', 'spread', 'ref', 'child'])
+
+    runtime.calls.length = 0
+    const consequent = await runtime.renderConditional(true)
+    await flushRuntime()
+    assert.equal(consequent.textContent, 'yes')
+    assert.deepEqual(runtime.calls, ['consequent'])
+    runtime.calls.length = 0
+    const alternate = await runtime.renderConditional(false)
+    await flushRuntime()
+    assert.equal(alternate.textContent, 'no')
+    assert.deepEqual(runtime.calls, ['alternate'])
+    runtime.calls.length = 0
+    const awaitedCondition = await runtime.renderAwaitedCondition(true)
+    await flushRuntime()
+    assert.equal(awaitedCondition.textContent, 'yes')
+    assert.deepEqual(runtime.calls, ['condition'])
+  }
+
+  const topLevelSource = `
+    export const calls = []
+    export let referenced
+
+    async function resolveValue(kind, value) {
+      calls.push(kind)
+      await Promise.resolve()
+      return value
+    }
+
+    export const node = <div
+      title={await resolveValue('attribute', 'top-level title')}
+      {...await resolveValue('spread', { 'data-spread': 'top-level spread' })}
+      ref={await resolveValue('ref', element => { referenced = element })}
+    >{await resolveValue('child', 'top-level child')}</div>
+  `
+
+  for (const moduleKind of ['module', 'unambiguous']) {
+    const runtime = await compileAndImport(topLevelSource, `jsx-await-top-level-${moduleKind}`, {
+      moduleKind,
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-J003'],
+    })
+
+    assert.equal(runtime.node.getAttribute('title'), 'top-level title')
+    assert.equal(runtime.node.getAttribute('data-spread'), 'top-level spread')
+    assert.equal(runtime.node.textContent, 'top-level child')
+    assert.equal(runtime.referenced, runtime.node)
+    assert.deepEqual(runtime.calls, ['attribute', 'spread', 'ref', 'child'])
+  }
 })

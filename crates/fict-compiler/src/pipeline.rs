@@ -2776,6 +2776,113 @@ mod tests {
     }
 
     #[test]
+    fn materializes_authored_jsx_awaits_before_synchronous_dom_getters() {
+        let forms = [
+            ("attribute", "<div title={await getTitle()}>x</div>"),
+            ("spread", "<div {...await getProps()}>x</div>"),
+            ("child", "<div>{await getValue()}</div>"),
+            (
+                "conditional-test",
+                "<div>{(await getFlag()) ? 'yes' : 'no'}</div>",
+            ),
+            (
+                "conditional-branch",
+                "<div>{flag ? await getYes() : await getNo()}</div>",
+            ),
+            ("logical-child", "<div>{flag && await getValue()}</div>"),
+            ("ref", "<div ref={await getRef()}>x</div>"),
+        ];
+        for (form, jsx) in forms {
+            for context in ["module", "async-function"] {
+                for fine_grained_dom in [true, false] {
+                    for module_kind in [ModuleKind::Module, ModuleKind::Unambiguous] {
+                        let source = if context == "module" {
+                            format!("export const node = {jsx};")
+                        } else {
+                            format!("export async function renderNode() {{ return {jsx}; }}")
+                        };
+                        let mut input = request(
+                            &source,
+                            &format!("jsx-await-{form}-{context}-{fine_grained_dom}.tsx"),
+                        );
+                        input.module_kind = Some(module_kind);
+                        input.options.fine_grained_dom = fine_grained_dom;
+                        input.options.strict_guarantee = false;
+                        let result = compile(input);
+
+                        assert!(
+                            !result.has_errors(),
+                            "{form}/{context}/{fine_grained_dom}: {:?}",
+                            result.diagnostics
+                        );
+                        assert!(
+                            result
+                                .diagnostics
+                                .iter()
+                                .all(|diagnostic| diagnostic.code.as_str()
+                                    != "FICT-OXC-EMIT-REPARSE"),
+                            "{form}/{context}/{fine_grained_dom}: {:?}",
+                            result.diagnostics
+                        );
+                        assert!(
+                            !result.code.contains("() => await"),
+                            "{form}/{context}/{fine_grained_dom}: {}",
+                            result.code
+                        );
+                        if fine_grained_dom && form != "ref" {
+                            assert!(
+                                result.code.contains("const __fict_await_"),
+                                "{form}/{context}: {}",
+                                result.code
+                            );
+                            assert!(
+                                result.code.contains("await (async () =>"),
+                                "{form}/{context}: {}",
+                                result.code
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn allocates_collision_free_jsx_await_snapshot_names() {
+        let mut authored_name = "__fict_await_0".to_owned();
+        let source = loop {
+            let source = format!(
+                "const {authored_name} = 'authored'; export async function renderNode() {{ return <div title={{await getTitle()}}>x</div>; }}"
+            );
+            let offset = source.find("await getTitle()").expect("await expression");
+            let next = format!("__fict_await_{offset}");
+            if next == authored_name {
+                break source;
+            }
+            authored_name = next;
+        };
+        let mut input = request(&source, "jsx-await-name-collision.tsx");
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains(&format!("const {authored_name} = \"authored\"")),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains(&format!("const {authored_name}_1 = await getTitle()")),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn resolves_adjacent_dynamic_child_markers_before_insertion() {
         let result = compile(request(
             "export function View(props) { return <div>{props.first}{props.second}<span>{props.third}</span></div>; }",
