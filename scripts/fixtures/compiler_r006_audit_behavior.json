@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "sourceAudit": {
+    "release": "0.28.0",
+    "revision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "sha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
+    "predicate": "Babel diagnostics include FICT-R006 while the audited Rust diagnostics do not"
+  },
+  "sourceCorpus": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
+  "summary": {
+    "fixtureCount": 29,
+    "strictReactivityFailClosed": 27,
+    "verifiedEmitCapability": 2
+  },
+  "claimBoundary": {
+    "strict-reactivity-fail-closed": "The exact audited source emits FICT-R006 and strictReactivity rejects output; fallback output is not claimed to update reactively.",
+    "verified-emit-capability": "The exact audited source shape suppresses FICT-R006, and an adapted probe mounts it, mutates the controlling reactive input, and asserts the DOM update."
+  },
+  "cases": [
+    {
+      "id": "packages/compiler/test/codegen.test.ts:1286:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/control-flow.test.ts:670:runTransform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/control-flow.test.ts:1189:runTransform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/control-flow.test.ts:1270:runTransformWithWarnings",
+      "disposition": "verified-emit-capability",
+      "behaviorProbe": "nested-conditional-prop-return"
+    },
+    {
+      "id": "packages/compiler/test/default-options.test.ts:170:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/sourcemap.test.ts:1325:compileWithSourcemap",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/sourcemap.test.ts:1951:compileWithSourcemap",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-advanced.test.ts:115:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-advanced.test.ts:314:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:417:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:445:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:472:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:491:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:520:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:578:transform",
+      "disposition": "verified-emit-capability",
+      "behaviorProbe": "captured-derived-closure"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:343:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:374:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2033:transformWithWarnings",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2052:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2120:transformWithWarnings",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2204:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2219:transformWithWarnings",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2302:transformWithWarnings",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2385:transformWithWarnings",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2405:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2500:transformWithWarnings",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2519:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2593:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:3548:transform",
+      "disposition": "strict-reactivity-fail-closed"
+    }
+  ]
+}

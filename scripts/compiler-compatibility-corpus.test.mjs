@@ -29,6 +29,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'diagnosticDeviationReview',
     'legacyAssertionInventory',
     'legacyDomainLedger',
+    'r006SuppressionAudit',
     'rustCodegenCorpus',
     'semanticCoverageMatrix',
   ])
@@ -142,6 +143,26 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.ok(diagnostics.doesNotProve.includes('runtime-semantic-equivalence'))
   assert.ok(read(diagnostics.generator).length > 0)
   assert.ok(read(diagnostics.ciTest).length > 0)
+
+  const r006Scope = scope.assets.r006SuppressionAudit
+  const r006Audit = readJson(r006Scope.artifact)
+  const r006Counts = Object.groupBy(r006Audit.cases, fixture => fixture.disposition)
+  assert.equal(r006Scope.sourceAuditSha256, r006Audit.sourceAudit.sha256)
+  assert.equal(r006Scope.sourceAuditSha256, codegenCorpus.provenance.auditInputSha256)
+  assert.equal(r006Scope.fixtureCount, r006Audit.cases.length)
+  assert.equal(
+    r006Scope.strictReactivityFailClosed,
+    r006Counts['strict-reactivity-fail-closed'].length,
+  )
+  assert.equal(r006Scope.verifiedEmitCapability, r006Counts['verified-emit-capability'].length)
+  assert.equal(r006Scope.assertionLevel, 'diagnostic-and-native-runtime')
+  assert.ok(r006Scope.proves.includes('exact-lost-r006-fixture-accounting'))
+  assert.ok(r006Scope.proves.includes('mount-mutate-update-for-every-suppressed-shape'))
+  assert.ok(r006Scope.doesNotProve.includes('runtime-equivalence-for-diagnosed-fallback-output'))
+  const r006Test = read(r006Scope.ciTest)
+  assert.match(r006Test, /strictReactivity: true/)
+  assert.match(r006Test, /module\.update\(\)/)
+  assert.match(r006Test, /updatedElement/)
 
   const architecture = read('docs/architecture/rust-compiler.md')
   const rollout = read('docs/features/rust-compiler-rollout/rollout.md')

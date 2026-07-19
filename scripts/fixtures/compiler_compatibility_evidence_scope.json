@@ -83,6 +83,24 @@
       ],
       "doesNotProve": ["runtime-semantic-equivalence"]
     },
+    "r006SuppressionAudit": {
+      "artifact": "scripts/fixtures/compiler_r006_audit_behavior.json",
+      "ciTest": "scripts/native-compiler-r006-audit.test.mjs",
+      "sourceAuditSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
+      "fixtureCount": 29,
+      "strictReactivityFailClosed": 27,
+      "verifiedEmitCapability": 2,
+      "assertionLevel": "diagnostic-and-native-runtime",
+      "proves": [
+        "exact-lost-r006-fixture-accounting",
+        "strict-reactivity-fail-closed-for-unsupported-shapes",
+        "mount-mutate-update-for-every-suppressed-shape"
+      ],
+      "doesNotProve": [
+        "runtime-equivalence-for-diagnosed-fallback-output",
+        "full-babel-runtime-equivalence"
+      ]
+    },
     "babelSemanticOracle": {
       "inputs": "scripts/fixtures/babel_0_28_semantic_inputs.json",
       "artifact": "crates/fict-compiler/tests/babel_0_28_semantic_oracle.json",
