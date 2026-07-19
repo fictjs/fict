@@ -388,6 +388,20 @@ The compiler will:
 3. In runtime:
    - When `deps` change, call `updateFn` to perform DOM operations.
 
+### Authored JSX text whitespace
+
+JSX text containing a line terminator follows the standard JSX authored-text
+rules before template extraction: indentation is trimmed, non-empty lines are
+joined with one space, and formatting-only lines are omitted. The element name
+does not opt out, so raw multiline text inside `<pre>` is normalized too. Use an
+expression string when exact whitespace matters:
+
+```tsx
+<pre>{'first\n  second'}</pre>
+```
+
+Same-line authored spaces and explicit expression strings are preserved.
+
 ---
 
 ## 7. Rule G: $effect Dependencies and Lifecycle
@@ -721,6 +735,12 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 2.  **Assignment & Aliasing**:
     - `x = v` where `x` is a `$state` variable compiles to `x(v)` (write).
     - `x` appearing in an expression compiles to `x()` (read).
+    - When a direct function initializer or direct function assignment establishes
+      that the stored value is callable, `x(args)` invokes that value and compiles
+      to `x()(args)`. An optional call such as `x?.()` compiles to `x()?.()`; it
+      does not test or invoke the backing signal accessor directly. Otherwise an
+      explicit `x()` remains the low-level accessor read supported by existing
+      code.
     - **Aliasing**: `const y = x` creates a **reactive getter** `() => x()`.
       - The getter model keeps `y` live across updates.
       - To create a **snapshot**, use an explicit escape such as `untrack(() => x)` (or future helper).

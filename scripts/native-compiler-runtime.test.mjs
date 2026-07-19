@@ -373,6 +373,36 @@ test('legacy DOM binding targets and forced prefixes update through native outpu
   container.remove()
 })
 
+test('function-valued state calls preserve the authored invocation chain', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let a = $state(0)
+        let b = $state(() => a + 1)
+        let c = $state(() => b() + 1)
+        let d = $state(() => c() + 1)
+        return <span data-id="value">{d()}</span>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'function-valued-state-calls',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="value"]')?.textContent, '3')
+
+  dispose()
+  container.remove()
+})
+
 test('native template extraction preserves static HTML and live binding paths', async () => {
   const result = binding.transformSync({
     code: `

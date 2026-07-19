@@ -225,6 +225,7 @@ fn materializes_unprojected_reactive_reads_as_accessor_calls() {
                 source_result: ValueId::new(u32::try_from(index).expect("value")),
                 projections: Vec::new(),
                 accessor_depth: 0,
+                call_value: false,
                 target: fict_emit::EmitTemporaryId::new(u32::try_from(index).expect("temporary")),
                 helper: None,
                 origin: Origin::source(SourceSpan::new(start, start + 4).expect("ordered span")),
@@ -263,6 +264,7 @@ fn materializes_projected_reactive_reads_at_the_root_only() {
                     optional: false,
                 }],
                 accessor_depth: 0,
+                call_value: false,
                 target: fict_emit::EmitTemporaryId::new(u32::try_from(index).expect("temporary")),
                 helper: None,
                 origin: Origin::source(

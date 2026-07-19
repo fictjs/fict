@@ -1365,6 +1365,7 @@ struct ReadRewrite {
     accessor_depth: u16,
     projection_count: usize,
     optional_accessor: bool,
+    call_value: bool,
 }
 fn projection_is_optional(projection: &fict_hir::Projection) -> bool {
     match projection {
@@ -1382,6 +1383,7 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
                 slot,
                 projections,
                 accessor_depth,
+                call_value,
                 origin,
                 ..
             } = operation
@@ -1424,6 +1426,7 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
                             .checked_sub(1)
                             .and_then(|index| projections.get(index))
                             .is_some_and(projection_is_optional),
+                        call_value: *call_value,
                     },
                 )
                 .is_some()
@@ -4197,11 +4200,9 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         }
         let callee_span = call.callee.span();
         let callee_location = (callee_span.start, callee_span.end);
-        if self
-            .reads
-            .get(&callee_location)
-            .is_some_and(|rewrite| usize::from(rewrite.accessor_depth) == rewrite.projection_count)
-        {
+        if self.reads.get(&callee_location).is_some_and(|rewrite| {
+            !rewrite.call_value && usize::from(rewrite.accessor_depth) == rewrite.projection_count
+        }) {
             self.matched_reads.insert(callee_location);
         }
         walk_mut::walk_call_expression(self, call);

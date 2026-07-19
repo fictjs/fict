@@ -349,6 +349,12 @@ the native response preserves the original structured fields. The twelve
 native-only host-protocol rows are explicitly marked and are not presented as
 Babel equivalence evidence.
 
+Authored multiline JSX text is one deliberate syntax-level difference: the
+native frontend applies standard JSX whitespace normalization before lowering,
+where Babel 0.28 preserved raw line terminators and indentation. This does not
+change the reactivity model, but it can change rendered text. The exact contract
+and source migration are recorded in the compiler spec and migration guide.
+
 Run the focused gate with:
 
 ```bash

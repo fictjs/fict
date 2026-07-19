@@ -296,6 +296,8 @@ pub enum EmitOperation {
         projections: Vec<Projection>,
         /// Number of projections included in the callable accessor expression.
         accessor_depth: u16,
+        /// Authored calls invoke the current value rather than the backing accessor.
+        call_value: bool,
         target: EmitTemporaryId,
         helper: Option<RuntimeHelper>,
         origin: Origin,

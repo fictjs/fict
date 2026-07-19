@@ -150,7 +150,7 @@ does not graduate it or make it a Core default.
 
 ### Audited Babel 0.28 behavior differences
 
-The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,892-case
+The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,950-case
 compile corpus currently has 60 intentional success/error status differences:
 38 inputs accepted by Babel are rejected by Rust, and 22 inputs rejected by
 Babel are accepted by Rust. These are upgrade policies, not an automatic claim
@@ -225,6 +225,32 @@ do not appear in a source-only `.tsx` corpus:
 | `cts-top-level-return`     | Rust infers CommonJS for `.cts` and accepts a top-level `return`; Babel 0.28 rejects the audited request. Treat this as a capability expansion and confirm that the downstream CommonJS host supports the emitted form. |
 | `source-map-normalization` | Both compilers preserve the audited logical source and `sourcesContent`, but raw mapping segmentation and serialized map text are emitter-specific. Compare normalized source identities, not whole-map hashes.         |
 | `explain-normalization`    | Both expose the audited physical/graph identity and source-event kinds, but native explain events are a versioned structured artifact rather than a Babel text snapshot. Consume documented fields, not exact text.     |
+
+### JSX authored-text whitespace
+
+The 0.31 native compiler applies standard JSX multiline text normalization.
+Babel 0.28 preserved the raw line terminators and indentation in authored JSX
+text, including inside `<pre>`. Native compilation trims indentation, omits
+formatting-only lines, and joins remaining lines with one space before DOM or
+VNode lowering. CSS such as `white-space: pre` cannot recover characters that
+were normalized during compilation.
+
+Use an expression string for whitespace that is part of the rendered value:
+
+```tsx
+// Multiline source formatting is normalized to "first second".
+<pre>
+  first
+  second
+</pre>
+
+// Explicit data is preserved exactly.
+<pre>{'first\n  second'}</pre>
+```
+
+Same-line spaces and explicit `{' '}` expressions remain authored data. There
+is no legacy-whitespace compiler switch; test text-sensitive `<pre>`, generated
+prose, and snapshot output before completing the 0.31 upgrade.
 
 The exact policies and counts are release-blocking fixtures in
 `rust_frozen_codegen_corpus.json` and `compiler_request_matrix.json`; changing a

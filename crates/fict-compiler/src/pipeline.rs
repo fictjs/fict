@@ -3759,6 +3759,39 @@ mod tests {
     }
 
     #[test]
+    fn invokes_function_values_stored_in_state_bindings() {
+        let result = compile(request(
+            r#"
+                import { $state } from 'fict';
+                export function Component() {
+                    let direct = $state((value) => value + 1);
+                    let optional = $state(() => 2);
+                    let assigned = $state(null);
+                    assigned = () => 3;
+                    let numeric = $state(1);
+                    const snapshot = numeric();
+                    let a = $state(0);
+                    let b = $state(() => a + 1);
+                    let c = $state(() => b() + 1);
+                    let d = $state(() => c() + 1);
+                    return [direct(2), optional?.(), assigned(), snapshot, d()];
+                }
+            "#,
+            "function-valued-state.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("direct()(2)"), "{}", result.code);
+        assert!(result.code.contains("optional()?.()"), "{}", result.code);
+        assert!(result.code.contains("assigned()()"), "{}", result.code);
+        assert!(result.code.contains("numeric()"), "{}", result.code);
+        assert!(!result.code.contains("numeric()()"), "{}", result.code);
+        assert!(result.code.contains("() => b()() + 1"), "{}", result.code);
+        assert!(result.code.contains("() => c()() + 1"), "{}", result.code);
+        assert!(result.code.contains("d()()"), "{}", result.code);
+    }
+
+    #[test]
     fn lowers_jsx_inside_component_prop_defaults() {
         let mut input = request(
             "import { $state } from 'fict'; export const calls = []; function Child({ label, fallback = (calls.push(label), <span data-id='fallback'>{label}</span>) } = {}) { return <div data-id='host'>{fallback}</div>; } export function App() { let label = $state('A'); return <><Child label={label} /><Child label={label} fallback={<em data-id='custom'>Custom</em>} /><Child label={label} fallback={null} /></>; }",

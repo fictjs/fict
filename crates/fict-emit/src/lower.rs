@@ -117,6 +117,7 @@ struct ReactiveBindingSite {
     owner: FunctionId,
     binding: BindingId,
     kind: ReactiveSlotKind,
+    call_value: bool,
     origin: Origin,
 }
 #[derive(Debug, Clone, Copy)]
@@ -668,6 +669,7 @@ fn collect_reactive_binding_sites(
     local_hook_returns: &BTreeMap<BindingId, ImportedHookReturn>,
 ) -> Result<BTreeMap<BindingId, ReactiveBindingSite>, DiagnosticBundle> {
     let mut sites = BTreeMap::new();
+    let mut state_bindings = BTreeSet::new();
     for (function_index, function) in hir.functions.iter().enumerate() {
         let owner = FunctionId::new(count_u32(function_index));
         let declarations: BTreeMap<_, _> = function
@@ -707,15 +709,25 @@ fn collect_reactive_binding_sites(
             else {
                 continue;
             };
+            let is_state = call.macro_kind == Some(FictMacroKind::State);
+            let call_value = is_state
+                && call
+                    .arguments
+                    .first()
+                    .is_some_and(|argument| function_value(function, argument.value).is_some());
             insert_reactive_binding_site(
                 &mut sites,
                 ReactiveBindingSite {
                     owner,
                     binding,
                     kind: slot_kind,
+                    call_value,
                     origin: instruction.origin,
                 },
             )?;
+            if is_state {
+                state_bindings.insert(binding);
+            }
         }
         if let Some(scopes) = scopes {
             for (_, local, origin) in derived_declarations(
@@ -733,9 +745,28 @@ fn collect_reactive_binding_sites(
                         owner,
                         binding,
                         kind: ReactiveSlotKind::Memo,
+                        call_value: false,
                         origin,
                     },
                 )?;
+            }
+        }
+    }
+    for function in &hir.functions {
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            let HirInstructionKind::Write { place, value } = &instruction.kind else {
+                continue;
+            };
+            let Some(binding) =
+                place_local(place.base).and_then(|local| function.locals[local.as_usize()].binding)
+            else {
+                continue;
+            };
+            if state_bindings.contains(&binding)
+                && function_value(function, *value).is_some()
+                && let Some(site) = sites.get_mut(&binding)
+            {
+                site.call_value = true;
             }
         }
     }
@@ -1209,6 +1240,24 @@ fn lower_function(
             })
             .map(|(local, _, _, _, slot)| (*local, *slot)),
     );
+    let call_value_slots: BTreeSet<_> = sites
+        .iter()
+        .filter(|site| {
+            site.kind == ReactiveSiteKind::Macro(FictMacroKind::State)
+                && site
+                    .local
+                    .and_then(|local| function.locals[local.as_usize()].binding)
+                    .and_then(|binding| reactive_bindings.get(&binding))
+                    .is_some_and(|site| site.call_value)
+        })
+        .map(|site| site.slot)
+        .chain(
+            captured_sites
+                .iter()
+                .filter(|(_, site, _)| site.call_value)
+                .map(|(_, _, slot)| *slot),
+        )
+        .collect();
     let mut slots: Vec<_> = sites
         .iter()
         .map(|site| ReactiveSlot {
@@ -1384,6 +1433,7 @@ fn lower_function(
                         source_result: site.result,
                         projections: Vec::new(),
                         accessor_depth: 0,
+                        call_value: false,
                         target,
                         helper: None,
                         origin: instruction.origin,
@@ -1585,6 +1635,7 @@ fn lower_function(
                         source_result: result,
                         projections: place.projections.clone(),
                         accessor_depth,
+                        call_value: call_value_slots.contains(&slot),
                         target,
                         helper: None,
                         origin: instruction.origin,
