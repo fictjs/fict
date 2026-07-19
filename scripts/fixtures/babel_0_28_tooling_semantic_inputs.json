@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "reactive-control",
+      "request": {
+        "code": "import { $state as s, $memo as m, $effect as fx } from 'fict'\nexport function Counter() {\n  let count = s(0)\n  const doubled = m(() => count * 2)\n  fx(() => console.log(doubled))\n  if (count > 0) count++\n  return <button>{count}:{doubled}</button>\n}\n",
+        "filename": "/tooling/reactive-control.tsx",
+        "language": "tsx",
+        "moduleKind": "module",
+        "options": {
+          "dev": false,
+          "fineGrainedDom": true,
+          "strictGuarantee": false
+        }
+      },
+      "comparison": {
+        "helperCapabilities": {
+          "shared": [
+            "context",
+            "effect",
+            "element-create",
+            "element-namespace-match",
+            "memo",
+            "path-resolution",
+            "range-insert",
+            "reactive-read",
+            "signal",
+            "template"
+          ],
+          "babelOnly": ["slot-boundary"],
+          "rustOnly": []
+        },
+        "diagnosticDisposition": "rust-control-span-precision",
+        "rustDiagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "line": 6,
+            "column": 7
+          }
+        ],
+        "traceAdditions": {
+          "Counter": ["3:reactive", "4:reactive", "6:reactive", "7:once"]
+        },
+        "regionDependencyDifferences": {
+          "Counter": {
+            "policy": "native-binding-resolved-dependencies",
+            "babel": ["m"],
+            "rust": ["count", "doubled"]
+          }
+        },
+        "rustRegionSemantics": {
+          "Counter": {
+            "declarations": ["count", "doubled"],
+            "dependencies": ["count", "doubled"],
+            "hasControlFlow": true,
+            "hasReactiveWrites": true
+          }
+        },
+        "rustOnlyNamedComponents": [],
+        "rustAnonymousCallbackLines": [4, 5]
+      }
+    },
+    {
+      "id": "runtime-memos",
+      "request": {
+        "code": "import { createMemo as memo } from '@fictjs/runtime'\nimport * as R from '@fictjs/runtime'\nexport function useValues() {\n  const a = memo(() => 1)\n  const b = memo?.(() => 2)\n  const c = R.createMemo(() => 3)\n  const d = R['createMemo'](() => 4)\n  return [a, b, c, d]\n}\n",
+        "filename": "/tooling/runtime-memos.tsx",
+        "language": "tsx",
+        "moduleKind": "module",
+        "options": {
+          "dev": false,
+          "fineGrainedDom": true,
+          "strictGuarantee": false
+        }
+      },
+      "comparison": {
+        "helperCapabilities": {
+          "shared": [],
+          "babelOnly": [],
+          "rustOnly": []
+        },
+        "diagnosticDisposition": "rust-binding-coverage-expansion",
+        "rustDiagnostics": [
+          {
+            "code": "FICT-M001",
+            "severity": "info",
+            "line": 4,
+            "column": 13
+          },
+          {
+            "code": "FICT-M001",
+            "severity": "info",
+            "line": 5,
+            "column": 13
+          },
+          {
+            "code": "FICT-M001",
+            "severity": "info",
+            "line": 6,
+            "column": 13
+          },
+          {
+            "code": "FICT-M001",
+            "severity": "info",
+            "line": 7,
+            "column": 13
+          }
+        ],
+        "traceAdditions": {},
+        "regionDependencyDifferences": {},
+        "rustRegionSemantics": {
+          "useValues": {
+            "declarations": ["a", "b", "c", "d"],
+            "dependencies": ["R", "a", "b", "c", "d", "memo"],
+            "hasControlFlow": false,
+            "hasReactiveWrites": true
+          }
+        },
+        "rustOnlyNamedComponents": [
+          {
+            "name": "useValues",
+            "startLine": 3,
+            "endLine": 9,
+            "traceKeys": [
+              "3:once",
+              "3:reactive",
+              "4:reactive",
+              "5:reactive",
+              "6:reactive",
+              "7:reactive"
+            ]
+          }
+        ],
+        "rustAnonymousCallbackLines": [4, 5, 6, 7]
+      }
+    },
+    {
+      "id": "hidden-jsx",
+      "request": {
+        "code": "import { $state as s, $effect as fx } from 'fict'\nexport function useCounter() {\n  let count = s(0)\n  fx(() => count)\n  return count\n}\nexport function Hidden({ ok }) {\n  return consume?.((0, <span>hidden</span>), new Box(<i>new</i>), tag`x${<b>tag</b>}`)\n}\nexport const Logical = ({ ok }) => ok && <strong>yes</strong>\n",
+        "filename": "/tooling/hidden-jsx.tsx",
+        "language": "tsx",
+        "moduleKind": "module",
+        "options": {
+          "dev": false,
+          "fineGrainedDom": true,
+          "strictGuarantee": false
+        }
+      },
+      "comparison": {
+        "helperCapabilities": {
+          "shared": [
+            "context",
+            "effect",
+            "element-namespace-match",
+            "property-binding",
+            "signal",
+            "template"
+          ],
+          "babelOnly": ["cleanup", "conditional", "element-create"],
+          "rustOnly": []
+        },
+        "diagnosticDisposition": "exact",
+        "rustDiagnostics": [],
+        "traceAdditions": {
+          "useCounter": ["2:reactive", "3:reactive", "4:reactive", "5:reactive"],
+          "Hidden": [],
+          "Logical": ["10:reactive"]
+        },
+        "regionDependencyDifferences": {
+          "useCounter": {
+            "policy": "native-structured-region-expansion",
+            "babel": [],
+            "rust": ["count", "fx", "s"]
+          },
+          "Logical": {
+            "policy": "native-prop-region-expansion",
+            "babel": [],
+            "rust": ["ok"]
+          }
+        },
+        "rustRegionSemantics": {
+          "useCounter": {
+            "declarations": ["count"],
+            "dependencies": ["count", "fx", "s"],
+            "hasControlFlow": false,
+            "hasReactiveWrites": true
+          },
+          "Hidden": {
+            "declarations": [],
+            "dependencies": [],
+            "hasControlFlow": false,
+            "hasReactiveWrites": false
+          },
+          "Logical": {
+            "declarations": [],
+            "dependencies": ["ok"],
+            "hasControlFlow": false,
+            "hasReactiveWrites": false
+          }
+        },
+        "rustOnlyNamedComponents": [],
+        "rustAnonymousCallbackLines": [4]
+      }
+    },
+    {
+      "id": "unicode-regions",
+      "request": {
+        "code": "import { $state, $effect } from 'fict'\nexport function Café() {\n  let emoji = $state('😀')\n  for (const value of [emoji]) {\n    if (value) emoji = value + '界'\n  }\n  $effect(() => emoji)\n  return <div title={emoji}>{emoji}</div>\n}\n",
+        "filename": "/tooling/unicode-regions.tsx",
+        "language": "tsx",
+        "moduleKind": "module",
+        "options": {
+          "dev": false,
+          "fineGrainedDom": true,
+          "strictGuarantee": false
+        }
+      },
+      "comparison": {
+        "helperCapabilities": {
+          "shared": [
+            "attribute-binding",
+            "context",
+            "effect",
+            "element-create",
+            "element-namespace-match",
+            "path-resolution",
+            "range-insert",
+            "reactive-read",
+            "signal",
+            "template"
+          ],
+          "babelOnly": ["memo", "slot-boundary"],
+          "rustOnly": []
+        },
+        "diagnosticDisposition": "rust-control-span-precision",
+        "rustDiagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "line": 4,
+            "column": 23
+          }
+        ],
+        "traceAdditions": {
+          "Café": ["3:reactive", "4:reactive", "7:reactive", "8:once"]
+        },
+        "regionDependencyDifferences": {
+          "Café": {
+            "policy": "native-iteration-dependency-ownership",
+            "babel": ["value"],
+            "rust": ["emoji"]
+          }
+        },
+        "rustRegionSemantics": {
+          "Café": {
+            "declarations": ["emoji"],
+            "dependencies": ["emoji"],
+            "hasControlFlow": true,
+            "hasReactiveWrites": true
+          }
+        },
+        "rustOnlyNamedComponents": [],
+        "rustAnonymousCallbackLines": [7]
+      }
+    }
+  ]
+}

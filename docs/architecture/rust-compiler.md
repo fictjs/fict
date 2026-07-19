@@ -322,6 +322,19 @@ events, async and generator order, class fields, and TypeScript namespace/enum
 lowering. It is a real semantic gate for those domains, not a claim of full
 language equivalence.
 
+Tooling behavior has its own four-fixture Babel 0.28 oracle instead of being
+inferred from the request-shape test. It freezes `fictExplain` and
+`analyzeFictFile` artifacts, then runs live native `transformSync` and
+`analyzeSync` requests. Source event roles and one-based UTF-16 positions match
+exactly. Runtime helper names are normalized to reviewed capabilities because
+the emitters use different private helper ABIs. Named component boundaries
+must match; legacy trace marker kinds remain a subset with every native
+structured-analysis addition declared in the input manifest. Region IDs and
+layout remain emitter-specific, so CI compares aggregate dependencies,
+declarations, control-flow ownership, and reactive writes. Diagnostic coverage
+and the two finer native control spans are explicit dispositions. This gate
+does not claim identical messages, helper names, trace labels, or region IDs.
+
 SSR is a separate executable oracle instead of an inference from client DOM
 tests. Three ESM fixtures run frozen 0.28.0 Babel output and live Rust output
 through the same current `@fictjs/ssr` and runtime builds. They compare

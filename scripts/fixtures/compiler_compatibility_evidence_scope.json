@@ -225,6 +225,37 @@
         "streaming-or-suspense-equivalence"
       ]
     },
+    "babelToolingSemanticOracle": {
+      "inputs": "scripts/fixtures/babel_0_28_tooling_semantic_inputs.json",
+      "artifact": "crates/fict-compiler/tests/babel_0_28_tooling_semantic_oracle.json",
+      "generator": "scripts/generate-babel-tooling-semantic-oracle.mjs",
+      "harness": "scripts/lib/compiler-tooling-semantic-harness.mjs",
+      "ciTest": "scripts/babel-compiler-tooling-semantic-oracle.test.mjs",
+      "fixtureCount": 4,
+      "toolingSurfaces": [
+        "explain-source-event-positions",
+        "runtime-helper-capabilities",
+        "component-boundaries",
+        "trace-marker-kinds",
+        "region-aggregate-semantics",
+        "diagnostic-codes-severities-and-positions",
+        "native-structured-callback-expansion"
+      ],
+      "exactBabelCompilerExecutedDuringGeneration": true,
+      "frozenBabelToolingArtifactsInspectedInCi": true,
+      "currentRustToolingExecutedInCi": true,
+      "assertionLevel": "cross-implementation-tooling-semantics",
+      "proves": [
+        "exact-source-event-role-and-utf16-position-parity",
+        "reviewed-helper-capability-and-tooling-structure-deviations",
+        "reviewed-analyze-trace-region-and-diagnostic-semantics"
+      ],
+      "doesNotProve": [
+        "exact-helper-name-or-message-parity",
+        "identical-region-ids-layout-or-trace-labels",
+        "full-language-tooling-semantic-equivalence"
+      ]
+    },
     "babelSourceMapOracle": {
       "inputs": "scripts/fixtures/babel_0_28_source_map_inputs.json",
       "artifact": "crates/fict-compiler/tests/babel_0_28_source_map_oracle.json",

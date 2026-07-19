@@ -30,6 +30,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'babelSemanticOracle',
     'babelSourceMapOracle',
     'babelSsrSemanticOracle',
+    'babelToolingSemanticOracle',
     'diagnosticDeviationReview',
     'legacyAssertionInventory',
     'legacyDomainLedger',
@@ -262,6 +263,73 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const ci = read('.github/workflows/ci.yml')
   assert.match(ci, /pnpm --filter @fictjs\/ssr build/)
   assert.match(ci, /babel-compiler-ssr-semantic-oracle\.test\.mjs/)
+
+  const toolingSemantic = scope.assets.babelToolingSemanticOracle
+  const toolingSemanticInputsText = read(toolingSemantic.inputs)
+  const toolingSemanticInputs = JSON.parse(toolingSemanticInputsText)
+  const toolingSemanticOracle = readJson(toolingSemantic.artifact)
+  assert.equal(toolingSemantic.fixtureCount, toolingSemanticInputs.fixtures.length)
+  assert.equal(toolingSemantic.fixtureCount, toolingSemanticOracle.fixtures.length)
+  assert.equal(toolingSemantic.fixtureCount, 4)
+  assert.equal(
+    toolingSemanticOracle.provenance.oracleInputsSha256,
+    sha256(toolingSemanticInputsText),
+  )
+  assert.equal(
+    toolingSemanticOracle.provenance.toolingHarnessSha256,
+    sha256(read(toolingSemantic.harness)),
+  )
+  assert.deepEqual(toolingSemantic.toolingSurfaces, [
+    'explain-source-event-positions',
+    'runtime-helper-capabilities',
+    'component-boundaries',
+    'trace-marker-kinds',
+    'region-aggregate-semantics',
+    'diagnostic-codes-severities-and-positions',
+    'native-structured-callback-expansion',
+  ])
+  assert.equal(toolingSemantic.exactBabelCompilerExecutedDuringGeneration, true)
+  assert.equal(toolingSemantic.frozenBabelToolingArtifactsInspectedInCi, true)
+  assert.equal(toolingSemantic.currentRustToolingExecutedInCi, true)
+  assert.equal(toolingSemantic.assertionLevel, 'cross-implementation-tooling-semantics')
+  assert.ok(toolingSemantic.proves.includes('exact-source-event-role-and-utf16-position-parity'))
+  assert.ok(
+    toolingSemantic.proves.includes('reviewed-analyze-trace-region-and-diagnostic-semantics'),
+  )
+  assert.ok(toolingSemantic.doesNotProve.includes('exact-helper-name-or-message-parity'))
+  assert.ok(toolingSemantic.doesNotProve.includes('identical-region-ids-layout-or-trace-labels'))
+  assert.deepEqual(
+    toolingSemanticOracle.fixtures.map(fixture => fixture.id),
+    toolingSemanticInputs.fixtures.map(fixture => fixture.id),
+  )
+  for (const fixture of toolingSemanticOracle.fixtures) {
+    assert.match(fixture.babelCodeSha256, sha256Pattern, fixture.id)
+    assert.match(fixture.babelExplainSha256, sha256Pattern, fixture.id)
+    assert.match(fixture.babelAnalysisSha256, sha256Pattern, fixture.id)
+    assert.equal(sha256(fixture.babelCode), fixture.babelCodeSha256, fixture.id)
+    assert.equal(
+      sha256(JSON.stringify(fixture.babelExplain)),
+      fixture.babelExplainSha256,
+      fixture.id,
+    )
+    assert.equal(
+      sha256(JSON.stringify(fixture.babelAnalysis)),
+      fixture.babelAnalysisSha256,
+      fixture.id,
+    )
+  }
+  const toolingSemanticTest = read(toolingSemantic.ciTest)
+  assert.match(toolingSemanticTest, /normalizeExplain\(/)
+  assert.match(toolingSemanticTest, /normalizeAnalysis\(/)
+  assert.match(toolingSemanticTest, /binding\.analyzeSync\(/)
+  assert.match(toolingSemanticTest, /helper capability disposition/)
+  const toolingSemanticGenerator = read(toolingSemantic.generator)
+  assert.match(toolingSemanticGenerator, /analyzeFictFile\(/)
+  assert.match(toolingSemanticGenerator, /metadata\?\.fictExplain/)
+  assert.match(toolingSemanticGenerator, /resolveConfig\(options\.output\)/)
+  assert.match(packageJson, /test:compiler:babel-tooling-semantic-oracle/)
+  assert.match(packageJson, /babel-compiler-tooling-semantic-oracle\.test\.mjs/)
+  assert.match(ci, /babel-compiler-tooling-semantic-oracle\.test\.mjs/)
 
   const sourceMapScope = scope.assets.babelSourceMapOracle
   const sourceMapInputsText = read(sourceMapScope.inputs)

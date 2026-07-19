@@ -1,0 +1,719 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "legacyRelease": "0.28.0",
+    "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "legacyCompilerSourceSha256": "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a",
+    "legacyCompilerArtifactSha256": "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789",
+    "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
+    "legacyPackageManager": "pnpm@9.1.1",
+    "babelDependencies": {
+      "@babel/core": "7.29.7",
+      "@babel/plugin-transform-typescript": "7.28.5"
+    },
+    "oracleInputsSha256": "b7d8646a321a12bf7d8ed096008c8971c31213de794854b84c3ab772cc89d0ad",
+    "toolingHarnessSha256": "60be88f3e10df390a83ba347968490e017cc6cd8286b824395b5b2a5d9c9c5eb"
+  },
+  "fixtures": [
+    {
+      "id": "reactive-control",
+      "babelCodeSha256": "6855a4171b570fb923fe137c95cb3ab87e3a4197445c0de95080308da96f5e60",
+      "babelCode": "import { __fictUseSignal, __fictUseEffect, __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from \"fict/internal\";\nimport { $memo as m } from 'fict';\nexport function Counter() {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, 0, {\n    name: \"count\"\n  });\n  const doubled = m(() => count() * 2);\n  __fictUseEffect(__fictCtx, () => console.log(doubled()));\n  __fictUseEffect(__fictCtx, () => {\n    if (count() > 0) {\n      (__prev_0 => count(++__prev_0))(count());\n    } else {}\n  });\n  return __fictElementNamespaceMatches(\"button\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_2 = template(\"<button><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></button>\");\n    const __root_1 = __tmpl_2();\n    const __el_3 = resolvePath(__root_1, [0]);\n    const __el_4 = resolvePath(__root_1, [2]);\n    const __end_5 = getSlotEnd(__el_3);\n    insertBetween(__el_3, __end_5, () => count(), __node => createElementInNamespace(__node, \"html\"));\n    const __end_6 = getSlotEnd(__el_4);\n    insertBetween(__el_4, __end_6, () => doubled(), __node => createElementInNamespace(__node, \"html\"));\n    return __root_1;\n  }, 1000)() : {\n    type: \"button\",\n    props: {\n      children: [__fictReactive(() => count()), \":\", __fictReactive(() => doubled())]\n    }\n  };\n}",
+      "babelWarnings": [
+        {
+          "code": "FICT-R006",
+          "message": "Reactive control-flow reads (count) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+          "fileName": "/tooling/reactive-control.tsx",
+          "line": 2,
+          "column": 8
+        }
+      ],
+      "babelExplainSha256": "95aa0e4b83efe2b606db810debef20b31957e3e1b2c0384b2fd40943db5d7304",
+      "babelExplain": {
+        "version": 1,
+        "fileName": "/tooling/reactive-control.tsx",
+        "helpers": [
+          "__fictElementNamespaceMatches",
+          "__fictReactive",
+          "__fictUseContext",
+          "__fictUseEffect",
+          "__fictUseMemo",
+          "__fictUseSignal",
+          "createElementInNamespace",
+          "getSlotEnd",
+          "insertBetween",
+          "resolvePath",
+          "template"
+        ],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "message": "Reactive control-flow reads (count) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+            "fileName": "/tooling/reactive-control.tsx",
+            "line": 2,
+            "column": 8
+          }
+        ],
+        "events": [
+          {
+            "kind": "source-signal",
+            "name": "s",
+            "message": "s creates a compiler-managed signal accessor.",
+            "line": 3,
+            "column": 15
+          },
+          {
+            "kind": "source-memo",
+            "name": "m",
+            "message": "m creates a compiler-managed memo boundary.",
+            "line": 4,
+            "column": 19
+          },
+          {
+            "kind": "source-effect",
+            "name": "fx",
+            "message": "fx creates a compiler-managed effect boundary.",
+            "line": 5,
+            "column": 3
+          },
+          {
+            "kind": "source-control-flow",
+            "name": "if",
+            "message": "Control flow participates in reactive region analysis.",
+            "line": 6,
+            "column": 3
+          },
+          {
+            "kind": "source-jsx",
+            "message": "JSX subtree participates in compiler DOM lowering.",
+            "line": 7,
+            "column": 10
+          },
+          {
+            "kind": "diagnostic",
+            "code": "FICT-R006",
+            "name": "FICT-R006",
+            "message": "Reactive control-flow reads (count) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+            "line": 2,
+            "column": 8
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictElementNamespaceMatches",
+            "message": "Compiler output imports runtime helper __fictElementNamespaceMatches."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictReactive",
+            "message": "Compiler output imports runtime helper __fictReactive."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseContext",
+            "message": "Compiler output imports runtime helper __fictUseContext."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseEffect",
+            "message": "Compiler output imports runtime helper __fictUseEffect."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseMemo",
+            "message": "Compiler output imports runtime helper __fictUseMemo."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseSignal",
+            "message": "Compiler output imports runtime helper __fictUseSignal."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "createElementInNamespace",
+            "message": "Compiler output imports runtime helper createElementInNamespace."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "getSlotEnd",
+            "message": "Compiler output imports runtime helper getSlotEnd."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "insertBetween",
+            "message": "Compiler output imports runtime helper insertBetween."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "resolvePath",
+            "message": "Compiler output imports runtime helper resolvePath."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "template",
+            "message": "Compiler output imports runtime helper template."
+          }
+        ]
+      },
+      "babelAnalysisSha256": "4bc4f104c9e308a3ea8fdc8e3e4bec6e2d7ca2fd8f55ed3efdca467a622a712b",
+      "babelAnalysis": {
+        "fileName": "/tooling/reactive-control.tsx",
+        "components": [
+          {
+            "name": "Counter",
+            "startLine": 2,
+            "endLine": 8,
+            "trace": [
+              {
+                "line": 2,
+                "markers": [{ "kind": "once", "label": "Component setup runs on mount" }]
+              },
+              {
+                "line": 3,
+                "markers": [
+                  {
+                    "kind": "once",
+                    "label": "Signal initialization runs once",
+                    "regionId": 0,
+                    "deps": []
+                  }
+                ]
+              },
+              {
+                "line": 5,
+                "markers": [
+                  { "kind": "effect", "label": "Effect reruns when dependencies change" },
+                  { "kind": "reactive", "label": "Statement reruns when reactive values change" },
+                  { "kind": "effect", "label": "Effect callback executes reactively" }
+                ]
+              },
+              {
+                "line": 7,
+                "markers": [
+                  { "kind": "reactive", "label": "JSX expression updates with reactive values" }
+                ]
+              }
+            ],
+            "regions": [
+              {
+                "id": 0,
+                "startLine": 3,
+                "startColumn": 6,
+                "endLine": 3,
+                "endColumn": 18,
+                "dependencies": [],
+                "declarations": ["count"],
+                "hasControlFlow": true,
+                "hasReactiveWrites": true,
+                "children": []
+              },
+              {
+                "id": 1,
+                "startLine": 4,
+                "startColumn": 8,
+                "endLine": 4,
+                "endColumn": 36,
+                "dependencies": ["m"],
+                "declarations": ["doubled"],
+                "hasControlFlow": true,
+                "hasReactiveWrites": true,
+                "children": []
+              }
+            ]
+          }
+        ],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "message": "Reactive control-flow reads (count) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+            "severity": "warning",
+            "line": 2,
+            "column": 8
+          }
+        ]
+      }
+    },
+    {
+      "id": "runtime-memos",
+      "babelCodeSha256": "e7809e04dee14be5316350149c25a573ac79f67a8147d71e1cdbe5ab97c7d5d1",
+      "babelCode": "import { createMemo as memo } from '@fictjs/runtime';\nimport * as R from '@fictjs/runtime';\nexport function useValues() {\n  const a = memo(() => 1);\n  const b = memo?.(() => 2);\n  const c = R.createMemo(() => 3);\n  const d = R[\"createMemo\"](() => 4);\n  return [a, b, c, d];\n}",
+      "babelWarnings": [
+        {
+          "code": "FICT-M001",
+          "message": "Memo has no reactive dependencies and could be a constant.",
+          "fileName": "/tooling/runtime-memos.tsx",
+          "line": 4,
+          "column": 13
+        }
+      ],
+      "babelExplainSha256": "d35a62743bc864188d2bc33e9422bfa76845501ce0ae91c6c7bfbf7974c0557e",
+      "babelExplain": {
+        "version": 1,
+        "fileName": "/tooling/runtime-memos.tsx",
+        "helpers": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M001",
+            "message": "Memo has no reactive dependencies and could be a constant.",
+            "fileName": "/tooling/runtime-memos.tsx",
+            "line": 4,
+            "column": 13
+          }
+        ],
+        "events": [
+          {
+            "kind": "source-memo",
+            "name": "memo",
+            "message": "memo creates a compiler-managed memo boundary.",
+            "line": 4,
+            "column": 13
+          },
+          {
+            "kind": "source-memo",
+            "name": "memo",
+            "message": "memo creates a compiler-managed memo boundary.",
+            "line": 5,
+            "column": 13
+          },
+          {
+            "kind": "source-memo",
+            "name": "R.createMemo",
+            "message": "R.createMemo creates a compiler-managed memo boundary.",
+            "line": 6,
+            "column": 13
+          },
+          {
+            "kind": "source-memo",
+            "name": "R.createMemo",
+            "message": "R.createMemo creates a compiler-managed memo boundary.",
+            "line": 7,
+            "column": 13
+          },
+          {
+            "kind": "diagnostic",
+            "code": "FICT-M001",
+            "name": "FICT-M001",
+            "message": "Memo has no reactive dependencies and could be a constant.",
+            "line": 4,
+            "column": 13
+          }
+        ]
+      },
+      "babelAnalysisSha256": "c314c4a2d523efea4632cefefe8e0d907f6676b4441f83322ee4a66daad1f329",
+      "babelAnalysis": {
+        "fileName": "/tooling/runtime-memos.tsx",
+        "components": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M001",
+            "message": "Memo has no reactive dependencies and could be a constant.",
+            "severity": "info",
+            "line": 4,
+            "column": 13
+          }
+        ]
+      }
+    },
+    {
+      "id": "hidden-jsx",
+      "babelCodeSha256": "4ee5e4c3af69e062474a0ca73d981237075a9484bd58001a706ebbe5368a0100",
+      "babelCode": "import { __fictUseSignal, __fictUseEffect, __fictUseContext, template, __fictElementNamespaceMatches, prop, createConditional, createElement, onDestroy } from \"fict/internal\";\nexport function useCounter() {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, 0, {\n    name: \"count\"\n  });\n  __fictUseEffect(__fictCtx, () => count());\n  return count;\n}\nexport function Hidden(__props) {\n  __props.ok;\n  const ok = prop(() => __props.ok);\n  return consume?.((0, __fictElementNamespaceMatches(\"span\", \"html\") ? (() => {\n    const __tmpl_1 = template(\"<span>hidden</span>\");\n    const __root_0 = __tmpl_1();\n    return __root_0;\n  })() : {\n    type: \"span\",\n    props: {\n      children: \"hidden\"\n    }\n  }), new Box(__fictElementNamespaceMatches(\"i\", \"html\") ? (() => {\n    const __tmpl_3 = template(\"<i>new</i>\");\n    const __root_2 = __tmpl_3();\n    return __root_2;\n  })() : {\n    type: \"i\",\n    props: {\n      children: \"new\"\n    }\n  }), tag`x${__fictElementNamespaceMatches(\"b\", \"html\") ? (() => {\n    const __tmpl_5 = template(\"<b>tag</b>\");\n    const __root_4 = __tmpl_5();\n    return __root_4;\n  })() : {\n    type: \"b\",\n    props: {\n      children: \"tag\"\n    }\n  }}`);\n}\nexport const Logical = __props => {\n  __props.ok;\n  const ok = prop(() => __props.ok);\n  return (() => {\n    const __cond_8 = createConditional(() => ok(), () => {\n      return __fictElementNamespaceMatches(\"strong\", \"html\") ? (() => {\n        const __tmpl_7 = template(\"<strong>yes</strong>\");\n        const __root_6 = __tmpl_7();\n        return __root_6;\n      })() : {\n        type: \"strong\",\n        props: {\n          children: \"yes\"\n        }\n      };\n    }, createElement, () => {\n      return ok();\n    });\n    onDestroy(__cond_8.dispose);\n    return __cond_8;\n  })();\n};",
+      "babelWarnings": [],
+      "babelExplainSha256": "d0f5d801e715a4e327bded549a3f04a408e6c2ff53c0e74049bf0b113c688aee",
+      "babelExplain": {
+        "version": 1,
+        "fileName": "/tooling/hidden-jsx.tsx",
+        "helpers": [
+          "__fictElementNamespaceMatches",
+          "__fictUseContext",
+          "__fictUseEffect",
+          "__fictUseSignal",
+          "createConditional",
+          "createElement",
+          "onDestroy",
+          "prop",
+          "template"
+        ],
+        "diagnostics": [],
+        "events": [
+          {
+            "kind": "source-signal",
+            "name": "s",
+            "message": "s creates a compiler-managed signal accessor.",
+            "line": 3,
+            "column": 15
+          },
+          {
+            "kind": "source-effect",
+            "name": "fx",
+            "message": "fx creates a compiler-managed effect boundary.",
+            "line": 4,
+            "column": 3
+          },
+          {
+            "kind": "source-jsx",
+            "message": "JSX subtree participates in compiler DOM lowering.",
+            "line": 8,
+            "column": 24
+          },
+          {
+            "kind": "source-jsx",
+            "message": "JSX subtree participates in compiler DOM lowering.",
+            "line": 8,
+            "column": 54
+          },
+          {
+            "kind": "source-jsx",
+            "message": "JSX subtree participates in compiler DOM lowering.",
+            "line": 8,
+            "column": 74
+          },
+          {
+            "kind": "source-jsx",
+            "message": "JSX subtree participates in compiler DOM lowering.",
+            "line": 10,
+            "column": 42
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictElementNamespaceMatches",
+            "message": "Compiler output imports runtime helper __fictElementNamespaceMatches."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseContext",
+            "message": "Compiler output imports runtime helper __fictUseContext."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseEffect",
+            "message": "Compiler output imports runtime helper __fictUseEffect."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseSignal",
+            "message": "Compiler output imports runtime helper __fictUseSignal."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "createConditional",
+            "message": "Compiler output imports runtime helper createConditional."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "createElement",
+            "message": "Compiler output imports runtime helper createElement."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "onDestroy",
+            "message": "Compiler output imports runtime helper onDestroy."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "prop",
+            "message": "Compiler output imports runtime helper prop."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "template",
+            "message": "Compiler output imports runtime helper template."
+          }
+        ]
+      },
+      "babelAnalysisSha256": "7ceccdeb6710af743fbee75f6bbe7763913a8e6d8c68ccd4f02ab4d8760c40ce",
+      "babelAnalysis": {
+        "fileName": "/tooling/hidden-jsx.tsx",
+        "components": [
+          {
+            "name": "useCounter",
+            "startLine": 2,
+            "endLine": 6,
+            "trace": [
+              {
+                "line": 2,
+                "markers": [{ "kind": "once", "label": "Component setup runs on mount" }]
+              },
+              {
+                "line": 3,
+                "markers": [
+                  {
+                    "kind": "once",
+                    "label": "Signal initialization runs once",
+                    "regionId": 0,
+                    "deps": []
+                  }
+                ]
+              },
+              {
+                "line": 4,
+                "markers": [
+                  { "kind": "effect", "label": "Effect reruns when dependencies change" },
+                  { "kind": "effect", "label": "Effect callback executes reactively" }
+                ]
+              }
+            ],
+            "regions": [
+              {
+                "id": 0,
+                "startLine": 3,
+                "startColumn": 6,
+                "endLine": 3,
+                "endColumn": 18,
+                "dependencies": [],
+                "declarations": ["count"],
+                "hasControlFlow": false,
+                "hasReactiveWrites": true,
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "Hidden",
+            "startLine": 7,
+            "endLine": 9,
+            "trace": [
+              {
+                "line": 7,
+                "markers": [
+                  { "kind": "once", "label": "Component setup runs on mount" },
+                  { "kind": "once", "label": "JSX expression runs during setup only" }
+                ]
+              },
+              {
+                "line": 8,
+                "markers": [{ "kind": "once", "label": "JSX expression runs during setup only" }]
+              }
+            ],
+            "regions": []
+          },
+          {
+            "name": "Logical",
+            "startLine": 10,
+            "endLine": 10,
+            "trace": [
+              {
+                "line": 10,
+                "markers": [
+                  { "kind": "once", "label": "Component setup runs on mount" },
+                  { "kind": "once", "label": "JSX expression runs during setup only" }
+                ]
+              }
+            ],
+            "regions": []
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "unicode-regions",
+      "babelCodeSha256": "b463ffe426571bc937afde57a8aff4c5c5cd80728e96a17ade80462b5a5bcc32",
+      "babelCode": "import { __fictUseSignal, __fictUseEffect, __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, bindAttribute, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from \"fict/internal\";\nexport function Café() {\n  const __fictCtx = __fictUseContext();\n  const emoji = __fictUseSignal(__fictCtx, \"\\uD83D\\uDE00\", {\n    name: \"emoji\"\n  });\n  __fictUseEffect(__fictCtx, () => {\n    for (const value of [emoji()]) {\n      if (value) {\n        emoji(value + \"\\u754C\");\n      }\n    }\n  }, 1000);\n  __fictUseEffect(__fictCtx, () => emoji());\n  return __fictElementNamespaceMatches(\"div\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0]);\n    const __end_3 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_3, () => emoji(), __node => createElementInNamespace(__node, \"html\"));\n    bindAttribute(__root_0, \"title\", () => emoji());\n    return __root_0;\n  }, 1001)() : {\n    type: \"div\",\n    props: {\n      title: __fictReactive(() => emoji()),\n      children: __fictReactive(() => emoji())\n    }\n  };\n}",
+      "babelWarnings": [
+        {
+          "code": "FICT-R006",
+          "message": "Reactive control-flow reads (emoji) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+          "fileName": "/tooling/unicode-regions.tsx",
+          "line": 2,
+          "column": 8
+        }
+      ],
+      "babelExplainSha256": "1e39595ab102b3b17256bf717e579321f9d871392b90504fa480f76b492656d6",
+      "babelExplain": {
+        "version": 1,
+        "fileName": "/tooling/unicode-regions.tsx",
+        "helpers": [
+          "__fictElementNamespaceMatches",
+          "__fictReactive",
+          "__fictUseContext",
+          "__fictUseEffect",
+          "__fictUseMemo",
+          "__fictUseSignal",
+          "bindAttribute",
+          "createElementInNamespace",
+          "getSlotEnd",
+          "insertBetween",
+          "resolvePath",
+          "template"
+        ],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "message": "Reactive control-flow reads (emoji) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+            "fileName": "/tooling/unicode-regions.tsx",
+            "line": 2,
+            "column": 8
+          }
+        ],
+        "events": [
+          {
+            "kind": "source-signal",
+            "name": "$state",
+            "message": "$state creates a compiler-managed signal accessor.",
+            "line": 3,
+            "column": 15
+          },
+          {
+            "kind": "source-control-flow",
+            "name": "for-of",
+            "message": "Loop control flow participates in reactive region analysis.",
+            "line": 4,
+            "column": 3
+          },
+          {
+            "kind": "source-control-flow",
+            "name": "if",
+            "message": "Control flow participates in reactive region analysis.",
+            "line": 5,
+            "column": 5
+          },
+          {
+            "kind": "source-effect",
+            "name": "$effect",
+            "message": "$effect creates a compiler-managed effect boundary.",
+            "line": 7,
+            "column": 3
+          },
+          {
+            "kind": "source-jsx",
+            "message": "JSX subtree participates in compiler DOM lowering.",
+            "line": 8,
+            "column": 10
+          },
+          {
+            "kind": "diagnostic",
+            "code": "FICT-R006",
+            "name": "FICT-R006",
+            "message": "Reactive control-flow reads (emoji) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+            "line": 2,
+            "column": 8
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictElementNamespaceMatches",
+            "message": "Compiler output imports runtime helper __fictElementNamespaceMatches."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictReactive",
+            "message": "Compiler output imports runtime helper __fictReactive."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseContext",
+            "message": "Compiler output imports runtime helper __fictUseContext."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseEffect",
+            "message": "Compiler output imports runtime helper __fictUseEffect."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseMemo",
+            "message": "Compiler output imports runtime helper __fictUseMemo."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "__fictUseSignal",
+            "message": "Compiler output imports runtime helper __fictUseSignal."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "bindAttribute",
+            "message": "Compiler output imports runtime helper bindAttribute."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "createElementInNamespace",
+            "message": "Compiler output imports runtime helper createElementInNamespace."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "getSlotEnd",
+            "message": "Compiler output imports runtime helper getSlotEnd."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "insertBetween",
+            "message": "Compiler output imports runtime helper insertBetween."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "resolvePath",
+            "message": "Compiler output imports runtime helper resolvePath."
+          },
+          {
+            "kind": "runtime-helper",
+            "name": "template",
+            "message": "Compiler output imports runtime helper template."
+          }
+        ]
+      },
+      "babelAnalysisSha256": "ee49bb3d41ebb0bf0fca24fd007e395470513e8578163b9264ed2f33ab038b68",
+      "babelAnalysis": {
+        "fileName": "/tooling/unicode-regions.tsx",
+        "components": [
+          {
+            "name": "Café",
+            "startLine": 2,
+            "endLine": 9,
+            "trace": [
+              {
+                "line": 2,
+                "markers": [{ "kind": "once", "label": "Component setup runs on mount" }]
+              },
+              {
+                "line": 3,
+                "markers": [
+                  {
+                    "kind": "once",
+                    "label": "Signal initialization runs once",
+                    "regionId": 0,
+                    "deps": ["value"]
+                  }
+                ]
+              },
+              {
+                "line": 7,
+                "markers": [
+                  { "kind": "effect", "label": "Effect reruns when dependencies change" },
+                  { "kind": "effect", "label": "Effect callback executes reactively" }
+                ]
+              },
+              {
+                "line": 8,
+                "markers": [
+                  { "kind": "reactive", "label": "JSX expression updates with reactive values" }
+                ]
+              }
+            ],
+            "regions": [
+              {
+                "id": 0,
+                "startLine": 3,
+                "startColumn": 6,
+                "endLine": 5,
+                "endColumn": 34,
+                "dependencies": ["value"],
+                "declarations": ["emoji"],
+                "hasControlFlow": true,
+                "hasReactiveWrites": true,
+                "children": []
+              }
+            ]
+          }
+        ],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "message": "Reactive control-flow reads (emoji) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.",
+            "severity": "warning",
+            "line": 2,
+            "column": 8
+          }
+        ]
+      }
+    }
+  ]
+}

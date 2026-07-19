@@ -530,8 +530,16 @@
       "name": "tooling-export-surface",
       "legacyFile": "packages/compiler/test/tooling-export-surface.test.ts",
       "disposition": "host-migration",
-      "summary": "The legacy analyze and trace helpers were replaced by serializable analyzeSync and analyze results on the native root.",
+      "summary": "The serializable native analyze API is checked against frozen Babel 0.28 component boundaries, trace kinds, region semantics, diagnostics, and explain events.",
       "evidence": [
+        {
+          "path": "scripts/babel-compiler-tooling-semantic-oracle.test.mjs",
+          "markers": [
+            "Rust matches reviewed Babel 0.28 tooling semantics",
+            "legacy trace subset",
+            "reviewed native region semantics"
+          ]
+        },
         {
           "path": "packages/compiler/test/native-root.test.ts",
           "markers": ["exposes the native request API without the legacy Babel plugin"]

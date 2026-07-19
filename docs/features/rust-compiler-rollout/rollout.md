@@ -109,6 +109,14 @@ evidence covers the selected reactivity, JSX/DOM, async, Unicode, and
 TypeScript/CommonJS lowerings; it does not claim identical generated layouts or
 exhaustive source-map token equivalence.
 
+Explain and editor analysis have a separate four-fixture tooling oracle. Frozen
+Babel `fictExplain` and `analyzeFictFile` artifacts are compared with live
+native transform/analyze results for source-event UTF-16 positions, helper
+capabilities, named component boundaries, trace kinds, aggregate region
+semantics, and diagnostic dispositions. Native callback components and more
+precise diagnostic spans are reviewed additions; helper names, prose, trace
+labels, and region IDs are deliberately outside the parity claim.
+
 Filename and request-protocol evidence is retained separately from the Rust
 codegen goldens. The exact 0.28.0 preset oracle covers real extension inference,
 strict defaults, input-map composition, and explain output. Reviewed native-only

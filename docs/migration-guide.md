@@ -222,12 +222,12 @@ fallback and carry `FICT-R006`.
 Direct compiler hosts must also account for request-identity differences that
 do not appear in a source-only `.tsx` corpus:
 
-| Request policy             | Babel 0.28 versus Rust 0.31                                                                                                                                                                                             |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jsx-extension-required`   | Babel accepts JSX in a `.js` request. Rust infers plain JavaScript and rejects JSX unless the filename uses `.jsx` or the host passes `language: "jsx"`.                                                                |
-| `cts-top-level-return`     | Rust infers CommonJS for `.cts` and accepts a top-level `return`; Babel 0.28 rejects the audited request. Treat this as a capability expansion and confirm that the downstream CommonJS host supports the emitted form. |
-| `source-map-normalization` | Both compilers preserve the audited logical source and `sourcesContent`, but raw mapping segmentation and serialized map text are emitter-specific. Compare normalized source identities, not whole-map hashes.         |
-| `explain-normalization`    | Both expose the audited physical/graph identity and source-event kinds, but native explain events are a versioned structured artifact rather than a Babel text snapshot. Consume documented fields, not exact text.     |
+| Request policy             | Babel 0.28 versus Rust 0.31                                                                                                                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jsx-extension-required`   | Babel accepts JSX in a `.js` request. Rust infers plain JavaScript and rejects JSX unless the filename uses `.jsx` or the host passes `language: "jsx"`.                                                                              |
+| `cts-top-level-return`     | Rust infers CommonJS for `.cts` and accepts a top-level `return`; Babel 0.28 rejects the audited request. Treat this as a capability expansion and confirm that the downstream CommonJS host supports the emitted form.               |
+| `source-map-normalization` | Both compilers preserve the audited logical source and `sourcesContent`, but raw mapping segmentation and serialized map text are emitter-specific. Compare normalized source identities, not whole-map hashes.                       |
+| `explain-normalization`    | Source event roles and authored UTF-16 positions match the frozen Babel artifact. Private helper names and prose remain emitter-specific; compare documented helper capabilities and structured fields, not exact text or region IDs. |
 
 ### JSX authored-text whitespace
 
