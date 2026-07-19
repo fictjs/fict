@@ -1075,6 +1075,7 @@ fn verify_operations(
             EmitOperation::CreateVNode {
                 template,
                 source_result,
+                reactive_helper,
                 fragment_helper,
                 ..
             } => {
@@ -1093,6 +1094,12 @@ fn verify_operations(
                     diagnostics.push(emit_error(
                         "FICT-EMIT-VNODE-FRAGMENT",
                         "VNode operation fragment helper must match its JSX template",
+                    ));
+                }
+                if *reactive_helper != RuntimeHelper::ReactiveGetter {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-VNODE-REACTIVE",
+                        "VNode operation must expose the reactive getter runtime helper",
                     ));
                 }
             }
@@ -1710,8 +1717,13 @@ fn verify_helper_semantics(
             helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)
         }
         EmitOperation::CreateVNode {
-            fragment_helper, ..
-        } => fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment),
+            reactive_helper,
+            fragment_helper,
+            ..
+        } => {
+            *reactive_helper == RuntimeHelper::ReactiveGetter
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
+        }
         EmitOperation::CloneTemplate {
             namespace_helper,
             reactive_helper,
@@ -1733,6 +1745,7 @@ fn verify_helper_semantics(
             merge_helper,
             non_reactive_helper,
             reactive_function_helper,
+            vnode_reactive_helper,
             fragment_helper,
             ..
         } => {
@@ -1775,6 +1788,12 @@ fn verify_helper_semantics(
                     }
                 )
             });
+            let needs_vnode_reactive = props
+                .iter()
+                .any(|prop| matches!(prop, crate::ComponentProp::Node { .. }))
+                || children
+                    .iter()
+                    .any(|child| matches!(child, crate::ComponentChild::Node(_)));
             let wrappers_exclusive = props.iter().all(|prop| {
                 let crate::ComponentProp::Named {
                     getter,
@@ -1804,6 +1823,8 @@ fn verify_helper_semantics(
                 && *non_reactive_helper == needs_non_reactive.then_some(RuntimeHelper::NonReactive)
                 && *reactive_function_helper
                     == needs_reactive_function.then_some(RuntimeHelper::ReactiveGetter)
+                && *vnode_reactive_helper
+                    == needs_vnode_reactive.then_some(RuntimeHelper::ReactiveGetter)
                 && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
         }
         EmitOperation::PreserveHir { .. }

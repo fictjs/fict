@@ -690,6 +690,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             EmitOperation::CreateVNode {
                 template,
                 source_result,
+                reactive_helper: RuntimeHelper::ReactiveGetter,
                 fragment_helper: None,
                 ..
             } if *template == TemplateId::new(0) && *source_result == ValueId::new(1)
@@ -700,6 +701,12 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             .imports
             .iter()
             .any(|intent| intent.helper == RuntimeHelper::Fragment)
+    );
+    assert!(
+        vnode
+            .imports
+            .iter()
+            .any(|intent| intent.helper == RuntimeHelper::ReactiveGetter)
     );
     assert!(
         !vnode.functions[0]

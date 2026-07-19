@@ -367,6 +367,7 @@ pub enum EmitOperation {
     CreateVNode {
         template: TemplateId,
         source_result: ValueId,
+        reactive_helper: RuntimeHelper,
         fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
@@ -405,6 +406,7 @@ pub enum EmitOperation {
         merge_helper: Option<RuntimeHelper>,
         non_reactive_helper: Option<RuntimeHelper>,
         reactive_function_helper: Option<RuntimeHelper>,
+        vnode_reactive_helper: Option<RuntimeHelper>,
         fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
@@ -588,20 +590,20 @@ impl EmitOperation {
             | Self::ResolveElement { helper, .. } => Some(*helper),
             Self::CreateDerived { helper, .. }
             | Self::ReadReactive { helper, .. }
-            | Self::CreateVNode {
-                fragment_helper: helper,
-                ..
-            }
             | Self::CloneTemplate {
                 namespace_helper: helper,
                 ..
             } => *helper,
+            Self::CreateVNode {
+                reactive_helper, ..
+            } => Some(*reactive_helper),
             Self::InvokeComponent {
                 prop_helper,
                 children_helper,
                 merge_helper,
                 non_reactive_helper,
                 reactive_function_helper,
+                vnode_reactive_helper,
                 fragment_helper,
                 ..
             } => match prop_helper {
@@ -614,7 +616,10 @@ impl EmitOperation {
                             Some(helper) => Some(*helper),
                             None => match reactive_function_helper {
                                 Some(helper) => Some(*helper),
-                                None => *fragment_helper,
+                                None => match vnode_reactive_helper {
+                                    Some(helper) => Some(*helper),
+                                    None => *fragment_helper,
+                                },
                             },
                         },
                     },
@@ -639,6 +644,9 @@ impl EmitOperation {
             Self::Conditional { create_helper, .. } => Some(*create_helper),
             Self::ConditionalReturn { create_helper, .. } => Some(*create_helper),
             Self::KeyedChild { cleanup_helper, .. } => Some(*cleanup_helper),
+            Self::CreateVNode {
+                fragment_helper, ..
+            } => *fragment_helper,
             Self::CloneTemplate {
                 reactive_helper, ..
             } => *reactive_helper,
@@ -685,6 +693,7 @@ impl EmitOperation {
                 merge_helper,
                 non_reactive_helper,
                 reactive_function_helper,
+                vnode_reactive_helper,
                 fragment_helper,
                 ..
             } => [
@@ -693,8 +702,8 @@ impl EmitOperation {
                 *merge_helper,
                 *non_reactive_helper,
                 *reactive_function_helper,
+                *vnode_reactive_helper,
                 *fragment_helper,
-                None,
                 None,
             ],
             Self::Conditional {

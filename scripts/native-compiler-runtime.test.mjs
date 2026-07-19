@@ -2358,6 +2358,71 @@ test('nullish conditional returns mount and dispose reactive branches', async ()
   container.remove()
 })
 
+test('stable conditional branches keep nested VNode values reactive', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export let api
+
+      function Frame({ children }) {
+        return <section data-id="frame">{children}</section>
+      }
+
+      function Modal() {
+        let visible = $state(true)
+        let closing = $state(false)
+        let title = $state('A')
+        let body = $state('one')
+        api = {
+          setClosing: value => (closing = value),
+          setTitle: value => (title = value),
+          setBody: value => (body = value),
+        }
+
+        if (!visible && !closing) return null
+        return (
+          <Frame>
+            <article data-id="modal" className={closing ? 'closing' : ''}>
+              <h2>{title}</h2>
+              <main>{body}</main>
+            </article>
+          </Frame>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <Modal />, container)
+      }
+    `,
+    'stable-conditional-nested-vnode',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const frame = container.querySelector('[data-id="frame"]')
+  const modal = container.querySelector('[data-id="modal"]')
+  assert.equal(modal?.querySelector('h2')?.textContent, 'A')
+  assert.equal(modal?.querySelector('main')?.textContent, 'one')
+  assert.equal(modal?.className, '')
+
+  compiled.api.setTitle('B')
+  compiled.api.setBody('two')
+  compiled.api.setClosing(true)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="frame"]'), frame)
+  assert.equal(container.querySelector('[data-id="modal"]'), modal)
+  assert.equal(modal?.querySelector('h2')?.textContent, 'B')
+  assert.equal(modal?.querySelector('main')?.textContent, 'two')
+  assert.equal(modal?.className, 'closing')
+
+  dispose()
+  container.remove()
+})
+
 test('getterCache controls safe repeated synchronous accessor reads', async () => {
   const source = `
     import { $memo, $state } from 'fict'

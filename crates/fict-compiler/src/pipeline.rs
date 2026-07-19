@@ -5380,7 +5380,39 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(result.code.contains("children: count()"), "{}", result.code);
+        assert!(
+            result
+                .code
+                .contains("children: __fictReactive(() => count())"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn wraps_reactive_values_in_component_nested_vnodes() {
+        let mut input = request(
+            "import { $state } from 'fict'; function Frame(props) { return <section>{props.children}</section>; } export function Modal() { let visible = $state(true); let closing = $state(false); let title = $state('A'); if (!visible && !closing) return null; return <Frame><article className={closing ? 'closing' : ''}><h2>{title}</h2></article></Frame>; }",
+            "component-nested-vnode.tsx",
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("className: __fictReactive(() => closing() ? \"closing\" : \"\")"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("children: __fictReactive(() => title())"),
+            "{}",
+            result.code
+        );
     }
 
     #[test]

@@ -1806,6 +1806,7 @@ fn lower_function(
                         operations.push(EmitOperation::CreateVNode {
                             template: *template,
                             source_result,
+                            reactive_helper: RuntimeHelper::ReactiveGetter,
                             fragment_helper: hir.templates[template.as_usize()]
                                 .contains_fragment
                                 .then_some(RuntimeHelper::Fragment),
@@ -2923,6 +2924,13 @@ fn lower_component_operation(
     if let Some(result) = source_result {
         value_temporaries.insert(result, target);
     }
+    let vnode_reactive_helper = (props
+        .iter()
+        .any(|prop| matches!(prop, ComponentProp::Node { .. }))
+        || children
+            .iter()
+            .any(|child| matches!(child, ComponentChild::Node(_))))
+    .then_some(RuntimeHelper::ReactiveGetter);
     operations.push(EmitOperation::InvokeComponent {
         target,
         component,
@@ -2974,6 +2982,7 @@ fn lower_component_operation(
                 )
             })
             .then_some(RuntimeHelper::ReactiveGetter),
+        vnode_reactive_helper,
         fragment_helper: element
             .contains_fragment()
             .then_some(RuntimeHelper::Fragment),

@@ -1567,6 +1567,7 @@ fn mutation_rewrites(
 }
 #[derive(Debug, Clone)]
 struct VNodeRewrite {
+    reactive_local: String,
     fragment_local: Option<String>,
 }
 fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Vec<Diagnostic>) {
@@ -1583,6 +1584,7 @@ fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Ve
         .flat_map(|function| &function.operations)
     {
         let EmitOperation::CreateVNode {
+            reactive_helper,
             fragment_helper,
             origin,
             ..
@@ -1596,6 +1598,17 @@ fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Ve
                 "VNode EmitIR operation requires a source origin",
                 GuaranteeClass::Internal,
             ));
+            continue;
+        };
+        let Some(reactive_local) = helper_names.get(reactive_helper) else {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-IMPORT",
+                    "VNode reactive helper has no runtime import intent",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
             continue;
         };
         let fragment_local = match fragment_helper {
@@ -1616,7 +1629,13 @@ fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Ve
             None => None,
         };
         if rewrites
-            .insert((span.start(), span.end()), VNodeRewrite { fragment_local })
+            .insert(
+                (span.start(), span.end()),
+                VNodeRewrite {
+                    reactive_local: (*reactive_local).to_owned(),
+                    fragment_local,
+                },
+            )
             .is_some()
         {
             diagnostics.push(
@@ -1640,6 +1659,7 @@ struct ComponentRewrite {
     merge_helper: Option<String>,
     non_reactive_helper: Option<String>,
     reactive_function_helper: Option<String>,
+    vnode_reactive_helper: Option<String>,
     fragment_local: Option<String>,
 }
 fn component_rewrites(
@@ -1665,6 +1685,7 @@ fn component_rewrites(
             merge_helper,
             non_reactive_helper,
             reactive_function_helper,
+            vnode_reactive_helper,
             fragment_helper,
             origin,
             ..
@@ -1765,6 +1786,23 @@ fn component_rewrites(
             }
             None => None,
         };
+        let vnode_reactive_helper = match vnode_reactive_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component nested-VNode helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
         let fragment_local = match fragment_helper {
             Some(helper) => {
                 let Some(local) = helper_names.get(helper) else {
@@ -1793,6 +1831,7 @@ fn component_rewrites(
                     merge_helper,
                     non_reactive_helper,
                     reactive_function_helper,
+                    vnode_reactive_helper,
                     fragment_local,
                 },
             )
@@ -4068,14 +4107,17 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         ) && (vnode.is_some() || self.vnode_depth > 0)
         {
             let previous_fragment = self.active_fragment_local.clone();
+            let previous_reactive = self.active_vnode_reactive_local.clone();
             if let Some(vnode) = &vnode {
                 self.active_fragment_local.clone_from(&vnode.fragment_local);
+                self.active_vnode_reactive_local = Some(vnode.reactive_local.clone());
             }
             self.vnode_depth += 1;
             let original = expression.take_in(&self.allocator);
             *expression = self.lower_jsx_expression(original);
             self.vnode_depth -= 1;
             self.active_fragment_local = previous_fragment;
+            self.active_vnode_reactive_local = previous_reactive;
             if vnode.is_some() {
                 self.matched_vnodes.insert(location);
             }
@@ -5867,9 +5909,14 @@ impl<'a> AstRewriter<'a, '_> {
             return self.lower_jsx_element(element);
         };
         let previous_fragment = self.active_fragment_local.clone();
+        let previous_reactive = self.active_vnode_reactive_local.clone();
         self.active_fragment_local = component.fragment_local.clone();
+        if let Some(helper) = &component.vnode_reactive_helper {
+            self.active_vnode_reactive_local = Some(helper.clone());
+        }
         let lowered = self.lower_component_element(element, component);
         self.active_fragment_local = previous_fragment;
+        self.active_vnode_reactive_local = previous_reactive;
         self.matched_components.insert(location);
         lowered
     }
