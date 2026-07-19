@@ -621,7 +621,11 @@ fn is_tooling_function(function: &HirFunction) -> bool {
 }
 
 fn function_span(function: &HirFunction) -> Option<SourceSpan> {
-    let mut span = function.origin.primary_span;
+    if let Some(span) = function.origin.primary_span {
+        return Some(span);
+    }
+
+    let mut span = None;
     for block in &function.blocks {
         merge_span(&mut span, block.origin.primary_span);
         merge_span(&mut span, block.terminator.origin.primary_span);
@@ -914,6 +918,31 @@ mod tests {
         assert!(kinds.contains(&TraceMarkerKind::Once));
         assert!(kinds.contains(&TraceMarkerKind::Effect));
         assert!(kinds.contains(&TraceMarkerKind::Reactive));
+    }
+
+    #[test]
+    fn keeps_component_locations_inside_the_authored_function_span() {
+        let result = analyze(request(
+            concat!(
+                "import { $effect, $state } from 'fict';\n",
+                "\n",
+                "export function Counter() {\n",
+                "  const count = $state(0);\n",
+                "  $effect(() => { count; });\n",
+                "  return <button>{count}</button>;\n",
+                "}\n",
+            ),
+            "counter-location.tsx",
+        ));
+
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        let counter = result
+            .components
+            .iter()
+            .find(|component| component.name == "Counter")
+            .expect("Counter analysis");
+        assert_eq!((counter.start_line, counter.end_line), (3, 7));
+        assert_eq!(counter.trace.first().map(|trace| trace.line), Some(3));
     }
 
     #[test]
