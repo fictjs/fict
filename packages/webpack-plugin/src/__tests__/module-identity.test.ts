@@ -147,6 +147,50 @@ describe('@fictjs/webpack-plugin module identity', () => {
     }
   })
 
+  it('keeps a local hook complete across an opaque package star re-export', async () => {
+    const root = await createFixture({
+      'entry.ts': `
+        import { useCounter } from './hook'
+
+        export function App() {
+          const count = useCounter()
+          return count * 2
+        }
+      `,
+      'hook.ts': `
+        import { $state } from 'fict'
+
+        export function useCounter() {
+          const count = $state(2)
+          return count
+        }
+
+        export * from 'ordinary-package'
+      `,
+      'node_modules/ordinary-package/index.js': `exports.ordinary = true`,
+      'node_modules/ordinary-package/package.json': JSON.stringify({
+        name: 'ordinary-package',
+        version: '1.0.0',
+        main: './index.js',
+      }),
+    })
+
+    try {
+      const configuration = createWebpackConfiguration(root)
+      const rule = configuration.module?.rules?.[0]
+      if (!rule || typeof rule !== 'object') throw new Error('Fixture loader rule is missing.')
+      rule.exclude = /node_modules/
+
+      const stats = await runCompiler(configuration)
+      expect(readStoredBuildMetadata(stats, path.join(root, 'hook.ts'))).toMatchObject({
+        incomplete: false,
+      })
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('analyzes callable CTS import-equals members without duplicating the module', async () => {
     const loadCounter = '__fictWebpackCallableImportEqualsLoads'
     const root = await createFixture({

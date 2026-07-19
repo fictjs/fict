@@ -790,6 +790,7 @@ async function buildMetadataGraph(
       if (!dependency || typeof request !== 'string' || !emittedRequests.has(request)) continue
       if (
         dependency.type !== 'harmony side effect evaluation' &&
+        dependency.type !== 'harmony export imported specifier' &&
         dependency.type !== 'cjs require'
       ) {
         continue

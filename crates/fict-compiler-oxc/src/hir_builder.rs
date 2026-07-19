@@ -1589,7 +1589,10 @@ fn apply_resolved_import_metadata(
     let snapshot: BTreeMap<_, _> = resolved_metadata
         .iter()
         .filter(|entry| {
-            entry.status == MetadataResolutionStatus::Resolved && entry.validate().is_ok()
+            matches!(
+                entry.status,
+                MetadataResolutionStatus::Resolved | MetadataResolutionStatus::IncompleteCycle
+            ) && entry.validate().is_ok()
         })
         .filter_map(|entry| {
             entry
@@ -3257,6 +3260,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             };
             if !self.unavailable_metadata_sources.contains(&import.source)
                 || !requires_imported_hook_metadata(frontend_binding, import, call.hook.as_ref())
+                || imported_hook_metadata_available(import, call.callee_reference.as_ref())
             {
                 continue;
             }
@@ -10382,6 +10386,28 @@ fn requires_imported_hook_metadata(
         fict_hir::ImportedName::Default => is_hook_name(&binding.display_name) || hook.is_some(),
         fict_hir::ImportedName::Namespace | fict_hir::ImportedName::ImportEquals => hook.is_some(),
     }
+}
+
+fn imported_hook_metadata_available(
+    import: &fict_hir::ImportBinding,
+    callee_reference: Option<&PlannedPlace>,
+) -> bool {
+    let Some(place) = callee_reference else {
+        return import.hook_return.is_some();
+    };
+    if place.projections.is_empty() {
+        return import.hook_return.is_some();
+    }
+    let path: Option<Vec<_>> = place
+        .projections
+        .iter()
+        .map(|projection| match projection {
+            PlannedProjection::Static { name, .. } => Some(name.clone()),
+            PlannedProjection::Index { index, .. } => Some(index.to_string()),
+            PlannedProjection::Computed { .. } => None,
+        })
+        .collect();
+    path.is_some_and(|path| import.resolve_hook_member_path(&path).is_some())
 }
 
 fn is_fict_runtime_source(source: &str) -> bool {

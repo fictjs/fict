@@ -1840,6 +1840,83 @@ mod tests {
     }
 
     #[test]
+    fn consumes_known_hook_facts_from_incomplete_cycle_metadata() {
+        let mut input = request(
+            "import { useCounter } from './hooks'; export function App() { const count = useCounter(); return <span>{count}</span>; }",
+            "partial-hook.tsx",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./hooks".into(),
+            resolved_id: Some("/src/hooks.ts".into()),
+            status: MetadataResolutionStatus::IncompleteCycle,
+            metadata: Some(ModuleReactiveMetadata {
+                hooks: BTreeMap::from([(
+                    "useCounter".into(),
+                    HookReturnInfo {
+                        direct_accessor: Some(ReactiveExportKind::Signal),
+                        ..HookReturnInfo::default()
+                    },
+                )]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:partial-hook".into(),
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.metadata_incomplete);
+        assert_eq!(result.unresolved_metadata_requests, ["./hooks"]);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-H003"),
+            "{:?}",
+            result.diagnostics
+        );
+        assert!(result.code.contains("() => count()"), "{}", result.code);
+    }
+
+    #[test]
+    fn re_exports_known_facts_from_incomplete_cycle_metadata() {
+        let mut input = request(
+            "export { useCounter } from './hooks';",
+            "partial-re-export.ts",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./hooks".into(),
+            resolved_id: Some("/src/hooks.ts".into()),
+            status: MetadataResolutionStatus::IncompleteCycle,
+            metadata: Some(ModuleReactiveMetadata {
+                hooks: BTreeMap::from([(
+                    "useCounter".into(),
+                    HookReturnInfo {
+                        direct_accessor: Some(ReactiveExportKind::Signal),
+                        ..HookReturnInfo::default()
+                    },
+                )]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:partial-re-export".into(),
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.metadata_incomplete);
+        assert_eq!(result.unresolved_metadata_requests, ["./hooks"]);
+        assert_eq!(
+            result
+                .module_metadata
+                .hooks
+                .get("useCounter")
+                .and_then(|hook| hook.direct_accessor),
+            Some(ReactiveExportKind::Signal)
+        );
+    }
+
+    #[test]
     fn publishes_hook_metadata_from_typescript_export_assignment() {
         let result = compile(request(
             "import { $state } from 'fict'; function useCounter() { const count = $state(2); return count; } export = useCounter;",
@@ -1858,7 +1935,7 @@ mod tests {
     }
 
     #[test]
-    fn marks_metadata_incomplete_for_an_opaque_star_re_export() {
+    fn treats_an_opaque_star_re_export_as_authoritatively_empty() {
         let mut input = request(
             "import { $state } from 'fict'; export function useCounter() { const count = $state(2); return count; } export * from 'ordinary-package';",
             "hook.ts",
@@ -1874,8 +1951,9 @@ mod tests {
         let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
-        assert!(result.metadata_incomplete);
-        assert_eq!(result.unresolved_metadata_requests, ["ordinary-package"]);
+        assert!(!result.metadata_incomplete);
+        assert!(result.unresolved_metadata_requests.is_empty());
+        assert_eq!(result.metadata_dependencies, ["package:ordinary-package"]);
         assert!(result.module_metadata.hooks.contains_key("useCounter"));
     }
 

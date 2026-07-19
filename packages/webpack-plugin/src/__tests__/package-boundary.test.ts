@@ -356,6 +356,7 @@ describe('Webpack package metadata boundaries', () => {
   it('treats invalid-only configs and invalid declared entries as unresolved', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'fict-webpack-invalid-config-'))
     const packageJsonPath = path.join(root, 'package.json')
+    const plainPackage = { name: 'ordinary-package', version: '1.0.0' }
     const invalidOnly = { name: 'hook-lib', fict: { exports: { '../escape': './meta.json' } } }
     const invalidEntry = { name: 'hook-lib', fict: { exports: { './hooks': '' } } }
     const absentEntry = {
@@ -364,6 +365,14 @@ describe('Webpack package metadata boundaries', () => {
     }
 
     try {
+      writeFileSync(packageJsonPath, JSON.stringify(plainPackage))
+      expect(
+        readPackageMetadataAtBoundary(
+          createResolution(packageJsonPath, '.', plainPackage),
+          () => {},
+        ),
+      ).toEqual({ kind: 'plain' })
+
       writeFileSync(packageJsonPath, JSON.stringify(invalidOnly))
       expect(
         readPackageMetadataAtBoundary(

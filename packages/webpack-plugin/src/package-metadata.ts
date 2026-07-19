@@ -532,7 +532,14 @@ export function readPackageMetadataAtBoundary(
       }
     }
     const config = readFictPackageConfig(packageData)
-    if (!config?.hasValidDeclaration) return { kind: 'unresolved' }
+    if (!config?.hasValidDeclaration) {
+      const explicitlyConfigured =
+        !!packageData &&
+        typeof packageData === 'object' &&
+        !Array.isArray(packageData) &&
+        Object.prototype.hasOwnProperty.call(packageData, 'fict')
+      return explicitlyConfigured ? { kind: 'unresolved' } : { kind: 'plain' }
+    }
     if (resolution.publicSubpath === null) return { kind: 'plain' }
     const metadataPath = Object.prototype.hasOwnProperty.call(
       config.exports ?? {},

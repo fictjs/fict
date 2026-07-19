@@ -91,7 +91,6 @@ interface FictPluginCompilerOptions extends Omit<
   /** @experimental Minimum node count for automatic Preview handler extraction. */
   autoExtractThreshold?: number
   /** Integration-owned metadata graph for the current build. @internal */
-  moduleMetadata?: Map<string, ModuleReactiveMetadata>
   resolveModuleMetadata?: (
     source: string,
     importer?: string,
@@ -201,16 +200,20 @@ interface CachedTransform {
   map: TransformResult['map']
   extractedHandlers?: ExtractedHandler[]
   moduleMetadata?: ModuleReactiveMetadata
+  metadataIncomplete?: boolean
+  unresolvedMetadataRequests?: string[]
 }
 
 interface CompilerStageResult {
   code: string
   map: TransformResult['map']
   artifacts: CompilerArtifact[]
+  moduleMetadata: ModuleReactiveMetadata
+  metadataIncomplete: boolean
+  unresolvedMetadataRequests: string[]
 }
 
 interface PreparedCompilerTransform extends CompilerStageResult {
-  moduleMetadata: ModuleReactiveMetadata
   preparationKey: string
 }
 
@@ -238,6 +241,11 @@ interface ResolvedMetadataModule {
   filename: string
 }
 
+interface ResolvedCompilerModuleMetadata {
+  metadata: ModuleReactiveMetadata | null | undefined
+  stateKey: string | null
+}
+
 interface DevHandlerGeneration {
   id: string
   registries: Map<string, Map<string, ExtractedHandler>>
@@ -249,6 +257,8 @@ interface MetadataTransformState {
   devHandlerGeneration: DevHandlerGeneration | null
   environment: object | null
   moduleMetadata: Map<string, ModuleReactiveMetadata>
+  incompleteModuleMetadata: Set<string>
+  unresolvedModuleMetadataRequests: Map<string, string[]>
   resolvedLocalModules: Map<string, ResolvedMetadataModule>
   preparedCompilerTransforms: Map<string, PreparedCompilerTransform>
   pipelineCompilerInputs: Map<string, string>
@@ -604,6 +614,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       devHandlerGeneration,
       environment,
       moduleMetadata: new Map(),
+      incompleteModuleMetadata: new Set(),
+      unresolvedModuleMetadataRequests: new Map(),
       resolvedLocalModules: new Map(),
       preparedCompilerTransforms: new Map(),
       pipelineCompilerInputs: new Map(),
@@ -668,6 +680,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state.tsProject = null
     state.tsProjectInit = null
     state.moduleMetadata.clear()
+    state.incompleteModuleMetadata.clear()
+    state.unresolvedModuleMetadataRequests.clear()
     state.resolvedLocalModules.clear()
     state.preparedCompilerTransforms.clear()
     state.pipelineCompilerInputs.clear()
@@ -1125,41 +1139,43 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const lookupStoredMetadata = (
     state: MetadataTransformState,
     resolved: string,
-  ): ModuleReactiveMetadata | undefined => {
+  ): { key: string; metadata: ModuleReactiveMetadata } | undefined => {
     const normalized = normalizeFileName(resolved, config?.root)
     const direct = state.moduleMetadata.get(normalized)
-    if (direct) return direct
+    if (direct) return { key: normalized, metadata: direct }
     const ext = path.extname(normalized)
     if (!ext) {
       for (const suffix of MODULE_EXTENSIONS) {
-        const byExt = state.moduleMetadata.get(`${normalized}${suffix}`)
-        if (byExt) return byExt
+        const key = `${normalized}${suffix}`
+        const byExt = state.moduleMetadata.get(key)
+        if (byExt) return { key, metadata: byExt }
       }
       for (const suffix of MODULE_EXTENSIONS) {
-        const byIndex = state.moduleMetadata.get(path.join(normalized, `index${suffix}`))
-        if (byIndex) return byIndex
+        const key = path.join(normalized, `index${suffix}`)
+        const byIndex = state.moduleMetadata.get(key)
+        if (byIndex) return { key, metadata: byIndex }
       }
     }
     return undefined
   }
 
-  const resolveCompilerModuleMetadata = (
+  const resolveCompilerModuleMetadataState = (
     state: MetadataTransformState,
     source: string,
     importer?: string,
     importerKey?: string,
-  ): ModuleReactiveMetadata | null | undefined => {
+  ): ResolvedCompilerModuleMetadata => {
     const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
-    if (userResolved !== undefined) return userResolved
+    if (userResolved !== undefined) return { metadata: userResolved, stateKey: null }
     if (
       shouldSkipMetadataForModuleQuery(source, {
         root: config?.root,
         importer,
       })
     ) {
-      return undefined
+      return { metadata: undefined, stateKey: null }
     }
-    if (!importer) return undefined
+    if (!importer) return { metadata: undefined, stateKey: null }
 
     const importerFile = normalizeFileName(importer, config?.root)
     const exactResolution = state.resolvedLocalModules.get(
@@ -1197,8 +1213,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     if (resolvedSource) {
       const resolvedMetadata = exactResolution
         ? state.moduleMetadata.get(exactResolution.key)
+          ? { key: exactResolution.key, metadata: state.moduleMetadata.get(exactResolution.key)! }
+          : undefined
         : lookupStoredMetadata(state, resolvedSource)
-      if (resolvedMetadata) return resolvedMetadata
+      if (resolvedMetadata) {
+        return { metadata: resolvedMetadata.metadata, stateKey: resolvedMetadata.key }
+      }
       if (shouldCompileModule(resolvedSource)) {
         throw new Error(
           `[fict] Local module metadata for "${source}" imported by "${importerFile}" ` +
@@ -1207,11 +1227,22 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
     }
 
-    if (!packageSource) return undefined
-    return resolvePackageModuleMetadata(packageSource, importerFile, {
-      onDependency: file => registerPackageMetadataDependency(state, file),
-    })
+    if (!packageSource) return { metadata: undefined, stateKey: null }
+    return {
+      metadata: resolvePackageModuleMetadata(packageSource, importerFile, {
+        onDependency: file => registerPackageMetadataDependency(state, file),
+      }),
+      stateKey: null,
+    }
   }
+
+  const resolveCompilerModuleMetadata = (
+    state: MetadataTransformState,
+    source: string,
+    importer?: string,
+    importerKey?: string,
+  ): ModuleReactiveMetadata | null | undefined =>
+    resolveCompilerModuleMetadataState(state, source, importer, importerKey).metadata
 
   const createNativeMetadataSnapshot = (
     state: MetadataTransformState,
@@ -1221,7 +1252,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   ): ResolvedMetadataInput[] => {
     const aliasEntries = normalizeAliases(config?.resolve?.alias)
     return sources.map(source => {
-      const metadata = resolveCompilerModuleMetadata(state, source, normalizedFilename, importerKey)
+      const resolution = resolveCompilerModuleMetadataState(
+        state,
+        source,
+        normalizedFilename,
+        importerKey,
+      )
+      const metadata = resolution.metadata
       const exactResolution = state.resolvedLocalModules.get(
         createLocalResolutionKey(importerKey, source),
       )
@@ -1237,7 +1274,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         status = 'missing'
         resolvedId = null
       } else if (metadata !== undefined) {
-        status = 'resolved'
+        status =
+          resolution.stateKey && state.incompleteModuleMetadata.has(resolution.stateKey)
+            ? 'incompleteCycle'
+            : 'resolved'
         resolvedMetadata = metadata
         resolvedId ??= `resolver:${source}`
       } else if (
@@ -1274,7 +1314,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     tsImportElisionOverride?: TypeScriptImportElision,
     transformOptions?: {
       metadataKey?: string
-      moduleMetadata?: Map<string, ModuleReactiveMetadata>
       publicIdentityId?: string
       useTypeScriptProject?: boolean
     },
@@ -1333,7 +1372,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       // Build identities resolve through the manifest. Dev identities are directly serviceable
       // Vite URLs, so SSR output never needs to expose a source-machine file:// URL.
       ...(publicModuleId ? { publicModuleId } : {}),
-      moduleMetadata: transformOptions?.moduleMetadata ?? state.moduleMetadata,
       resolveModuleMetadata: (source, importer) =>
         resolveCompilerModuleMetadata(state, source, importer, transformOptions?.metadataKey),
     }
@@ -1485,15 +1523,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   ): Promise<{
     key: string
     fictOptions: FictPluginCompilerOptions
-    outputMetadata: Map<string, ModuleReactiveMetadata>
     tsImportElision: TypeScriptImportElision
     nativeMetadata: ResolvedMetadataInput[]
   }> => {
     assertTransformStateActive(state)
     const isVariant = node.key !== node.filename
-    const outputMetadata = isVariant
-      ? new Map<string, ModuleReactiveMetadata>()
-      : state.moduleMetadata
     const { fictOptions, project, nativeMetadata } = await createCompilerOptions(
       state,
       node.code,
@@ -1501,7 +1535,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       tsImportElision,
       {
         metadataKey: node.key,
-        moduleMetadata: outputMetadata,
         publicIdentityId: node.id,
         useTypeScriptProject: !isVariant,
       },
@@ -1518,6 +1551,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       file => registerPackageMetadataDependency(state, file),
       node.key,
       collectCompilerStaticModuleSourcesSync,
+      state.incompleteModuleMetadata,
     )
     return {
       key: buildMetadataPreparationKey(
@@ -1530,9 +1564,29 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         getCompilerStageFingerprint(),
       ),
       fictOptions,
-      outputMetadata,
       tsImportElision,
       nativeMetadata,
+    }
+  }
+
+  const storeModuleMetadataState = (
+    state: MetadataTransformState,
+    key: string,
+    metadata: ModuleReactiveMetadata,
+    incomplete: boolean,
+    unresolvedRequests: readonly string[],
+  ): void => {
+    state.moduleMetadata.set(key, metadata)
+    if (incomplete) {
+      state.incompleteModuleMetadata.add(key)
+    } else {
+      state.incompleteModuleMetadata.delete(key)
+    }
+    const normalizedRequests = [...new Set(unresolvedRequests)].sort()
+    if (normalizedRequests.length > 0) {
+      state.unresolvedModuleMetadataRequests.set(key, normalizedRequests)
+    } else {
+      state.unresolvedModuleMetadataRequests.delete(key)
     }
   }
 
@@ -1540,7 +1594,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state: MetadataTransformState,
     node: MetadataGraphNode,
     fictOptions: FictPluginCompilerOptions,
-    outputMetadata: Map<string, ModuleReactiveMetadata>,
     tsImportElision: TypeScriptImportElision,
     nativeMetadata: ResolvedMetadataInput[],
   ): Promise<Omit<PreparedCompilerTransform, 'preparationKey'>> => {
@@ -1557,17 +1610,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       },
     )
     assertTransformStateActive(state)
-    const generatedMetadata = outputMetadata.get(node.filename)
-    if (!generatedMetadata) {
-      throw new Error(`[fict] Compiler did not emit module metadata for ${node.filename}.`)
-    }
-    state.moduleMetadata.set(node.key, generatedMetadata)
-    return {
-      code: compiled.code,
-      map: compiled.map,
-      artifacts: compiled.artifacts,
-      moduleMetadata: generatedMetadata,
-    }
+    storeModuleMetadataState(
+      state,
+      node.key,
+      compiled.moduleMetadata,
+      compiled.metadataIncomplete,
+      compiled.unresolvedMetadataRequests,
+    )
+    return compiled
   }
 
   const prepareMetadataGraph = async (
@@ -1624,6 +1674,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                 createEmptyModuleMetadata(),
             )
           }
+          state.incompleteModuleMetadata.add(moduleKey)
         }
       }
 
@@ -1632,7 +1683,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         prepared: PreparedCompilerTransform | undefined
         key: string
         fictOptions: FictPluginCompilerOptions
-        outputMetadata: Map<string, ModuleReactiveMetadata>
         tsImportElision: TypeScriptImportElision
         nativeMetadata: ResolvedMetadataInput[]
       }[] = []
@@ -1652,7 +1702,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         preparedCandidates.every(candidate => candidate.prepared?.preparationKey === candidate.key)
       ) {
         for (const candidate of preparedCandidates) {
-          state.moduleMetadata.set(candidate.moduleKey, candidate.prepared!.moduleMetadata)
+          storeModuleMetadataState(
+            state,
+            candidate.moduleKey,
+            candidate.prepared!.moduleMetadata,
+            candidate.prepared!.metadataIncomplete,
+            candidate.prepared!.unresolvedMetadataRequests,
+          )
         }
         continue
       }
@@ -1661,7 +1717,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const moduleKey = sortedComponent[0]!
         const node = graph.get(moduleKey)!
         const tsImportElision = await getFixedTsImportElision(node)
-        const { fictOptions, outputMetadata, nativeMetadata } = await getPreparationKey(
+        const { fictOptions, nativeMetadata } = await getPreparationKey(
           state,
           node,
           tsImportElision,
@@ -1670,7 +1726,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           state,
           node,
           fictOptions,
-          outputMetadata,
           tsImportElision,
           nativeMetadata,
         )
@@ -1679,35 +1734,22 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         continue
       }
 
-      let latestResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
       let converged = false
       const maxPasses = Math.max(8, sortedComponent.length * 4)
       for (let pass = 0; pass < maxPasses; pass++) {
         const before = stableStringify(
           sortedComponent.map(filename => [filename, state.moduleMetadata.get(filename)]),
         )
-        const passResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
         for (const moduleKey of sortedComponent) {
           const node = graph.get(moduleKey)!
           const tsImportElision = await getFixedTsImportElision(node)
-          const { fictOptions, outputMetadata, nativeMetadata } = await getPreparationKey(
+          const { fictOptions, nativeMetadata } = await getPreparationKey(
             state,
             node,
             tsImportElision,
           )
-          passResults.set(
-            moduleKey,
-            await compileMetadataNode(
-              state,
-              node,
-              fictOptions,
-              outputMetadata,
-              tsImportElision,
-              nativeMetadata,
-            ),
-          )
+          await compileMetadataNode(state, node, fictOptions, tsImportElision, nativeMetadata)
         }
-        latestResults = passResults
         const after = stableStringify(
           sortedComponent.map(filename => [filename, state.moduleMetadata.get(filename)]),
         )
@@ -1721,9 +1763,31 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           `[fict] Local module metadata did not converge for circular dependency: ${sortedComponent.join(', ')}`,
         )
       }
+      // The iterative passes deliberately advertise every SCC member as incompleteCycle so the
+      // native compiler can consume monotonic partial facts. Once those facts converge, certify
+      // the fixed point with resolved intra-SCC snapshots; genuine external incompleteness is
+      // rediscovered and propagated by this final pass.
+      for (const moduleKey of sortedComponent) {
+        state.incompleteModuleMetadata.delete(moduleKey)
+        state.unresolvedModuleMetadataRequests.delete(moduleKey)
+      }
+      const certifiedResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
       for (const moduleKey of sortedComponent) {
         const node = graph.get(moduleKey)!
-        const result = latestResults.get(moduleKey)!
+        const tsImportElision = await getFixedTsImportElision(node)
+        const { fictOptions, nativeMetadata } = await getPreparationKey(
+          state,
+          node,
+          tsImportElision,
+        )
+        certifiedResults.set(
+          moduleKey,
+          await compileMetadataNode(state, node, fictOptions, tsImportElision, nativeMetadata),
+        )
+      }
+      for (const moduleKey of sortedComponent) {
+        const node = graph.get(moduleKey)!
+        const result = certifiedResults.get(moduleKey)!
         const tsImportElision = await getFixedTsImportElision(node)
         const { key } = await getPreparationKey(state, node, tsImportElision)
         state.preparedCompilerTransforms.set(moduleKey, { ...result, preparationKey: key })
@@ -2107,9 +2171,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const releaseState = retainTransformState(state)
       const pipelineMetadataEnabled = hasMetadataPipelineLoader(metadataContext)
       const tracksModuleInput = pipelineMetadataEnabled || isPassThroughVariant
-      const transformMetadata = isPassThroughVariant
-        ? new Map<string, ModuleReactiveMetadata>()
-        : state.moduleMetadata
       // Pass-through URL variants keep their compiler output isolated from the
       // physical module while still publishing it under their full Vite identity.
       if (tracksModuleInput) {
@@ -2132,7 +2193,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           nativeMetadata,
         } = await createCompilerOptions(state, code, normalizedFilename, undefined, {
           metadataKey,
-          moduleMetadata: transformMetadata,
           publicIdentityId: id,
           useTypeScriptProject: !isPassThroughVariant,
         })
@@ -2149,6 +2209,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           file => registerPackageMetadataDependency(state, file),
           metadataKey,
           collectCompilerStaticModuleSourcesSync,
+          state.incompleteModuleMetadata,
         )
         const cacheStore = ensureCache()
         const shouldSplit =
@@ -2201,8 +2262,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               }
             }
             if (cached.moduleMetadata) {
-              transformMetadata.set(normalizedFilename, cached.moduleMetadata)
-              state.moduleMetadata.set(metadataKey, cached.moduleMetadata)
+              storeModuleMetadataState(
+                state,
+                metadataKey,
+                cached.moduleMetadata,
+                cached.metadataIncomplete ?? false,
+                cached.unresolvedMetadataRequests ?? [],
+              )
             }
             if (tracksModuleInput) {
               state.pipelineTransformedModules.add(metadataKey)
@@ -2217,6 +2283,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         let finalCode: string
         let finalMap: TransformResult['map']
         let compilerArtifacts: CompilerArtifact[] = []
+        let compilerStageResult: CompilerStageResult | null = null
         let splitResult: { code: string; handlers: string[]; map: TransformResult['map'] } | null =
           null
 
@@ -2252,18 +2319,21 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               },
             )
             assertTransformStateActive(state)
-            const generatedMetadata = transformMetadata.get(normalizedFilename)
-            if (generatedMetadata) {
-              state.moduleMetadata.set(metadataKey, generatedMetadata)
-              if (!isPassThroughVariant) {
-                state.preparedCompilerTransforms.set(metadataKey, {
-                  ...result,
-                  moduleMetadata: generatedMetadata,
-                  preparationKey,
-                })
-              }
+            if (!isPassThroughVariant) {
+              state.preparedCompilerTransforms.set(metadataKey, {
+                ...result,
+                preparationKey,
+              })
             }
           }
+          storeModuleMetadataState(
+            state,
+            metadataKey,
+            result.moduleMetadata,
+            result.metadataIncomplete,
+            result.unresolvedMetadataRequests,
+          )
+          compilerStageResult = result
           finalCode = result.code
           finalMap = result.map
           compilerArtifacts = result.artifacts
@@ -2353,9 +2423,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             code: finalCode,
             map: finalMap,
           }
-          const generatedModuleMetadata = transformMetadata.get(normalizedFilename)
-          if (generatedModuleMetadata) {
-            cachedTransform.moduleMetadata = generatedModuleMetadata
+          if (compilerStageResult) {
+            cachedTransform.moduleMetadata = compilerStageResult.moduleMetadata
+            cachedTransform.metadataIncomplete = compilerStageResult.metadataIncomplete
+            cachedTransform.unresolvedMetadataRequests =
+              compilerStageResult.unresolvedMetadataRequests
           }
 
           if (shouldSplit && splitResult?.handlers.length) {
@@ -4307,11 +4379,13 @@ function consumeNativeCompileResult(
     throw error
   }
 
-  options.moduleMetadata?.set(filename, result.moduleMetadata)
   return {
     code: result.code,
     map: result.map as TransformResult['map'],
     artifacts: result.artifacts,
+    moduleMetadata: result.moduleMetadata,
+    metadataIncomplete: result.metadataIncomplete,
+    unresolvedMetadataRequests: [...result.unresolvedMetadataRequests],
   }
 }
 
@@ -4391,6 +4465,7 @@ function computePackageMetadataCacheFingerprint(
   onPackageMetadataDependency?: (filename: string) => void,
   metadataKey?: string,
   collectModuleSources: (code: string, filename: string) => string[] = () => [],
+  incompleteModuleMetadata: ReadonlySet<string> = new Set(),
 ): string {
   const normalizedFilename = normalizeFileName(filename, root)
   const currentMetadataKey = metadataKey ?? normalizedFilename
@@ -4418,7 +4493,8 @@ function computePackageMetadataCacheFingerprint(
     if (localFile) {
       try {
         const localCode = readFileSync(localFile, 'utf8')
-        const storedMetadata = moduleMetadata.get(exactResolution?.key ?? localFile)
+        const storedKey = exactResolution?.key ?? localFile
+        const storedMetadata = moduleMetadata.get(storedKey)
         const nestedFingerprint = computePackageMetadataCacheFingerprint(
           localCode,
           localFile,
@@ -4431,11 +4507,12 @@ function computePackageMetadataCacheFingerprint(
           onPackageMetadataDependency,
           exactResolution?.key ?? localFile,
           collectModuleSources,
+          incompleteModuleMetadata,
         )
         entries.push([
           source,
           storedMetadata ? stableStringify(storedMetadata) : null,
-          `${hashString(localCode)}:${nestedFingerprint}`,
+          `${incompleteModuleMetadata.has(storedKey) ? 'incomplete' : 'resolved'}:${hashString(localCode)}:${nestedFingerprint}`,
         ])
       } catch {
         entries.push([source, null, 'unreadable'])

@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
 import type {
   CompileRequest,
   CompileResult,
@@ -100,6 +104,28 @@ function scanResult(request: ScanRequest, overrides: Partial<ScanResult> = {}): 
     diagnostics: [],
     compilerBuildId: native.info.compilerBuildId,
     ...overrides,
+  }
+}
+
+function scanAllStaticImports(request: ScanRequest): ScanResult {
+  const moduleRequests: ScanResult['moduleRequests'] = []
+  const pattern = /(?:\bfrom\s*|\bimport\s*)['"]([^'"]+)['"]/g
+  for (const match of request.code.matchAll(pattern)) {
+    const source = match[1]!
+    const start = match.index + match[0].lastIndexOf(source)
+    moduleRequests.push({
+      source,
+      kind: 'import',
+      typeOnly: false,
+      span: { start, end: start + source.length },
+    })
+  }
+  return {
+    protocolVersion: 1,
+    moduleRequests,
+    hasModuleSyntax: moduleRequests.length > 0,
+    diagnostics: [],
+    compilerBuildId: native.info.compilerBuildId,
   }
 }
 
@@ -344,6 +370,121 @@ describe('Rust compiler backend', () => {
       }),
     )
     expect(metadataDependencies).toHaveBeenCalledWith('dep')
+  })
+
+  it('propagates partial local metadata as incompleteCycle without discarding known facts', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-partial-metadata-'))
+    const hookFile = path.join(root, 'hooks.ts')
+    const appFile = path.join(root, 'app.ts')
+    const hookSource = `
+      export function useCounter() { return 1 }
+      export * from 'ordinary-package'
+    `
+    const appSource = `
+      import { useCounter } from './hooks'
+      export const value = useCounter()
+    `
+    await writeFile(hookFile, hookSource)
+    await writeFile(appFile, appSource)
+    native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+    native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+    native.transform.mockImplementation(async request => {
+      const input = request as CompileRequest
+      if (input.filename === hookFile) {
+        return compileResult({
+          moduleMetadata: {
+            version: 1,
+            exports: {},
+            hooks: { useCounter: { directAccessor: 'signal' } },
+          },
+          metadataIncomplete: true,
+          unresolvedMetadataRequests: ['ordinary-package'],
+        })
+      }
+      return compileResult()
+    })
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    plugin.configResolved?.({ ...config, root } as never)
+
+    try {
+      await plugin.transform?.call(context() as never, appSource, appFile)
+      const appRequest = native.transform.mock.calls
+        .map(call => call[0] as CompileRequest)
+        .find(request => request.filename === appFile)
+      expect(appRequest?.metadata).toEqual([
+        expect.objectContaining({
+          request: './hooks',
+          resolvedId: hookFile,
+          status: 'incompleteCycle',
+          metadata: {
+            version: 1,
+            exports: {},
+            hooks: { useCounter: { directAccessor: 'signal' } },
+          },
+        }),
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('certifies a real metadata SCC after partial facts reach a fixed point', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-metadata-scc-'))
+    const aFile = path.join(root, 'a.ts')
+    const bFile = path.join(root, 'b.ts')
+    const aSource = `import { useB } from './b'; export function useA() { return useB() }`
+    const bSource = `import { useA } from './a'; export function useB() { return useA() }`
+    await writeFile(aFile, aSource)
+    await writeFile(bFile, bSource)
+    native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+    native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+    native.transform.mockImplementation(async request => {
+      const input = request as CompileRequest
+      const incomplete = input.metadata?.some(entry => entry.status === 'incompleteCycle') ?? false
+      const hook = input.filename === aFile ? 'useA' : 'useB'
+      return compileResult({
+        moduleMetadata: {
+          version: 1,
+          exports: {},
+          hooks: { [hook]: { directAccessor: 'signal' } },
+        },
+        metadataIncomplete: incomplete,
+        unresolvedMetadataRequests: incomplete
+          ? (input.metadata?.map(entry => entry.request) ?? [])
+          : [],
+      })
+    })
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    plugin.configResolved?.({ ...config, root } as never)
+
+    try {
+      await plugin.transform?.call(context() as never, aSource, aFile)
+      const requests = native.transform.mock.calls.map(call => call[0] as CompileRequest)
+      expect(
+        requests.some(request =>
+          request.metadata?.some(entry => entry.status === 'incompleteCycle'),
+        ),
+      ).toBe(true)
+      for (const filename of [aFile, bFile]) {
+        const moduleRequests = requests.filter(request => request.filename === filename)
+        const lastRequest = moduleRequests[moduleRequests.length - 1]
+        expect(lastRequest?.metadata).toEqual([
+          expect.objectContaining({ status: 'resolved', metadata: expect.any(Object) }),
+        ])
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('surfaces structured native errors with source locations', async () => {

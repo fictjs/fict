@@ -2197,7 +2197,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     }
   })
 
-  it('fails closed when an alias rename reaches incomplete local hook metadata', async () => {
+  it('uses aliased local hook metadata through an opaque package star export', async () => {
     const root = await createFixture({
       'entry.ts': `
         import { useCounter as useAliasedCounter } from './hook'
@@ -2223,15 +2223,14 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     })
 
     try {
-      await expect(
-        runCompiler(excludeNodeModules(createWebpackConfiguration(root))),
-      ).rejects.toThrow('FICT-H003')
+      await runCompiler(excludeNodeModules(createWebpackConfiguration(root)))
+      expect(runApp(root)).toBe(4)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
 
-  it('restores incomplete local hook metadata from filesystem cache', async () => {
+  it('restores partial incomplete local hook metadata from filesystem cache', async () => {
     const root = await createFixture({
       'entry.ts': `
         import './hook'
@@ -2250,6 +2249,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
         name: 'ordinary-utility-package',
         version: '1.0.0',
         main: './index.js',
+        fict: { metadata: './missing.fict.meta.json' },
       }),
     })
     const entryPath = path.join(root, 'entry.ts')
@@ -2301,7 +2301,8 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
           }
         `,
       )
-      await expect(runCompiler(configuration())).rejects.toThrow('FICT-H003')
+      await runCompiler(configuration())
+      expect(runApp(root)).toBe(4)
       expect(builtBeforeFict).toContain(entryPath)
       expect(builtBeforeFict).not.toContain(hookPath)
     } finally {
@@ -2379,6 +2380,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
         name: 'actual-hook',
         version: '1.0.0',
         main: './index.js',
+        fict: { metadata: './missing.fict.meta.json' },
       }),
     })
 

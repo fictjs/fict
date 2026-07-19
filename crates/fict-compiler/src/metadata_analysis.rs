@@ -161,6 +161,7 @@ impl<'snapshot> MetadataBuilder<'snapshot> {
 
     fn resolve(&mut self, request: &str) -> Option<ModuleReactiveMetadata> {
         let Some(entry) = self.snapshot.get(request).copied() else {
+            self.incomplete = true;
             self.unresolved_requests.insert(request.to_owned());
             return None;
         };
@@ -172,19 +173,19 @@ impl<'snapshot> MetadataBuilder<'snapshot> {
             MetadataResolutionStatus::IncompleteCycle => {
                 self.incomplete = true;
                 self.unresolved_requests.insert(request.to_owned());
+                entry.metadata.clone()
+            }
+            MetadataResolutionStatus::Opaque => Some(ModuleReactiveMetadata::new()),
+            MetadataResolutionStatus::Missing => {
+                self.incomplete = true;
+                self.unresolved_requests.insert(request.to_owned());
                 None
             }
-            MetadataResolutionStatus::Opaque | MetadataResolutionStatus::Missing => None,
         }
     }
 
     fn resolve_export(&mut self, request: &str) -> Option<ModuleReactiveMetadata> {
-        let metadata = self.resolve(request);
-        if metadata.is_none() {
-            self.incomplete = true;
-            self.unresolved_requests.insert(request.to_owned());
-        }
-        metadata
+        self.resolve(request)
     }
 }
 
@@ -204,10 +205,11 @@ pub(crate) fn generate_module_metadata(
         .iter()
         .filter_map(|binding| binding.import.as_ref())
         .filter(|import| {
-            import.reactive.is_some()
-                || !import.reactive_members.is_empty()
-                || import.hook_return.is_some()
-                || !import.hook_members.is_empty()
+            !is_fict_runtime_source(&import.source)
+                && (import.reactive.is_some()
+                    || !import.reactive_members.is_empty()
+                    || import.hook_return.is_some()
+                    || !import.hook_members.is_empty())
         })
     {
         let _ = builder.resolve(&import.source);
@@ -657,18 +659,7 @@ fn namespace_call_member<'function>(
 }
 
 fn runtime_creator_kind(source: &str, imported: &str) -> Option<ReactiveExportKind> {
-    let runtime_source = matches!(
-        source,
-        "fict"
-            | "fict/advanced"
-            | "fict/internal"
-            | "fict/plus"
-            | "fict/slim"
-            | "@fictjs/runtime"
-            | "@fictjs/runtime/advanced"
-            | "@fictjs/runtime/internal"
-    );
-    if !runtime_source {
+    if !is_fict_runtime_source(source) {
         return None;
     }
     match imported {
@@ -680,6 +671,26 @@ fn runtime_creator_kind(source: &str, imported: &str) -> Option<ReactiveExportKi
         }
         _ => None,
     }
+}
+
+fn is_fict_runtime_source(source: &str) -> bool {
+    matches!(
+        source,
+        "fict"
+            | "fict/advanced"
+            | "fict/internal"
+            | "fict/internal/list"
+            | "fict/plus"
+            | "fict/slim"
+            | "fict/jsx-runtime"
+            | "fict/jsx-dev-runtime"
+            | "@fictjs/runtime"
+            | "@fictjs/runtime/advanced"
+            | "@fictjs/runtime/internal"
+            | "@fictjs/runtime/internal/list"
+            | "@fictjs/runtime/jsx-runtime"
+            | "@fictjs/runtime/jsx-dev-runtime"
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
