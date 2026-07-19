@@ -1127,6 +1127,17 @@ test('records the function-valued state call decision', () => {
   assert.match(index, /0005-invoke-function-valued-state\.md/)
 })
 
+test('records the raw-text JSX coercion decision', () => {
+  const adr = read('docs/adr/0006-materialize-raw-text-jsx-values.md')
+  const index = read('docs/adr/index.md')
+
+  assert.match(adr, /status: accepted/)
+  assert.match(adr, /retain Babel 0\.28 value coercion/)
+  assert.match(adr, /\[object HTMLSpanElement\]/)
+  assert.match(adr, /not\s+inserted into the raw-text element/)
+  assert.match(index, /0006-materialize-raw-text-jsx-values\.md/)
+})
+
 test('keeps native recovery diagnostics free of removed legacy paths', () => {
   const pipeline = read('crates/fict-compiler/src/pipeline.rs')
   const scanner = read('crates/fict-compiler/src/scan.rs')

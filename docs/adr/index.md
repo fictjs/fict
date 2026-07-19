@@ -15,3 +15,6 @@
 - [ADR-0005 — Invoke function-valued state through its accessor](0005-invoke-function-valued-state.md) -
   Preserve the released authored-call contract when a state binding is proven
   to contain a callable value.
+- [ADR-0006 — Materialize JSX values before raw-text coercion](0006-materialize-raw-text-jsx-values.md) -
+  Keep raw-text and RCDATA value stringification independent of the compiler's
+  internal DOM-node or VNode representation.

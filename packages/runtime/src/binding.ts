@@ -52,7 +52,7 @@ import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { __fictIsHydrating } from './resume'
 import { batch } from './scheduler'
 import { computed, signal, untrack, isSignal, isComputed, isEffect, isEffectScope } from './signal'
-import type { Cleanup, FictNode } from './types'
+import type { Cleanup, FictNode, FictVNode } from './types'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -529,7 +529,25 @@ function formatTextValue(value: unknown): string {
   if (value == null || typeof value === 'boolean') {
     return ''
   }
-  return String(value)
+  return String(materializeTextValue(value))
+}
+
+function materializeTextValue(value: unknown): unknown {
+  if (!registeredCreateElement) return value
+  if (Array.isArray(value)) return value.map(materializeTextValue)
+  if (!isVNodeTextValue(value)) return value
+  return registeredCreateElement(value)
+}
+
+function isVNodeTextValue(value: unknown): value is FictVNode {
+  if (!value || typeof value !== 'object' || isNodeLike(value)) return false
+  const candidate = value as Partial<FictVNode>
+  return (
+    (typeof candidate.type === 'string' ||
+      typeof candidate.type === 'symbol' ||
+      typeof candidate.type === 'function') &&
+    Object.prototype.hasOwnProperty.call(candidate, 'props')
+  )
 }
 
 // ============================================================================

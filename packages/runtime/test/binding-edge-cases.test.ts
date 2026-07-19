@@ -649,6 +649,17 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(el.textContent).toBe('updated')
     })
+
+    it('stringifies renderable JSX values through their DOM representation', () => {
+      const script = document.createElement('script')
+
+      setTextContent(script, {
+        type: 'span',
+        props: { children: 'code' },
+      })
+
+      expect(script.textContent).toBe('[object HTMLSpanElement]')
+    })
   })
 
   describe('bindAttribute', () => {

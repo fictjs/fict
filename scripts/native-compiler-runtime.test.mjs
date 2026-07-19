@@ -1514,9 +1514,12 @@ test('raw-text and RCDATA expressions bind literal textContent', async () => {
     assert.equal(element?.textContent.includes('<!---->'), false)
   }
   assert.equal(childrenProp?.hasAttribute('children'), false)
+  assert.equal(script?.textContent, '[object HTMLSpanElement]')
   assert.equal(style?.textContent, 'body { color: red; }')
   assert.equal(textarea?.textContent, 'hello')
   assert.equal(textarea?.value, 'hello')
+  assert.equal(title?.textContent, '[object HTMLSpanElement]')
+  assert.equal(childrenProp?.textContent, '[object HTMLSpanElement]')
   assert.equal(mixed?.textContent, '.a > .b { color: red }')
   assert.equal(mixed?.textContent.includes('&gt;'), false)
 
