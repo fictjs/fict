@@ -1790,6 +1790,14 @@ fn lower_function(
             &mut operations,
         );
     }
+    crate::control_flow_region::lower_control_flow_regions(
+        hir,
+        function,
+        &control_flow,
+        &mut temporaries,
+        &mut temporary_names,
+        &mut operations,
+    );
     let context = operations
         .iter()
         .filter_map(EmitOperation::helper)

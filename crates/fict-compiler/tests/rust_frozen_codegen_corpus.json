@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "1f0ab8082612bb9b67d298aaa7d4b66a3309767e",
+    "rustAuditRevision": "05f37254a6d069d790cbdeffbca760b1164e7321",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,22 +25,24 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "1f0ab8082612bb9b67d298aaa7d4b66a3309767e",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-a42f4756705686b5303acd5251826d6e66a92eb644e589f1ed0d64e27b025faf"
+    "reviewedRevision": "05f37254a6d069d790cbdeffbca760b1164e7321",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-c53f7d7b32f315ae58f704b862981e669d0a4ce15f204b791ea55b7bd05e3535"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.",
     "narrow-component-role": "Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.",
     "structured-hook-return": "Rust 0.31 enforces readonly and setter rules for structured same-module hook return accessors.",
     "namespace-macro-fail-closed": "Rust 0.31 rejects compiler macros invoked through a Fict namespace instead of leaving an uncompiled runtime call.",
-    "standard-decorator-fail-closed": "Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript."
+    "standard-decorator-fail-closed": "Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript.",
+    "strict-reactivity-fail-closed": "Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution."
   },
   "deviationPolicyCounts": {
     "rust-capability-expansion": 22,
     "narrow-component-role": 24,
     "structured-hook-return": 6,
     "namespace-macro-fail-closed": 1,
-    "standard-decorator-fail-closed": 3
+    "standard-decorator-fail-closed": 3,
+    "strict-reactivity-fail-closed": 4
   },
   "fixtures": [
     {
@@ -4126,7 +4128,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "45863e1c1220f26424967519a01bd66f97b540ff243584da2c6c12ed24fb026c"
+        "codeSha256": "e273839b88e3dafe2aeb86984c6696fd048dc11c09fe97518883d6a4b8c94b16"
       },
       "deviationPolicy": null
     },
@@ -4156,7 +4158,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "8c4dee43905070813b7d917badf458b6fe891c4d36dbe26cccf9f074e2ec7c5c"
+        "codeSha256": "33319249b7cad5e082846ab88d8a6f38b497fa81e6f02c5534abe9cdad846110"
       },
       "deviationPolicy": null
     },
@@ -4456,7 +4458,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "5055281e4072a43642b575012912f161a62d9372d7e7de670783492dc08d0a01"
+        "codeSha256": "660341e3661833a572b0a4084dfc80228a4347ea642c5e09a67e77c40de09122"
       },
       "deviationPolicy": null
     },
@@ -4486,7 +4488,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "de3107ed23fc9cac744e449196e79d095703a5601c23329ed70b4c0e6d43bd6c"
+        "codeSha256": "ec53973b314ab582aff61c319fbb7627e9de49d96b8a8051f43f7235db352b24"
       },
       "deviationPolicy": null
     },
@@ -4536,7 +4538,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "2a8768ed2c9470ecd7839cfb1b6df2279a42173ca3a4cd7e5c2611e85b10c208"
+        "codeSha256": "22d3a0a5289c4c1b9e5ed01f38865519c429880b023c29948a346e0cecfb4641"
       },
       "deviationPolicy": null
     },
@@ -4566,7 +4568,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "53ae09992114734c90f65d8b88a588348060383d6420af629eee19a540d1ca2d"
+        "codeSha256": "feca655e1b4e3a38038f7066b099a79ffd522f3adcc685ed7ac2afe4cc4adcf6"
       },
       "deviationPolicy": null
     },
@@ -4769,8 +4771,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "a0be0df3baa4ec110fa7f9127866bbfc33cc8436348a3c330efc27ab1f4e8cac"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "08943b08b8e90e0fe54f6b28793f14f82784ff8dde5933de2a953907cf6df381"
       },
       "deviationPolicy": null
     },
@@ -13060,7 +13068,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "7fce34420aa5339a9d5dbfa0030900596e77c4dfc0ee22628b216eaee5f4c936"
+        "codeSha256": "64be77509575feb907b65445244b62c5aa6b71c23953db93da6b2a5132079fba"
       },
       "deviationPolicy": null
     },
@@ -13108,7 +13116,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "ccb3e0a7191baf354cd2173efc089034b4a2c4a67d49048cb36579d17b9317cd"
+        "codeSha256": "1378f4cf38d115c2070f8d3e8a5d6e04cb13ba611bbc9a311f5db7e81032d0d9"
       },
       "deviationPolicy": null
     },
@@ -13155,8 +13163,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "dff64f1f4c574a37a9b8b867d13327e6e97e0500409044d9b70f44d6092fff82"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "b9b7f46c8c76f1ebf318905cdd3902e0f45af00ed215a2fc694713b4b52c943f"
       },
       "deviationPolicy": null
     },
@@ -21369,8 +21383,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "401fded5942625957da1ee58cb6d26db0694a59ee4d751f0a62288756f99fdbf"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "177d9dfda5bfd1039155d70fbf59575257527ec0d4ec56ad1909e9b7593cf598"
       },
       "deviationPolicy": null
     },
@@ -21393,11 +21413,17 @@
         "codeSha256": "b431eb7c011a2d964b6088e65ba5b03262b1801fddbfa6d469ead3046f32c92e"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "401fded5942625957da1ee58cb6d26db0694a59ee4d751f0a62288756f99fdbf"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "error",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": null
+      "deviationPolicy": "strict-reactivity-fail-closed"
     },
     {
       "id": "packages/compiler/test/default-options.test.ts:252:transformWithCompilerDefaults",
@@ -24934,8 +24960,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "2470b8f1ce1108893966049dfee2eee748c8869560a4c2d6eb1a8dc623d053b1"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "263304277bfd49ad8bcd1649b56bb461a4a9620acb72b7c18821164d29078040"
       },
       "deviationPolicy": null
     },
@@ -25681,8 +25713,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "b555efcfc69a722a1f5fce74b5a3cc434f77d0b2d49a74ebf2c21527c8321240"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "23c38f1e760a449dc2485816e5a006853d2d1fbe3174f8e7392d5958c35e7179"
       },
       "deviationPolicy": null
     },
@@ -25704,11 +25742,17 @@
         "codeSha256": "d87b715d287576fc0de9ec866354e8aaf0f35090582cce3b2ac5e56f29f81784"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "b555efcfc69a722a1f5fce74b5a3cc434f77d0b2d49a74ebf2c21527c8321240"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "error",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": null
+      "deviationPolicy": "strict-reactivity-fail-closed"
     },
     {
       "id": "packages/compiler/test/reactivity-guarantee-contract.test.ts:1114:transform",
@@ -25737,7 +25781,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "4ecc3fd0b0d4b471a2ffaecfc0a040a94d6038c947875f0b282bc4266a9582b0"
+        "codeSha256": "d3f2958b22f75522a951c1e77258d1b96b5f0805651aad3b7850c982d55c4667"
       },
       "deviationPolicy": null
     },
@@ -25799,7 +25843,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "95deb2e570f25def9d8f30dafb87b321ed0584224cb7f6733f0a1c49f7af8fad"
+        "codeSha256": "64dbedf236a4338af1e8755bf037cbf0c3a3f849c5a47e1035652b06537d58c7"
       },
       "deviationPolicy": null
     },
@@ -26407,7 +26451,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "40c489c7be8d901eb3ab683be33059114e3137bb4ef7f0b878d5776bd9045d71"
+        "codeSha256": "8422ba591bff5fc86773e41f4f1bf8efa06e052e392169c94befd2ada573439b"
       },
       "deviationPolicy": null
     },
@@ -26480,7 +26524,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "8a58415feb9eb0d3ce331da07b92f41d859f97ea0b21b365299db9bb88539336"
+        "codeSha256": "b7dac91206d352931bc269c18551332dbc9435c2d4178059331a0ed20738471f"
       },
       "deviationPolicy": null
     },
@@ -26504,7 +26548,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "18c10a380af28c9bb1d8d5c002b15a011c79f2312d94b8ecebd1088f9d27cda5"
+        "codeSha256": "9357b0822dc0c7a1bfc05e6cf29556b1bd4806fe707cde11f0f52bf113f75fbe"
       },
       "deviationPolicy": null
     },
@@ -27010,7 +27054,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "8d62c5caa9b4bb6e6b7ca25320f490d1e8365ce293f64a97999a0bf5931443c6"
+        "codeSha256": "ad9adb0e99ec7b6b154f0d8ef38f5eed1b17f6d040a590ccd7dc736c7056fe87"
       },
       "deviationPolicy": null
     },
@@ -27034,7 +27078,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "8d62c5caa9b4bb6e6b7ca25320f490d1e8365ce293f64a97999a0bf5931443c6"
+        "codeSha256": "ad9adb0e99ec7b6b154f0d8ef38f5eed1b17f6d040a590ccd7dc736c7056fe87"
       },
       "deviationPolicy": null
     },
@@ -27058,7 +27102,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "f914935417cba01a2ff45841b0522952d516ed3b92cbaeab412fc755cd2f931c"
+        "codeSha256": "84be41991c09b76f71b1ac7358ce03784a1d66be7bd496bacdf8ce678c1ce7f0"
       },
       "deviationPolicy": null
     },
@@ -27082,7 +27126,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "d353cd47fabc03a7d33db8fb16c2e4c6cfbcdf1feff5b6a1622d62f53b3a2198"
+        "codeSha256": "786b57a945b3b4e962bb93f0b70b74c72d27cbbfb35574e47973eb21395b45e4"
       },
       "deviationPolicy": null
     },
@@ -27130,7 +27174,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "1cd48175c02f292d1dd614eba9cc7e7013763b7c080eea9be9190044e0590c15"
+        "codeSha256": "138b4cc466b3fcb1e41e4cf0a0f3fd1b46570c4d4a20ff2db9fb59c8c5c4abea"
       },
       "deviationPolicy": null
     },
@@ -27178,7 +27222,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "23fd9004e3421d209f84b7e0759e933c0da0c4d229bcb855086c2441c4f19d82"
+        "codeSha256": "1a66ef87dc746bb011739ba087d29072e7721e4298ce548a0f96be626cd6fd38"
       },
       "deviationPolicy": null
     },
@@ -27202,7 +27246,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "cd0a773f3aa1af075a9a21f26c57668c283496ff07a1b0a25ac33dcc1c1a78cc"
+        "codeSha256": "95e154629b4354038f18d43a778df376d80ef41fa67a66468ca759854ea33e96"
       },
       "deviationPolicy": null
     },
@@ -31945,7 +31989,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "9565039175c8cf7f8b4ade04dd7c23ab42f63ed7ebe5f0e06c6739ff93f5e394"
       },
       "deviationPolicy": null
@@ -32774,8 +32824,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "a287ec06333896ba6001068ff004ea6aed8951a6a9bac69639e165281c47f436"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "a0df4e2c0171a4434e03c443eb503f077c8ad17089465972434b0854cb48907b"
       },
       "deviationPolicy": null
     },
@@ -33842,8 +33898,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "7be55886e5f39659b25546a459e27336c244b59da87a5c0eec8de6275b77f342"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "cf8ac5160a97064c06c4809adc1d3c106492ea738b7eb1ec3126ea30802068f9"
       },
       "deviationPolicy": null
     },
@@ -33867,8 +33929,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "b908d66d59e6ee234aaab1504963556bc2eb95af3424d4143abc3384248402f1"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "de37ce84a536054878a0899b52d6c7fdb3073fd66bd4110e6046d6e7e89670be"
       },
       "deviationPolicy": null
     },
@@ -33892,8 +33960,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "c563e7a3615e68331901ebed8e650a8264b432fba691b6921dc4740c2dd71436"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "b6ca20acfe8ca33a0823fe70900e267d13a411ac5666dadfc2a8a0c9fd5df4fb"
       },
       "deviationPolicy": null
     },
@@ -33917,8 +33991,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "05f80c9de6c669f251e60f49ebe4dbe5f7537e9f94bde6a46bea056bf669deda"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "a8c75f352f0577d2ea31c0cb17affa6ab2a03e0585eddac860d88e95191486e8"
       },
       "deviationPolicy": null
     },
@@ -33942,8 +34022,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "76423603cc5805e4288ca196fff5fd4510b84e303ac753ad2c00f131681961d1"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "d1d29a1a4f49f5ca6e470949d763161d64b82a6b7319dea3b12666c9abf4441a"
       },
       "deviationPolicy": null
     },
@@ -33974,7 +34060,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "a368ac049c77f2db4aed5a352750fe4c02a8f1b0f35bb04d0384249341e24bf0"
+        "codeSha256": "3e5c0e2af47862bd1c6823bb98c304305145fe7c8cbd2fadae8a1dd062e0bc38"
       },
       "deviationPolicy": null
     },
@@ -33999,7 +34085,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "bed6aa91553c32e6af5563d0da7a104d676644762cce9c82196d0262b47480ec"
+        "codeSha256": "5fc47e525c52b6cedc7548944e24888743933e8fec24457bc0e6e10fe89a7d8a"
       },
       "deviationPolicy": null
     },
@@ -38445,8 +38531,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "9bba845e410982839ff5f0c12b9e66aa694df50640c7f75e98b84f6a1c0cf0cc"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "024531961a766ede306237f8fc7385335e1fe7351eb46e65d4c919017f18ffd8"
       },
       "deviationPolicy": null
     },
@@ -42093,8 +42185,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "627c9403921965914723905760387bc30320788dc284ff0cb8230dbfd7d03d2b"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "3eb643ce0c4269b29f4c019185a20ea31d8e0a98086ffa704e37d3884bd51fef"
       },
       "deviationPolicy": null
     },
@@ -42380,7 +42478,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "75169ac5f88df22ba1e1e1d17168e19d4401d9bf88bbd94a8eb6d1ffb3b7d5fd"
+        "codeSha256": "98eb1d04b048e1558a128440b765b031851c08319626013b0173a3e9cfef696b"
       },
       "deviationPolicy": null
     },
@@ -42710,8 +42808,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "84edb858efe1a1d1a56ac6a81d501fc582747393b2cc894fcab8540adbb8785d"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "d0cffadc022ed3d0b6ad29704506e3b21216d5d4ccda2756663450b8293c390b"
       },
       "deviationPolicy": null
     },
@@ -42735,11 +42839,17 @@
         "codeSha256": "cb24e1a89a7475efa0ee35ffbe3e649e5dd9a59145323667d9a738cfeb2ba970"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "84edb858efe1a1d1a56ac6a81d501fc582747393b2cc894fcab8540adbb8785d"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "error",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": null
+      "deviationPolicy": "strict-reactivity-fail-closed"
     },
     {
       "id": "packages/compiler/test/template-integration.test.ts:1359:compileAndLoad",
@@ -42762,8 +42872,14 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "a80f095ccddd289e02a855923582abf9d19ccdf00d2ab8dc5c9518df5ec7d77b"
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "d1fc1cec4a617fa182b31356744ab507bdb2733fdb1c3bda65648be7e2c3f856"
       },
       "deviationPolicy": null
     },
@@ -42787,11 +42903,17 @@
         "codeSha256": "f8287051539fa8c49b088b899d6cb3bd5e580801767527e08b6cc248bb86823b"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "a80f095ccddd289e02a855923582abf9d19ccdf00d2ab8dc5c9518df5ec7d77b"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "error",
+            "guaranteeClass": "fallback"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": null
+      "deviationPolicy": "strict-reactivity-fail-closed"
     },
     {
       "id": "packages/compiler/test/template-integration.test.ts:1394:compileAndLoad",

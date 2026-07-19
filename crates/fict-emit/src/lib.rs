@@ -3,6 +3,7 @@
 //! OXC-independent EmitIR and verified runtime-helper intent for Fict output.
 
 mod conditional_return;
+mod control_flow_region;
 mod ir;
 mod lower;
 mod name_allocator;
@@ -10,14 +11,15 @@ mod runtime_abi;
 mod verify;
 
 pub use ir::{
-    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind, DomBindingKind,
-    DomNamespace, DomTextSegment, EmitContext, EmitControlArm, EmitFunction, EmitModulePlan,
-    EmitOperation, EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture,
-    EmitPreviewLocalHandler, EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture,
-    EmitPreviewPropRestCapture, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode,
-    EmitPropsDefault, EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId,
-    EmitValueRef, EventOptions, PropsOperation, ReactivePatternTarget, ReactiveSlot,
-    ReactiveSlotKind, ReactiveSlotStorage, RuntimeImportIntent,
+    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
+    ControlFlowRegionOutput, DomBindingKind, DomNamespace, DomTextSegment, EmitContext,
+    EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation, EmitPreviewComponent,
+    EmitPreviewHandler, EmitPreviewLexicalCapture, EmitPreviewLocalHandler,
+    EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture, EmitPreviewPropRestCapture,
+    EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault, EmitPropsPlan,
+    EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, EventOptions,
+    PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
+    RuntimeImportIntent,
 };
 pub use lower::{
     NoJsxLoweringOptions, lower_core, lower_core_with_hook_returns, lower_no_jsx,

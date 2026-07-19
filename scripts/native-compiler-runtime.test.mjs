@@ -578,6 +578,75 @@ test('reactive conditional returns preserve branch statements and local scope', 
   container.remove()
 })
 
+test('reactive switch assignments re-execute as one fallback region', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let setMode = () => {}
+
+    function App() {
+      let mode = $state(0)
+      setMode = value => { mode = value }
+      let out
+
+      switch (mode) {
+        case 0:
+          out = 'zero'
+          break
+        case 1:
+          out = 'one'
+          break
+        default:
+          out = 'many'
+      }
+
+      return <div data-id="control-region">{out}</div>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+
+    export function update(value) {
+      setMode(value)
+    }
+  `
+
+  const strict = binding.transformSync({
+    code: source,
+    filename: '/fixtures/control-flow-region-strict.tsx',
+  })
+  assert.equal(strict.code, '')
+  assert.deepEqual(
+    strict.diagnostics.map(({ code, severity }) => [code, severity]),
+    [['FICT-R006', 'error']],
+  )
+
+  const compiled = await compileAndImport(source, 'control-flow-region-fallback', {
+    options: { strictGuarantee: false },
+    diagnosticCodes: ['FICT-R006'],
+  })
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const value = () => container.querySelector('[data-id="control-region"]')?.textContent
+  assert.equal(value(), 'zero')
+  for (const [mode, expected] of [
+    [1, 'one'],
+    [2, 'many'],
+    [0, 'zero'],
+  ]) {
+    compiled.update(mode)
+    await flushRuntime()
+    assert.equal(value(), expected)
+  }
+
+  dispose()
+  container.remove()
+})
+
 test('named function expression hooks use their public binding role', async () => {
   const source = `
     import { $state, render } from 'fict'

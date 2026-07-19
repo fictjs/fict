@@ -31,9 +31,9 @@ use oxc::{
             FormalParameters, Function, FunctionBody, FunctionType, IdentifierName,
             IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind, JSXAttributeItem,
             JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName, JSXFragment,
-            JSXMemberExpression, JSXMemberExpressionObject, ModuleExportName, ObjectPropertyKind,
-            Program, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
-            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            JSXMemberExpression, JSXMemberExpressionObject, ModuleExportName, ObjectProperty,
+            ObjectPropertyKind, Program, PropertyKey, PropertyKind, SimpleAssignmentTarget,
+            Statement, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
@@ -55,6 +55,7 @@ use oxc::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 mod conditional_return;
+mod control_flow_region;
 mod derived_inline;
 mod full_optimizer;
 mod getter_cache;
@@ -182,6 +183,8 @@ pub fn emit_program(
         vnodes: &vnodes,
         components: &components,
         conditional_returns: &templates.conditional_returns,
+        control_flow_regions: &templates.control_flow_regions,
+        control_flow_outputs: &templates.control_flow_outputs,
         clones: &templates.clones,
         preview_handlers: &preview_handlers,
         preview_qrl_local,
@@ -196,6 +199,8 @@ pub fn emit_program(
         matched_vnodes: BTreeSet::new(),
         matched_components: BTreeSet::new(),
         matched_conditional_returns: BTreeSet::new(),
+        matched_control_flow_regions: BTreeSet::new(),
+        matched_control_flow_outputs: BTreeSet::new(),
         matched_clones: BTreeSet::new(),
         vnode_shadowed_clones: BTreeSet::new(),
         active_list_reads: BTreeSet::new(),
@@ -363,6 +368,30 @@ pub fn emit_program(
                         .expect("ordered conditional-return location"),
                 ),
             );
+        }
+    }
+    for location in templates.control_flow_regions.keys() {
+        if !rewriter.matched_control_flow_regions.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-CONTROL-REGION",
+                    "control-flow region plan does not identify its authored dispatcher and declarations",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered control-flow region location"),
+                ),
+            );
+        }
+    }
+    for binding in templates.control_flow_outputs.keys() {
+        if !rewriter.matched_control_flow_outputs.contains(binding) {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-CONTROL-REGION",
+                "control-flow region output has no escaping source reference",
+                GuaranteeClass::Internal,
+            ));
         }
     }
     for location in templates.clones.keys() {
@@ -1891,6 +1920,14 @@ struct TemplateRewrites {
     sources: Vec<TemplateSource>,
     clones: BTreeMap<(u32, u32), CloneRewrite>,
     conditional_returns: BTreeMap<(u32, u32), conditional_return::ConditionalReturnRewrite>,
+    control_flow_regions: BTreeMap<(u32, u32), control_flow_region::ControlFlowRegionRewrite>,
+    control_flow_outputs: BTreeMap<
+        BindingId,
+        (
+            (u32, u32),
+            control_flow_region::ControlFlowRegionOutputRewrite,
+        ),
+    >,
     diagnostics: Vec<Diagnostic>,
 }
 fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
@@ -1962,6 +1999,8 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
     }
     let mut clones: BTreeMap<(u32, u32), CloneRewrite> = BTreeMap::new();
     let mut conditional_returns = BTreeMap::new();
+    let mut control_flow_regions = BTreeMap::new();
+    let mut control_flow_outputs = BTreeMap::new();
     for function in &emit.functions {
         let temporary_names: BTreeMap<_, _> = function
             .temporaries
@@ -2111,6 +2150,103 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                             emit_error(
                                 "FICT-OXC-EMIT-CONDITIONAL-RETURN",
                                 "conditional return has missing or duplicate plan identity",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(span),
+                        );
+                    }
+                }
+                EmitOperation::ControlFlowRegion {
+                    target,
+                    helper,
+                    outputs,
+                    origin,
+                } => {
+                    let Some(span) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "control-flow region requires a source origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let location = (span.start(), span.end());
+                    let output_rewrites: Vec<_> = outputs
+                        .iter()
+                        .map(
+                            |output| control_flow_region::ControlFlowRegionOutputRewrite {
+                                binding: output.binding,
+                                name: output.name.clone(),
+                                declaration: output
+                                    .declaration
+                                    .primary_span
+                                    .map(|span| (span.start(), span.end()))
+                                    .expect("verified control-flow output declaration"),
+                                references: output
+                                    .references
+                                    .iter()
+                                    .filter_map(|origin| origin.primary_span)
+                                    .map(|span| (span.start(), span.end()))
+                                    .collect(),
+                            },
+                        )
+                        .collect();
+                    let plan = temporary_names
+                        .get(target)
+                        .copied()
+                        .zip(helper_names.get(helper).copied())
+                        .zip(
+                            function
+                                .context
+                                .as_ref()
+                                .map(|context| context.local.as_str()),
+                        )
+                        .map(|((target, helper), context)| {
+                            control_flow_region::ControlFlowRegionRewrite::new(
+                                target,
+                                helper,
+                                context,
+                                output_rewrites.clone(),
+                            )
+                        });
+                    let duplicate_output = outputs
+                        .iter()
+                        .filter(|output| !output.references.is_empty())
+                        .any(|output| {
+                            control_flow_outputs
+                                .insert(
+                                    output.binding,
+                                    (
+                                        location,
+                                        control_flow_region::ControlFlowRegionOutputRewrite {
+                                            binding: output.binding,
+                                            name: output.name.clone(),
+                                            declaration: output
+                                                .declaration
+                                                .primary_span
+                                                .map(|span| (span.start(), span.end()))
+                                                .expect("verified control-flow output declaration"),
+                                            references: output
+                                                .references
+                                                .iter()
+                                                .filter_map(|origin| origin.primary_span)
+                                                .map(|span| (span.start(), span.end()))
+                                                .collect(),
+                                        },
+                                    ),
+                                )
+                                .is_some()
+                        });
+                    if plan.is_none()
+                        || duplicate_output
+                        || control_flow_regions
+                            .insert(location, plan.expect("checked plan"))
+                            .is_some()
+                    {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-CONTROL-REGION",
+                                "control-flow region has missing or duplicate plan identity",
                                 GuaranteeClass::Internal,
                             )
                             .with_primary_span(span),
@@ -3042,6 +3178,8 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
         sources,
         clones,
         conditional_returns,
+        control_flow_regions,
+        control_flow_outputs,
         diagnostics,
     }
 }
@@ -3407,6 +3545,15 @@ struct AstRewriter<'a, 'emit> {
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
     components: &'emit BTreeMap<(u32, u32), ComponentRewrite>,
     conditional_returns: &'emit BTreeMap<(u32, u32), conditional_return::ConditionalReturnRewrite>,
+    control_flow_regions:
+        &'emit BTreeMap<(u32, u32), control_flow_region::ControlFlowRegionRewrite>,
+    control_flow_outputs: &'emit BTreeMap<
+        BindingId,
+        (
+            (u32, u32),
+            control_flow_region::ControlFlowRegionOutputRewrite,
+        ),
+    >,
     clones: &'emit BTreeMap<(u32, u32), CloneRewrite>,
     preview_handlers: &'emit BTreeMap<(u32, u32), EmitPreviewHandler>,
     preview_qrl_local: Option<&'emit str>,
@@ -3421,6 +3568,8 @@ struct AstRewriter<'a, 'emit> {
     matched_vnodes: BTreeSet<(u32, u32)>,
     matched_components: BTreeSet<(u32, u32)>,
     matched_conditional_returns: BTreeSet<(u32, u32)>,
+    matched_control_flow_regions: BTreeSet<(u32, u32)>,
+    matched_control_flow_outputs: BTreeSet<BindingId>,
     matched_clones: BTreeSet<(u32, u32)>,
     vnode_shadowed_clones: BTreeSet<(u32, u32)>,
     active_list_reads: BTreeSet<(u32, u32)>,
@@ -3734,6 +3883,13 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         walk_mut::walk_function(self, function, flags);
         self.await_allowed = previous_await_allowed;
         if let Some(body) = &mut function.body {
+            control_flow_region::lower_statements(
+                self.allocator,
+                &mut body.statements,
+                self.control_flow_regions,
+                self.semantic_identities,
+                &mut self.matched_control_flow_regions,
+            );
             conditional_return::lower_statements(
                 self.allocator,
                 &mut body.statements,
@@ -3777,6 +3933,13 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         self.await_allowed = function.r#async;
         walk_mut::walk_arrow_function_expression(self, function);
         self.await_allowed = previous_await_allowed;
+        control_flow_region::lower_statements(
+            self.allocator,
+            &mut function.body.statements,
+            self.control_flow_regions,
+            self.semantic_identities,
+            &mut self.matched_control_flow_regions,
+        );
         conditional_return::lower_statements(
             self.allocator,
             &mut function.body.statements,
@@ -3824,6 +3987,42 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         walk_mut::walk_export_specifier(self, specifier);
     }
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
+        if let Expression::Identifier(identifier) = expression {
+            let location = (identifier.span.start, identifier.span.end);
+            let semantic_binding = self.semantic_identities.binding_for_reference(identifier);
+            let selected = semantic_binding
+                .and_then(|binding| {
+                    self.control_flow_outputs
+                        .get(&binding)
+                        .map(|plan| (binding, plan))
+                })
+                .or_else(|| {
+                    self.control_flow_outputs
+                        .iter()
+                        .find_map(|(binding, plan)| {
+                            let (_, output) = plan;
+                            (identifier.name.as_str() == output.name.as_str()
+                                && output.references.iter().any(|reference| {
+                                    reference.0 <= location.0 && location.1 <= reference.1
+                                }))
+                            .then_some((*binding, plan))
+                        })
+                });
+            if let Some((binding, (region, output))) = selected
+                && !(region.0 <= location.0 && location.1 <= region.1)
+            {
+                let span = identifier.span;
+                let target = self
+                    .control_flow_regions
+                    .get(region)
+                    .map(|rewrite| rewrite.target.as_str())
+                    .expect("control-flow output references an existing region");
+                let name = output.name.clone();
+                *expression = control_flow_output_expression(self.allocator, &name, target, span);
+                self.matched_control_flow_outputs.insert(binding);
+                return;
+            }
+        }
         let location = (expression.span().start, expression.span().end);
         if self.active_list_key_initializer == Some(location)
             && let Some(local) = &self.active_list_key_local
@@ -3960,6 +4159,13 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         }
         if list_read || prop_read {
             self.cacheable_accessor_calls.insert(location);
+        }
+    }
+    fn visit_object_property(&mut self, property: &mut ObjectProperty<'a>) {
+        let shorthand = property.shorthand;
+        walk_mut::walk_object_property(self, property);
+        if shorthand && !matches!(property.value, Expression::Identifier(_)) {
+            property.shorthand = false;
         }
     }
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {
@@ -6825,6 +7031,30 @@ fn collect_jsx_expression_value<'a>(
         values.insert((span.start, span.end), expression);
     }
 }
+fn control_flow_output_expression<'a>(
+    allocator: &'a Allocator,
+    name: &str,
+    target: &str,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let call = Expression::new_call_expression(
+        span,
+        Expression::new_identifier(span, allocator.alloc_str(target), &builder),
+        NONE,
+        ArenaVec::new_in(&allocator),
+        false,
+        &builder,
+    );
+    Expression::new_static_member_expression(
+        span,
+        call,
+        IdentifierName::new(span, allocator.alloc_str(name), &builder),
+        false,
+        &builder,
+    )
+}
+
 fn const_statement<'a>(
     allocator: &'a Allocator,
     name: &str,

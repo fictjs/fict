@@ -55,6 +55,7 @@ pub(super) fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::Insert { origin, .. }
         | EmitOperation::Conditional { origin, .. }
         | EmitOperation::ConditionalReturn { origin, .. }
+        | EmitOperation::ControlFlowRegion { origin, .. }
         | EmitOperation::KeyedChild { origin, .. }
         | EmitOperation::KeyedList { origin, .. }
         | EmitOperation::Return { origin, .. } => *origin,

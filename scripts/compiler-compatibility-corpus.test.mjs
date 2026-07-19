@@ -413,17 +413,17 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   })
   assert.deepEqual(reviewed, observed)
   assert.equal(reviewed.schemaVersion, 1)
-  assert.equal(reviewed.deviationCount, 281)
-  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 281)
+  assert.equal(reviewed.deviationCount, 284)
+  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 284)
   assert.equal(
     reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
-    246,
+    245,
   )
   assert.deepEqual(reviewed.policyCounts, {
-    'rust-structured-rejection-diagnostics': 168,
+    'rust-structured-rejection-diagnostics': 172,
     'diagnostic-severity-reclassification': 23,
-    'rust-warning-addition': 27,
-    'rust-warning-removal': 58,
+    'rust-warning-addition': 34,
+    'rust-warning-removal': 50,
     'rust-warning-set-change': 5,
   })
   assert.ok(
@@ -605,8 +605,12 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
       fixture.id,
     )
     const statusChanged = fixture.babelAudit.status !== fixture.expected.status
-    if (fixture.origin.requestVariant === 'strict-guarantee') {
-      assert.equal(statusChanged, false, `${fixture.id} strict status parity`)
+    if (fixture.origin.requestVariant === 'strict-guarantee' && statusChanged) {
+      assert.equal(
+        fixture.deviationPolicy,
+        'strict-reactivity-fail-closed',
+        `${fixture.id} strict status deviation`,
+      )
     }
     assert.equal(fixture.deviationPolicy !== null, statusChanged, fixture.id)
     if (fixture.deviationPolicy !== null) {
@@ -633,6 +637,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
     'structured-hook-return': 6,
     'namespace-macro-fail-closed': 1,
     'standard-decorator-fail-closed': 3,
+    'strict-reactivity-fail-closed': 4,
   })
   const corpusGenerator = read('scripts/generate-rust-codegen-corpus.mjs')
   assert.match(corpusGenerator, /buildCorpusRequestPolicy/)

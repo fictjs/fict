@@ -7,6 +7,7 @@ const DEFAULT_ROOT = path.resolve(SCRIPT_DIR, '..')
 const PRODUCER_FILES = [
   'crates/fict-emit/src/lower.rs',
   'crates/fict-emit/src/conditional_return.rs',
+  'crates/fict-emit/src/control_flow_region.rs',
 ]
 
 function enumBody(source, name) {

@@ -310,8 +310,13 @@ fn replays_the_frozen_rust_codegen_corpus() {
             assert_sha256(hash, &format!("{} Babel audit code hash", fixture.id));
         }
         let status_changed = fixture.babel_audit.status != fixture.expected.status;
-        if fixture.origin.request_variant == RequestVariant::StrictGuarantee {
-            assert!(!status_changed, "{} strict status parity", fixture.id);
+        if fixture.origin.request_variant == RequestVariant::StrictGuarantee && status_changed {
+            assert_eq!(
+                fixture.deviation_policy.as_deref(),
+                Some("strict-reactivity-fail-closed"),
+                "{} strict status deviation",
+                fixture.id
+            );
         }
         assert_eq!(
             fixture.deviation_policy.is_some(),

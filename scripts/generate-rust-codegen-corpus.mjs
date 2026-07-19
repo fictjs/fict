@@ -52,6 +52,8 @@ const deviationPolicies = {
     'Rust 0.31 rejects compiler macros invoked through a Fict namespace instead of leaving an uncompiled runtime call.',
   'standard-decorator-fail-closed':
     'Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript.',
+  'strict-reactivity-fail-closed':
+    'Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution.',
 }
 const expectedPolicyCounts = {
   'rust-capability-expansion': 22,
@@ -59,6 +61,7 @@ const expectedPolicyCounts = {
   'structured-hook-return': 6,
   'namespace-macro-fail-closed': 1,
   'standard-decorator-fail-closed': 3,
+  'strict-reactivity-fail-closed': 4,
 }
 
 function parseArguments(argv) {
@@ -204,6 +207,14 @@ function compileLegacyFixture(row, legacy) {
 function deviationPolicy(babelStatus, currentStatus, currentErrorCodes, requestVariant) {
   if (babelStatus === currentStatus) return null
   if (requestVariant === 'strict-guarantee') {
+    if (
+      babelStatus === 'ok' &&
+      currentStatus === 'error' &&
+      currentErrorCodes.length > 0 &&
+      currentErrorCodes.every(code => code === 'FICT-R006')
+    ) {
+      return 'strict-reactivity-fail-closed'
+    }
     throw new Error(
       `strictGuarantee status mismatch: Babel=${babelStatus}, Rust=${currentStatus}; restore the missing guarantee instead of policying the request`,
     )

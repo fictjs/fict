@@ -1182,6 +1182,40 @@ fn verify_operations(
             | EmitOperation::Conditional { cleanup, .. } => {
                 verify_cleanup(function, analysis, *cleanup, diagnostics);
             }
+            EmitOperation::ControlFlowRegion {
+                outputs, origin, ..
+            } => {
+                let mut bindings = BTreeSet::new();
+                let valid = function.kind == fict_hir::FunctionKind::Component
+                    && origin.primary_span.is_some()
+                    && !outputs.is_empty()
+                    && outputs.iter().all(|output| {
+                        let Some(local) = hir_function.locals.get(output.local.as_usize()) else {
+                            return false;
+                        };
+                        valid_identifier(&output.name)
+                            && bindings.insert(output.binding)
+                            && output.declaration.primary_span.is_some()
+                            && output
+                                .references
+                                .iter()
+                                .all(|reference| reference.primary_span.is_some())
+                            && local.kind == fict_hir::LocalKind::User
+                            && matches!(
+                                local.declaration_kind,
+                                fict_hir::DeclarationKind::Let | fict_hir::DeclarationKind::Var
+                            )
+                            && local.binding == Some(output.binding)
+                            && local.debug_name.as_deref() == Some(output.name.as_str())
+                            && local.origin == output.declaration
+                    });
+                if !valid {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-CONTROL-REGION",
+                        "control-flow region outputs must be unique mutable component locals with exact semantic identity",
+                    ));
+                }
+            }
             EmitOperation::KeyedChild {
                 source_result,
                 render,
@@ -1646,6 +1680,9 @@ fn verify_helper_semantics(
                 && *create_helper == RuntimeHelper::CreateElement
                 && *cleanup_helper == RuntimeHelper::OnDestroy
         }
+        EmitOperation::ControlFlowRegion {
+            helper, outputs, ..
+        } => *helper == RuntimeHelper::UseMemo && !outputs.is_empty(),
         EmitOperation::KeyedChild {
             helper,
             cleanup_helper,

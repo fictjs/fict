@@ -270,7 +270,7 @@ fn returned_jsx_story(
     .then_some((returned, blocks))
 }
 
-fn story_has_reactive_control(
+pub(crate) fn story_has_reactive_control(
     function: &HirFunction,
     operations: &[EmitOperation],
     blocks: &BTreeSet<BlockId>,

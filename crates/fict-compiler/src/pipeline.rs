@@ -4227,12 +4227,36 @@ mod tests {
     #[test]
     fn checks_the_whole_story_conditional_before_suppressing_r006() {
         let safe_source = "import { $state } from 'fict'; export function App() { const count = $state(0); let heading = 'empty'; if (count > 0) heading = count + ' items'; return <h1>{heading}</h1>; }";
-        let safe = compile(request(safe_source, "safe-story.tsx"));
-        assert!(!safe.has_errors(), "{:?}", safe.diagnostics);
+        let safe_strict = compile(request(safe_source, "safe-story.tsx"));
+        assert!(safe_strict.has_errors(), "{:?}", safe_strict.diagnostics);
+        assert!(safe_strict.code.is_empty());
+        assert!(safe_strict.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+
+        let mut safe_fallback_request = request(safe_source, "safe-story.tsx");
+        safe_fallback_request.options.strict_guarantee = false;
+        let safe_fallback = compile(safe_fallback_request);
         assert!(
-            safe.diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
+            !safe_fallback.has_errors(),
+            "{:?}",
+            safe_fallback.diagnostics
+        );
+        assert!(
+            safe_fallback.code.contains("__fictUseMemo"),
+            "{}",
+            safe_fallback.code
+        );
+        assert!(
+            safe_fallback.code.contains("return { heading };"),
+            "{}",
+            safe_fallback.code
+        );
+        assert!(
+            safe_fallback.code.contains("().heading"),
+            "{}",
+            safe_fallback.code
         );
 
         let unsafe_source = "import { $state } from 'fict'; const external = { fmt() { return 'count:'; } }; export function App() { const count = $state(0); let heading = 'empty'; if (count > 0) heading = external.fmt() + count; return <h1>{heading}</h1>; }";
@@ -4256,18 +4280,25 @@ mod tests {
     #[test]
     fn accepts_memoizable_switch_stories_and_total_switch_returns() {
         let story_source = "import { $state } from 'fict'; export function App() { const mode = $state(0); let label = 'zero'; switch (mode) { case 0: label = 'zero'; break; case 1: label = 'one'; break; default: label = 'many'; } return <span>{label}</span>; }";
-        let story = compile(request(story_source, "switch-story.tsx"));
+        let story_strict = compile(request(story_source, "switch-story.tsx"));
+        assert!(story_strict.has_errors(), "{:?}", story_strict.diagnostics);
+        assert!(story_strict.code.is_empty());
+        let mut story_request = request(story_source, "switch-story.tsx");
+        story_request.options.strict_guarantee = false;
+        let story = compile(story_request);
         assert!(!story.has_errors(), "{:?}", story.diagnostics);
         assert!(
             story
                 .diagnostics
                 .iter()
-                .all(|diagnostic| { diagnostic.code.as_str() != "FICT-R006" })
+                .any(|diagnostic| { diagnostic.code.as_str() == "FICT-R006" })
         );
+        assert!(story.code.contains("__fictUseMemo"), "{}", story.code);
         assert!(story.code.contains("switch (mode())"), "{}", story.code);
         assert!(story.code.contains("case 0:"), "{}", story.code);
         assert!(story.code.contains("case 1:"), "{}", story.code);
         assert!(story.code.contains("default:"), "{}", story.code);
+        assert!(story.code.contains("().label"), "{}", story.code);
 
         let returns_source = "import { $state } from 'fict'; export function App() { const mode = $state(0); switch (mode) { case 0: return <Zero />; default: return <Many />; } }";
         let returns = compile(request(returns_source, "switch-return.tsx"));
@@ -4278,6 +4309,83 @@ mod tests {
                 .iter()
                 .all(|diagnostic| { diagnostic.code.as_str() != "FICT-R006" })
         );
+    }
+
+    #[test]
+    fn lowers_multiple_control_region_outputs_and_captured_reads_in_arrow_components() {
+        let source = "import { $state } from 'fict'; declare function consume(value: string): void; export const App = () => { const mode = $state(false); let label; let detail; if (mode) { label = 'on'; detail = 'ready'; } else { label = 'off'; detail = 'idle'; } return <button onClick={() => consume(label)}>{label}:{detail}</button>; };";
+        let strict = compile(request(source, "arrow-control-region.tsx"));
+        assert!(strict.has_errors(), "{:?}", strict.diagnostics);
+        assert!(strict.code.is_empty());
+
+        let mut fallback_request = request(source, "arrow-control-region.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(fallback.code.contains("__fictUseMemo"), "{}", fallback.code);
+        assert!(fallback.code.contains("return {"), "{}", fallback.code);
+        assert!(fallback.code.contains("label,"), "{}", fallback.code);
+        assert!(fallback.code.contains("detail"), "{}", fallback.code);
+        assert!(fallback.code.contains("().label"), "{}", fallback.code);
+        assert!(fallback.code.contains("().detail"), "{}", fallback.code);
+        assert!(
+            fallback.code.contains("consume(__fict_region"),
+            "{}",
+            fallback.code
+        );
+    }
+
+    #[test]
+    fn keeps_function_scoped_branch_vars_inside_control_regions() {
+        let source = "import { $state } from 'fict'; function side() { return 2; } export function App() { const count = $state(1); let retained = side(); let out = 0; let intermediate = 0; if (count) { intermediate = side(); const readIntermediate = () => intermediate; var branchVar = readIntermediate(); out = branchVar; } return <span>{retained}:{out}:{branchVar}:{count}</span>; }";
+        let mut fallback_request = request(source, "branch-var-control-region.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(
+            fallback
+                .code
+                .contains("var branchVar = readIntermediate();"),
+            "{}",
+            fallback.code
+        );
+        assert!(
+            fallback.code.contains("() => intermediate"),
+            "{}",
+            fallback.code
+        );
+        assert!(fallback.code.contains("return {"), "{}", fallback.code);
+        assert!(
+            fallback
+                .code
+                .contains("out,\n\t\t\tintermediate,\n\t\t\tbranchVar"),
+            "{}",
+            fallback.code
+        );
+        assert!(fallback.code.contains("().out"), "{}", fallback.code);
+        assert!(fallback.code.contains("().branchVar"), "{}", fallback.code);
+        let retained = fallback
+            .code
+            .find("let retained = side();")
+            .unwrap_or_else(|| panic!("{}", fallback.code));
+        let region = fallback
+            .code
+            .find("const __fict_region")
+            .unwrap_or_else(|| panic!("{}", fallback.code));
+        let output = fallback
+            .code
+            .find("let out = 0;")
+            .unwrap_or_else(|| panic!("{}", fallback.code));
+        assert!(retained < region && region < output, "{}", fallback.code);
     }
 
     #[test]
@@ -4335,7 +4443,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_closed_reactive_try_stories_under_strict_guarantees() {
+    fn lowers_closed_reactive_try_stories_only_in_fallback_mode() {
         for (name, body) in [
             (
                 "caught-throw",
@@ -4349,15 +4457,26 @@ mod tests {
             let source = format!(
                 "import {{ $state }} from 'fict'; export function App() {{ let n = $state(0); let label = 'init'; try {{ {body} }} catch (error) {{ label = 'caught:' + error.message; }} return <span>{{label}}</span>; }}"
             );
-            let result = compile(request(&source, &format!("try-{name}.tsx")));
+            let strict = compile(request(&source, &format!("try-{name}.tsx")));
+            assert!(strict.has_errors(), "{name}: {:?}", strict.diagnostics);
+            assert!(strict.code.is_empty());
+            assert!(strict.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R006"
+                    && diagnostic.severity == DiagnosticSeverity::Error
+            }));
+
+            let mut fallback_request = request(&source, &format!("try-{name}.tsx"));
+            fallback_request.options.strict_guarantee = false;
+            let result = compile(fallback_request);
             assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R006"
+                    && diagnostic.severity == DiagnosticSeverity::Warning
+            }));
             assert!(
-                result
-                    .diagnostics
-                    .iter()
-                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006"),
-                "{name}: {:?}",
-                result.diagnostics
+                result.code.contains("__fictUseMemo"),
+                "{name}: {}",
+                result.code
             );
             assert!(result.code.contains("try {"), "{name}: {}", result.code);
             assert!(

@@ -55,7 +55,7 @@ pub(crate) fn reactive_control_flow_diagnostics(
                     let TerminatorKind::Branch { test, .. } = block.terminator.kind else {
                         continue;
                     };
-                    let (reactive_paths, has_late_hook_path) = reactive_control_paths(
+                    let (reactive_paths, _) = reactive_control_paths(
                         analysis
                             .dependencies
                             .value_dependencies
@@ -87,16 +87,7 @@ pub(crate) fn reactive_control_flow_diagnostics(
                     let has_try_ancestor = enclosing_try_story.is_some();
                     let branch_return =
                         !has_try_ancestor && is_branch_return_construct(function, construct, *join);
-                    let memoizable_story = !function.flags.no_memo
-                        && match enclosing_try_story {
-                            Some(closed) => closed,
-                            None => {
-                                !construct_has_unsafe_control_work(&core.hir, function, construct)
-                            }
-                        };
-                    if !condition_invokes_user_code
-                        && (branch_return || (memoizable_story && !has_late_hook_path))
-                    {
+                    if !condition_invokes_user_code && branch_return {
                         continue;
                     }
 
@@ -140,11 +131,10 @@ pub(crate) fn reactive_control_flow_diagnostics(
                 }
                 StructuredConstructKind::Switch { arms, join } => {
                     let mut reactive_paths = BTreeSet::new();
-                    let mut has_late_hook_path = false;
                     let mut condition_invokes_user_code = false;
                     let mut switch_primary_span = None;
                     for (control, block_id) in switch_control_values(function, construct) {
-                        let (paths, control_has_late_hook_path) = reactive_control_paths(
+                        let (paths, _) = reactive_control_paths(
                             analysis
                                 .dependencies
                                 .value_dependencies
@@ -158,7 +148,6 @@ pub(crate) fn reactive_control_flow_diagnostics(
                         if paths.is_empty() {
                             continue;
                         }
-                        has_late_hook_path |= control_has_late_hook_path;
                         reactive_paths.extend(paths);
                         condition_invokes_user_code |= value_has_unsafe_control_work(
                             &core.hir,
@@ -190,21 +179,7 @@ pub(crate) fn reactive_control_flow_diagnostics(
                                 function.blocks.len(),
                             )
                         });
-                    let contains_nested_switch = construct.children.iter().any(|child| {
-                        analysis
-                            .structurize
-                            .constructs
-                            .get(*child as usize)
-                            .is_some_and(|child| {
-                                matches!(child.kind, StructuredConstructKind::Switch { .. })
-                            })
-                    });
-                    let memoizable_story = !function.flags.no_memo
-                        && !contains_nested_switch
-                        && !construct_has_unsafe_control_work(&core.hir, function, construct);
-                    if !condition_invokes_user_code
-                        && (switch_return || (memoizable_story && !has_late_hook_path))
-                    {
+                    if !condition_invokes_user_code && switch_return {
                         continue;
                     }
 
@@ -617,31 +592,6 @@ fn terminates_before_join(
     };
     visiting.remove(&block);
     result
-}
-
-fn construct_has_unsafe_control_work(
-    file: &HirFile,
-    function: &HirFunction,
-    construct: &StructuredConstruct,
-) -> bool {
-    let source_span = function.blocks[construct.header.as_usize()]
-        .source_hint
-        .as_ref()
-        .and_then(|hint| hint.origin.primary_span);
-    construct.blocks.iter().copied().any(|block| {
-        function.blocks[block.as_usize()]
-            .instructions
-            .iter()
-            .filter(|instruction| {
-                source_span.is_none_or(|span| {
-                    instruction
-                        .origin
-                        .primary_span
-                        .is_some_and(|candidate| contains(span, candidate))
-                })
-            })
-            .any(|instruction| instruction_is_unsafe(file, instruction))
-    })
 }
 
 fn value_has_unsafe_control_work(

@@ -239,6 +239,23 @@ pub enum ConditionalKind {
     LogicalAnd,
 }
 
+/// One local value exported from a reactive control-flow region.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControlFlowRegionOutput {
+    /// Function-local storage assigned by the region.
+    pub local: LocalId,
+    /// Semantic binding used by adapters to rewrite every escaping reference.
+    pub binding: BindingId,
+    /// Authored binding spelling retained for the result object property.
+    pub name: String,
+    /// Exact source binding declaration.
+    pub declaration: Origin,
+    /// Escaping source reads rewritten to the region result, including captured reads. This is
+    /// empty for a region-owned intermediate that is returned only to keep declaration movement
+    /// atomic.
+    pub references: Vec<Origin>,
+}
+
 /// Verified operation between HIR analysis and output AST construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitOperation {
@@ -447,6 +464,13 @@ pub enum EmitOperation {
         track_branch_reads: bool,
         origin: Origin,
     },
+    /// Re-execute a statement-level conditional/switch and expose locals assigned by its arms.
+    ControlFlowRegion {
+        target: EmitTemporaryId,
+        helper: RuntimeHelper,
+        outputs: Vec<ControlFlowRegionOutput>,
+        origin: Origin,
+    },
     /// Materialize a binding-aware keyed `.map()` child between template-owned markers.
     KeyedChild {
         target: EmitTemporaryId,
@@ -516,6 +540,7 @@ impl EmitOperation {
             | Self::Insert { helper, .. }
             | Self::Conditional { helper, .. }
             | Self::ConditionalReturn { helper, .. }
+            | Self::ControlFlowRegion { helper, .. }
             | Self::KeyedChild { helper, .. }
             | Self::KeyedList { helper, .. }
             | Self::ResolveElement { helper, .. } => Some(*helper),
@@ -668,6 +693,7 @@ impl EmitOperation {
             | Self::InvokeComponent { target, .. }
             | Self::Conditional { target, .. }
             | Self::ConditionalReturn { target, .. }
+            | Self::ControlFlowRegion { target, .. }
             | Self::KeyedChild { target, .. }
             | Self::KeyedList { target, .. }
             | Self::DeleteReactive { target, .. } => Some(*target),
@@ -734,6 +760,7 @@ impl EmitOperation {
             | Self::DeclareTemplate { .. }
             | Self::CloneTemplate { .. }
             | Self::ConditionalReturn { .. }
+            | Self::ControlFlowRegion { .. }
             | Self::KeyedChild { .. }
             | Self::ResolveElement { .. } => {}
         }
