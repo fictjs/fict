@@ -19,7 +19,9 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_emit::{NoJsxLoweringOptions, lower_core_with_hook_returns};
-use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
+use fict_hir::{
+    FictMacroKind, HirFile, HirInstructionKind, ReactiveCallKind, StructuredSourceKind,
+};
 use fict_metadata::MetadataResolutionStatus;
 use std::mem;
 /// Execute the currently connected native pipeline and return a complete result.
@@ -578,29 +580,36 @@ fn source_explain_events(hir: &HirFile) -> Vec<CompilerExplainEvent> {
                     continue;
                 };
                 let event = match &instruction.kind {
-                    HirInstructionKind::Call(call) => match call.macro_kind {
-                        Some(FictMacroKind::State) => Some(CompilerExplainEvent {
+                    HirInstructionKind::Call(call) => match (call.macro_kind, call.reactive_kind) {
+                        (Some(FictMacroKind::State), _) => Some(CompilerExplainEvent {
                             kind: CompilerExplainEventKind::SourceSignal,
                             message: "classifies $state as a source signal".to_owned(),
                             name: Some("$state".to_owned()),
                             code: None,
                             span: Some(span),
                         }),
-                        Some(FictMacroKind::Effect) => Some(CompilerExplainEvent {
+                        (Some(FictMacroKind::Effect), _) => Some(CompilerExplainEvent {
                             kind: CompilerExplainEventKind::SourceEffect,
                             message: "classifies $effect as a reactive effect".to_owned(),
                             name: Some("$effect".to_owned()),
                             code: None,
                             span: Some(span),
                         }),
-                        Some(FictMacroKind::Memo) => Some(CompilerExplainEvent {
+                        (Some(FictMacroKind::Memo), _) => Some(CompilerExplainEvent {
                             kind: CompilerExplainEventKind::SourceMemo,
                             message: "classifies $memo as a derived memo".to_owned(),
                             name: Some("$memo".to_owned()),
                             code: None,
                             span: Some(span),
                         }),
-                        None => None,
+                        (None, Some(ReactiveCallKind::Memo)) => Some(CompilerExplainEvent {
+                            kind: CompilerExplainEventKind::SourceMemo,
+                            message: "classifies createMemo as a derived memo".to_owned(),
+                            name: Some("createMemo".to_owned()),
+                            code: None,
+                            span: Some(span),
+                        }),
+                        (None, _) => None,
                     },
                     HirInstructionKind::Jsx { .. } => Some(CompilerExplainEvent {
                         kind: CompilerExplainEventKind::SourceJsx,
@@ -1281,6 +1290,46 @@ mod tests {
         assert!(source_events.windows(2).all(|events| {
             events[0].span.expect("source event span").start()
                 <= events[1].span.expect("source event span").start()
+        }));
+    }
+
+    #[test]
+    fn explains_binding_resolved_runtime_memo_creators() {
+        let code = r#"
+            import { createMemo } from 'fict';
+            import { createMemo as memo } from '@fictjs/runtime';
+            import * as F from 'fict';
+            import * as Runtime from '@fictjs/runtime';
+            export function App() {
+                const direct = createMemo(() => 1);
+                const optional = createMemo?.(() => 2);
+                const alias = memo?.(() => 3);
+                const namespace = F.createMemo?.(() => 4);
+                const computed = Runtime['createMemo']?.(() => 5);
+                return <div>{direct}{optional}{alias}{namespace}{computed}</div>;
+            }
+        "#;
+        let mut input = request(code, "explain-runtime-memo.tsx");
+        input.options.explain = true;
+        input.options.strict_guarantee = false;
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let explain = result.explain.expect("native explanation");
+        let memo_events: Vec<_> = explain
+            .events
+            .iter()
+            .filter(|event| event.kind == CompilerExplainEventKind::SourceMemo)
+            .collect();
+        assert_eq!(memo_events.len(), 5, "{memo_events:?}");
+        assert!(
+            memo_events.iter().all(|event| {
+                event.name.as_deref() == Some("createMemo") && event.span.is_some()
+            })
+        );
+        assert!(memo_events.windows(2).all(|events| {
+            events[0].span.expect("memo span").start() < events[1].span.expect("memo span").start()
         }));
     }
 
