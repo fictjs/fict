@@ -126,6 +126,27 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const domSemanticOracle = readJson(domSemantic.artifact)
   assert.equal(domSemantic.fixtureCount, domSemanticInputs.fixtures.length)
   assert.equal(domSemantic.fixtureCount, domSemanticOracle.fixtures.length)
+  const requiredPropsFixtures = domSemanticInputs.fixtures.filter(
+    fixture => fixture.corpusFixtureId !== undefined,
+  )
+  const reviewedDomDeviations = requiredPropsFixtures.filter(
+    fixture => fixture.rustDeviation !== undefined,
+  )
+  assert.equal(domSemantic.requiredPropsCorpusMounts, requiredPropsFixtures.length)
+  assert.equal(domSemantic.requiredPropsCorpusMounts, 26)
+  assert.equal(
+    domSemantic.exactRequiredPropsParity,
+    requiredPropsFixtures.length - reviewedDomDeviations.length,
+  )
+  assert.equal(domSemantic.reviewedIntentionalLegacyBugFixes, reviewedDomDeviations.length)
+  assert.deepEqual(
+    reviewedDomDeviations.map(fixture => fixture.id),
+    ['props-warnings-structured-hook-branch'],
+  )
+  assert.equal(
+    domSemanticOracle.provenance.rustCodegenCorpusSha256,
+    sha256(read(compileCorpusPath)),
+  )
   assert.deepEqual(domSemantic.interactionSurfaces, [
     'input',
     'form-submit',
@@ -140,11 +161,18 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.equal(domSemantic.sharedCurrentRuntime, true)
   assert.equal(domSemantic.assertionLevel, 'dom-runtime-semantics')
   assert.ok(domSemantic.proves.includes('reviewed-cross-implementation-dom-interaction-semantics'))
+  assert.ok(
+    domSemantic.proves.includes('normal-props-mount-for-all-26-previous-double-error-components'),
+  )
+  assert.ok(domSemantic.proves.includes('explicit-review-of-intentional-legacy-output-deviation'))
   assert.ok(domSemantic.doesNotProve.includes('all-legacy-dom-fixture-equivalence'))
   const domSemanticTest = read(domSemantic.ciTest)
   assert.match(domSemanticTest, /executeDomCommonJs\(expected\.babelCode/)
   assert.match(domSemanticTest, /executeDomCommonJs\(result\.code/)
-  assert.ok(read(domSemantic.generator).length > 0)
+  assert.match(domSemanticTest, /treeShape\(actual\[0\]\.value\.tree\)/)
+  assert.match(domSemanticTest, /expectedRustDeviationIds/)
+  const domSemanticGenerator = read(domSemantic.generator)
+  assert.match(domSemanticGenerator, /resolveConfig\(options\.output\)/)
 
   const coverageScope = scope.assets.semanticCoverageMatrix
   const coverage = readJson(coverageScope.artifact)

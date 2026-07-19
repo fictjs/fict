@@ -5,9 +5,10 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { format } from 'prettier'
+import { format, resolveConfig } from 'prettier'
 
 import { executeDomCommonJs } from './lib/compiler-dom-semantic-harness.mjs'
+import { materializeDomSemanticFixture } from './lib/compiler-dom-semantic-fixtures.mjs'
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..')
 const legacyRevision = 'b99ff5b185e3eed701e2d4f3521832dac67c979f'
@@ -110,12 +111,18 @@ const compiler = compilerModule.default ?? compilerModule
 
 const inputText = readFileSync(options.input, 'utf8')
 const input = JSON.parse(inputText)
+const corpusText = readFileSync(
+  path.join(repositoryRoot, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
+  'utf8',
+)
+const corpus = JSON.parse(corpusText)
 assert.equal(input.schemaVersion, 1)
 assert.ok(Array.isArray(input.fixtures))
 const ids = new Set()
 const fixtures = []
 
-for (const fixture of input.fixtures) {
+for (const fixtureInput of input.fixtures) {
+  const fixture = materializeDomSemanticFixture(fixtureInput, corpus)
   assert.equal(ids.has(fixture.id), false, `duplicate fixture ${fixture.id}`)
   ids.add(fixture.id)
   assert.equal(fixture.request.language, 'tsx', fixture.id)
@@ -182,10 +189,17 @@ const oracle = {
     legacyPackageManager: legacyRootPackage.packageManager,
     babelDependencies: dependencyVersions,
     oracleInputsSha256: sha256(inputText),
+    rustCodegenCorpusSha256: sha256(corpusText),
     sharedRuntimePackage: `${runtimePackage.name}@${runtimePackage.version}`,
     runtimeExecutionModel: 'frozen-babel-and-live-rust-output-share-current-runtime',
   },
   fixtures,
 }
-writeFileSync(options.output, await format(JSON.stringify(oracle), { parser: 'json' }))
+writeFileSync(
+  options.output,
+  await format(JSON.stringify(oracle), {
+    ...(await resolveConfig(options.output)),
+    parser: 'json',
+  }),
+)
 process.stdout.write(`${JSON.stringify({ output: options.output, fixtures: fixtures.length })}\n`)

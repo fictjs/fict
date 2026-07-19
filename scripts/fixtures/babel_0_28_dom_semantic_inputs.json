@@ -53,6 +53,168 @@
           { "kind": "record", "label": "disposed" }
         ]
       }
+    },
+    {
+      "id": "props-codegen-hook-branch",
+      "corpusFixtureId": "packages/compiler/test/codegen.test.ts:1286:transform",
+      "componentName": "App",
+      "propsSource": "{ flag: true }"
+    },
+    {
+      "id": "props-codegen-compatible-hook-shapes",
+      "corpusFixtureId": "packages/compiler/test/codegen.test.ts:1373:transform",
+      "componentName": "App",
+      "propsSource": "{ flag: true }"
+    },
+    {
+      "id": "props-codegen-incompatible-hook-shapes",
+      "corpusFixtureId": "packages/compiler/test/codegen.test.ts:1415:transform",
+      "componentName": "App",
+      "propsSource": "{ flag: true }"
+    },
+    {
+      "id": "props-codegen-structured-hook-derived-values",
+      "corpusFixtureId": "packages/compiler/test/codegen.test.ts:1830:transform",
+      "componentName": "App",
+      "propsSource": "{ flag: true }"
+    },
+    {
+      "id": "props-explain-dynamic-field",
+      "corpusFixtureId": "packages/compiler/test/explain-artifact.test.ts:12:transform",
+      "componentName": "App",
+      "propsSource": "{ field: 'city' }"
+    },
+    {
+      "id": "props-reactivity-torture-dynamic-field",
+      "corpusFixtureId": "packages/compiler/test/reactivity-torture.test.ts:191:transformWithCompilerDefaults",
+      "componentName": "App",
+      "propsSource": "{ field: 'city' }"
+    },
+    {
+      "id": "props-name-collision-local",
+      "corpusFixtureId": "packages/compiler/test/props-name-collision.test.ts:7:transform",
+      "componentName": "Child",
+      "propsSource": "{ name: 'Ada' }"
+    },
+    {
+      "id": "props-name-collision-rest",
+      "corpusFixtureId": "packages/compiler/test/props-name-collision.test.ts:56:transform",
+      "componentName": "Child",
+      "propsSource": "{ name: 'Ada', title: 'hello' }"
+    },
+    {
+      "id": "props-name-collision-nested-scope",
+      "corpusFixtureId": "packages/compiler/test/props-name-collision.test.ts:73:transform",
+      "componentName": "Child",
+      "propsSource": "{ name: 'Ada' }"
+    },
+    {
+      "id": "props-list-unkeyed-map",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:693:transform",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-logical-map",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:738:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], ok: true }"
+    },
+    {
+      "id": "props-list-function-child",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:746:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-keyed-map",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:782:transform",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-multiple-keyed-map-results",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:787:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ altId: 'aa', id: 'a', name: 'A' }, { altId: 'bb', id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-precomputed-unkeyed-map",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:804:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-conditional-precomputed-map",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:815:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ compact: true, items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-precomputed-keyed-map",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:826:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-unused-map",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:837:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-index-key",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:848:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-item-key-with-index",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:879:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-list-computed-key-callback",
+      "corpusFixtureId": "packages/compiler/test/spec-rules.test.ts:889:transformWithWarnings",
+      "componentName": "List",
+      "propsSource": "{ items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }"
+    },
+    {
+      "id": "props-svg-polymorphic-tag",
+      "corpusFixtureId": "packages/compiler/test/svg-namespace.test.ts:206:transform",
+      "componentName": "App",
+      "propsSource": "{ Tag: 'circle' }"
+    },
+    {
+      "id": "props-svg-foreignobject-polymorphic-tag",
+      "corpusFixtureId": "packages/compiler/test/svg-namespace.test.ts:246:transform",
+      "componentName": "App",
+      "propsSource": "{ Tag: 'span' }"
+    },
+    {
+      "id": "props-mathml-polymorphic-tag",
+      "corpusFixtureId": "packages/compiler/test/svg-namespace.test.ts:401:transform",
+      "componentName": "App",
+      "propsSource": "{ Tag: 'mi' }"
+    },
+    {
+      "id": "props-annotation-xml-encoding",
+      "corpusFixtureId": "packages/compiler/test/template-integration.test.ts:5494:compileAndLoad",
+      "componentName": "App",
+      "propsSource": "{ htmlEncoding: 'TEXT/HTML', mathEncoding: 'application/xml' }"
+    },
+    {
+      "id": "props-warnings-structured-hook-branch",
+      "corpusFixtureId": "packages/compiler/test/warnings-as-errors.test.ts:487:transform",
+      "componentName": "C",
+      "propsSource": "{ flag: true }",
+      "rustDeviation": {
+        "classification": "intentional-legacy-bug-fix",
+        "expectedText": "0",
+        "expectedTextNodes": ["0"],
+        "reason": "Rust insert recursively resolves the signal returned from the inconsistent hook branch; Babel bindText stringified that signal function."
+      }
     }
   ]
 }

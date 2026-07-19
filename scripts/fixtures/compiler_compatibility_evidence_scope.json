@@ -136,7 +136,10 @@
       "artifact": "crates/fict-compiler/tests/babel_0_28_dom_semantic_oracle.json",
       "generator": "scripts/generate-babel-dom-semantic-oracle.mjs",
       "ciTest": "scripts/babel-compiler-dom-semantic-oracle.test.mjs",
-      "fixtureCount": 1,
+      "fixtureCount": 27,
+      "requiredPropsCorpusMounts": 26,
+      "exactRequiredPropsParity": 25,
+      "reviewedIntentionalLegacyBugFixes": 1,
       "interactionSurfaces": [
         "input",
         "form-submit",
@@ -152,7 +155,10 @@
       "assertionLevel": "dom-runtime-semantics",
       "proves": [
         "reviewed-cross-implementation-dom-interaction-semantics",
-        "mount-mutate-observe-dispose-lifecycle"
+        "mount-mutate-observe-dispose-lifecycle",
+        "normal-props-mount-for-all-26-previous-double-error-components",
+        "semantic-dom-tree-text-attributes-and-namespaces",
+        "explicit-review-of-intentional-legacy-output-deviation"
       ],
       "doesNotProve": ["all-legacy-dom-fixture-equivalence", "legacy-runtime-version-equivalence"]
     },

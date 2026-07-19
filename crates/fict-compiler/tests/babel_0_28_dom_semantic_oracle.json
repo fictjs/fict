@@ -12,7 +12,8 @@
       "@babel/plugin-transform-modules-commonjs": "7.28.6",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "oracleInputsSha256": "5d9bccd31685e8a2995228a61a2205a9efc5c92ccee0b95394eb7826827450c3",
+    "oracleInputsSha256": "38ff0afdb3268096ddfa44e514c30356c23f416d31b7900e1b246c621bc4dc63",
+    "rustCodegenCorpusSha256": "5409602356b730895c2e0cc152f90f95468e98f7a0ad139c7ac635d2bf991667",
     "sharedRuntimePackage": "@fictjs/runtime@0.31.0",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-runtime"
   },
@@ -104,11 +105,7 @@
             "value": "edited"
           }
         },
-        {
-          "accepted": false,
-          "defaultPrevented": true,
-          "label": "submit-event"
-        },
+        { "accepted": false, "defaultPrevented": true, "label": "submit-event" },
         {
           "label": "submitted",
           "value": {
@@ -135,6 +132,1374 @@
             "rootChildren": 0,
             "submission": null,
             "value": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-codegen-hook-branch",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "message": "Reactive control-flow reads (flag) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates."
+        }
+      ],
+      "babelCodeSha256": "2bf2ec44e2d2911f3f484a22eeb64fe0ac5a5ac1385801763fa0930db851b6b5",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_codegen_hook_branch = __fictDomOracleMount_props_codegen_hook_branch;\nexports.__fictDomOracleObserve_props_codegen_hook_branch = __fictDomOracleObserve_props_codegen_hook_branch;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction useCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"count\",\n    devToolsSource: \"/oracle/props-codegen-hook-branch.tsx:5:24\"\n  });\n  return {\n    count\n  };\n}\nfunction App(__props) {\n  __props.flag;\n  const flag = (0, _internal.prop)(() => __props.flag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    let state = useCounter();\n    if (flag()) {\n      state = {\n        count: 1\n      };\n    }\n    return {\n      state\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const state = () => __region_0().state;\n  return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<span> </span>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    (0, _internal.bindText)(__el_2, () => state().count);\n    return __root_0;\n  }, 1001)() : {\n    type: \"span\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => state().count)\n    }\n  };\n}\nlet __fictDomOracleRoot_props_codegen_hook_branch = void 0;\nfunction __fictDomOracleSnapshotNode_props_codegen_hook_branch(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_codegen_hook_branch).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_codegen_hook_branch(root) {\n  __fictDomOracleRoot_props_codegen_hook_branch = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      flag: true\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_codegen_hook_branch() {\n  return {\n    text: __fictDomOracleRoot_props_codegen_hook_branch.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_codegen_hook_branch.childNodes, __fictDomOracleSnapshotNode_props_codegen_hook_branch).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_codegen_hook_branch.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "1",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [{ "type": "text", "value": "1" }],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-codegen-compatible-hook-shapes",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "7e5ba246dcb660c7e0c27db112936a5e2ef1791ebec10a07ca162b31bc0a0915",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_codegen_compatible_hook_shapes = __fictDomOracleMount_props_codegen_compatible_hook_shapes;\nexports.__fictDomOracleObserve_props_codegen_compatible_hook_shapes = __fictDomOracleObserve_props_codegen_compatible_hook_shapes;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction useCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"count\",\n    devToolsSource: \"/oracle/props-codegen-compatible-hook-shapes.tsx:5:24\"\n  });\n  return {\n    count\n  };\n}\nfunction useOtherCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\",\n    devToolsSource: \"/oracle/props-codegen-compatible-hook-shapes.tsx:10:24\"\n  });\n  return {\n    count\n  };\n}\nfunction App(__props) {\n  __props.flag;\n  const flag = (0, _internal.prop)(() => __props.flag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const state = useCounter();\n  const other = useOtherCounter();\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const sequence = (0, state);\n    const logical = state || state;\n    const conditional = (0, _internal.__fictUseMemo)(__fictCtx, () => flag() ? state : state, {\n      name: \"conditional\",\n      devToolsSource: \"/oracle/props-codegen-compatible-hook-shapes.tsx:19:16\"\n    }, 1000);\n    const nested = (0, _internal.__fictUseMemo)(__fictCtx, () => flag() ? (0, state) : state || state, {\n      name: \"nested\",\n      devToolsSource: \"/oracle/props-codegen-compatible-hook-shapes.tsx:20:16\"\n    }, 1001);\n    const compatible = (0, _internal.__fictUseMemo)(__fictCtx, () => flag() ? state : other, {\n      name: \"compatible\",\n      devToolsSource: \"/oracle/props-codegen-compatible-hook-shapes.tsx:21:16\"\n    }, 1002);\n    return {\n      sequence,\n      logical,\n      conditional,\n      nested,\n      compatible\n    };\n  }, {\n    internal: true\n  }, 1003);\n  const {\n    sequence,\n    logical,\n    conditional,\n    nested,\n    compatible\n  } = __region_0();\n  return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--></span>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __el_3 = (0, _internal.resolvePath)(__root_0, [1]);\n    const __el_4 = (0, _internal.resolvePath)(__root_0, [2]);\n    const __el_5 = (0, _internal.resolvePath)(__root_0, [3]);\n    const __el_6 = (0, _internal.resolvePath)(__root_0, [4]);\n    const __end_7 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_7, () => sequence.count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_8 = (0, _internal.getSlotEnd)(__el_3);\n    (0, _internal.insertBetween)(__el_3, __end_8, () => logical.count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_9 = (0, _internal.getSlotEnd)(__el_4);\n    (0, _internal.insertBetween)(__el_4, __end_9, () => conditional().count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_10 = (0, _internal.getSlotEnd)(__el_5);\n    (0, _internal.insertBetween)(__el_5, __end_10, () => nested().count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_11 = (0, _internal.getSlotEnd)(__el_6);\n    (0, _internal.insertBetween)(__el_6, __end_11, () => compatible().count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1004)() : {\n    type: \"span\",\n    props: {\n      children: [(0, _internal.__fictReactive)(() => sequence.count()), (0, _internal.__fictReactive)(() => logical.count()), (0, _internal.__fictReactive)(() => conditional().count()), (0, _internal.__fictReactive)(() => nested().count()), (0, _internal.__fictReactive)(() => compatible().count())]\n    }\n  };\n}\nlet __fictDomOracleRoot_props_codegen_compatible_hook_shapes = void 0;\nfunction __fictDomOracleSnapshotNode_props_codegen_compatible_hook_shapes(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_codegen_compatible_hook_shapes).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_codegen_compatible_hook_shapes(root) {\n  __fictDomOracleRoot_props_codegen_compatible_hook_shapes = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      flag: true\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_codegen_compatible_hook_shapes() {\n  return {\n    text: __fictDomOracleRoot_props_codegen_compatible_hook_shapes.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_codegen_compatible_hook_shapes.childNodes, __fictDomOracleSnapshotNode_props_codegen_compatible_hook_shapes).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_codegen_compatible_hook_shapes.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "00000",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  { "type": "text", "value": "0" },
+                  { "type": "text", "value": "0" },
+                  { "type": "text", "value": "0" },
+                  { "type": "text", "value": "0" },
+                  { "type": "text", "value": "0" }
+                ],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-codegen-incompatible-hook-shapes",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "534ea4664fece0cd53501b7c6a36f74e7860c6cc5d97410bde96d6b902b896d0",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_codegen_incompatible_hook_shapes = __fictDomOracleMount_props_codegen_incompatible_hook_shapes;\nexports.__fictDomOracleObserve_props_codegen_incompatible_hook_shapes = __fictDomOracleObserve_props_codegen_incompatible_hook_shapes;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction useCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"count\",\n    devToolsSource: \"/oracle/props-codegen-incompatible-hook-shapes.tsx:5:24\"\n  });\n  return {\n    count\n  };\n}\nfunction useOtherCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const total = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"total\",\n    devToolsSource: \"/oracle/props-codegen-incompatible-hook-shapes.tsx:10:24\"\n  });\n  return {\n    total\n  };\n}\nfunction App(__props) {\n  __props.flag;\n  const flag = (0, _internal.prop)(() => __props.flag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const state = useCounter();\n  const other = useOtherCounter();\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const mixed = (0, _internal.__fictUseMemo)(__fictCtx, () => flag() ? state : {\n      count: 1\n    }, {\n      name: \"mixed\",\n      devToolsSource: \"/oracle/props-codegen-incompatible-hook-shapes.tsx:17:16\"\n    }, 1000);\n    const incompatible = (0, _internal.__fictUseMemo)(__fictCtx, () => flag() ? state : other, {\n      name: \"incompatible\",\n      devToolsSource: \"/oracle/props-codegen-incompatible-hook-shapes.tsx:18:16\"\n    }, 1001);\n    return {\n      mixed,\n      incompatible\n    };\n  }, {\n    internal: true\n  }, 1002);\n  const {\n    mixed,\n    incompatible\n  } = __region_0();\n  return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></span>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __el_3 = (0, _internal.resolvePath)(__root_0, [2]);\n    const __end_4 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_4, () => mixed().count, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_5 = (0, _internal.getSlotEnd)(__el_3);\n    (0, _internal.insertBetween)(__el_3, __end_5, () => incompatible().count, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1003)() : {\n    type: \"span\",\n    props: {\n      children: [(0, _internal.__fictReactive)(() => mixed().count), \":\", (0, _internal.__fictReactive)(() => incompatible().count)]\n    }\n  };\n}\nlet __fictDomOracleRoot_props_codegen_incompatible_hook_shapes = void 0;\nfunction __fictDomOracleSnapshotNode_props_codegen_incompatible_hook_shapes(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_codegen_incompatible_hook_shapes).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_codegen_incompatible_hook_shapes(root) {\n  __fictDomOracleRoot_props_codegen_incompatible_hook_shapes = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      flag: true\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_codegen_incompatible_hook_shapes() {\n  return {\n    text: __fictDomOracleRoot_props_codegen_incompatible_hook_shapes.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_codegen_incompatible_hook_shapes.childNodes, __fictDomOracleSnapshotNode_props_codegen_incompatible_hook_shapes).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_codegen_incompatible_hook_shapes.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "0:0",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  { "type": "text", "value": "0" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "0" }
+                ],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-codegen-structured-hook-derived-values",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "2d247cd2056e5b0300f7504a1a28e8d63a7fb3783f9f3444f7e5fb25af305223",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_codegen_structured_hook_derived_values = __fictDomOracleMount_props_codegen_structured_hook_derived_values;\nexports.__fictDomOracleObserve_props_codegen_structured_hook_derived_values = __fictDomOracleObserve_props_codegen_structured_hook_derived_values;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction useBucket() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\",\n    devToolsSource: \"/oracle/props-codegen-structured-hook-derived-values.tsx:5:24\"\n  });\n  return {\n    count,\n    plain: 7\n  };\n}\nfunction App(__props) {\n  __props.flag;\n  const flag = (0, _internal.prop)(() => __props.flag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const bucket = useBucket();\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const doubled = (0, _internal.__fictUseMemo)(__fictCtx, () => bucket.count() * 2, {\n      name: \"doubled\",\n      devToolsSource: \"/oracle/props-codegen-structured-hook-derived-values.tsx:11:16\"\n    }, 1000);\n    const label = (0, _internal.__fictUseMemo)(__fictCtx, () => `count:${bucket.count()}`, {\n      name: \"label\",\n      devToolsSource: \"/oracle/props-codegen-structured-hook-derived-values.tsx:12:16\"\n    }, 1001);\n    const choice = (0, _internal.__fictUseMemo)(__fictCtx, () => flag() ? bucket.count() : 0, {\n      name: \"choice\",\n      devToolsSource: \"/oracle/props-codegen-structured-hook-derived-values.tsx:13:16\"\n    }, 1002);\n    const obj = (0, _internal.__fictUseMemo)(__fictCtx, () => ({\n      value: bucket.count()\n    }), {\n      name: \"obj\",\n      devToolsSource: \"/oracle/props-codegen-structured-hook-derived-values.tsx:14:16\"\n    }, 1003);\n    const arr = (0, _internal.__fictUseMemo)(__fictCtx, () => [bucket.count()], {\n      name: \"arr\",\n      devToolsSource: \"/oracle/props-codegen-structured-hook-derived-values.tsx:15:16\"\n    }, 1004);\n    const plain = bucket.plain * 2;\n    return {\n      doubled,\n      label,\n      choice,\n      obj,\n      arr,\n      plain\n    };\n  }, {\n    internal: true\n  }, 1005);\n  const {\n    doubled,\n    label,\n    choice,\n    obj,\n    arr,\n    plain\n  } = __region_0();\n  return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></span>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __el_3 = (0, _internal.resolvePath)(__root_0, [2]);\n    const __el_4 = (0, _internal.resolvePath)(__root_0, [4]);\n    const __el_5 = (0, _internal.resolvePath)(__root_0, [6]);\n    const __el_6 = (0, _internal.resolvePath)(__root_0, [8]);\n    const __el_7 = (0, _internal.resolvePath)(__root_0, [10]);\n    const __el_8 = (0, _internal.resolvePath)(__root_0, [12]);\n    const __end_9 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_9, () => doubled(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_10 = (0, _internal.getSlotEnd)(__el_3);\n    (0, _internal.insertBetween)(__el_3, __end_10, () => label(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_11 = (0, _internal.getSlotEnd)(__el_4);\n    (0, _internal.insertBetween)(__el_4, __end_11, () => choice(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_12 = (0, _internal.getSlotEnd)(__el_5);\n    (0, _internal.insertBetween)(__el_5, __end_12, () => obj().value, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_13 = (0, _internal.getSlotEnd)(__el_6);\n    (0, _internal.insertBetween)(__el_6, __end_13, () => arr()[0], __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_14 = (0, _internal.getSlotEnd)(__el_7);\n    (0, _internal.insertBetween)(__el_7, __end_14, () => plain, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_15 = (0, _internal.getSlotEnd)(__el_8);\n    (0, _internal.insertBetween)(__el_8, __end_15, () => bucket.count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1006)() : {\n    type: \"span\",\n    props: {\n      children: [(0, _internal.__fictReactive)(() => doubled()), \":\", (0, _internal.__fictReactive)(() => label()), \":\", (0, _internal.__fictReactive)(() => choice()), \":\", (0, _internal.__fictReactive)(() => obj().value), \":\", (0, _internal.__fictReactive)(() => arr()[0]), \":\", (0, _internal.__fictReactive)(() => plain), \":\", (0, _internal.__fictReactive)(() => bucket.count())]\n    }\n  };\n}\nlet __fictDomOracleRoot_props_codegen_structured_hook_derived_values = void 0;\nfunction __fictDomOracleSnapshotNode_props_codegen_structured_hook_derived_values(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_codegen_structured_hook_derived_values).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_codegen_structured_hook_derived_values(root) {\n  __fictDomOracleRoot_props_codegen_structured_hook_derived_values = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      flag: true\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_codegen_structured_hook_derived_values() {\n  return {\n    text: __fictDomOracleRoot_props_codegen_structured_hook_derived_values.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_codegen_structured_hook_derived_values.childNodes, __fictDomOracleSnapshotNode_props_codegen_structured_hook_derived_values).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_codegen_structured_hook_derived_values.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "2:count:1:1:1:1:14:1",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  { "type": "text", "value": "2" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "count:1" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "1" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "1" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "1" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "14" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "1" }
+                ],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-explain-dynamic-field",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-H",
+          "severity": "warning",
+          "message": "Dynamic property access widens dependency tracking"
+        }
+      ],
+      "babelCodeSha256": "82a46e0944d96dfa91b5fb61d2dca6d2f3b378987f278bb246127a6c97c01de5",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_explain_dynamic_field = __fictDomOracleMount_props_explain_dynamic_field;\nexports.__fictDomOracleObserve_props_explain_dynamic_field = __fictDomOracleObserve_props_explain_dynamic_field;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction App(__props) {\n  const __propDefault_1 = __props.field === void 0 ? 'name' : void 0;\n  const field = (0, _internal.prop)(() => __props.field === void 0 ? __propDefault_1 : __props.field);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const user = (0, _internal.__fictUseSignal)(__fictCtx, {\n    name: \"Ada\",\n    city: \"London\"\n  }, {\n    name: \"user\",\n    devToolsSource: \"/oracle/props-explain-dynamic-field.tsx:5:21\"\n  });\n  return (() => {\n    const __cond_10 = (0, _internal.createConditional)(() => field(), () => {\n      return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (() => {\n        const __tmpl_3 = (0, _internal.template)(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n        const __root_2 = __tmpl_3();\n        const __el_4 = (0, _internal.resolvePath)(__root_2, [0]);\n        const __end_5 = (0, _internal.getSlotEnd)(__el_4);\n        (0, _internal.insertBetween)(__el_4, __end_5, () => user()[field()], __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n        return __root_2;\n      })() : {\n        type: \"div\",\n        props: {\n          children: (0, _internal.__fictReactive)(() => user()[field()])\n        }\n      };\n    }, _internal.createElement, () => {\n      return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (() => {\n        const __tmpl_7 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end--></span>\");\n        const __root_6 = __tmpl_7();\n        const __el_8 = (0, _internal.resolvePath)(__root_6, [0]);\n        const __end_9 = (0, _internal.getSlotEnd)(__el_8);\n        (0, _internal.insertBetween)(__el_8, __end_9, () => user().name, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n        return __root_6;\n      })() : {\n        type: \"span\",\n        props: {\n          children: (0, _internal.__fictReactive)(() => user().name)\n        }\n      };\n    });\n    (0, _internal.onDestroy)(__cond_10.dispose);\n    return __cond_10;\n  })();\n}\nlet __fictDomOracleRoot_props_explain_dynamic_field = void 0;\nfunction __fictDomOracleSnapshotNode_props_explain_dynamic_field(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_explain_dynamic_field).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_explain_dynamic_field(root) {\n  __fictDomOracleRoot_props_explain_dynamic_field = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      field: \"city\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_explain_dynamic_field() {\n  return {\n    text: __fictDomOracleRoot_props_explain_dynamic_field.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_explain_dynamic_field.childNodes, __fictDomOracleSnapshotNode_props_explain_dynamic_field).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_explain_dynamic_field.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "div",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "London",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [{ "type": "text", "value": "London" }],
+                "localName": "div",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-reactivity-torture-dynamic-field",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-H",
+          "severity": "warning",
+          "message": "Dynamic property access widens dependency tracking"
+        }
+      ],
+      "babelCodeSha256": "62b6ea2da314294506314b7d90c59513cc8468079e3f1249a1a89e4f8b9fe0a4",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_reactivity_torture_dynamic_field = __fictDomOracleMount_props_reactivity_torture_dynamic_field;\nexports.__fictDomOracleObserve_props_reactivity_torture_dynamic_field = __fictDomOracleObserve_props_reactivity_torture_dynamic_field;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction App(__props) {\n  const __propDefault_1 = __props.field === void 0 ? 'name' : void 0;\n  const field = (0, _internal.prop)(() => __props.field === void 0 ? __propDefault_1 : __props.field);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const user = (0, _internal.__fictUseSignal)(__fictCtx, {\n    name: \"Ada\",\n    city: \"London\"\n  }, {\n    name: \"user\",\n    devToolsSource: \"/oracle/props-reactivity-torture-dynamic-field.tsx:5:21\"\n  });\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const bag = (0, _internal.__fictUseMemo)(__fictCtx, () => ({\n      ...user()\n    }), {\n      name: \"bag\",\n      devToolsSource: \"/oracle/props-reactivity-torture-dynamic-field.tsx:6:16\"\n    }, 1000);\n    return {\n      bag\n    };\n  }, {\n    internal: true\n  }, 1001);\n  const {\n    bag\n  } = __region_0();\n  return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_3 = (0, _internal.template)(\"<div> </div>\");\n    const __root_2 = __tmpl_3();\n    const __el_4 = (0, _internal.resolvePath)(__root_2, [0]);\n    (0, _internal.bindText)(__el_4, () => bag()[field()]);\n    return __root_2;\n  }, 1002)() : {\n    type: \"div\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => bag()[field()])\n    }\n  };\n}\nlet __fictDomOracleRoot_props_reactivity_torture_dynamic_field = void 0;\nfunction __fictDomOracleSnapshotNode_props_reactivity_torture_dynamic_field(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_reactivity_torture_dynamic_field).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_reactivity_torture_dynamic_field(root) {\n  __fictDomOracleRoot_props_reactivity_torture_dynamic_field = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      field: \"city\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_reactivity_torture_dynamic_field() {\n  return {\n    text: __fictDomOracleRoot_props_reactivity_torture_dynamic_field.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_reactivity_torture_dynamic_field.childNodes, __fictDomOracleSnapshotNode_props_reactivity_torture_dynamic_field).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_reactivity_torture_dynamic_field.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "div",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "London",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [{ "type": "text", "value": "London" }],
+                "localName": "div",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-name-collision-local",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "306cf21e35066325297d3fcb73b2b77761f98a93f61acc7ca082d1c9d561604b",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Child = Child;\nexports.__fictDomOracleMount_props_name_collision_local = __fictDomOracleMount_props_name_collision_local;\nexports.__fictDomOracleObserve_props_name_collision_local = __fictDomOracleObserve_props_name_collision_local;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction Child(__props_1) {\n  __props_1.name;\n  const name = (0, _internal.prop)(() => __props_1.name);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const __props = globalThis.__fictPropsCollision ?? \"user\";\n  return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></span>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __el_3 = (0, _internal.resolvePath)(__root_0, [2]);\n    const __end_4 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_4, () => __props, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_5 = (0, _internal.getSlotEnd)(__el_3);\n    (0, _internal.insertBetween)(__el_3, __end_5, () => name(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"span\",\n    props: {\n      children: [(0, _internal.__fictReactive)(() => __props), \":\", (0, _internal.__fictReactive)(() => name())]\n    }\n  };\n}\nlet __fictDomOracleRoot_props_name_collision_local = void 0;\nfunction __fictDomOracleSnapshotNode_props_name_collision_local(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_name_collision_local).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_name_collision_local(root) {\n  __fictDomOracleRoot_props_name_collision_local = root;\n  return (0, _fict.render)(() => ({\n    type: Child,\n    props: {\n      name: \"Ada\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_name_collision_local() {\n  return {\n    text: __fictDomOracleRoot_props_name_collision_local.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_name_collision_local.childNodes, __fictDomOracleSnapshotNode_props_name_collision_local).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_name_collision_local.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "user:Ada",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  { "type": "text", "value": "user" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "Ada" }
+                ],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-name-collision-rest",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "ec68d52200f78646c6f0386107d94a252c00c34b4d35aced27ef5b5e571fcefe",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Child = Child;\nexports.__fictDomOracleMount_props_name_collision_rest = __fictDomOracleMount_props_name_collision_rest;\nexports.__fictDomOracleObserve_props_name_collision_rest = __fictDomOracleObserve_props_name_collision_rest;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction Child(__props_1) {\n  __props_1.name;\n  const name = (0, _internal.prop)(() => __props_1.name);\n  const rest = (0, _internal.__fictPropsRest)(__props_1, [\"name\"]);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const __props = globalThis.__fictPropsRestCollision ?? \"user\";\n  return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></span>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __el_3 = (0, _internal.resolvePath)(__root_0, [2]);\n    const __el_4 = (0, _internal.resolvePath)(__root_0, [4]);\n    const __end_5 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_5, () => __props, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_6 = (0, _internal.getSlotEnd)(__el_3);\n    (0, _internal.insertBetween)(__el_3, __end_6, () => name(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_7 = (0, _internal.getSlotEnd)(__el_4);\n    (0, _internal.insertBetween)(__el_4, __end_7, () => rest.title, __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"span\",\n    props: {\n      children: [(0, _internal.__fictReactive)(() => __props), \":\", (0, _internal.__fictReactive)(() => name()), \":\", rest.title]\n    }\n  };\n}\nlet __fictDomOracleRoot_props_name_collision_rest = void 0;\nfunction __fictDomOracleSnapshotNode_props_name_collision_rest(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_name_collision_rest).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_name_collision_rest(root) {\n  __fictDomOracleRoot_props_name_collision_rest = root;\n  return (0, _fict.render)(() => ({\n    type: Child,\n    props: {\n      name: \"Ada\",\n      title: \"hello\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_name_collision_rest() {\n  return {\n    text: __fictDomOracleRoot_props_name_collision_rest.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_name_collision_rest.childNodes, __fictDomOracleSnapshotNode_props_name_collision_rest).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_name_collision_rest.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "user:Ada:hello",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  { "type": "text", "value": "user" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "Ada" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "hello" }
+                ],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-name-collision-nested-scope",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "f086865a8c5231842ea00dc064295354c8e8f5672260a1497e84999d0603ade3",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Child = Child;\nexports.__fictDomOracleMount_props_name_collision_nested_scope = __fictDomOracleMount_props_name_collision_nested_scope;\nexports.__fictDomOracleObserve_props_name_collision_nested_scope = __fictDomOracleObserve_props_name_collision_nested_scope;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction Child(__props) {\n  __props.name;\n  const name = (0, _internal.prop)(() => __props.name);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  function readNested() {\n    const __props = \"nested\";\n    return __props;\n  }\n  return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></span>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __el_3 = (0, _internal.resolvePath)(__root_0, [2]);\n    const __end_4 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_4, () => name(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_5 = (0, _internal.getSlotEnd)(__el_3);\n    (0, _internal.insertBetween)(__el_3, __end_5, () => readNested(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"span\",\n    props: {\n      children: [(0, _internal.__fictReactive)(() => name()), \":\", (0, _internal.__fictReactive)(() => readNested())]\n    }\n  };\n}\nlet __fictDomOracleRoot_props_name_collision_nested_scope = void 0;\nfunction __fictDomOracleSnapshotNode_props_name_collision_nested_scope(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_name_collision_nested_scope).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_name_collision_nested_scope(root) {\n  __fictDomOracleRoot_props_name_collision_nested_scope = root;\n  return (0, _fict.render)(() => ({\n    type: Child,\n    props: {\n      name: \"Ada\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_name_collision_nested_scope() {\n  return {\n    text: __fictDomOracleRoot_props_name_collision_nested_scope.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_name_collision_nested_scope.childNodes, __fictDomOracleSnapshotNode_props_name_collision_nested_scope).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_name_collision_nested_scope.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "Ada:nested",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  { "type": "text", "value": "Ada" },
+                  { "type": "text", "value": ":" },
+                  { "type": "text", "value": "nested" }
+                ],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-unkeyed-map",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-J002",
+          "severity": "warning",
+          "message": "Missing key prop in list rendering."
+        }
+      ],
+      "babelCodeSha256": "bce8b09cd65383871fb4d9a624d87d2597c8f9736845f29463a78a328cfec1f6",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_unkeyed_map = __fictDomOracleMount_props_list_unkeyed_map;\nexports.__fictDomOracleObserve_props_list_unkeyed_map = __fictDomOracleObserve_props_list_unkeyed_map;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => items().map(item => ({\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      }\n    })), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => items().map(item => ({\n        type: \"li\",\n        props: {\n          children: item.name\n        }\n      })))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_unkeyed_map = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_unkeyed_map(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_unkeyed_map).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_unkeyed_map(root) {\n  __fictDomOracleRoot_props_list_unkeyed_map = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_unkeyed_map() {\n  return {\n    text: __fictDomOracleRoot_props_list_unkeyed_map.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_unkeyed_map.childNodes, __fictDomOracleSnapshotNode_props_list_unkeyed_map).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_unkeyed_map.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-logical-map",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "9ea875d7705c6a8444f813915a80101dbac58540a81d411afd58470be717d89e",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_logical_map = __fictDomOracleMount_props_list_logical_map;\nexports.__fictDomOracleObserve_props_list_logical_map = __fictDomOracleObserve_props_list_logical_map;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  __props.ok;\n  const ok = (0, _internal.prop)(() => __props.ok);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    const __cond_4 = (0, _internal.createConditional)(() => ok(), () => items().map(item => ({\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      },\n      key: item.id\n    })), __node => (0, _internal.createElementInNamespace)(__node, \"html\"), void 0, __el_2, __end_3, {\n      trackBranchReads: true\n    });\n    __cond_4?.flush?.();\n    (0, _internal.onDestroy)(__cond_4.dispose);\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => ok() && items().map(item => ({\n        type: \"li\",\n        props: {\n          children: item.name\n        },\n        key: item.id\n      })))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_logical_map = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_logical_map(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_logical_map).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_logical_map(root) {\n  __fictDomOracleRoot_props_list_logical_map = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }],\n      ok: true\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_logical_map() {\n  return {\n    text: __fictDomOracleRoot_props_list_logical_map.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_logical_map.childNodes, __fictDomOracleSnapshotNode_props_list_logical_map).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_logical_map.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-function-child",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "f1a39f86c169ed80b2f177665d171baeb428fb03c6c30651b848044f21d0a9ea",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_function_child = __fictDomOracleMount_props_list_function_child;\nexports.__fictDomOracleObserve_props_list_function_child = __fictDomOracleObserve_props_list_function_child;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => () => items().map(item => ({\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      }\n    })), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => () => items().map(item => ({\n        type: \"li\",\n        props: {\n          children: item.name\n        }\n      })))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_function_child = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_function_child(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_function_child).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_function_child(root) {\n  __fictDomOracleRoot_props_list_function_child = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_function_child() {\n  return {\n    text: __fictDomOracleRoot_props_list_function_child.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_function_child.childNodes, __fictDomOracleSnapshotNode_props_list_function_child).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_function_child.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [{ "type": "text", "value": "" }],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-keyed-map",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "5e5cb8f1ab6b5f768e7ad74271a13eec347b1f748507529da030fc235c1c9ef1",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_keyed_map = __fictDomOracleMount_props_list_keyed_map;\nexports.__fictDomOracleObserve_props_list_keyed_map = __fictDomOracleObserve_props_list_keyed_map;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => items().map(item => ({\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      },\n      key: item.id\n    })), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => items().map(item => ({\n        type: \"li\",\n        props: {\n          children: item.name\n        },\n        key: item.id\n      })))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_keyed_map = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_keyed_map(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_keyed_map).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_keyed_map(root) {\n  __fictDomOracleRoot_props_list_keyed_map = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_keyed_map() {\n  return {\n    text: __fictDomOracleRoot_props_list_keyed_map.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_keyed_map.childNodes, __fictDomOracleSnapshotNode_props_list_keyed_map).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_keyed_map.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-multiple-keyed-map-results",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "de1e1c7ed6508a100a072706ee9f90afae3c072b0c61ca862bd9b313e740dac0",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_multiple_keyed_map_results = __fictDomOracleMount_props_list_multiple_keyed_map_results;\nexports.__fictDomOracleObserve_props_list_multiple_keyed_map_results = __fictDomOracleObserve_props_list_multiple_keyed_map_results;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => items().map(item => [{\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      },\n      key: item.id\n    }, {\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      },\n      key: item.altId\n    }]), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => items().map(item => [{\n        type: \"li\",\n        props: {\n          children: item.name\n        },\n        key: item.id\n      }, {\n        type: \"li\",\n        props: {\n          children: item.name\n        },\n        key: item.altId\n      }]))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_multiple_keyed_map_results = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_multiple_keyed_map_results(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_multiple_keyed_map_results).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_multiple_keyed_map_results(root) {\n  __fictDomOracleRoot_props_list_multiple_keyed_map_results = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        altId: \"aa\",\n        id: \"a\",\n        name: \"A\"\n      }, {\n        altId: \"bb\",\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_multiple_keyed_map_results() {\n  return {\n    text: __fictDomOracleRoot_props_list_multiple_keyed_map_results.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_multiple_keyed_map_results.childNodes, __fictDomOracleSnapshotNode_props_list_multiple_keyed_map_results).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_multiple_keyed_map_results.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AABB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-precomputed-unkeyed-map",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-J002",
+          "severity": "warning",
+          "message": "Missing key prop in list rendering."
+        }
+      ],
+      "babelCodeSha256": "19b3d8f3b87249a589f208746500a10a0ff263c35845046e5e9cb9a693cc080b",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_precomputed_unkeyed_map = __fictDomOracleMount_props_list_precomputed_unkeyed_map;\nexports.__fictDomOracleObserve_props_list_precomputed_unkeyed_map = __fictDomOracleObserve_props_list_precomputed_unkeyed_map;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const rows = (0, _internal.__fictUseMemo)(__fictCtx, () => items().map(item => ({\n    type: \"li\",\n    props: {\n      children: item.name\n    }\n  })), {\n    name: \"rows\",\n    devToolsSource: \"/oracle/props-list-precomputed-unkeyed-map.tsx:3:14\"\n  });\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => rows(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => rows())\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_precomputed_unkeyed_map = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_precomputed_unkeyed_map(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_precomputed_unkeyed_map).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_precomputed_unkeyed_map(root) {\n  __fictDomOracleRoot_props_list_precomputed_unkeyed_map = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_precomputed_unkeyed_map() {\n  return {\n    text: __fictDomOracleRoot_props_list_precomputed_unkeyed_map.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_precomputed_unkeyed_map.childNodes, __fictDomOracleSnapshotNode_props_list_precomputed_unkeyed_map).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_precomputed_unkeyed_map.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-conditional-precomputed-map",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-J002",
+          "severity": "warning",
+          "message": "Missing key prop in list rendering."
+        }
+      ],
+      "babelCodeSha256": "9322bcc440f11e8c311cea231a44564487c39c02f9e20d97f03a44bdc4f3ce55",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_conditional_precomputed_map = __fictDomOracleMount_props_list_conditional_precomputed_map;\nexports.__fictDomOracleObserve_props_list_conditional_precomputed_map = __fictDomOracleObserve_props_list_conditional_precomputed_map;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  __props.compact;\n  const compact = (0, _internal.prop)(() => __props.compact);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const rows = (0, _internal.__fictUseMemo)(__fictCtx, () => compact() ? items().map(item => ({\n    type: \"li\",\n    props: {\n      children: item.name\n    }\n  })) : [], {\n    name: \"rows\",\n    devToolsSource: \"/oracle/props-list-conditional-precomputed-map.tsx:3:14\"\n  });\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => rows(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => rows())\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_conditional_precomputed_map = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_conditional_precomputed_map(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_conditional_precomputed_map).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_conditional_precomputed_map(root) {\n  __fictDomOracleRoot_props_list_conditional_precomputed_map = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      compact: true,\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_conditional_precomputed_map() {\n  return {\n    text: __fictDomOracleRoot_props_list_conditional_precomputed_map.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_conditional_precomputed_map.childNodes, __fictDomOracleSnapshotNode_props_list_conditional_precomputed_map).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_conditional_precomputed_map.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-precomputed-keyed-map",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "6ad508248b5562c6da3a99c8cca046c2702cdf534cacd43f565d20d20fb0bac4",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_precomputed_keyed_map = __fictDomOracleMount_props_list_precomputed_keyed_map;\nexports.__fictDomOracleObserve_props_list_precomputed_keyed_map = __fictDomOracleObserve_props_list_precomputed_keyed_map;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const rows = (0, _internal.__fictUseMemo)(__fictCtx, () => items().map(item => ({\n    type: \"li\",\n    props: {\n      children: item.name\n    },\n    key: item.id\n  })), {\n    name: \"rows\",\n    devToolsSource: \"/oracle/props-list-precomputed-keyed-map.tsx:3:14\"\n  });\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => rows(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => rows())\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_precomputed_keyed_map = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_precomputed_keyed_map(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_precomputed_keyed_map).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_precomputed_keyed_map(root) {\n  __fictDomOracleRoot_props_list_precomputed_keyed_map = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_precomputed_keyed_map() {\n  return {\n    text: __fictDomOracleRoot_props_list_precomputed_keyed_map.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_precomputed_keyed_map.childNodes, __fictDomOracleSnapshotNode_props_list_precomputed_keyed_map).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_precomputed_keyed_map.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-unused-map",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "78f6c84f9edbcdb304a1d5e295c1b6e82e8c0401fb6bee003ac3b3de59952a78",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_unused_map = __fictDomOracleMount_props_list_unused_map;\nexports.__fictDomOracleObserve_props_list_unused_map = __fictDomOracleObserve_props_list_unused_map;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const rows = (0, _internal.__fictUseMemo)(__fictCtx, () => items().map(item => ({\n    type: \"li\",\n    props: {\n      children: item.name\n    }\n  })), {\n    name: \"rows\",\n    devToolsSource: \"/oracle/props-list-unused-map.tsx:3:14\"\n  });\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (() => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul></ul>\");\n    const __root_0 = __tmpl_1();\n    return __root_0;\n  })() : {\n    type: \"ul\",\n    props: null\n  };\n}\nlet __fictDomOracleRoot_props_list_unused_map = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_unused_map(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_unused_map).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_unused_map(root) {\n  __fictDomOracleRoot_props_list_unused_map = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_unused_map() {\n  return {\n    text: __fictDomOracleRoot_props_list_unused_map.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_unused_map.childNodes, __fictDomOracleSnapshotNode_props_list_unused_map).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_unused_map.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-index-key",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-J001",
+          "severity": "warning",
+          "message": "Dynamic key expression may impact performance."
+        }
+      ],
+      "babelCodeSha256": "a8b667e08eabe977a992b68b633cb258cfb0e03c3e63a0ab809833b01078877e",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_index_key = __fictDomOracleMount_props_list_index_key;\nexports.__fictDomOracleObserve_props_list_index_key = __fictDomOracleObserve_props_list_index_key;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => items().map((item, index) => ({\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      },\n      key: index\n    })), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => items().map((item, index) => ({\n        type: \"li\",\n        props: {\n          children: item.name\n        },\n        key: index\n      })))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_index_key = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_index_key(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_index_key).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_index_key(root) {\n  __fictDomOracleRoot_props_list_index_key = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_index_key() {\n  return {\n    text: __fictDomOracleRoot_props_list_index_key.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_index_key.childNodes, __fictDomOracleSnapshotNode_props_list_index_key).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_index_key.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-item-key-with-index",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "acd3134e4bf2f7f4f9e6c77d09b3cf86ed5da58c366340aad028ada488bc7b6f",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_item_key_with_index = __fictDomOracleMount_props_list_item_key_with_index;\nexports.__fictDomOracleObserve_props_list_item_key_with_index = __fictDomOracleObserve_props_list_item_key_with_index;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => items().map((item, index) => ({\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      },\n      key: item.id\n    })), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => items().map((item, index) => ({\n        type: \"li\",\n        props: {\n          children: item.name\n        },\n        key: item.id\n      })))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_item_key_with_index = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_item_key_with_index(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_item_key_with_index).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_item_key_with_index(root) {\n  __fictDomOracleRoot_props_list_item_key_with_index = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_item_key_with_index() {\n  return {\n    text: __fictDomOracleRoot_props_list_item_key_with_index.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_item_key_with_index.childNodes, __fictDomOracleSnapshotNode_props_list_item_key_with_index).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_item_key_with_index.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-list-computed-key-callback",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "f0211fbf301cb58e83be8268fc7596dd6e8a78298d7c8f61c5d9e4d9a66354f7",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.List = List;\nexports.__fictDomOracleMount_props_list_computed_key_callback = __fictDomOracleMount_props_list_computed_key_callback;\nexports.__fictDomOracleObserve_props_list_computed_key_callback = __fictDomOracleObserve_props_list_computed_key_callback;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction List(__props) {\n  __props.items;\n  const items = (0, _internal.prop)(() => __props.items);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"ul\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<ul><!--fict:slot:start--><!--fict:slot:end--></ul>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => items().map((item, index) => ({\n      type: \"li\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => item.name)\n      },\n      key: (index => index)(item.id)\n    })), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"ul\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => items().map((item, index) => ({\n        type: \"li\",\n        props: {\n          children: item.name\n        },\n        key: (index => index)(item.id)\n      })))\n    }\n  };\n}\nlet __fictDomOracleRoot_props_list_computed_key_callback = void 0;\nfunction __fictDomOracleSnapshotNode_props_list_computed_key_callback(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_list_computed_key_callback).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_list_computed_key_callback(root) {\n  __fictDomOracleRoot_props_list_computed_key_callback = root;\n  return (0, _fict.render)(() => ({\n    type: List,\n    props: {\n      items: [{\n        id: \"a\",\n        name: \"A\"\n      }, {\n        id: \"b\",\n        name: \"B\"\n      }]\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_list_computed_key_callback() {\n  return {\n    text: __fictDomOracleRoot_props_list_computed_key_callback.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_list_computed_key_callback.childNodes, __fictDomOracleSnapshotNode_props_list_computed_key_callback).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_list_computed_key_callback.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [],
+                "localName": "li",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "AB",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "A" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [],
+                    "children": [{ "type": "text", "value": "B" }],
+                    "localName": "li",
+                    "namespaceURI": "http://www.w3.org/1999/xhtml",
+                    "type": "element"
+                  }
+                ],
+                "localName": "ul",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-svg-polymorphic-tag",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "fdf4a934d5ab8e88feea3feadd1188ea395e0783dd07f510a0bf165ecd9e7afd",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_svg_polymorphic_tag = __fictDomOracleMount_props_svg_polymorphic_tag;\nexports.__fictDomOracleObserve_props_svg_polymorphic_tag = __fictDomOracleObserve_props_svg_polymorphic_tag;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction App(__props) {\n  __props.Tag;\n  const Tag = (0, _internal.prop)(() => __props.Tag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"svg\", \"svg\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<svg><!--fict:slot:start--><!--fict:slot:end--></svg>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => ({\n      type: Tag(),\n      props: {\n        \"data-id\": \"direct\"\n      }\n    }), __node => (0, _internal.createElementInNamespace)(__node, \"svg\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"svg\",\n    props: {\n      children: {\n        type: Tag(),\n        props: {\n          \"data-id\": \"direct\"\n        }\n      }\n    }\n  };\n}\nlet __fictDomOracleRoot_props_svg_polymorphic_tag = void 0;\nfunction __fictDomOracleSnapshotNode_props_svg_polymorphic_tag(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_svg_polymorphic_tag).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_svg_polymorphic_tag(root) {\n  __fictDomOracleRoot_props_svg_polymorphic_tag = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      Tag: \"circle\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_svg_polymorphic_tag() {\n  return {\n    text: __fictDomOracleRoot_props_svg_polymorphic_tag.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_svg_polymorphic_tag.childNodes, __fictDomOracleSnapshotNode_props_svg_polymorphic_tag).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_svg_polymorphic_tag.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "svg",
+                "namespaceURI": "http://www.w3.org/2000/svg"
+              },
+              {
+                "attributes": [["data-id", "direct"]],
+                "localName": "circle",
+                "namespaceURI": "http://www.w3.org/2000/svg"
+              }
+            ],
+            "text": "",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [["data-id", "direct"]],
+                    "children": [],
+                    "localName": "circle",
+                    "namespaceURI": "http://www.w3.org/2000/svg",
+                    "type": "element"
+                  }
+                ],
+                "localName": "svg",
+                "namespaceURI": "http://www.w3.org/2000/svg",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-svg-foreignobject-polymorphic-tag",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "f902a4757c3487381b1c2b7f4964ba25f00823450178a81d352f7334ea2fc818",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_svg_foreignobject_polymorphic_tag = __fictDomOracleMount_props_svg_foreignobject_polymorphic_tag;\nexports.__fictDomOracleObserve_props_svg_foreignobject_polymorphic_tag = __fictDomOracleObserve_props_svg_foreignobject_polymorphic_tag;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction App(__props) {\n  __props.Tag;\n  const Tag = (0, _internal.prop)(() => __props.Tag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"svg\", \"svg\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<svg><foreignobject><!--fict:slot:start--><!--fict:slot:end--></foreignobject></svg>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0, 0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => ({\n      type: Tag(),\n      props: {\n        \"data-id\": \"html\"\n      }\n    }), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"svg\",\n    props: {\n      children: {\n        type: \"foreignobject\",\n        props: {\n          children: {\n            type: Tag(),\n            props: {\n              \"data-id\": \"html\"\n            }\n          }\n        }\n      }\n    }\n  };\n}\nlet __fictDomOracleRoot_props_svg_foreignobject_polymorphic_tag = void 0;\nfunction __fictDomOracleSnapshotNode_props_svg_foreignobject_polymorphic_tag(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_svg_foreignobject_polymorphic_tag).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_svg_foreignobject_polymorphic_tag(root) {\n  __fictDomOracleRoot_props_svg_foreignobject_polymorphic_tag = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      Tag: \"span\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_svg_foreignobject_polymorphic_tag() {\n  return {\n    text: __fictDomOracleRoot_props_svg_foreignobject_polymorphic_tag.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_svg_foreignobject_polymorphic_tag.childNodes, __fictDomOracleSnapshotNode_props_svg_foreignobject_polymorphic_tag).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_svg_foreignobject_polymorphic_tag.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "svg",
+                "namespaceURI": "http://www.w3.org/2000/svg"
+              },
+              {
+                "attributes": [],
+                "localName": "foreignObject",
+                "namespaceURI": "http://www.w3.org/2000/svg"
+              },
+              {
+                "attributes": [["data-id", "html"]],
+                "localName": "span",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [],
+                    "children": [
+                      {
+                        "attributes": [["data-id", "html"]],
+                        "children": [],
+                        "localName": "span",
+                        "namespaceURI": "http://www.w3.org/1999/xhtml",
+                        "type": "element"
+                      }
+                    ],
+                    "localName": "foreignObject",
+                    "namespaceURI": "http://www.w3.org/2000/svg",
+                    "type": "element"
+                  }
+                ],
+                "localName": "svg",
+                "namespaceURI": "http://www.w3.org/2000/svg",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-mathml-polymorphic-tag",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "48f56df1456357ee0c0b5217749657f0fae01244f0e046fb4909e810c64672ca",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_mathml_polymorphic_tag = __fictDomOracleMount_props_mathml_polymorphic_tag;\nexports.__fictDomOracleObserve_props_mathml_polymorphic_tag = __fictDomOracleObserve_props_mathml_polymorphic_tag;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction App(__props) {\n  __props.Tag;\n  const Tag = (0, _internal.prop)(() => __props.Tag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  return (0, _internal.__fictElementNamespaceMatches)(\"math\", \"mathml\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<math><!--fict:slot:start--><!--fict:slot:end--></math>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => ({\n      type: Tag(),\n      props: {\n        \"data-id\": \"direct\",\n        children: \"x\"\n      }\n    }), __node => (0, _internal.createElementInNamespace)(__node, \"mathml\"));\n    return __root_0;\n  }, 1000)() : {\n    type: \"math\",\n    props: {\n      children: {\n        type: Tag(),\n        props: {\n          \"data-id\": \"direct\",\n          children: \"x\"\n        }\n      }\n    }\n  };\n}\nlet __fictDomOracleRoot_props_mathml_polymorphic_tag = void 0;\nfunction __fictDomOracleSnapshotNode_props_mathml_polymorphic_tag(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_mathml_polymorphic_tag).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_mathml_polymorphic_tag(root) {\n  __fictDomOracleRoot_props_mathml_polymorphic_tag = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      Tag: \"mi\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_mathml_polymorphic_tag() {\n  return {\n    text: __fictDomOracleRoot_props_mathml_polymorphic_tag.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_mathml_polymorphic_tag.childNodes, __fictDomOracleSnapshotNode_props_mathml_polymorphic_tag).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_mathml_polymorphic_tag.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "math",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["data-id", "direct"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              }
+            ],
+            "text": "x",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [["data-id", "direct"]],
+                    "children": [{ "type": "text", "value": "x" }],
+                    "localName": "mi",
+                    "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                    "type": "element"
+                  }
+                ],
+                "localName": "math",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-annotation-xml-encoding",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-J003",
+          "severity": "warning",
+          "message": "Spread on native element may include unknown props."
+        },
+        {
+          "code": "FICT-J003",
+          "severity": "warning",
+          "message": "Spread on native element may include unknown props."
+        },
+        {
+          "code": "FICT-J003",
+          "severity": "warning",
+          "message": "Spread on native element may include unknown props."
+        }
+      ],
+      "babelCodeSha256": "981808657ca2396b7e2b9f1cd86c3dae6f399d763df60d06459e7b85d9b98055",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.App = App;\nexports.__fictDomOracleMount_props_annotation_xml_encoding = __fictDomOracleMount_props_annotation_xml_encoding;\nexports.__fictDomOracleObserve_props_annotation_xml_encoding = __fictDomOracleObserve_props_annotation_xml_encoding;\nexports.mount = mount;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction makeDom(id) {\n  return (0, _internal.createElement)({\n    type: \"mi\",\n    props: {\n      \"data-id\": id,\n      children: id\n    }\n  });\n}\nfunction App(__props) {\n  __props.htmlEncoding;\n  const htmlEncoding = (0, _internal.prop)(() => __props.htmlEncoding);\n  __props.mathEncoding;\n  const mathEncoding = (0, _internal.prop)(() => __props.mathEncoding);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const show = (0, _internal.__fictUseSignal)(__fictCtx, true, {\n    name: \"show\",\n    devToolsSource: \"/oracle/props-annotation-xml-encoding.tsx:10:21\"\n  });\n  const items = (0, _internal.__fictUseSignal)(__fictCtx, [\"list\"], {\n    name: \"items\",\n    devToolsSource: \"/oracle/props-annotation-xml-encoding.tsx:11:22\"\n  });\n  const beforeMath = {\n    encoding: \"application/xml\"\n  };\n  const afterHtml = {\n    encoding: \"application/xhtml+xml\"\n  };\n  const afterMath = {\n    encoding: \"application/xml\"\n  };\n  return (0, _internal.__fictElementNamespaceMatches)(\"math\", \"mathml\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<math><annotation-xml><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--></annotation-xml><annotation-xml><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--></annotation-xml><annotation-xml><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--></annotation-xml></math>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __el_3 = (0, _internal.resolvePath)(__el_2, [0]);\n    const __el_4 = (0, _internal.resolvePath)(__el_2, [1]);\n    const __el_5 = (0, _internal.resolvePath)(__el_2, [2]);\n    const __el_6 = (0, _internal.resolvePath)(__el_2, [3]);\n    const __el_7 = (0, _internal.resolvePath)(__root_0, [1]);\n    const __el_8 = (0, _internal.resolvePath)(__el_7, [0]);\n    const __el_9 = (0, _internal.resolvePath)(__el_7, [1]);\n    const __el_10 = (0, _internal.resolvePath)(__root_0, [2]);\n    const __el_11 = (0, _internal.resolvePath)(__el_10, [0]);\n    const __el_12 = (0, _internal.resolvePath)(__el_10, [1]);\n    const __el_13 = (0, _internal.resolvePath)(__el_10, [2]);\n    const __el_14 = (0, _internal.resolvePath)(__el_10, [3]);\n    (0, _internal.spread)(__el_2, (0, _internal.__fictReactive)(() => beforeMath), \"mathml\", true, [\"encoding\"]);\n    (0, _internal.bindAttribute)(__el_2, \"encoding\", () => htmlEncoding());\n    const __end_15 = (0, _internal.getSlotEnd)(__el_3);\n    (0, _internal.insertBetween)(__el_3, __end_15, () => ({\n      type: \"mi\",\n      props: {\n        \"data-id\": \"html-static-before\",\n        children: \"static\"\n      }\n    }), __node => (0, _internal.createElementInParentNamespace)(__node, __el_3.parentNode));\n    const __end_16 = (0, _internal.getSlotEnd)(__el_4);\n    (0, _internal.insertBetween)(__el_4, __end_16, () => makeDom(\"html-direct\"), __node => (0, _internal.createElementInParentNamespace)(__node, __el_4.parentNode));\n    const __end_17 = (0, _internal.getSlotEnd)(__el_5);\n    const __cond_18 = (0, _internal.createConditional)(() => show(), () => makeDom(\"html-conditional\"), __node => (0, _internal.createElementInParentNamespace)(__node, __el_5.parentNode), () => null, __el_5, __end_17);\n    __cond_18?.flush?.();\n    (0, _internal.onDestroy)(__cond_18.dispose);\n    const __end_19 = (0, _internal.getSlotEnd)(__el_6);\n    (0, _internal.insertBetween)(__el_6, __end_19, () => items().map(item => makeDom(\"html-\" + item)), __node => (0, _internal.createElementInParentNamespace)(__node, __el_6.parentNode));\n    (0, _internal.bindAttribute)(__el_7, \"encoding\", () => mathEncoding());\n    (0, _internal.spread)(__el_7, (0, _internal.__fictReactive)(() => afterHtml), \"mathml\", true);\n    const __end_20 = (0, _internal.getSlotEnd)(__el_8);\n    (0, _internal.insertBetween)(__el_8, __end_20, () => ({\n      type: \"mi\",\n      props: {\n        \"data-id\": \"html-static-after\",\n        children: \"static\"\n      }\n    }), __node => (0, _internal.createElementInParentNamespace)(__node, __el_8.parentNode));\n    const __end_21 = (0, _internal.getSlotEnd)(__el_9);\n    (0, _internal.insertBetween)(__el_9, __end_21, () => makeDom(\"html-after-direct\"), __node => (0, _internal.createElementInParentNamespace)(__node, __el_9.parentNode));\n    (0, _internal.bindAttribute)(__el_10, \"encoding\", () => htmlEncoding());\n    (0, _internal.spread)(__el_10, (0, _internal.__fictReactive)(() => afterMath), \"mathml\", true);\n    const __end_22 = (0, _internal.getSlotEnd)(__el_11);\n    (0, _internal.insertBetween)(__el_11, __end_22, () => ({\n      type: \"mi\",\n      props: {\n        \"data-id\": \"math-static-after\",\n        children: \"static\"\n      }\n    }), __node => (0, _internal.createElementInParentNamespace)(__node, __el_11.parentNode));\n    const __end_23 = (0, _internal.getSlotEnd)(__el_12);\n    (0, _internal.insertBetween)(__el_12, __end_23, () => makeDom(\"math-direct\"), __node => (0, _internal.createElementInParentNamespace)(__node, __el_12.parentNode));\n    const __end_24 = (0, _internal.getSlotEnd)(__el_13);\n    const __cond_25 = (0, _internal.createConditional)(() => show(), () => makeDom(\"math-conditional\"), __node => (0, _internal.createElementInParentNamespace)(__node, __el_13.parentNode), () => null, __el_13, __end_24);\n    __cond_25?.flush?.();\n    (0, _internal.onDestroy)(__cond_25.dispose);\n    const __end_26 = (0, _internal.getSlotEnd)(__el_14);\n    (0, _internal.insertBetween)(__el_14, __end_26, () => items().map(item => makeDom(\"math-\" + item)), __node => (0, _internal.createElementInParentNamespace)(__node, __el_14.parentNode));\n    return __root_0;\n  }, 1000)() : {\n    type: \"math\",\n    props: {\n      children: [{\n        type: \"annotation-xml\",\n        props: {\n          ...beforeMath,\n          encoding: (0, _internal.__fictReactive)(() => htmlEncoding()),\n          children: [{\n            type: \"mi\",\n            props: {\n              \"data-id\": \"html-static-before\",\n              children: \"static\"\n            }\n          }, makeDom(\"html-direct\"), (0, _internal.__fictReactive)(() => show() ? makeDom(\"html-conditional\") : null), (0, _internal.__fictReactive)(() => items().map(item => makeDom(\"html-\" + item)))]\n        }\n      }, {\n        type: \"annotation-xml\",\n        props: {\n          encoding: (0, _internal.__fictReactive)(() => mathEncoding()),\n          ...afterHtml,\n          children: [{\n            type: \"mi\",\n            props: {\n              \"data-id\": \"html-static-after\",\n              children: \"static\"\n            }\n          }, makeDom(\"html-after-direct\")]\n        }\n      }, {\n        type: \"annotation-xml\",\n        props: {\n          encoding: (0, _internal.__fictReactive)(() => htmlEncoding()),\n          ...afterMath,\n          children: [{\n            type: \"mi\",\n            props: {\n              \"data-id\": \"math-static-after\",\n              children: \"static\"\n            }\n          }, makeDom(\"math-direct\"), (0, _internal.__fictReactive)(() => show() ? makeDom(\"math-conditional\") : null), (0, _internal.__fictReactive)(() => items().map(item => makeDom(\"math-\" + item)))]\n        }\n      }]\n    }\n  };\n}\nfunction mount(el) {\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      htmlEncoding: \"TEXT/HTML\",\n      mathEncoding: \" TEXT/HTML \"\n    }\n  }), el);\n}\nlet __fictDomOracleRoot_props_annotation_xml_encoding = void 0;\nfunction __fictDomOracleSnapshotNode_props_annotation_xml_encoding(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_annotation_xml_encoding).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_annotation_xml_encoding(root) {\n  __fictDomOracleRoot_props_annotation_xml_encoding = root;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: {\n      htmlEncoding: \"TEXT/HTML\",\n      mathEncoding: \"application/xml\"\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_annotation_xml_encoding() {\n  return {\n    text: __fictDomOracleRoot_props_annotation_xml_encoding.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_annotation_xml_encoding.childNodes, __fictDomOracleSnapshotNode_props_annotation_xml_encoding).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_annotation_xml_encoding.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "math",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["encoding", "TEXT/HTML"]],
+                "localName": "annotation-xml",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["data-id", "html-static-before"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [["data-id", "html-direct"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [["data-id", "html-conditional"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [["data-id", "html-list"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [["encoding", "application/xhtml+xml"]],
+                "localName": "annotation-xml",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["data-id", "html-static-after"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [["data-id", "html-after-direct"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              },
+              {
+                "attributes": [["encoding", "application/xml"]],
+                "localName": "annotation-xml",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["data-id", "math-static-after"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["data-id", "math-direct"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["data-id", "math-conditional"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              },
+              {
+                "attributes": [["data-id", "math-list"]],
+                "localName": "mi",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML"
+              }
+            ],
+            "text": "statichtml-directhtml-conditionalhtml-liststatichtml-after-directstaticmath-directmath-conditionalmath-list",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [
+                  {
+                    "attributes": [["encoding", "TEXT/HTML"]],
+                    "children": [
+                      {
+                        "attributes": [["data-id", "html-static-before"]],
+                        "children": [{ "type": "text", "value": "static" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1999/xhtml",
+                        "type": "element"
+                      },
+                      {
+                        "attributes": [["data-id", "html-direct"]],
+                        "children": [{ "type": "text", "value": "html-direct" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1999/xhtml",
+                        "type": "element"
+                      },
+                      {
+                        "attributes": [["data-id", "html-conditional"]],
+                        "children": [{ "type": "text", "value": "html-conditional" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1999/xhtml",
+                        "type": "element"
+                      },
+                      {
+                        "attributes": [["data-id", "html-list"]],
+                        "children": [{ "type": "text", "value": "html-list" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1999/xhtml",
+                        "type": "element"
+                      }
+                    ],
+                    "localName": "annotation-xml",
+                    "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [["encoding", "application/xhtml+xml"]],
+                    "children": [
+                      {
+                        "attributes": [["data-id", "html-static-after"]],
+                        "children": [{ "type": "text", "value": "static" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1999/xhtml",
+                        "type": "element"
+                      },
+                      {
+                        "attributes": [["data-id", "html-after-direct"]],
+                        "children": [{ "type": "text", "value": "html-after-direct" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1999/xhtml",
+                        "type": "element"
+                      }
+                    ],
+                    "localName": "annotation-xml",
+                    "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                    "type": "element"
+                  },
+                  {
+                    "attributes": [["encoding", "application/xml"]],
+                    "children": [
+                      {
+                        "attributes": [["data-id", "math-static-after"]],
+                        "children": [{ "type": "text", "value": "static" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                        "type": "element"
+                      },
+                      {
+                        "attributes": [["data-id", "math-direct"]],
+                        "children": [{ "type": "text", "value": "math-direct" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                        "type": "element"
+                      },
+                      {
+                        "attributes": [["data-id", "math-conditional"]],
+                        "children": [{ "type": "text", "value": "math-conditional" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                        "type": "element"
+                      },
+                      {
+                        "attributes": [["data-id", "math-list"]],
+                        "children": [{ "type": "text", "value": "math-list" }],
+                        "localName": "mi",
+                        "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                        "type": "element"
+                      }
+                    ],
+                    "localName": "annotation-xml",
+                    "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                    "type": "element"
+                  }
+                ],
+                "localName": "math",
+                "namespaceURI": "http://www.w3.org/1998/Math/MathML",
+                "type": "element"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "props-warnings-structured-hook-branch",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-H002",
+          "severity": "warning",
+          "message": "Hook \"useThing\" returns \"count\" with an inconsistent shape across branches. Each slot must consistently be a plain value or the same reactive accessor kind so consumers can be rewritten safely: return a plain value from every branch (e.g. { count: count() }) or a compatible accessor from every branch (e.g. { count: () => 'off' })."
+        }
+      ],
+      "babelCodeSha256": "748eebe3d30dc0b77283bf94d5fde731a65b462536def96adefb9a88e998ad82",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.C = C;\nexports.__fictDomOracleMount_props_warnings_structured_hook_branch = __fictDomOracleMount_props_warnings_structured_hook_branch;\nexports.__fictDomOracleObserve_props_warnings_structured_hook_branch = __fictDomOracleObserve_props_warnings_structured_hook_branch;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nfunction useThing(flag) {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"count\"\n  });\n  if (flag) {\n    return {\n      count\n    };\n  } else {\n    return {\n      count: \"static\"\n    };\n  }\n}\nfunction C(__props) {\n  __props.flag;\n  const flag = (0, _internal.prop)(() => __props.flag);\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const t = (__eager_t => (__eager_t(), __eager_t))((0, _internal.__fictUseMemo)(__fictCtx, () => useThing(flag()), {\n    name: \"t\"\n  }));\n  return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<div> </div>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    (0, _internal.bindText)(__el_2, () => t().count);\n    return __root_0;\n  }, 1000)() : {\n    type: \"div\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => t().count)\n    }\n  };\n}\nlet __fictDomOracleRoot_props_warnings_structured_hook_branch = void 0;\nfunction __fictDomOracleSnapshotNode_props_warnings_structured_hook_branch(node) {\n  if (node.nodeType === 3) {\n    return {\n      type: \"text\",\n      value: node.data\n    };\n  } else {\n    if (node.nodeType !== 1) {\n      return null;\n    } else {\n      return {\n        type: \"element\",\n        attributes: Array.from(node.attributes, attribute => [attribute.name, attribute.value]),\n        localName: node.localName,\n        namespaceURI: node.namespaceURI,\n        children: Array.from(node.childNodes, __fictDomOracleSnapshotNode_props_warnings_structured_hook_branch).filter(Boolean)\n      };\n    }\n  }\n}\nfunction __fictDomOracleMount_props_warnings_structured_hook_branch(root) {\n  __fictDomOracleRoot_props_warnings_structured_hook_branch = root;\n  return (0, _fict.render)(() => ({\n    type: C,\n    props: {\n      flag: true\n    }\n  }), root);\n}\nfunction __fictDomOracleObserve_props_warnings_structured_hook_branch() {\n  return {\n    text: __fictDomOracleRoot_props_warnings_structured_hook_branch.textContent,\n    tree: Array.from(__fictDomOracleRoot_props_warnings_structured_hook_branch.childNodes, __fictDomOracleSnapshotNode_props_warnings_structured_hook_branch).filter(Boolean),\n    elements: Array.from(__fictDomOracleRoot_props_warnings_structured_hook_branch.querySelectorAll(\"*\"), element => ({\n      attributes: Array.from(element.attributes, attribute => [attribute.name, attribute.value]),\n      localName: element.localName,\n      namespaceURI: element.namespaceURI\n    }))\n  };\n}",
+      "expected": [
+        {
+          "label": "mounted-with-props",
+          "value": {
+            "elements": [
+              {
+                "attributes": [],
+                "localName": "div",
+                "namespaceURI": "http://www.w3.org/1999/xhtml"
+              }
+            ],
+            "text": "function () { [native code] }",
+            "tree": [
+              {
+                "attributes": [],
+                "children": [{ "type": "text", "value": "function () { [native code] }" }],
+                "localName": "div",
+                "namespaceURI": "http://www.w3.org/1999/xhtml",
+                "type": "element"
+              }
+            ]
           }
         }
       ]
