@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
@@ -63,7 +64,7 @@ const assertionLevels = new Set([
 ])
 
 test('accounts for the exact 34 legacy test domains missing from the extracted corpus', () => {
-  assert.equal(manifest.schemaVersion, 2)
+  assert.equal(manifest.schemaVersion, 3)
   assert.equal(manifest.baseline, '@fictjs/compiler@0.28.0')
   assert.equal(manifest.unrepresentedFileCount, expectedDomains.length)
   assert.deepEqual(manifest.domains.map(domain => domain.name).sort(), [...expectedDomains].sort())
@@ -77,6 +78,47 @@ test('accounts for the exact 34 legacy test domains missing from the extracted c
   assert.ok(
     Object.values(manifest.assertionLevelDefinitions).every(definition => definition.length >= 60),
   )
+})
+
+test('binds every domain review to the exact legacy test and assertion surface', () => {
+  const review = manifest.legacySurfaceReview
+  const inventory = JSON.parse(readFileSync(path.join(repositoryRoot, review.inventoryArtifact)))
+  const unrepresentedFiles = inventory.files.filter(file => file.corpusBaseFixtureCount === 0)
+  const domainByFile = new Map(manifest.domains.map(domain => [domain.legacyFile, domain]))
+
+  assert.equal(
+    review.inventoryArtifact,
+    'scripts/fixtures/legacy_0_28_compiler_assertion_inventory.json',
+  )
+  assert.equal(review.legacyTestFiles, unrepresentedFiles.length)
+  assert.equal(
+    review.testDeclarationSites,
+    unrepresentedFiles.reduce((count, file) => count + file.testDeclarationSiteCount, 0),
+  )
+  assert.equal(
+    review.staticAssertionCallsites,
+    unrepresentedFiles.reduce((count, file) => count + file.staticAssertionCallsiteCount, 0),
+  )
+  assert.deepEqual(
+    Object.keys(review.domainDigests).sort(),
+    manifest.domains.map(domain => domain.name).sort(),
+  )
+  assert.deepEqual(
+    {
+      legacyTestFiles: review.legacyTestFiles,
+      testDeclarationSites: review.testDeclarationSites,
+      staticAssertionCallsites: review.staticAssertionCallsites,
+    },
+    { legacyTestFiles: 34, testDeclarationSites: 467, staticAssertionCallsites: 1009 },
+  )
+
+  for (const file of unrepresentedFiles) {
+    const domain = domainByFile.get(file.file)
+    assert.ok(domain, `${file.file}: missing reviewed domain`)
+    assert.equal(file.domainLedgerName, domain.name, `${domain.name}: inventory identity`)
+    const digest = `sha256:${createHash('sha256').update(JSON.stringify(file)).digest('hex')}`
+    assert.equal(review.domainDigests[domain.name], digest, `${domain.name}: legacy surface drift`)
+  }
 })
 
 test('keeps every replacement or removal claim bound to live repository evidence', () => {

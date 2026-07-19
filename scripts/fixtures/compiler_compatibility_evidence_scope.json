@@ -24,11 +24,13 @@
       "artifact": "scripts/fixtures/legacy_0_28_test_domain_coverage.json",
       "ciTest": "scripts/legacy-test-domain-coverage.test.mjs",
       "domainCount": 34,
+      "legacyTestDeclarationSites": 467,
+      "legacyStaticAssertionCallsites": 1009,
       "assertionLevelCounts": {
-        "runtime-behavior": 11,
+        "runtime-behavior": 10,
         "output-contract": 4,
         "host-contract": 4,
-        "structural-invariant": 8,
+        "structural-invariant": 9,
         "type-contract": 1,
         "gate-contract": 3,
         "intentional-removal": 3
@@ -36,6 +38,7 @@
       "assertionLevel": "domain-scoped-migration-evidence",
       "proves": [
         "exact-unrepresented-file-accounting",
+        "digest-bound-review-of-every-legacy-test-and-assertion-in-each-domain",
         "declared-evidence-strength-per-domain",
         "behavioral-evidence-for-observable-directives-and-optimizer"
       ],

@@ -63,9 +63,22 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     {},
   )
   assert.equal(domainScope.domainCount, domainLedger.domains.length)
+  assert.equal(
+    domainScope.legacyTestDeclarationSites,
+    domainLedger.legacySurfaceReview.testDeclarationSites,
+  )
+  assert.equal(
+    domainScope.legacyStaticAssertionCallsites,
+    domainLedger.legacySurfaceReview.staticAssertionCallsites,
+  )
   assert.deepEqual(domainScope.assertionLevelCounts, observedAssertionLevels)
   assert.equal(domainScope.assertionLevel, 'domain-scoped-migration-evidence')
   assert.ok(domainScope.proves.includes('declared-evidence-strength-per-domain'))
+  assert.ok(
+    domainScope.proves.includes(
+      'digest-bound-review-of-every-legacy-test-and-assertion-in-each-domain',
+    ),
+  )
   assert.ok(
     domainScope.doesNotProve.includes('runtime-equivalence-for-structural-invariant-domains'),
   )

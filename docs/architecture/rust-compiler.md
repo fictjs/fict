@@ -257,12 +257,18 @@ regeneration rather than silently preserving the 73-file headline.
 The 34 files with no audit row use a separate
 [legacy domain ledger](../../scripts/fixtures/legacy_0_28_test_domain_coverage.json).
 Its schema declares the strength of every replacement claim instead of treating
-all marker matches alike: 11 domains have executable runtime behavior, four
+all marker matches alike: 10 domains have executable runtime behavior, four
 assert emitted output or diagnostics, four execute migrated host contracts,
-eight assert structural IR/analysis invariants, one compiles the public type
+nine assert structural IR/analysis invariants, one compiles the public type
 contract, three execute tooling or release gates, and three are documented
 intentional removals. Structural and gate evidence is explicitly not presented
-as runtime equivalence.
+as runtime equivalence. Each of the 34 decisions is digest-bound to its exact
+legacy inventory record, covering all 467 test declarations and 1,009 static
+assertions, so a marker can no longer stand in for an unreviewed legacy surface.
+The old fine-grained DOM override-key helper is classified as structural
+replacement: typed `LocalId`/`SsaName` identities and HIR object-key invariants
+replace it, without claiming that a broad DOM runtime test is equivalent to that
+retired internal mechanism.
 
 The directive domain is now behavioral evidence, not parse/flag evidence. It
 executes compiler-disable precedence, module and nested no-memo lowering,

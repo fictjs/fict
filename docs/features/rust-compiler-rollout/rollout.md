@@ -76,8 +76,12 @@ the old assertion or each runtime loop instance executes in CI.
 The 34 no-audit-row files have a separate domain ledger whose schema records
 whether each replacement is runtime behavior, emitted-output/diagnostic
 contract, migrated host behavior, structural invariant, type contract, gate, or
-intentional removal. In particular, directive and optimizer replacement claims
-are now bound to executable compiler-disable, no-memo, `use pure`, output
+intentional removal. The ledger binds every decision to the exact inventory
+record for all 467 test declarations and 1,009 static assertions in those files;
+marker presence alone is not the reviewed unit. The retired string-key
+fine-grained override helper is explicitly structural replacement rather than a
+runtime-equivalence claim. In particular, directive and optimizer replacement
+claims are bound to executable compiler-disable, no-memo, `use pure`, output
 filtering, and runtime barrier tests; parse and HIR flags alone are not accepted
 as their migration evidence.
 

@@ -1,7 +1,49 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "baseline": "@fictjs/compiler@0.28.0",
   "unrepresentedFileCount": 34,
+  "legacySurfaceReview": {
+    "inventoryArtifact": "scripts/fixtures/legacy_0_28_compiler_assertion_inventory.json",
+    "legacyTestFiles": 34,
+    "testDeclarationSites": 467,
+    "staticAssertionCallsites": 1009,
+    "domainDigests": {
+      "api-type-contract": "sha256:de70f8dc3dd46d2ce17352a112de426e3c07988f4024a3c1039a29a4e8ea19ea",
+      "cache-fingerprint": "sha256:79bc42f547ec4ac47ca8d1a23a8a15d7c30905dc6533f3a7b0dee66d0f4d82b3",
+      "cache-fingerprint-path": "sha256:2544fa9cceaaad21a7738083556b5e79443e574d695d955ef3a682bb94210b78",
+      "codegen-auto-extract": "sha256:8c64cf6603947df2c7dfe17468cecb6e69dac4d4933840173fdb9d2887cba0e1",
+      "codegen-expression-deps": "sha256:d796f4d976f031ad665cce860be1bb7e25747c82292d45a5f57a481cbcf20403",
+      "codegen-reactive-accessors": "sha256:14e5c45714f40d636e8111812bdee8590f5598bf19fb632f962fc9808f676ca8",
+      "compiler-complexity-report": "sha256:c7de6a698e9b2a4b64a12419bd547da73030c6f4ff3315c03a33611453881c4a",
+      "conformance-matrix": "sha256:dac43452721514576f03eee0370308dfb4a040d1571e07de9e5852febe897b4f",
+      "delegated-events-parity": "sha256:52dcafc642545a978dd02e1635e52d0c9daa3de5a509cd069223963d98ffbdff",
+      "dependency-key": "sha256:6303b914e67b43d159c4f7053459cdf5ff9ebf95d79fb63bcfb9344bc2a5db36",
+      "diagnostic-docs": "sha256:666b74537283dbd44f5073a1ae320d0fe91682b09807c1f41fe1380684daf302",
+      "directives": "sha256:a0c7da7461a0dcfc245665a38a3f6bfe54392f2c780f81b33df7b61cd1091183",
+      "fine-grained-dom": "sha256:0527394fd8f6e38b55424cfd6f9f1eefa25db28f87cfbbccd517d8f9c3356541",
+      "hir-builder": "sha256:26a9ef3c09a0608792a670939dd44fc456e9d420c4bb2527530490c8ef01dbd5",
+      "hir-fuzzing": "sha256:5bfa0d07411c705ed816e73cc0d95adaa097a5dd615ca27f1347cecce70114ee",
+      "module-metadata-safety": "sha256:4678bb4effc402fd1df69430012286be60f54d996afb6ebda3024fe3320e0039",
+      "optimizer": "sha256:394267ad676734e907bcdee288307a169be5dfda82377d339d693104fce038be",
+      "optimizer-bench-cli": "sha256:e78612621f4aa89fcd873bf44fb1a683e7baef71858a72fb749f104db68bb9b8",
+      "optimizer-bench-sampling": "sha256:a8465cb540ea0f76fc5f57e0c075f3e6f25dbcacb1960db888f577c4572622f5",
+      "optimizer-diff": "sha256:753c7168ab52acad91d34060a08993b183c9017fc1b26d9606c59298f704784c",
+      "regions": "sha256:657d65d77d05e5bd6bdc362577eba1d9840ee6de7c546235372ae70622cf7664",
+      "release-strict-scope": "sha256:cf400772104698440214db147829e303a86e6036b3142f1baf1772cacd221986",
+      "runtime-abi": "sha256:22958c2e6efb28803f150fc5621f5ff53eb3fba72b74bef2c2960110704b62be",
+      "scopes": "sha256:3ccfb90edda53ef4250adb31aa877a0e8298b9ee6b563024558b970a096b0687",
+      "shapes": "sha256:8a8d7b236021ad92abbe6a8b12699dc9b2148453c688c1702baec4a25c67dee7",
+      "ssa": "sha256:65525c368737e81fdc7060cf1f9721b8016ea5110f02533f20c0f8315c717dbc",
+      "state-machine-name-collision": "sha256:7a83993d4c6620305843cf11dce55862e082eff768d6f4b64ecec1b30ad374b1",
+      "structurize": "sha256:6e5f1fd84c4705f2050fcd8509581102c671f25f7c356509102fcd40bb87764a",
+      "template-extractor": "sha256:3acc0ae4caa0532ce78978aea6b44cc8c98c64bbb17696f84d04f30e67bdf42f",
+      "tooling-export-surface": "sha256:802aede88f2c2515718736dd5ab86eca7540abac0c45baffccb37437fa72de77",
+      "tooling-minimize": "sha256:894e11d3902fc7134d05329ff4562ac8cd468716cdd364e0cb17bdbee6e35b01",
+      "using-declaration": "sha256:154084f167a171dfac61f259c11a9fedc0df3f9be59ae896547adb912528db96",
+      "validation": "sha256:da3298f5ae218e68b91bcb1d3a9f0e27d9ebfb1e3a70043efcb1a1472ba0e26e",
+      "vnode-props-order": "sha256:b2a3e739ffe9053381ab612806802d630ec37f1cd7b05402365bf5d2f039a352"
+    }
+  },
   "claimBoundary": "A replacement marker proves only the domain's declared assertion level; structural and gate evidence are not runtime-equivalence evidence.",
   "assertionLevelDefinitions": {
     "runtime-behavior": "Current compiled output executes and its observable result is asserted.",
@@ -25,7 +67,7 @@
     "dependency-key": "structural-invariant",
     "diagnostic-docs": "gate-contract",
     "directives": "runtime-behavior",
-    "fine-grained-dom": "runtime-behavior",
+    "fine-grained-dom": "structural-invariant",
     "hir-builder": "structural-invariant",
     "hir-fuzzing": "structural-invariant",
     "module-metadata-safety": "host-contract",
@@ -76,7 +118,9 @@
           "path": "packages/vite-plugin/src/__tests__/cache-fingerprint-path.test.ts",
           "markers": [
             "extracts POSIX paths from stack frames",
+            "extracts POSIX file URLs from stack frames",
             "extracts Windows drive-letter paths from stack frames",
+            "extracts Windows file URLs from stack frames",
             "reads source and dist artifacts for source-map-remapped source frames"
           ]
         }
@@ -262,15 +306,22 @@
       "name": "fine-grained-dom",
       "legacyFile": "packages/compiler/test/fine-grained-dom.test.ts",
       "disposition": "architecture-replacement",
-      "summary": "Typed native dependency identities and EmitIR replace JavaScript region override maps; native output is checked for authored spread and prop order.",
+      "summary": "Typed LocalId/SsaName dependency identities and HIR object-key invariants replace the retired string-key region override map; this is structural replacement evidence, not runtime-equivalence evidence.",
       "evidence": [
         {
-          "path": "crates/fict-compiler/src/pipeline.rs",
-          "markers": ["preserves_authored_fine_grained_spread_and_static_prop_order"]
+          "path": "crates/fict-hir/src/ids.rs",
+          "markers": [
+            "SSA identity represented structurally instead of by mutating a user-visible name",
+            "pub struct SsaName"
+          ]
         },
         {
-          "path": "scripts/native-compiler-runtime.test.mjs",
-          "markers": ["Rust compiler output preserves Core reactive runtime behavior"]
+          "path": "crates/fict-hir/tests/hir_contract.rs",
+          "markers": ["verifier_enforces_object_prototype_setter_invariants"]
+        },
+        {
+          "path": "crates/fict-reactivity/tests/shapes.rs",
+          "markers": ["propagates_shape_state_across_aliases", "__proto__"]
         }
       ]
     },
@@ -317,7 +368,9 @@
           "markers": [
             "fails closed for malformed, non-canonical, unknown, and over-deep schemas",
             "preserves reserved names as own data without prototype pollution",
-            "rejects metadata symlinks that leave the declared package root"
+            "rejects relative escapes, absolute paths, file URLs, /@fs paths, and NULs",
+            "rejects metadata symlinks that leave the declared package root",
+            "does not cache package misses or stale metadata assets"
           ]
         }
       ]
