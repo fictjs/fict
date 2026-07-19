@@ -5,8 +5,8 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     BindingId, BlockId, CallHost, DeleteTarget, FunctionKind, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, ImportedHookReturn, MutationEffect, PlaceBase, Projection, TerminatorKind,
-    ValueId,
+    HirInstructionKind, ImportedHookReturn, MutationEffect, PlaceBase, Projection, Purity,
+    TerminatorKind, ValueId,
 };
 use fict_reactivity::{
     DependencyBase, DependencyPath, DependencySegment, StructuredConstruct, StructuredConstructKind,
@@ -87,7 +87,10 @@ pub(crate) fn reactive_control_flow_diagnostics(
                     let has_try_ancestor = enclosing_try_story.is_some();
                     let branch_return =
                         !has_try_ancestor && is_branch_return_construct(function, construct, *join);
-                    if !condition_invokes_user_code && branch_return {
+                    if !condition_invokes_user_code
+                        && (branch_return
+                            || construct_body_is_proven_inert(function, construct, *join))
+                    {
                         continue;
                     }
 
@@ -179,7 +182,10 @@ pub(crate) fn reactive_control_flow_diagnostics(
                                 function.blocks.len(),
                             )
                         });
-                    if !condition_invokes_user_code && switch_return {
+                    if !condition_invokes_user_code
+                        && (switch_return
+                            || construct_body_is_proven_inert(function, construct, *join))
+                    {
                         continue;
                     }
 
@@ -530,6 +536,54 @@ fn is_branch_return_construct(
     } else {
         consequent_returns || alternate_returns
     }
+}
+
+fn construct_body_is_proven_inert(
+    function: &HirFunction,
+    construct: &StructuredConstruct,
+    join: Option<BlockId>,
+) -> bool {
+    let Some(join) = join else {
+        return false;
+    };
+    let members: BTreeSet<_> = construct.blocks.iter().copied().collect();
+    let stays_in_construct = |target: BlockId| target == join || members.contains(&target);
+
+    construct
+        .blocks
+        .iter()
+        .copied()
+        .filter(|block| *block != construct.header)
+        .all(|block| {
+            let Some(block) = function.blocks.get(block.as_usize()) else {
+                return false;
+            };
+            let instructions_are_inert = block.instructions.iter().all(|instruction| {
+                instruction.semantics.purity == Purity::Pure
+                    && instruction.semantics.mutation == MutationEffect::None
+                    && !instruction.semantics.may_throw
+            });
+            if !instructions_are_inert {
+                return false;
+            }
+            match &block.terminator.kind {
+                TerminatorKind::Goto { target } => stays_in_construct(*target),
+                TerminatorKind::Branch {
+                    consequent,
+                    alternate,
+                    ..
+                } => stays_in_construct(*consequent) && stays_in_construct(*alternate),
+                TerminatorKind::Switch { cases, .. } => {
+                    cases.iter().all(|case| stays_in_construct(case.target))
+                }
+                TerminatorKind::Return { .. }
+                | TerminatorKind::Throw { .. }
+                | TerminatorKind::ForIn { .. }
+                | TerminatorKind::ForOf { .. }
+                | TerminatorKind::Try { .. }
+                | TerminatorKind::Unreachable => false,
+            }
+        })
 }
 
 fn terminates_before_join(

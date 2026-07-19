@@ -24,7 +24,28 @@ fn remaps_optimized_values_inside_embedded_jsx() {
     let result = compile(request(source, "optimized-embedded-jsx.tsx"));
 
     assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006"),
+        "{:?}",
+        result.diagnostics
+    );
     assert!(result.code.contains("Routes"), "{}", result.code);
+}
+
+#[test]
+fn keeps_reactive_control_diagnostics_for_local_writes() {
+    let source = "export function App(props) { let label = 'off'; if (props.ok) label = 'on'; return <div>{label}</div>; }";
+    let result = compile(request(source, "reactive-local-write.tsx"));
+
+    assert!(result.has_errors(), "{:?}", result.diagnostics);
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-R006"
+            && diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
+    }));
+    assert!(result.code.is_empty());
 }
 
 #[cfg(feature = "preview")]
