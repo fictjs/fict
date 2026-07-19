@@ -1,6 +1,8 @@
 #[cfg(feature = "preview")]
 use fict_compiler::CompilerPreviewOptions;
-use fict_compiler::{COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerOptions, compile};
+use fict_compiler::{
+    COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerOptions, ModuleKind, compile,
+};
 
 fn request(source: &str, filename: &str) -> CompileRequest {
     CompileRequest {
@@ -48,6 +50,22 @@ fn keeps_reactive_control_diagnostics_for_local_writes() {
     assert!(result.code.is_empty());
 }
 
+#[test]
+fn treats_unambiguous_esm_as_a_module_for_top_level_await() {
+    let source = "export const node = <div ref={await getRef()}>x</div>;";
+    let mut input = request(source, "unambiguous-awaited-ref.tsx");
+    input.module_kind = Some(ModuleKind::Unambiguous);
+    let result = compile(input);
+
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    assert!(
+        result.code.contains("? await (async () =>"),
+        "{}",
+        result.code
+    );
+    assert!(!result.code.contains("? (async () =>"), "{}", result.code);
+}
+
 #[cfg(feature = "preview")]
 #[test]
 fn emits_preview_handlers_inside_conditional_jsx_branches() {
@@ -63,4 +81,21 @@ fn emits_preview_handlers_inside_conditional_jsx_branches() {
     assert!(!result.has_errors(), "{:?}", result.diagnostics);
     assert_eq!(result.artifacts.len(), 2, "{}", result.code);
     assert_eq!(result.code.matches("fict:compiler-artifact:").count(), 4);
+}
+
+#[cfg(feature = "preview")]
+#[test]
+fn permits_preview_for_unambiguous_source_that_parses_as_esm() {
+    let source = "import { $state } from 'fict'; export function App() { let count = $state(0); return <button onClick$={() => count++}>{count}</button>; }";
+    let mut input = request(source, "preview-unambiguous-module.tsx");
+    input.module_kind = Some(ModuleKind::Unambiguous);
+    input.options.preview = Some(CompilerPreviewOptions {
+        resumable: true,
+        auto_extract_handlers: true,
+        ..CompilerPreviewOptions::default()
+    });
+    let result = compile(input);
+
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    assert_eq!(result.artifacts.len(), 1, "{}", result.code);
 }

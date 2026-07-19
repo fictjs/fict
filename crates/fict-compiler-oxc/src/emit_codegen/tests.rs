@@ -1,4 +1,6 @@
-use super::{devtools_source_label, emit_program, encode_javascript_string_for_oxc};
+use super::{
+    devtools_source_label, effective_module_kind, emit_program, encode_javascript_string_for_oxc,
+};
 use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions};
 use fict_emit::{
     CleanupOwner, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
@@ -10,6 +12,7 @@ use fict_hir::{
     Projection, SourceSpan, UpdateOperator, ValueId,
 };
 use fict_reactivity::{StructurizeAnalysis, StructurizeStats};
+use oxc::span::SourceType;
 fn options(language: OxcSourceLanguage, sourcemap: bool) -> OxcCompileOptions {
     OxcCompileOptions {
         language,
@@ -17,6 +20,21 @@ fn options(language: OxcSourceLanguage, sourcemap: bool) -> OxcCompileOptions {
         typescript: OxcTypeScriptOptions::default(),
         sourcemap,
     }
+}
+#[test]
+fn derives_effective_module_kind_from_the_parsed_source_type() {
+    assert_eq!(
+        effective_module_kind(SourceType::mjs()),
+        OxcModuleKind::Module
+    );
+    assert_eq!(
+        effective_module_kind(SourceType::cjs()),
+        OxcModuleKind::CommonJs
+    );
+    assert_eq!(
+        effective_module_kind(SourceType::script()),
+        OxcModuleKind::Script
+    );
 }
 #[test]
 fn encodes_exact_utf16_strings_for_oxc_without_replacement_loss() {

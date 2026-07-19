@@ -78,20 +78,6 @@ pub fn emit_program(
     emit: &EmitProgram,
 ) -> OxcCompileOutput {
     let mut diagnostics = unsupported_operations(emit);
-    if options.module_kind == OxcModuleKind::Script && !emit.imports.is_empty() {
-        diagnostics.push(emit_error(
-            "FICT-OXC-EMIT-SCRIPT-IMPORT",
-            "runtime helper imports cannot be injected into classic script output",
-            GuaranteeClass::Unsupported,
-        ));
-    }
-    if emit.preview_plan.is_some() && options.module_kind != OxcModuleKind::Module {
-        diagnostics.push(emit_error(
-            "FICT-OXC-PREVIEW-MODULE",
-            "Preview handler artifacts and resume entries require ESM output",
-            GuaranteeClass::Unsupported,
-        ));
-    }
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
@@ -101,8 +87,8 @@ pub fn emit_program(
         return failed_output(diagnostics);
     }
     let allocator = Allocator::default();
-    let input_source_type = source_type(options);
-    let parsed = Parser::new(&allocator, source, input_source_type)
+    let requested_source_type = source_type(options);
+    let parsed = Parser::new(&allocator, source, requested_source_type)
         .with_options(ParseOptions {
             allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
             ..ParseOptions::default()
@@ -112,6 +98,25 @@ pub fn emit_program(
         return failed_output(convert_diagnostics(parsed.diagnostics, "FICT-PARSE"));
     }
     let mut program = parsed.program;
+    let input_source_type = program.source_type;
+    let effective_module_kind = effective_module_kind(input_source_type);
+    if effective_module_kind == OxcModuleKind::Script && !emit.imports.is_empty() {
+        diagnostics.push(emit_error(
+            "FICT-OXC-EMIT-SCRIPT-IMPORT",
+            "runtime helper imports cannot be injected into classic script output",
+            GuaranteeClass::Unsupported,
+        ));
+    }
+    if emit.preview_plan.is_some() && effective_module_kind != OxcModuleKind::Module {
+        diagnostics.push(emit_error(
+            "FICT-OXC-PREVIEW-MODULE",
+            "Preview handler artifacts and resume entries require ESM output",
+            GuaranteeClass::Unsupported,
+        ));
+    }
+    if !diagnostics.is_empty() {
+        return failed_output(diagnostics);
+    }
     let identities = match SemanticIdentities::build(&program) {
         Ok(identities) => identities,
         Err(findings) => return failed_output(findings),
@@ -215,7 +220,7 @@ pub fn emit_program(
         active_fragment_local: None,
         active_vnode_reactive_local: None,
         source_clone_depth: 0,
-        await_allowed: options.module_kind == OxcModuleKind::Module,
+        await_allowed: effective_module_kind == OxcModuleKind::Module,
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
@@ -628,7 +633,7 @@ pub fn emit_program(
         plan_typescript_program(
             &program,
             semantic.semantic.scoping(),
-            options.module_kind,
+            effective_module_kind,
             &options.typescript,
         )
     });
@@ -667,7 +672,7 @@ pub fn emit_program(
         jsx: JsxOptions::disable(),
         ..TransformOptions::default()
     };
-    if options.module_kind == OxcModuleKind::CommonJs {
+    if effective_module_kind == OxcModuleKind::CommonJs {
         transform_options.env.module = Module::CommonJS;
     }
     if let Some(plan) = &typescript_plan {
@@ -682,7 +687,7 @@ pub fn emit_program(
                     source,
                     filename,
                     source_type: input_source_type,
-                    module_kind: options.module_kind,
+                    module_kind: effective_module_kind,
                     transform_options: &transform_options,
                     runtime_family: emit.runtime_family,
                     preview,
@@ -713,7 +718,7 @@ pub fn emit_program(
     if transform_has_errors {
         return failed_output(diagnostics);
     }
-    if options.module_kind == OxcModuleKind::CommonJs
+    if effective_module_kind == OxcModuleKind::CommonJs
         && let Err(diagnostic) =
             lower_standard_esm_to_commonjs(&allocator, &mut program, transformed_scoping)
     {
@@ -741,10 +746,10 @@ pub fn emit_program(
         .with_source_type(input_source_type)
         .with_scoping(Some(rebuilt.semantic.into_scoping()))
         .build(&program);
-    let validation_type = output_source_type(options.module_kind);
+    let validation_type = output_source_type(effective_module_kind);
     let validation = Parser::new(&allocator, &generated.code, validation_type)
         .with_options(ParseOptions {
-            allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
+            allow_return_outside_function: effective_module_kind == OxcModuleKind::CommonJs,
             ..ParseOptions::default()
         })
         .parse();
@@ -8267,6 +8272,15 @@ fn output_source_type(module_kind: OxcModuleKind) -> SourceType {
         OxcModuleKind::Script => SourceType::cjs().with_script(true),
         OxcModuleKind::CommonJs => SourceType::cjs(),
         OxcModuleKind::Unambiguous => SourceType::unambiguous(),
+    }
+}
+fn effective_module_kind(source_type: SourceType) -> OxcModuleKind {
+    if source_type.is_module() {
+        OxcModuleKind::Module
+    } else if source_type.is_commonjs() {
+        OxcModuleKind::CommonJs
+    } else {
+        OxcModuleKind::Script
     }
 }
 fn with_operation_span(mut diagnostic: Diagnostic, origin: fict_hir::Origin) -> Diagnostic {
