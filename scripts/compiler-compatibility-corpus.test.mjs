@@ -1105,6 +1105,17 @@ test('documents every reviewed Babel status and request-identity deviation', () 
   assert.match(migrationGuide, /language: "jsx"/)
 })
 
+test('records the authored JSX whitespace compatibility decision', () => {
+  const adr = read('docs/adr/0004-standardize-jsx-authored-whitespace.md')
+  const index = read('docs/adr/index.md')
+
+  assert.match(adr, /status: accepted/)
+  assert.match(adr, /Multiline authored JSX text is\s+normalized/)
+  assert.match(adr, /Babel 0\.28 result remains a reviewed migration deviation/)
+  assert.match(adr, /does not provide a\s+legacy-whitespace compiler option/)
+  assert.match(index, /0004-standardize-jsx-authored-whitespace\.md/)
+})
+
 test('keeps native recovery diagnostics free of removed legacy paths', () => {
   const pipeline = read('crates/fict-compiler/src/pipeline.rs')
   const scanner = read('crates/fict-compiler/src/scan.rs')

@@ -9,3 +9,6 @@
 - [ADR-0003 — Retire the Babel preset after a bounded compatibility window](0003-retire-babel-preset.md) -
   Record the completed 0.29.0 → 0.30.0 → 0.30.1 compatibility line and the
   coordinated Rust-only 0.31 Core removal.
+- [ADR-0004 — Standardize authored JSX whitespace](0004-standardize-jsx-authored-whitespace.md) -
+  Keep conventional JSX multiline text normalization and record the Babel 0.28
+  rendered-text migration boundary.
