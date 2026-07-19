@@ -1450,6 +1450,47 @@ mod tests {
     }
 
     #[test]
+    fn preserves_accessor_identity_through_const_asserted_hook_returns() {
+        let result = compile(request(
+            r#"
+                import { $state } from 'fict';
+                export function useFunctionTuple() {
+                    const count = $state(0);
+                    const set = () => { count = 1; };
+                    return [count, set] as const;
+                }
+                export const useArrowTuple = () => {
+                    const count = $state(0);
+                    const set = () => { count = 1; };
+                    return [count, set] as const;
+                };
+            "#,
+            "const-asserted-hook-returns.ts",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let expected = HookReturnInfo {
+            array_props: BTreeMap::from([("0".into(), ReactiveExportKind::Signal)]),
+            ..HookReturnInfo::default()
+        };
+        assert_eq!(
+            result.module_metadata.hooks.get("useFunctionTuple"),
+            Some(&expected)
+        );
+        assert_eq!(
+            result.module_metadata.hooks.get("useArrowTuple"),
+            Some(&expected)
+        );
+        assert_eq!(
+            result.code.matches("return [count, set];").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("return [count(),"), "{}", result.code);
+    }
+
+    #[test]
     fn propagates_resolved_reexports_and_namespace_metadata() {
         let mut input = request(
             r#"

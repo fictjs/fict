@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "totalMaxLines": 94336,
+  "totalMaxLines": 94377,
   "defaultFileMaxLines": 2000,
   "crates": {
-    "fict-compiler": 18147,
+    "fict-compiler": 18188,
     "fict-compiler-napi": 500,
     "fict-compiler-oxc": 42637,
     "fict-compiler-preview": 2400,
@@ -18,7 +18,7 @@
     "crates/fict-compiler-oxc/src/hir_builder.rs": 11031,
     "crates/fict-compiler-oxc/tests/hir_builder.rs": 8258,
     "crates/fict-compiler-preview/src/lib.rs": 2350,
-    "crates/fict-compiler/src/pipeline.rs": 7580,
+    "crates/fict-compiler/src/pipeline.rs": 7621,
     "crates/fict-compiler/tests/pass_manager.rs": 2350,
     "crates/fict-emit/src/lower.rs": 4391
   }

@@ -447,7 +447,7 @@ impl<'a> Visit<'a> for FunctionCollector {
                 .returns
                 .push(FunctionReturnFact {
                     statement: source_span(function.body.span),
-                    value: Some(source_span(expression.span())),
+                    value: Some(source_span(expression.get_inner_expression().span())),
                 });
         }
         self.stack.push(id);
@@ -464,7 +464,7 @@ impl<'a> Visit<'a> for FunctionCollector {
                     value: statement
                         .argument
                         .as_ref()
-                        .map(|value| source_span(value.span())),
+                        .map(|value| source_span(value.get_inner_expression().span())),
                 });
         }
         walk_return_statement(self, statement);

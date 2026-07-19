@@ -676,6 +676,51 @@ test('named function expression hooks use their public binding role', async () =
   container.remove()
 })
 
+test('const-asserted hook tuples preserve live accessor identity', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let toggle = () => {}
+
+    function useToggle() {
+      let on = $state(false)
+      toggle = () => { on = !on }
+      return [on, toggle] as const
+    }
+
+    function App() {
+      const tuple = useToggle()
+      return <span data-id="const-hook">{tuple[0] ? 'on' : 'off'}</span>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+
+    export function update() {
+      toggle()
+    }
+  `
+
+  const compiled = await compileAndImport(source, 'const-asserted-hook-return')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const value = () => container.querySelector('[data-id="const-hook"]')?.textContent
+  assert.equal(value(), 'off')
+  compiled.update()
+  await flushRuntime()
+  assert.equal(value(), 'on')
+  compiled.update()
+  await flushRuntime()
+  assert.equal(value(), 'off')
+
+  dispose()
+  container.remove()
+})
+
 test('runtime reactive creators preserve calls and enforce configurable R004', async () => {
   const compiled = await compileAndImport(
     `
