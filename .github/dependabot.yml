@@ -16,6 +16,9 @@ updates:
         dependency-type: production
         exclude-patterns:
           - 'fict-*'
+    # Keep this in lockstep with packages/vscode-extension#engines.vscode.
+    ignore:
+      - dependency-name: '@types/vscode'
     commit-message:
       prefix: 'chore(deps)'
     labels:

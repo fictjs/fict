@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -19,6 +19,17 @@ afterEach(async () => {
 })
 
 describe('VSIX packaging', () => {
+  it('pins VS Code types to the minimum supported engine', async () => {
+    const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8')) as {
+      devDependencies?: Record<string, string>
+      engines?: { vscode?: string }
+    }
+    const engine = manifest.engines?.vscode
+
+    expect(engine).toMatch(/^\^\d+\.\d+\.\d+$/)
+    expect(manifest.devDependencies?.['@types/vscode']).toBe(engine?.slice(1))
+  })
+
   it('packages through a valid Marketplace manifest without renaming the workspace package', async () => {
     const outputDirectory = await mkdtemp(path.join(tmpdir(), 'fict-vsix-test-'))
     temporaryDirectories.push(outputDirectory)
