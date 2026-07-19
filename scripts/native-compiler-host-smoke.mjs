@@ -150,7 +150,7 @@ for (const [format, facade] of [
       import legacy = require('./legacy')
       import('./dynamic')
     `,
-    filename: '/fixtures/module.ts?worker#client',
+    filename: '/fixtures/module.ts',
     moduleId: '/@id/module.ts?worker#client',
   }
   const syncScan = binding.scanSync(scanRequest)
@@ -182,7 +182,7 @@ for (const [format, facade] of [
         return <button>{count}</button>
       }
     `,
-    filename: '/fixtures/counter.tsx?worker#physical',
+    filename: '/fixtures/counter.tsx',
     moduleId: '/@id/counter.tsx?worker#client',
     options: { includeRegions: true, includeDiagnostics: true, verbosity: 'verbose' },
   }
