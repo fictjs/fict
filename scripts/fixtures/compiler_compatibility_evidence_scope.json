@@ -131,6 +131,31 @@
       "proves": ["reviewed-cross-implementation-runtime-semantics"],
       "doesNotProve": ["full-language-runtime-semantic-equivalence"]
     },
+    "babelDomSemanticOracle": {
+      "inputs": "scripts/fixtures/babel_0_28_dom_semantic_inputs.json",
+      "artifact": "crates/fict-compiler/tests/babel_0_28_dom_semantic_oracle.json",
+      "generator": "scripts/generate-babel-dom-semantic-oracle.mjs",
+      "ciTest": "scripts/babel-compiler-dom-semantic-oracle.test.mjs",
+      "fixtureCount": 1,
+      "interactionSurfaces": [
+        "input",
+        "form-submit",
+        "keyboard",
+        "focus-blur",
+        "callback-ref-lifecycle",
+        "portal"
+      ],
+      "exactBabelCompilerExecutedDuringGeneration": true,
+      "frozenBabelOutputExecutedInCi": true,
+      "currentRustOutputExecutedInCi": true,
+      "sharedCurrentRuntime": true,
+      "assertionLevel": "dom-runtime-semantics",
+      "proves": [
+        "reviewed-cross-implementation-dom-interaction-semantics",
+        "mount-mutate-observe-dispose-lifecycle"
+      ],
+      "doesNotProve": ["all-legacy-dom-fixture-equivalence", "legacy-runtime-version-equivalence"]
+    },
     "semanticCoverageMatrix": {
       "artifact": "scripts/fixtures/compiler_semantic_coverage_matrix.json",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",

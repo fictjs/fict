@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "input-form-keyboard-focus-ref-portal",
+      "request": {
+        "code": "import { $state, createPortal, render } from 'fict'\nimport { createElement } from 'fict/internal'\n\nexport const refCalls = []\nlet mountedRoot\nlet mountedPortal\n\nfunction App() {\n  let value = $state('start')\n  let focus = $state('blurred')\n  let key = $state('none')\n  let submission = $state('none')\n\n  createPortal(mountedPortal, () => <aside data-id=\"portal\">portal:{value}</aside>, createElement)\n\n  return (\n    <form\n      data-id=\"form\"\n      onSubmit={event => {\n        event.preventDefault()\n        submission = `submitted:${value}`\n      }}\n    >\n      <input\n        data-id=\"field\"\n        value={value}\n        ref={element => refCalls.push(element ? `attach:${element.tagName}` : 'detach')}\n        onInput={event => { value = event.currentTarget.value }}\n        onKeyDown={event => { key = `${event.key}:${event.shiftKey ? 'shift' : 'plain'}` }}\n        onFocus={() => { focus = 'focused' }}\n        onBlur={() => { focus = 'blurred' }}\n      />\n      <output data-id=\"value\">{value}</output>\n      <output data-id=\"focus\">{focus}</output>\n      <output data-id=\"key\">{key}</output>\n      <output data-id=\"submission\">{submission}</output>\n    </form>\n  )\n}\n\nexport function mount(root, portal) {\n  mountedRoot = root\n  mountedPortal = portal\n  return render(() => <App />, root)\n}\n\nexport function observe() {\n  const field = mountedRoot.querySelector('[data-id=\"field\"]')\n  return {\n    active: document.activeElement === field,\n    field: field?.value ?? null,\n    focus: mountedRoot.querySelector('[data-id=\"focus\"]')?.textContent ?? null,\n    key: mountedRoot.querySelector('[data-id=\"key\"]')?.textContent ?? null,\n    portal: mountedPortal.textContent,\n    refCalls: [...refCalls],\n    rootChildren: mountedRoot.childNodes.length,\n    submission: mountedRoot.querySelector('[data-id=\"submission\"]')?.textContent ?? null,\n    value: mountedRoot.querySelector('[data-id=\"value\"]')?.textContent ?? null,\n  }\n}\n",
+        "filename": "/oracle/input-form-keyboard-focus-ref-portal.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false,
+          "fineGrainedDom": true,
+          "dev": false
+        }
+      },
+      "scenario": {
+        "mountExport": "mount",
+        "observeExport": "observe",
+        "steps": [
+          { "kind": "record", "label": "initial" },
+          { "kind": "focus", "selector": "[data-id=\"field\"]" },
+          { "kind": "record", "label": "focused" },
+          {
+            "kind": "dispatch",
+            "selector": "[data-id=\"field\"]",
+            "event": "input",
+            "constructor": "InputEvent",
+            "assign": { "value": "edited" },
+            "init": { "bubbles": true, "composed": true }
+          },
+          { "kind": "record", "label": "input" },
+          {
+            "kind": "dispatch",
+            "selector": "[data-id=\"field\"]",
+            "event": "keydown",
+            "constructor": "KeyboardEvent",
+            "init": { "bubbles": true, "composed": true, "key": "Enter", "shiftKey": true }
+          },
+          { "kind": "record", "label": "keyboard" },
+          { "kind": "blur", "selector": "[data-id=\"field\"]" },
+          { "kind": "record", "label": "blurred" },
+          {
+            "kind": "dispatch",
+            "label": "submit-event",
+            "selector": "[data-id=\"form\"]",
+            "event": "submit",
+            "constructor": "SubmitEvent",
+            "init": { "bubbles": true, "cancelable": true, "composed": true }
+          },
+          { "kind": "record", "label": "submitted" },
+          { "kind": "dispose" },
+          { "kind": "record", "label": "disposed" }
+        ]
+      }
+    }
+  ]
+}

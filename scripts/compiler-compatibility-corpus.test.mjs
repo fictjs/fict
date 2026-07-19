@@ -24,6 +24,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const scope = readJson(evidenceScopePath)
   assert.equal(scope.schemaVersion, 1)
   assert.deepEqual(Object.keys(scope.assets).sort(), [
+    'babelDomSemanticOracle',
     'babelRequestOracle',
     'babelSemanticOracle',
     'diagnosticDeviationReview',
@@ -120,6 +121,31 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(semanticTest, /executeCommonJsAsync\(result\.code/)
   assert.ok(read(semantic.generator).length > 0)
 
+  const domSemantic = scope.assets.babelDomSemanticOracle
+  const domSemanticInputs = readJson(domSemantic.inputs)
+  const domSemanticOracle = readJson(domSemantic.artifact)
+  assert.equal(domSemantic.fixtureCount, domSemanticInputs.fixtures.length)
+  assert.equal(domSemantic.fixtureCount, domSemanticOracle.fixtures.length)
+  assert.deepEqual(domSemantic.interactionSurfaces, [
+    'input',
+    'form-submit',
+    'keyboard',
+    'focus-blur',
+    'callback-ref-lifecycle',
+    'portal',
+  ])
+  assert.equal(domSemantic.exactBabelCompilerExecutedDuringGeneration, true)
+  assert.equal(domSemantic.frozenBabelOutputExecutedInCi, true)
+  assert.equal(domSemantic.currentRustOutputExecutedInCi, true)
+  assert.equal(domSemantic.sharedCurrentRuntime, true)
+  assert.equal(domSemantic.assertionLevel, 'dom-runtime-semantics')
+  assert.ok(domSemantic.proves.includes('reviewed-cross-implementation-dom-interaction-semantics'))
+  assert.ok(domSemantic.doesNotProve.includes('all-legacy-dom-fixture-equivalence'))
+  const domSemanticTest = read(domSemantic.ciTest)
+  assert.match(domSemanticTest, /executeDomCommonJs\(expected\.babelCode/)
+  assert.match(domSemanticTest, /executeDomCommonJs\(result\.code/)
+  assert.ok(read(domSemantic.generator).length > 0)
+
   const coverageScope = scope.assets.semanticCoverageMatrix
   const coverage = readJson(coverageScope.artifact)
   assert.equal(coverageScope.categoryCount, coverage.categories.length)
@@ -197,6 +223,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
   const semanticInputs = readJson('scripts/fixtures/babel_0_28_semantic_inputs.json')
   const semanticIds = new Set(semanticInputs.fixtures.map(fixture => fixture.id))
   const allowedLevels = new Set([
+    'cross-implementation-dom-runtime',
     'cross-implementation-runtime',
     'native-runtime',
     'request-contract',

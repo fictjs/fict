@@ -36,6 +36,15 @@
       "requirement": "JSX event and delegation behavior plus DOM mutation",
       "evidence": [
         {
+          "assertionLevel": "cross-implementation-dom-runtime",
+          "path": "scripts/babel-compiler-dom-semantic-oracle.test.mjs",
+          "markers": [
+            "Rust matches Babel 0.28 DOM interactions",
+            "executeDomCommonJs(expected.babelCode",
+            "executeDomCommonJs(result.code"
+          ]
+        },
+        {
           "assertionLevel": "cross-implementation-runtime",
           "semanticFixtureIds": ["vnode-event-order"]
         },
@@ -53,7 +62,7 @@
           "markers": ["emits_delegated_events_refs_and_reactive_handler_mutations"]
         }
       ],
-      "claimBoundary": "The VNode event result is compared across compilers; delegated browser events and live DOM mutation are native runtime contracts because the isolated Babel harness has no browser owner lifecycle."
+      "claimBoundary": "Input, form submission, keyboard, focus/blur, callback-ref cleanup, and portal behavior are compared across compiler outputs in JSDOM with one shared current runtime. This proves compiler-output alignment for the reviewed scenario, not every legacy DOM fixture or legacy-runtime equivalence."
     },
     {
       "id": "component-role-policy",

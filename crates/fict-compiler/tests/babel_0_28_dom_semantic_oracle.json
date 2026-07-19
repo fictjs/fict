@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "legacyRelease": "0.28.0",
+    "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "legacyCompilerSourceSha256": "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a",
+    "legacyCompilerArtifactSha256": "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789",
+    "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
+    "legacyPackageManager": "pnpm@9.1.1",
+    "babelDependencies": {
+      "@babel/core": "7.29.7",
+      "@babel/plugin-transform-modules-commonjs": "7.28.6",
+      "@babel/plugin-transform-typescript": "7.28.5"
+    },
+    "oracleInputsSha256": "5d9bccd31685e8a2995228a61a2205a9efc5c92ccee0b95394eb7826827450c3",
+    "sharedRuntimePackage": "@fictjs/runtime@0.31.0",
+    "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-runtime"
+  },
+  "fixtures": [
+    {
+      "id": "input-form-keyboard-focus-ref-portal",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise"
+        },
+        {
+          "code": "FICT-R005",
+          "severity": "warning",
+          "message": "Function captures reactive variable(s): value. Pass them as parameters or memoize explicitly to avoid hidden dependencies."
+        }
+      ],
+      "babelCodeSha256": "2d5a0f06e9b09fe423cc72df4a8fadc703124c8f3aa3abc3402e065efb699985",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.mount = mount;\nexports.observe = observe;\nexports.refCalls = void 0;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nconst refCalls = exports.refCalls = [];\nlet mountedRoot = void 0;\nlet mountedPortal = void 0;\nfunction App() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const value = (0, _internal.__fictUseSignal)(__fictCtx, \"start\", {\n    name: \"value\"\n  });\n  const focus = (0, _internal.__fictUseSignal)(__fictCtx, \"blurred\", {\n    name: \"focus\"\n  });\n  const key = (0, _internal.__fictUseSignal)(__fictCtx, \"none\", {\n    name: \"key\"\n  });\n  const submission = (0, _internal.__fictUseSignal)(__fictCtx, \"none\", {\n    name: \"submission\"\n  });\n  (0, _fict.createPortal)(mountedPortal, () => (() => {\n    const __tmpl_1 = (0, _internal.template)(\"<aside data-id=\\\"portal\\\">portal:<!--fict:slot:start--><!--fict:slot:end--></aside>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [1]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => value(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  })(), _internal.createElement);\n  return (0, _internal.__fictElementNamespaceMatches)(\"form\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_5 = (0, _internal.template)(\"<form data-id=\\\"form\\\"><input data-id=\\\"field\\\"><output data-id=\\\"value\\\"><!--fict:slot:start--><!--fict:slot:end--></output><output data-id=\\\"focus\\\"><!--fict:slot:start--><!--fict:slot:end--></output><output data-id=\\\"key\\\"><!--fict:slot:start--><!--fict:slot:end--></output><output data-id=\\\"submission\\\"><!--fict:slot:start--><!--fict:slot:end--></output></form>\");\n    const __root_4 = __tmpl_5();\n    const __el_6 = (0, _internal.resolvePath)(__root_4, [0]);\n    const __el_7 = (0, _internal.resolvePath)(__root_4, [1, 0]);\n    const __el_8 = (0, _internal.resolvePath)(__root_4, [2, 0]);\n    const __el_9 = (0, _internal.resolvePath)(__root_4, [3, 0]);\n    const __el_10 = (0, _internal.resolvePath)(__root_4, [4, 0]);\n    const __evt_11 = (0, _internal.bindEvent)(__root_4, \"submit\", (...__fictArgs) => {\n      (event => {\n        event.preventDefault();\n        submission(`submitted:${value()}`);\n      })(...__fictArgs);\n    });\n    (0, _internal.onDestroy)(__evt_11);\n    (0, _internal.bindRef)(__el_6, element => refCalls.push(element ? `attach:${element.tagName}` : \"detach\"));\n    (0, _internal.addEventListener)(__el_6, \"input\", (...__fictArgs) => {\n      (event => {\n        value(event.currentTarget.value);\n      })(...__fictArgs);\n    }, true);\n    (0, _internal.addEventListener)(__el_6, \"keydown\", (...__fictArgs) => {\n      (event => {\n        key(`${event.key}:${event.shiftKey ? \"shift\" : \"plain\"}`);\n      })(...__fictArgs);\n    }, true);\n    const __evt_12 = (0, _internal.bindEvent)(__el_6, \"focus\", (...__fictArgs) => {\n      (() => {\n        focus(\"focused\");\n      })(...__fictArgs);\n    });\n    (0, _internal.onDestroy)(__evt_12);\n    const __evt_13 = (0, _internal.bindEvent)(__el_6, \"blur\", (...__fictArgs) => {\n      (() => {\n        focus(\"blurred\");\n      })(...__fictArgs);\n    });\n    (0, _internal.onDestroy)(__evt_13);\n    const __end_14 = (0, _internal.getSlotEnd)(__el_7);\n    (0, _internal.insertBetween)(__el_7, __end_14, () => value(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_15 = (0, _internal.getSlotEnd)(__el_8);\n    (0, _internal.insertBetween)(__el_8, __end_15, () => focus(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_16 = (0, _internal.getSlotEnd)(__el_9);\n    (0, _internal.insertBetween)(__el_9, __end_16, () => key(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    const __end_17 = (0, _internal.getSlotEnd)(__el_10);\n    (0, _internal.insertBetween)(__el_10, __end_17, () => submission(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    (0, _internal.bindProperty)(__el_6, \"value\", () => value());\n    return __root_4;\n  }, 1000)() : {\n    type: \"form\",\n    props: {\n      \"data-id\": \"form\",\n      onSubmit: (...__fictArgs) => {\n        (event => {\n          event.preventDefault();\n          submission(`submitted:${value()}`);\n        })(...__fictArgs);\n      },\n      children: [{\n        type: \"input\",\n        props: {\n          \"data-id\": \"field\",\n          value: (0, _internal.__fictReactive)(() => value()),\n          ref: element => refCalls.push(element ? `attach:${element.tagName}` : \"detach\"),\n          onInput: (...__fictArgs) => {\n            (event => {\n              value(event.currentTarget.value);\n            })(...__fictArgs);\n          },\n          onKeyDown: (...__fictArgs) => {\n            (event => {\n              key(`${event.key}:${event.shiftKey ? \"shift\" : \"plain\"}`);\n            })(...__fictArgs);\n          },\n          onFocus: (...__fictArgs) => {\n            (() => {\n              focus(\"focused\");\n            })(...__fictArgs);\n          },\n          onBlur: (...__fictArgs) => {\n            (() => {\n              focus(\"blurred\");\n            })(...__fictArgs);\n          }\n        }\n      }, {\n        type: \"output\",\n        props: {\n          \"data-id\": \"value\",\n          children: (0, _internal.__fictReactive)(() => value())\n        }\n      }, {\n        type: \"output\",\n        props: {\n          \"data-id\": \"focus\",\n          children: (0, _internal.__fictReactive)(() => focus())\n        }\n      }, {\n        type: \"output\",\n        props: {\n          \"data-id\": \"key\",\n          children: (0, _internal.__fictReactive)(() => key())\n        }\n      }, {\n        type: \"output\",\n        props: {\n          \"data-id\": \"submission\",\n          children: (0, _internal.__fictReactive)(() => submission())\n        }\n      }]\n    }\n  };\n}\nfunction mount(root, portal) {\n  mountedRoot = root;\n  mountedPortal = portal;\n  return (0, _fict.render)(() => ({\n    type: App,\n    props: null\n  }), root);\n}\nfunction observe() {\n  const field = mountedRoot.querySelector(\"[data-id=\\\"field\\\"]\");\n  return {\n    active: document.activeElement === field,\n    field: field?.value ?? null,\n    focus: mountedRoot.querySelector(\"[data-id=\\\"focus\\\"]\")?.textContent ?? null,\n    key: mountedRoot.querySelector(\"[data-id=\\\"key\\\"]\")?.textContent ?? null,\n    portal: mountedPortal.textContent,\n    refCalls: [...refCalls],\n    rootChildren: mountedRoot.childNodes.length,\n    submission: mountedRoot.querySelector(\"[data-id=\\\"submission\\\"]\")?.textContent ?? null,\n    value: mountedRoot.querySelector(\"[data-id=\\\"value\\\"]\")?.textContent ?? null\n  };\n}",
+      "expected": [
+        {
+          "label": "initial",
+          "value": {
+            "active": false,
+            "field": "start",
+            "focus": "blurred",
+            "key": "none",
+            "portal": "portal:start",
+            "refCalls": ["attach:INPUT"],
+            "rootChildren": 1,
+            "submission": "none",
+            "value": "start"
+          }
+        },
+        {
+          "label": "focused",
+          "value": {
+            "active": true,
+            "field": "start",
+            "focus": "focused",
+            "key": "none",
+            "portal": "portal:start",
+            "refCalls": ["attach:INPUT"],
+            "rootChildren": 1,
+            "submission": "none",
+            "value": "start"
+          }
+        },
+        {
+          "label": "input",
+          "value": {
+            "active": true,
+            "field": "edited",
+            "focus": "focused",
+            "key": "none",
+            "portal": "portal:edited",
+            "refCalls": ["attach:INPUT"],
+            "rootChildren": 1,
+            "submission": "none",
+            "value": "edited"
+          }
+        },
+        {
+          "label": "keyboard",
+          "value": {
+            "active": true,
+            "field": "edited",
+            "focus": "focused",
+            "key": "Enter:shift",
+            "portal": "portal:edited",
+            "refCalls": ["attach:INPUT"],
+            "rootChildren": 1,
+            "submission": "none",
+            "value": "edited"
+          }
+        },
+        {
+          "label": "blurred",
+          "value": {
+            "active": false,
+            "field": "edited",
+            "focus": "blurred",
+            "key": "Enter:shift",
+            "portal": "portal:edited",
+            "refCalls": ["attach:INPUT"],
+            "rootChildren": 1,
+            "submission": "none",
+            "value": "edited"
+          }
+        },
+        {
+          "accepted": false,
+          "defaultPrevented": true,
+          "label": "submit-event"
+        },
+        {
+          "label": "submitted",
+          "value": {
+            "active": false,
+            "field": "edited",
+            "focus": "blurred",
+            "key": "Enter:shift",
+            "portal": "portal:edited",
+            "refCalls": ["attach:INPUT"],
+            "rootChildren": 1,
+            "submission": "submitted:edited",
+            "value": "edited"
+          }
+        },
+        {
+          "label": "disposed",
+          "value": {
+            "active": false,
+            "field": null,
+            "focus": null,
+            "key": null,
+            "portal": "",
+            "refCalls": ["attach:INPUT", "detach"],
+            "rootChildren": 0,
+            "submission": null,
+            "value": null
+          }
+        }
+      ]
+    }
+  ]
+}
