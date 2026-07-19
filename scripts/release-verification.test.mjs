@@ -391,7 +391,7 @@ test('browser E2E failures retain annotations, reports, and retry traces', () =>
 
   assert.match(ciWorkflow, /name: Run browser and real-application E2E\n\s+id: e2e/)
   assert.match(ciWorkflow, /name: Upload E2E failure diagnostics/)
-  assert.match(ciWorkflow, /if: steps\.e2e\.outcome == 'failure'/)
+  assert.match(ciWorkflow, /if: failure\(\) && steps\.e2e\.outcome == 'failure'/)
   assert.match(ciWorkflow, /packages\/fict\/playwright-report/)
   assert.match(ciWorkflow, /packages\/fict\/test-results/)
   assert.match(ciWorkflow, /examples\/real-apps\/playwright-report/)

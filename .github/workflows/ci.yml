@@ -429,7 +429,7 @@ jobs:
         run: pnpm test:e2e
 
       - name: Upload E2E failure diagnostics
-        if: steps.e2e.outcome == 'failure'
+        if: failure() && steps.e2e.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
           name: e2e-failure-diagnostics-${{ github.sha }}
