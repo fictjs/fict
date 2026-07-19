@@ -971,12 +971,27 @@ impl<'semantic> PlanBuilder<'semantic> {
                 self.lower_switch(switch_statement, current, label)
             }
             _ => {
-                self.supported = false;
-                self.owners.push(SpanOwner {
-                    span: source_span(statement.span),
-                    block: current,
+                // JavaScript labels may target an arbitrary statement, most commonly a block
+                // containing nested loops. Model the label as a break-only control target so a
+                // `break label` preserves the nested structured CFG instead of forcing the whole
+                // function onto the flat fallback plan.
+                self.has_control_flow = true;
+                let scope = self.blocks[current.as_usize()].scope;
+                let exit = self.new_block(scope, source_span(statement.span));
+                self.control_targets.push(ControlTarget {
+                    label,
+                    break_target: exit,
+                    continue_target: None,
                 });
-                Some(current)
+                let body_end = self.lower_statement(&statement.body, current);
+                self.control_targets.pop();
+                if let Some(body_end) = body_end {
+                    self.blocks[body_end.as_usize()].terminator = PlannedTerminator::Goto {
+                        target: exit,
+                        origin: source_span(statement.body.span()),
+                    };
+                }
+                Some(exit)
             }
         }
     }

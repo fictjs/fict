@@ -13,10 +13,10 @@
     "rust-structured-rejection-diagnostics": 172,
     "diagnostic-severity-reclassification": 23,
     "rust-warning-addition": 32,
-    "rust-warning-removal": 48,
+    "rust-warning-removal": 47,
     "rust-warning-set-change": 5
   },
-  "deviationCount": 280,
+  "deviationCount": 279,
   "deviations": [
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:153:transform",
@@ -1093,19 +1093,6 @@
         }
       ],
       "policy": "rust-structured-rejection-diagnostics"
-    },
-    {
-      "id": "packages/compiler/test/control-flow.test.ts:1189:runTransform",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [
-        {
-          "code": "FICT-R006",
-          "severity": "warning"
-        }
-      ],
-      "rustDiagnostics": [],
-      "policy": "rust-warning-removal"
     },
     {
       "id": "packages/compiler/test/control-flow.test.ts:1270:runTransformWithWarnings",

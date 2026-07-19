@@ -4932,6 +4932,30 @@ mod tests {
     }
 
     #[test]
+    fn diagnoses_reactive_loop_controls_inside_labeled_blocks() {
+        let source = "import { $state } from 'fict'; export function App() { let hot = $state(true); let label = 'cold'; choose: { for (const item of hot ? [1] : [2]) { if (item === 1) { label = 'hot'; break choose; } } label = 'warm'; } return <div>{label}</div>; }";
+        let strict = compile(request(source, "labeled-block-loop.tsx"));
+
+        assert!(strict.has_errors(), "{:?}", strict.diagnostics);
+        assert!(strict.code.is_empty());
+        assert!(strict.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.message.contains("hot")
+        }));
+
+        let mut fallback_request = request(source, "labeled-block-loop.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+                && diagnostic.message.contains("hot")
+        }));
+    }
+
+    #[test]
     fn does_not_diagnose_reactive_reads_that_do_not_control_a_loop() {
         let source = "import { $state } from 'fict'; export function App() { let value = $state(1); let total = 0; for (let index = 0; index < 2; index += 1) total += value; return <div>{total}</div>; }";
         let result = compile(request(source, "loop-body-read.tsx"));

@@ -1132,6 +1132,75 @@ fn lowers_classic_loops_and_labeled_control_edges() {
         Some(TerminatorKind::Goto { target }) if Some(*target) == do_while_loop.1.exit
     ));
 }
+
+#[test]
+fn preserves_nested_loop_cfg_inside_a_labeled_block() {
+    let source = r#"
+        function choose(items) {
+            let selected = 'none';
+            choice: {
+                for (const item of items) {
+                    if (item.active) {
+                        selected = item.label;
+                        break choice;
+                    }
+                }
+                selected = 'fallback';
+            }
+            return selected;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified labeled-block CFG");
+    let choose = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "choose")
+        .expect("choose binding")
+        .id;
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.binding == Some(choose))
+        .expect("choose function");
+    let loop_header = function
+        .blocks
+        .iter()
+        .find(|block| {
+            block
+                .source_hint
+                .as_ref()
+                .is_some_and(|hint| matches!(hint.kind, StructuredSourceKind::ForOfLoop))
+        })
+        .expect("for-of header");
+    let loop_exit = loop_header
+        .source_hint
+        .as_ref()
+        .and_then(|hint| hint.exit)
+        .expect("for-of exit");
+    let labeled_break_target = function
+        .blocks
+        .iter()
+        .find_map(|block| {
+            let span = block.terminator.origin.primary_span?;
+            (source
+                .get(span.start() as usize..span.end() as usize)
+                .is_some_and(|candidate| candidate == "break choice;"))
+            .then_some(match block.terminator.kind {
+                TerminatorKind::Goto { target } => Some(target),
+                _ => None,
+            })
+            .flatten()
+        })
+        .expect("labeled break target");
+    assert_ne!(labeled_break_target, loop_exit);
+}
+
 #[test]
 fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targets() {
     let source = r#"
