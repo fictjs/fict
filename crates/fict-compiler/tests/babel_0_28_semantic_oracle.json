@@ -12,7 +12,7 @@
       "@babel/plugin-transform-modules-commonjs": "7.28.6",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "oracleInputsSha256": "5cb6c0183740c5f33c9cad703b5d4e19fb2238f3c559908eeeed457c15b7efdd"
+    "oracleInputsSha256": "d132b60a9de27ab11c5937be16792c5222973c198b4342c9e3339acc67d4d17e"
   },
   "fixtures": [
     {
@@ -274,6 +274,111 @@
         "initial": { "$type": "-infinity" },
         "updated": { "$type": "-infinity" }
       }
+    },
+    {
+      "id": "runtime-package-state",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "3e48c0f306f213efbe296dcc2880db3e2e568b617b20e658cb5ee622586ee1b9",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _runtime = require(\"@fictjs/runtime\");\nfunction Scenario() {\n  const count = (0, _runtime.$state)(2);\n  const before = count();\n  count(5);\n  return [before, count()];\n}",
+      "expected": [2, 5]
+    },
+    {
+      "id": "mixed-runtime-family",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "f43c751464b2ebefb927364162fbf52551ffe2e0f15291657d176ece5b456377",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nvar _runtime = require(\"@fictjs/runtime\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 2, {\n    name: \"count\"\n  });\n  const doubled = (0, _runtime.createMemo)(() => count() * 2);\n  const __region_1 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const before = (0, _internal.__fictUseMemo)(__fictCtx, () => doubled(), {\n      name: \"before\"\n    }, 1000);\n    return {\n      before\n    };\n  }, {\n    internal: true\n  }, 1001);\n  const {\n    before\n  } = __region_1();\n  count(3);\n  return [before(), doubled()];\n}",
+      "expected": [6, 6]
+    },
+    {
+      "id": "program-compiler-disable",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "191b72c0d9326ba2f085d7395f82a5ddc6b3c87c427cc4939a9f02080c47fce1",
+      "babelCode": "\"use strict\";\n\"use fict-compiler-disable\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _fict = require(\"fict\");\nfunction Scenario() {\n  const count = (0, _fict.$state)(1);\n  count(4);\n  return count();\n}",
+      "expected": 4
+    },
+    {
+      "id": "module-no-memo",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "01fd12a229338b4073937fbebdd908f2236db4ed6a41ea5ff554b46d224d9f32",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const doubled = () => count() * 2;\n  count(3);\n  const before = () => doubled();\n  return [before(), doubled()];\n}",
+      "expected": [6, 6]
+    },
+    {
+      "id": "function-pure-mutation-barrier",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "6d0aeaf6cae98ed1f29026c66fd6a764103074f1c1e93c84f6e4822d051b1e70",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nfunction Scenario() {\n  const object = {\n    value: 1\n  };\n  let alias = object;\n  const before = object.value;\n  alias.value = 3;\n  return [before, object.value];\n}",
+      "expected": [1, 3]
+    },
+    {
+      "id": "diagnostic-suppression",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "b13e11f2f5d5fb1b79d0adeecb3dc4d69f63f2ba9ca6798774dc6713db1b8b89",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _fict = require(\"fict\");\n// fict-ignore-next-line FICT-M003\nconst value = (0, _fict.$memo)(() => {\n  console.log(\"side\");\n  return 2;\n});\nfunction Scenario() {\n  return 1;\n}",
+      "expected": 1
+    },
+    {
+      "id": "member-reactive-scope",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "299b4b24c7e0253c05ebba3709c8f0b4e532e2556b5f6fb6a6338de4ccd386d4",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const utils = {\n    renderHook: callback => callback()\n  };\n  return utils.renderHook(() => {\n    const __fictCtx = (0, _internal.__fictUseContext)();\n    const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n      name: \"count\"\n    });\n    const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n      const before = count();\n      count(3);\n      return {\n        before\n      };\n    }, {\n      internal: true\n    });\n    const before = () => __region_0().before;\n    return [before() + 0, count() + 0];\n  });\n}",
+      "expected": [1, 3]
+    },
+    {
+      "id": "vnode-event-order",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/vnode-event-order.tsx",
+          "line": 6,
+          "column": 14
+        },
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/vnode-event-order.tsx",
+          "line": 9,
+          "column": 12
+        }
+      ],
+      "babelCodeSha256": "9a219b294fc321b1c42f3aba7b93935920a7311188dcb7e2cf0ab14c27b3b2d5",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const log = [];\n  const node = (0, _internal.__fictUseMemo)(__fictCtx, () => ({\n    type: \"button\",\n    props: {\n      onClick: (...__fictArgs) => {\n        (() => {\n          log.push(count());\n          (__prev_0 => count(++__prev_0))(count());\n        })(...__fictArgs);\n      },\n      children: (0, _internal.__fictReactive)(() => count())\n    }\n  }), {\n    name: \"node\"\n  });\n  (0, _internal.__fictUseEffect)(__fictCtx, () => log.push(count()), 1000);\n  (0, _internal.__fictUseEffect)(__fictCtx, () => node().props.onClick(), 1001);\n  return {\n    type: node().type,\n    after: count(),\n    log\n  };\n}",
+      "expected": { "after": 2, "log": [1, 1, 2], "type": "button" }
+    },
+    {
+      "id": "async-await-order",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "6b3068759fd162052e69150df28395ca39ab4804595d269b4b6ccc18d32f1bb0",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nasync function Scenario() {\n  const values = [1];\n  await Promise.resolve();\n  values.push(2);\n  return values;\n}",
+      "expected": [1, 2]
+    },
+    {
+      "id": "generator-yield-order",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "058af02742baac8543cc80c191b0b355a62a7c0c74b5bcc469652269bb21a593",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nfunction Scenario() {\n  const iterator = function* sequence() {\n    yield 1;\n    yield 2;\n    return 3;\n  }();\n  return [iterator.next(), iterator.next(), iterator.next()];\n}",
+      "expected": [
+        { "done": false, "value": 1 },
+        { "done": false, "value": 2 },
+        { "done": true, "value": 3 }
+      ]
+    },
+    {
+      "id": "class-field-order",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "97adf84aa94d9f923a9f974e7fd258fc6e76cb711d1098f8545e5ab70d112fbf",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nfunction Scenario(seed = 2) {\n  let Counter = class Counter {\n    static label = 'counter';\n    value = seed;\n    increment() {\n      this.value += 1;\n      return this.value;\n    }\n  };\n  const counter = new Counter();\n  return [Counter.label, counter.value, counter.increment(), counter.value];\n}",
+      "expected": ["counter", 2, 3, 3]
+    },
+    {
+      "id": "typescript-namespace-enum",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "18b1d25482bf4235a760828f4b547682d85d12b298a0de81e1dd03453d8eea91",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nlet Box = void 0;\n(function (_Box) {\n  let Step = function (Step) {\n    Step[Step[\"One\"] = 1] = \"One\";\n    Step[Step[\"Two\"] = 2] = \"Two\";\n    return Step;\n  }({});\n  _Box.Step = Step;\n  const add = _Box.add = value => value + Step.Two;\n})(Box || (Box = {}));\nfunction Scenario() {\n  return [Box.Step.One, Box.Step[2], Box.add(3)];\n}",
+      "expected": [1, "Two", 5]
     }
   ]
 }

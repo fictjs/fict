@@ -30,6 +30,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'legacyAssertionInventory',
     'legacyDomainLedger',
     'rustCodegenCorpus',
+    'semanticCoverageMatrix',
   ])
 
   const inventoryScope = scope.assets.legacyAssertionInventory
@@ -92,9 +93,21 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.ok(semantic.proves.includes('reviewed-cross-implementation-runtime-semantics'))
   assert.ok(semantic.doesNotProve.includes('full-language-runtime-semantic-equivalence'))
   const semanticTest = read(semantic.ciTest)
-  assert.match(semanticTest, /executeCommonJs\(expected\.babelCode/)
-  assert.match(semanticTest, /executeCommonJs\(result\.code/)
+  assert.match(semanticTest, /executeCommonJsAsync\(expected\.babelCode/)
+  assert.match(semanticTest, /executeCommonJsAsync\(result\.code/)
   assert.ok(read(semantic.generator).length > 0)
+
+  const coverageScope = scope.assets.semanticCoverageMatrix
+  const coverage = readJson(coverageScope.artifact)
+  assert.equal(coverageScope.categoryCount, coverage.categories.length)
+  assert.equal(coverageScope.assertionLevel, 'mixed-evidence-matrix')
+  assert.ok(coverageScope.proves.includes('report-e07-category-accounting'))
+  assert.ok(
+    coverageScope.doesNotProve.includes(
+      'cross-implementation-runtime-equivalence-for-native-only-or-rejected-categories',
+    ),
+  )
+  assert.ok(read(coverageScope.ciTest).length > 0)
 
   const request = scope.assets.babelRequestOracle
   const requestInputs = readJson(request.inputs)
@@ -134,6 +147,91 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const rollout = read('docs/features/rust-compiler-rollout/rollout.md')
   assert.match(architecture, /compiler_compatibility_evidence_scope\.json/)
   assert.match(rollout, /compiler_compatibility_evidence_scope\.json/)
+})
+
+test('accounts for every E-07 semantic coverage category at its actual evidence level', () => {
+  const matrix = readJson('scripts/fixtures/compiler_semantic_coverage_matrix.json')
+  const semanticInputs = readJson('scripts/fixtures/babel_0_28_semantic_inputs.json')
+  const semanticIds = new Set(semanticInputs.fixtures.map(fixture => fixture.id))
+  const allowedLevels = new Set([
+    'cross-implementation-runtime',
+    'native-runtime',
+    'request-contract',
+    'diagnostic-contract',
+    'source-map-contract',
+  ])
+  const expectedCategories = [
+    'runtime-import-family',
+    'directives-purity-and-suppression',
+    'jsx-events-delegation-and-dom-mutation',
+    'component-role-policy',
+    'member-reactive-scopes',
+    'cross-module-metadata',
+    'module-and-source-identity-matrix',
+    'async-generator-class-decorator-and-typescript',
+    'complex-source-map-lowering',
+    'capability-expansion-runtime-results',
+  ]
+
+  assert.equal(matrix.schemaVersion, 1)
+  assert.equal(matrix.reportFinding, 'E-07')
+  assert.equal(matrix.baselineSemanticFixtureCount, 12)
+  assert.equal(
+    matrix.expandedSemanticFixtureCount,
+    semanticInputs.fixtures.length - matrix.baselineSemanticFixtureCount,
+  )
+  assert.deepEqual(
+    matrix.categories.map(category => category.id),
+    expectedCategories,
+  )
+  assert.equal(new Set(expectedCategories).size, matrix.categories.length)
+
+  const coveredExpandedSemanticIds = []
+  for (const category of matrix.categories) {
+    assert.ok(category.requirement.length > 0, category.id)
+    assert.ok(category.claimBoundary.length > 0, category.id)
+    assert.ok(category.evidence.length > 0, category.id)
+    for (const evidence of category.evidence) {
+      assert.ok(allowedLevels.has(evidence.assertionLevel), `${category.id}: evidence level`)
+      if (evidence.semanticFixtureIds !== undefined) {
+        assert.equal(evidence.assertionLevel, 'cross-implementation-runtime', category.id)
+        assert.ok(evidence.semanticFixtureIds.length > 0, category.id)
+        for (const fixtureId of evidence.semanticFixtureIds) {
+          assert.ok(
+            semanticIds.has(fixtureId),
+            `${category.id}: missing semantic fixture ${fixtureId}`,
+          )
+          coveredExpandedSemanticIds.push(fixtureId)
+        }
+      } else {
+        assert.notEqual(evidence.assertionLevel, 'cross-implementation-runtime', category.id)
+      }
+      if (evidence.path !== undefined) {
+        const source = read(evidence.path)
+        assert.ok(evidence.markers.length > 0, category.id)
+        for (const marker of evidence.markers) {
+          assert.ok(
+            source.includes(marker),
+            `${category.id}: missing ${marker} in ${evidence.path}`,
+          )
+        }
+      } else {
+        assert.equal(evidence.markers, undefined, category.id)
+      }
+      assert.ok(
+        evidence.semanticFixtureIds !== undefined || evidence.path !== undefined,
+        category.id,
+      )
+    }
+  }
+
+  assert.deepEqual(
+    coveredExpandedSemanticIds.sort(),
+    semanticInputs.fixtures
+      .slice(matrix.baselineSemanticFixtureCount)
+      .map(fixture => fixture.id)
+      .sort(),
+  )
 })
 
 test('accounts for legacy tests and assertions below the misleading file level', () => {
@@ -602,8 +700,8 @@ test('retains the independently generated Babel 0.28 semantic oracle', () => {
       oracleInputsSha256: sha256(inputsText),
     },
   )
-  assert.equal(inputs.fixtures.length, 12)
-  assert.equal(oracle.fixtures.length, 12)
+  assert.equal(inputs.fixtures.length, 24)
+  assert.equal(oracle.fixtures.length, 24)
   assert.deepEqual(
     oracle.fixtures.map(fixture => fixture.id),
     inputs.fixtures.map(fixture => fixture.id),
@@ -616,8 +714,8 @@ test('retains the independently generated Babel 0.28 semantic oracle', () => {
   }
 
   const semanticTest = read('scripts/babel-compiler-semantic-oracle.test.mjs')
-  assert.match(semanticTest, /executeCommonJs\(expected\.babelCode/)
-  assert.match(semanticTest, /executeCommonJs\(result\.code/)
+  assert.match(semanticTest, /executeCommonJsAsync\(expected\.babelCode/)
+  assert.match(semanticTest, /executeCommonJsAsync\(result\.code/)
   assert.match(semanticTest, /binding\.transformSync\(fixture\.request\)/)
   const packageJson = read('package.json')
   assert.match(packageJson, /test:compiler:babel-semantic-oracle/)

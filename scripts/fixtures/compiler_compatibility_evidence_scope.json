@@ -88,13 +88,23 @@
       "artifact": "crates/fict-compiler/tests/babel_0_28_semantic_oracle.json",
       "generator": "scripts/generate-babel-semantic-oracle.mjs",
       "ciTest": "scripts/babel-compiler-semantic-oracle.test.mjs",
-      "fixtureCount": 12,
+      "fixtureCount": 24,
       "exactBabelCompilerExecutedDuringGeneration": true,
       "frozenBabelOutputExecutedInCi": true,
       "currentRustOutputExecutedInCi": true,
       "assertionLevel": "runtime-semantics",
       "proves": ["reviewed-cross-implementation-runtime-semantics"],
       "doesNotProve": ["full-language-runtime-semantic-equivalence"]
+    },
+    "semanticCoverageMatrix": {
+      "artifact": "scripts/fixtures/compiler_semantic_coverage_matrix.json",
+      "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
+      "categoryCount": 10,
+      "assertionLevel": "mixed-evidence-matrix",
+      "proves": ["report-e07-category-accounting", "evidence-level-and-claim-boundary-validation"],
+      "doesNotProve": [
+        "cross-implementation-runtime-equivalence-for-native-only-or-rejected-categories"
+      ]
     },
     "babelRequestOracle": {
       "inputs": "scripts/fixtures/compiler_request_matrix.json",

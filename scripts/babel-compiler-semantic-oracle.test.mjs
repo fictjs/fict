@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import test from 'node:test'
 
-import { executeCommonJs } from './lib/compiler-semantic-harness.mjs'
+import { executeCommonJsAsync } from './lib/compiler-semantic-harness.mjs'
 
 const require = createRequire(import.meta.url)
 const repositoryRoot = path.resolve(import.meta.dirname, '..')
@@ -36,18 +36,18 @@ test('Babel 0.28 semantic oracle has exact independent provenance', () => {
     },
     oracleInputsSha256: sha256(inputsText),
   })
-  assert.equal(inputs.fixtures.length, 12)
+  assert.equal(inputs.fixtures.length, 24)
   assert.equal(oracle.fixtures.length, inputs.fixtures.length)
 })
 
 const oracleById = new Map(oracle.fixtures.map(fixture => [fixture.id, fixture]))
 for (const fixture of inputs.fixtures) {
-  test(`Rust matches Babel 0.28 observable semantics: ${fixture.id}`, () => {
+  test(`Rust matches Babel 0.28 observable semantics: ${fixture.id}`, async () => {
     const expected = oracleById.get(fixture.id)
     assert.ok(expected, `missing Babel oracle ${fixture.id}`)
     assert.equal(sha256(expected.babelCode), expected.babelCodeSha256)
     assert.deepEqual(
-      executeCommonJs(expected.babelCode, fixture.invocation),
+      await executeCommonJsAsync(expected.babelCode, fixture.invocation),
       expected.expected,
       `${fixture.id} frozen Babel output`,
     )
@@ -80,7 +80,7 @@ for (const fixture of inputs.fixtures) {
       assert.deepEqual(rustDiagnostics, [], fixture.id)
     }
     assert.deepEqual(
-      executeCommonJs(result.code, fixture.invocation),
+      await executeCommonJsAsync(result.code, fixture.invocation),
       expected.expected,
       `${fixture.id} Rust output`,
     )

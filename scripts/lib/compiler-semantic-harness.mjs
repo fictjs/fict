@@ -141,6 +141,7 @@ function reactiveRuntime() {
     __fictUseSignal: signal,
     __fictUseMemo: memo,
     __fictUseEffect: effect,
+    __fictReactive: callback => callback,
     createSignal: signal,
     createMemo: memo,
     createEffect: effect,
@@ -150,7 +151,7 @@ function reactiveRuntime() {
   }
 }
 
-export function executeCommonJs(code, invocation) {
+function invokeCommonJs(code, invocation) {
   assert.equal(typeof code, 'string')
   assert.equal(typeof invocation?.exportName, 'string')
   assert.ok(Array.isArray(invocation.arguments))
@@ -183,9 +184,35 @@ export function executeCommonJs(code, invocation) {
   const entry = module.exports[invocation.exportName]
   assert.equal(typeof entry, 'function', `missing export ${invocation.exportName}`)
   context.__oracleArguments = structuredClone(invocation.arguments)
-  const result = new Script(
+  return new Script(
     `module.exports[${JSON.stringify(invocation.exportName)}](...__oracleArguments)`,
     { filename: 'semantic-oracle-invocation.cjs' },
   ).runInContext(context, { timeout: 1_000 })
+}
+
+export function executeCommonJs(code, invocation) {
+  const result = invokeCommonJs(code, invocation)
+  if (result && typeof result.then === 'function') {
+    throw new TypeError('Semantic oracle returned a Promise; use executeCommonJsAsync')
+  }
   return normalize(result)
+}
+
+export async function executeCommonJsAsync(code, invocation) {
+  const result = invokeCommonJs(code, invocation)
+  let timer
+  try {
+    const settled = await Promise.race([
+      Promise.resolve(result),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Semantic oracle async invocation timed out')),
+          1_000,
+        )
+      }),
+    ])
+    return normalize(settled)
+  } finally {
+    clearTimeout(timer)
+  }
 }

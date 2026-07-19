@@ -306,7 +306,7 @@ reviews, test wiring, and retained native runtime cases so deleting or changing
 the regression evidence cannot silently leave CI green.
 
 The distinct Babel 0.28 semantic oracle freezes compiled CommonJS output,
-structured warnings, and observable results for 12 runtime probes. Its
+structured warnings, and observable results for 24 runtime probes. Its
 provenance binds the exact 0.28.0 source-tree digest, built artifact digest,
 frozen lockfile and package-manager identity, Babel dependency versions, and
 input digest. CI executes that frozen Babel code and current Rust output through
@@ -316,8 +316,21 @@ hook-member escape warnings and is explicit in the input manifest.
 
 This independent oracle covers state, derived invalidation, effects, projected
 mutation, destructuring, hooks, loops, try/finally, explicit memos, optional
-dependencies, update-expression order, and numeric edge cases. It is a real
-semantic gate for those domains, not a claim of full language equivalence.
+dependencies, update-expression order, numeric edge cases, runtime-package
+imports, compiler directives and suppression, member reactive scopes, VNode
+events, async and generator order, class fields, and TypeScript namespace/enum
+lowering. It is a real semantic gate for those domains, not a claim of full
+language equivalence.
+
+The machine-readable [E-07 semantic coverage
+matrix](../../scripts/fixtures/compiler_semantic_coverage_matrix.json) binds the
+remaining reviewed categories to their actual evidence strength. Browser
+DOM/delegation and the 22 Rust
+capability expansions use native runtime evidence; module identity uses the
+request contract; rejected component roles and decorators use diagnostic
+contracts; and complex lowerings use exact source-map position probes. Those
+native-only or rejection contracts are not presented as cross-implementation
+runtime equivalence.
 
 A second full-request matrix prevents the semantic probes from collapsing every
 input to `.tsx`/CommonJS. Eighteen of its 30 reviewed requests freeze output from

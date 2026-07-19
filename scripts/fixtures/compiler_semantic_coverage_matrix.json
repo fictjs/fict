@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "reportFinding": "E-07",
+  "baselineSemanticFixtureCount": 12,
+  "expandedSemanticFixtureCount": 12,
+  "categories": [
+    {
+      "id": "runtime-import-family",
+      "requirement": "runtime import family",
+      "evidence": [
+        {
+          "assertionLevel": "cross-implementation-runtime",
+          "semanticFixtureIds": ["runtime-package-state", "mixed-runtime-family"]
+        }
+      ],
+      "claimBoundary": "Compares observable CommonJS results for the reviewed public and runtime-package imports; it does not cover every helper export or bundler resolver."
+    },
+    {
+      "id": "directives-purity-and-suppression",
+      "requirement": "disable, no-memo, pure, and diagnostic suppression",
+      "evidence": [
+        {
+          "assertionLevel": "cross-implementation-runtime",
+          "semanticFixtureIds": [
+            "program-compiler-disable",
+            "module-no-memo",
+            "function-pure-mutation-barrier",
+            "diagnostic-suppression"
+          ]
+        }
+      ],
+      "claimBoundary": "Compares the reviewed directive and suppression outcomes, including the pure mutation barrier; it is not an exhaustive optimizer equivalence claim."
+    },
+    {
+      "id": "jsx-events-delegation-and-dom-mutation",
+      "requirement": "JSX event and delegation behavior plus DOM mutation",
+      "evidence": [
+        {
+          "assertionLevel": "cross-implementation-runtime",
+          "semanticFixtureIds": ["vnode-event-order"]
+        },
+        {
+          "assertionLevel": "native-runtime",
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": [
+            "Rust compiler output preserves Core reactive runtime behavior",
+            "captured reactive aliases remain mutable after an event"
+          ]
+        },
+        {
+          "assertionLevel": "native-runtime",
+          "path": "crates/fict-compiler/src/pipeline.rs",
+          "markers": ["emits_delegated_events_refs_and_reactive_handler_mutations"]
+        }
+      ],
+      "claimBoundary": "The VNode event result is compared across compilers; delegated browser events and live DOM mutation are native runtime contracts because the isolated Babel harness has no browser owner lifecycle."
+    },
+    {
+      "id": "component-role-policy",
+      "requirement": "anonymous, member, and wrapped component roles",
+      "evidence": [
+        {
+          "assertionLevel": "diagnostic-contract",
+          "path": "scripts/compiler-compatibility-corpus.test.mjs",
+          "markers": ["'narrow-component-role': 24"]
+        },
+        {
+          "assertionLevel": "diagnostic-contract",
+          "path": "docs/migration-guide.md",
+          "markers": [
+            "anonymous, indirect, assigned, wrapped, registry, or object-member functions"
+          ]
+        }
+      ],
+      "claimBoundary": "These 24 Babel-accepted roles are explicit Rust rejections with a migration contract, not cross-implementation runtime parity."
+    },
+    {
+      "id": "member-reactive-scopes",
+      "requirement": "member-form configured reactive scopes",
+      "evidence": [
+        {
+          "assertionLevel": "cross-implementation-runtime",
+          "semanticFixtureIds": ["member-reactive-scope"]
+        },
+        {
+          "assertionLevel": "native-runtime",
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": ["configured reactive scopes accept member, optional member, and global hosts"]
+        }
+      ],
+      "claimBoundary": "Compares one member-host callback result across compilers and separately checks native member, optional-member, and global host recognition."
+    },
+    {
+      "id": "cross-module-metadata",
+      "requirement": "cross-module reactive metadata",
+      "evidence": [
+        {
+          "assertionLevel": "native-runtime",
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": ["compile and analyze consume the same resolved metadata snapshot"]
+        },
+        {
+          "assertionLevel": "native-runtime",
+          "path": "scripts/native-vite-metadata-graph-smoke.mjs",
+          "markers": [
+            "assert.match(cycleCode, /api\\.count\\(\\)/)",
+            "assert.match(linkedClientCode, /api\\.value\\(\\)/)",
+            "assert.match(linkedSsrCode, /api\\.value\\(\\)/)"
+          ]
+        }
+      ],
+      "claimBoundary": "Exercises the versioned Rust metadata snapshot and real Vite graph convergence; Babel 0.28 process-global metadata APIs are intentionally not represented as the same host protocol."
+    },
+    {
+      "id": "module-and-source-identity-matrix",
+      "requirement": "CommonJS, ESM, and physical, graph, and public identity combinations",
+      "evidence": [
+        {
+          "assertionLevel": "request-contract",
+          "path": "scripts/fixtures/compiler_request_matrix.json",
+          "markers": [
+            "\"infer-mjs-module\"",
+            "\"infer-cjs-commonjs\"",
+            "\"physical-graph-public-identities\""
+          ]
+        },
+        {
+          "assertionLevel": "request-contract",
+          "path": "scripts/native-compiler-request-matrix.test.mjs",
+          "markers": [
+            "request matrix covers every source identity and structured request dimension"
+          ]
+        }
+      ],
+      "claimBoundary": "Compares legacy-compatible request dimensions structurally and labels Rust-only public and graph identity fields as native host protocol rather than Babel equivalence."
+    },
+    {
+      "id": "async-generator-class-decorator-and-typescript",
+      "requirement": "async, generator, class, decorator, and TypeScript option matrix",
+      "evidence": [
+        {
+          "assertionLevel": "cross-implementation-runtime",
+          "semanticFixtureIds": [
+            "async-await-order",
+            "generator-yield-order",
+            "class-field-order",
+            "typescript-namespace-enum"
+          ]
+        },
+        {
+          "assertionLevel": "diagnostic-contract",
+          "path": "scripts/native-compiler-runtime.test.mjs",
+          "markers": ["standard decorators fail closed before emitting unsupported syntax"]
+        }
+      ],
+      "claimBoundary": "Compares reviewed async, generator, class-field, namespace, and enum results; raw standard decorators are an explicit fail-closed diagnostic contract, not runtime parity."
+    },
+    {
+      "id": "complex-source-map-lowering",
+      "requirement": "per-position source maps through complex lowering",
+      "evidence": [
+        {
+          "assertionLevel": "source-map-contract",
+          "path": "crates/fict-compiler/tests/source_map_probes.rs",
+          "markers": [
+            "maps_reactivity_props_events_and_control_flow_origins",
+            "maps_keyed_list_receivers_keys_render_reads_and_svg_bindings",
+            "maps_nested_keyed_table_lists_across_outer_and_inner_callbacks",
+            "maps_memos_runtime_primitives_and_async_handler_origins",
+            "maps_commonjs_rewrites_and_keeps_generated_preludes_unmapped",
+            "maps_reactive_writes_across_try_catch_and_finally",
+            "preserves_utf16_columns_for_unicode_jsx_reads"
+          ]
+        },
+        {
+          "assertionLevel": "request-contract",
+          "path": "scripts/fixtures/compiler_request_matrix.json",
+          "markers": ["\"composed-input-source-map\""]
+        }
+      ],
+      "claimBoundary": "Checks exact authored line and UTF-16 column mappings for reviewed native lowerings plus legacy-compatible input-map composition; it does not assert identical Babel and Rust generated-token layouts."
+    },
+    {
+      "id": "capability-expansion-runtime-results",
+      "requirement": "runtime results for all 22 reviewed capability expansions",
+      "evidence": [
+        {
+          "assertionLevel": "native-runtime",
+          "path": "scripts/native-compiler-capability-expansions.test.mjs",
+          "markers": [
+            "assert.equal(probes.length, 22)",
+            "runtime probes cover every reviewed Rust capability expansion exactly once",
+            "executes reviewed Rust capability expansion"
+          ]
+        }
+      ],
+      "claimBoundary": "Executes each Rust capability expansion exactly once and binds it to its reviewed corpus row; Babel rejected these inputs, so this is deliberately not cross-implementation runtime parity."
+    }
+  ]
+}

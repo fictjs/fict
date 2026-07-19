@@ -7,7 +7,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { format } from 'prettier'
 
-import { executeCommonJs } from './lib/compiler-semantic-harness.mjs'
+import { executeCommonJsAsync } from './lib/compiler-semantic-harness.mjs'
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..')
 const legacyRevision = 'b99ff5b185e3eed701e2d4f3521832dac67c979f'
@@ -111,7 +111,8 @@ assert.equal(input.schemaVersion, 1)
 assert.ok(Array.isArray(input.fixtures))
 const ids = new Set()
 
-const fixtures = input.fixtures.map(fixture => {
+const fixtures = []
+for (const fixture of input.fixtures) {
   assert.equal(ids.has(fixture.id), false, `duplicate fixture ${fixture.id}`)
   ids.add(fixture.id)
   assert.equal(fixture.request.language, 'tsx', fixture.id)
@@ -149,12 +150,12 @@ const fixtures = input.fixtures.map(fixture => {
   const babelCode = transformed.code
   let expected
   try {
-    expected = executeCommonJs(babelCode, fixture.invocation)
+    expected = await executeCommonJsAsync(babelCode, fixture.invocation)
   } catch (error) {
     error.message = `${fixture.id}: ${error.message}`
     throw error
   }
-  return {
+  fixtures.push({
     id: fixture.id,
     babelDiagnostics: warnings.map(warning => ({
       code: warning.code,
@@ -167,8 +168,8 @@ const fixtures = input.fixtures.map(fixture => {
     babelCodeSha256: sha256(babelCode),
     babelCode,
     expected,
-  }
-})
+  })
+}
 
 const oracle = {
   schemaVersion: 1,
