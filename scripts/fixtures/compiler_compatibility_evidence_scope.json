@@ -225,6 +225,40 @@
         "streaming-or-suspense-equivalence"
       ]
     },
+    "babelSourceMapOracle": {
+      "inputs": "scripts/fixtures/babel_0_28_source_map_inputs.json",
+      "artifact": "crates/fict-compiler/tests/babel_0_28_source_map_oracle.json",
+      "generator": "scripts/generate-babel-source-map-oracle.mjs",
+      "ciTest": "scripts/babel-compiler-source-map-oracle.test.mjs",
+      "fixtureCount": 3,
+      "probeCount": 23,
+      "exactParityPositions": 10,
+      "reviewedRustPrecisionImprovements": 13,
+      "positionSurfaces": [
+        "reactivity-and-memos",
+        "props-and-component-inputs",
+        "events-control-flow-and-keyed-lists",
+        "effects-and-async-await",
+        "jsx-and-dom-bindings",
+        "unicode-utf16-columns",
+        "typescript-commonjs-rewrites",
+        "generated-unmapped-prelude"
+      ],
+      "exactBabelCompilerExecutedDuringGeneration": true,
+      "frozenBabelMapReplayedInCi": true,
+      "currentRustMapTracedInCi": true,
+      "assertionLevel": "cross-implementation-source-map",
+      "proves": [
+        "reviewed-cross-implementation-authored-source-positions",
+        "explicit-babel-to-rust-source-map-deviation-accounting",
+        "utf16-column-and-generated-unmapped-contracts"
+      ],
+      "doesNotProve": [
+        "identical-generated-token-layout",
+        "exhaustive-source-map-token-equivalence",
+        "input-source-map-composition-equivalence-beyond-request-contract"
+      ]
+    },
     "semanticCoverageMatrix": {
       "artifact": "scripts/fixtures/compiler_semantic_coverage_matrix.json",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",

@@ -194,6 +194,15 @@
       "requirement": "per-position source maps through complex lowering",
       "evidence": [
         {
+          "assertionLevel": "cross-implementation-source-map",
+          "path": "scripts/babel-compiler-source-map-oracle.test.mjs",
+          "markers": [
+            "Rust source-map positions match the reviewed Babel 0.28 baseline",
+            "assert.equal(probes.length, 23)",
+            "rust.original, replayedBabel.original"
+          ]
+        },
+        {
           "assertionLevel": "source-map-contract",
           "path": "crates/fict-compiler/tests/source_map_probes.rs",
           "markers": [
@@ -212,7 +221,7 @@
           "markers": ["\"composed-input-source-map\""]
         }
       ],
-      "claimBoundary": "Checks exact authored line and UTF-16 column mappings for reviewed native lowerings plus legacy-compatible input-map composition; it does not assert identical Babel and Rust generated-token layouts."
+      "claimBoundary": "Traces 23 reviewed generated tokens across three frozen Babel maps and live Rust maps to authored line and UTF-16 columns: ten positions are exact parity and thirteen are explicit Rust precision improvements over coarser Babel positions. Native probes add deeper lowering coverage and the request matrix checks input-map composition. This does not assert identical generated-token layouts or exhaustive source-map token equivalence."
     },
     {
       "id": "capability-expansion-runtime-results",

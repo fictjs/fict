@@ -101,6 +101,14 @@ strict DOM-node claiming with eager updates, and Preview snapshot/resume clicks.
 This closes the reviewed compiler-output SSR/hydration blind spot without
 claiming legacy-runtime, streaming, Suspense, or exhaustive SSR equivalence.
 
+Source maps have a separate position-level oracle. It replays 23 sampled tokens
+from three frozen Babel maps and traces the corresponding live Rust tokens to
+authored line and UTF-16 columns. Ten positions match exactly and thirteen
+record reviewed Rust precision improvements over coarser Babel locations. This
+evidence covers the selected reactivity, JSX/DOM, async, Unicode, and
+TypeScript/CommonJS lowerings; it does not claim identical generated layouts or
+exhaustive source-map token equivalence.
+
 Filename and request-protocol evidence is retained separately from the Rust
 codegen goldens. The exact 0.28.0 preset oracle covers real extension inference,
 strict defaults, input-map composition, and explain output. Reviewed native-only

@@ -1,0 +1,569 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "legacyRelease": "0.28.0",
+    "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "legacyCompilerSourceSha256": "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a",
+    "legacyCompilerArtifactSha256": "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789",
+    "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
+    "legacyPackageManager": "pnpm@9.1.1",
+    "babelDependencies": {
+      "@babel/core": "7.29.7",
+      "@babel/plugin-transform-modules-commonjs": "7.28.6",
+      "@babel/plugin-transform-typescript": "7.28.5"
+    },
+    "traceMappingDependency": "@jridgewell/trace-mapping@0.3.31",
+    "oracleInputsSha256": "756661304e04d27ef5381b4f2080c224f9b0fe15ab3c333fb7171b6060ee630f",
+    "sourceMapHarnessSha256": "782f4b270e4098fa6195cabf2a87d3e19aa411aab697b6c3e4449f75d5c48b25",
+    "comparisonModel": "frozen-babel-generated-tokens-vs-live-rust-authored-original-positions"
+  },
+  "fixtures": [
+    {
+      "id": "reactive-jsx-control-flow",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-J003",
+          "severity": "warning",
+          "message": "Spread on native element may include unknown props.",
+          "fileName": "/oracle/source-map/reactive.tsx",
+          "line": 4,
+          "column": 18
+        }
+      ],
+      "babelCodeSha256": "19ec8fef5bd50d80e28f0cfb5022c7dd63dc069526c9a604a6535fd27506a7b7",
+      "babelMapSha256": "ea6e053d1db316d65de63e933afbfef9ae4d5ed193702ab174a183ff4793a90c",
+      "babelCode": "import { __fictUseMemo, template, resolvePath, spread, __fictReactive, getSlotEnd, createElementInNamespace, insertBetween, __fictElementNamespaceMatches, __fictUseContext, prop, __fictPropsRest, __fictUseSignal, addEventListener, createConditional, onDestroy, createElement, __fictProp, bindAttribute } from \"fict/internal\";\nimport { createKeyedList } from \"fict/internal/list\";\nimport { $memo } from 'fict';\nfunction Child(__props) {\n  const __propValue_0 = __props.value;\n  const value = prop(() => __props.value);\n  const __propDefault_2 = __props.label === void 0 ? String(__propValue_0) : void 0;\n  const label = prop(() => __props.label === void 0 ? __propDefault_2 : __props.label);\n  const rest = __fictPropsRest(__props, [\"value\", \"label\"]);\n  const __fictCtx = __fictUseContext();\n  return __fictElementNamespaceMatches(\"button\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_4 = template(\"<button><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></button>\");\n    const __root_3 = __tmpl_4();\n    const __el_5 = resolvePath(__root_3, [0]);\n    const __el_6 = resolvePath(__root_3, [2]);\n    spread(__root_3, __fictReactive(() => rest), false, true);\n    const __end_7 = getSlotEnd(__el_5);\n    insertBetween(__el_5, __end_7, () => label(), __node => createElementInNamespace(__node, \"html\"));\n    const __end_8 = getSlotEnd(__el_6);\n    insertBetween(__el_6, __end_8, () => value(), __node => createElementInNamespace(__node, \"html\"));\n    return __root_3;\n  }, 1000)() : {\n    type: \"button\",\n    props: {\n      ...rest,\n      children: [__fictReactive(() => label()), \":\", __fictReactive(() => value())]\n    }\n  };\n}\nexport function App(props) {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, props.start, {\n    name: \"count\"\n  });\n  const doubled = $memo(() => count() * 2);\n  const rows = __fictUseSignal(__fictCtx, [{\n    id: \"a\",\n    value: 4\n  }], {\n    name: \"rows\"\n  });\n  return __fictElementNamespaceMatches(\"main\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_10 = template(\"<main><!--fict:slot:start--><!--fict:slot:end--><svg viewBox=\\\"0 0 10 10\\\"><!--fict:slot:start--><!--fict:slot:end--></svg></main>\");\n    const __root_9 = __tmpl_10();\n    const __el_11 = resolvePath(__root_9, [0]);\n    const __el_12 = resolvePath(__root_9, [1, 0]);\n    addEventListener(__root_9, \"click\", (...__fictArgs) => {\n      (() => (__prev_13 => (__old_14 => (count(__prev_13), __old_14))(__prev_13++))(count()))(...__fictArgs);\n    }, true);\n    const __end_15 = getSlotEnd(__el_11);\n    const __cond_18 = createConditional(() => count() > 0, () => ({\n      type: Child,\n      props: {\n        value: __fictProp(() => count()),\n        \"data-count\": __fictProp(() => doubled())\n      }\n    }), __node => createElementInNamespace(__node, \"html\"), () => (() => {\n      const __tmpl_17 = template(\"<i>zero</i>\");\n      const __root_16 = __tmpl_17();\n      return __root_16;\n    })(), __el_11, __end_15);\n    __cond_18?.flush?.();\n    onDestroy(__cond_18.dispose);\n    const __end_19 = getSlotEnd(__el_12);\n    const __htmpl_20 = template(\"<circle></circle>\", void 0, true);\n    const __list_22 = createKeyedList(() => rows(), (row, __index) => row.id, (row, __index, __key) => (() => {\n      const __root_21 = __htmpl_20();\n      bindAttribute(__root_21, \"cx\", () => row().value);\n      return __root_21;\n    })(), false, __el_12, __end_19, true, \"svg\");\n    __list_22?.flush?.();\n    onDestroy(__list_22.dispose);\n    bindAttribute(__root_9, \"title\", () => doubled());\n    return __root_9;\n  }, 1001)() : {\n    type: \"main\",\n    props: {\n      title: __fictReactive(() => doubled()),\n      onClick: (...__fictArgs) => {\n        (() => (__prev_23 => (__old_24 => (count(__prev_23), __old_24))(__prev_23++))(count()))(...__fictArgs);\n      },\n      children: [__fictReactive(() => count() > 0 ? {\n        type: Child,\n        props: {\n          value: __fictProp(() => count()),\n          \"data-count\": __fictProp(() => doubled())\n        }\n      } : __fictElementNamespaceMatches(\"i\", \"html\") ? (() => {\n        const __tmpl_26 = template(\"<i>zero</i>\");\n        const __root_25 = __tmpl_26();\n        return __root_25;\n      })() : {\n        type: \"i\",\n        props: {\n          children: \"zero\"\n        }\n      }), {\n        type: \"svg\",\n        props: {\n          viewBox: \"0 0 10 10\",\n          children: __fictReactive(() => rows().map(row => ({\n            type: \"circle\",\n            props: {\n              cx: row.value\n            },\n            key: row.id\n          })))\n        }\n      }]\n    }\n  };\n}",
+      "babelMap": {
+        "version": 3,
+        "names": [
+          "$memo",
+          "Child",
+          "__props",
+          "__propValue_0",
+          "value",
+          "prop",
+          "__propDefault_2",
+          "label",
+          "String",
+          "rest",
+          "__fictPropsRest",
+          "__fictCtx",
+          "__fictUseContext",
+          "__fictElementNamespaceMatches",
+          "__fictUseMemo",
+          "__tmpl_4",
+          "template",
+          "__root_3",
+          "__el_5",
+          "resolvePath",
+          "__el_6",
+          "spread",
+          "__fictReactive",
+          "__end_7",
+          "getSlotEnd",
+          "insertBetween",
+          "__node",
+          "createElementInNamespace",
+          "__end_8",
+          "type",
+          "props",
+          "children",
+          "App",
+          "count",
+          "__fictUseSignal",
+          "start",
+          "name",
+          "doubled",
+          "rows",
+          "id",
+          "__tmpl_10",
+          "__root_9",
+          "__el_11",
+          "__el_12",
+          "addEventListener",
+          "__fictArgs",
+          "__prev_13",
+          "__old_14",
+          "__end_15",
+          "__cond_18",
+          "createConditional",
+          "__fictProp",
+          "__tmpl_17",
+          "__root_16",
+          "flush",
+          "onDestroy",
+          "dispose",
+          "__end_19",
+          "__htmpl_20",
+          "__list_22",
+          "createKeyedList",
+          "row",
+          "__index",
+          "__key",
+          "__root_21",
+          "bindAttribute",
+          "title",
+          "onClick",
+          "__prev_23",
+          "__old_24",
+          "__tmpl_26",
+          "__root_25",
+          "viewBox",
+          "map",
+          "cx",
+          "key"
+        ],
+        "sources": ["/oracle/source-map/reactive.tsx"],
+        "sourcesContent": [
+          "import { $state, $memo } from 'fict'\n\nfunction Child({ value, label = String(value), ...rest }) {\n  return <button {...rest}>{label}:{value}</button>\n}\n\nexport function App(props) {\n  let count = $state(props.start)\n  const doubled = $memo(() => count * 2)\n  let rows = $state([{ id: 'a', value: 4 }])\n  return (\n    <main title={doubled} onClick={() => count++}>\n      {count > 0 ? <Child value={count} data-count={doubled} /> : <i>zero</i>}\n      <svg viewBox=\"0 0 10 10\">\n        {rows.map(row => <circle key={row.id} cx={row.value} />)}\n      </svg>\n    </main>\n  )\n}\n"
+        ],
+        "mappings": "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",
+        "ignoreList": []
+      },
+      "probes": [
+        {
+          "id": "signal-initializer",
+          "kind": "signal",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 32,
+              "column": 16,
+              "needle": "__fictUseSignal",
+              "occurrence": 1,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 7, "column": 7 }
+          }
+        },
+        {
+          "id": "memo-initializer",
+          "kind": "memo",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 35,
+              "column": 18,
+              "needle": "$memo",
+              "occurrence": 1,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 7, "column": 7 }
+          }
+        },
+        {
+          "id": "destructured-prop-default",
+          "kind": "prop-default",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 7,
+              "column": 53,
+              "needle": "String(__propValue_0)",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 3, "column": 32 }
+          }
+        },
+        {
+          "id": "destructured-prop-child-read",
+          "kind": "prop-read",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 20,
+              "column": 41,
+              "needle": "value()",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 4, "column": 25 }
+          }
+        },
+        {
+          "id": "event-update",
+          "kind": "event-write",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 48,
+              "column": 41,
+              "needle": "count(__prev_13)",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 12, "column": 41 }
+          }
+        },
+        {
+          "id": "conditional-test",
+          "kind": "control-flow",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 51,
+              "column": 46,
+              "needle": "count() > 0",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 13, "column": 7 }
+          }
+        },
+        {
+          "id": "component-value-prop-read",
+          "kind": "component-prop",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 54,
+              "column": 32,
+              "needle": "value: __fictProp(() => count())",
+              "occurrence": 0,
+              "offset": 24
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 13, "column": 25 }
+          }
+        },
+        {
+          "id": "component-data-prop-read",
+          "kind": "component-prop",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 55,
+              "column": 39,
+              "needle": "\"data-count\": __fictProp(() => doubled())",
+              "occurrence": 0,
+              "offset": 31
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 13, "column": 25 }
+          }
+        },
+        {
+          "id": "keyed-list-receiver",
+          "kind": "keyed-list-receiver",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 66,
+              "column": 44,
+              "needle": "rows()",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 13, "column": 77 }
+          }
+        },
+        {
+          "id": "keyed-list-key",
+          "kind": "keyed-list-key",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 66,
+              "column": 70,
+              "needle": "row.id",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 15, "column": 38 }
+          }
+        },
+        {
+          "id": "keyed-list-value",
+          "kind": "keyed-list-value",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 68,
+              "column": 43,
+              "needle": "row().value",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 15, "column": 50 }
+          }
+        },
+        {
+          "id": "reactive-title-binding",
+          "kind": "attribute-binding",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 73,
+              "column": 43,
+              "needle": "bindAttribute(__root_9, \"title\", () => doubled())",
+              "occurrence": 0,
+              "offset": 39
+            },
+            "original": { "source": "/oracle/source-map/reactive.tsx", "line": 15, "column": 63 }
+          }
+        }
+      ]
+    },
+    {
+      "id": "unicode-effects-and-async-handler",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/source-map/unicode.tsx",
+          "line": 12,
+          "column": 25
+        }
+      ],
+      "babelCodeSha256": "c1e016d97356ca16379aa9278d66fba12a6cdd56d38b8a79de40746875499767",
+      "babelMapSha256": "05a9d1c7187cdf3f9d136f275b680e42e7166b4e44ccb9ff4e6f4932cf90feba",
+      "babelCode": "import { __fictUseSignal, __fictUseEffect, __fictUseMemo, template, resolvePath, addEventListener, getSlotEnd, createElementInNamespace, insertBetween, bindAttribute, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from \"fict/internal\";\nimport { resource } from 'fict';\nexport function Unicode() {\n  const __fictCtx = __fictUseContext();\n  const prefix = \"\\uD83D\\uDE00\";\n  const café = __fictUseSignal(__fictCtx, \"\\uD83D\\uDE00\", {\n    name: \"caf\\xE9\"\n  });\n  const data = resource(async (_ctx, id) => String(id));\n  __fictUseEffect(__fictCtx, () => {\n    document.title = café();\n  });\n  return __fictElementNamespaceMatches(\"p\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<p><!--fict:slot:start--><!--fict:slot:end--></p>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0]);\n    addEventListener(__root_0, \"click\", (...__fictArgs) => {\n      (async () => {\n        café(café() + \"\\u96EA\");\n        await data.read(café());\n      })(...__fictArgs);\n    }, true);\n    const __end_3 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_3, () => café(), __node => createElementInNamespace(__node, \"html\"));\n    bindAttribute(__root_0, \"title\", () => café());\n    return __root_0;\n  }, 1000)() : {\n    type: \"p\",\n    props: {\n      title: __fictReactive(() => café()),\n      onClick: (...__fictArgs) => {\n        (async () => {\n          café(café() + \"\\u96EA\");\n          await data.read(café());\n        })(...__fictArgs);\n      },\n      children: __fictReactive(() => café())\n    }\n  };\n}",
+      "babelMap": {
+        "version": 3,
+        "names": [
+          "resource",
+          "Unicode",
+          "__fictCtx",
+          "__fictUseContext",
+          "prefix",
+          "café",
+          "__fictUseSignal",
+          "name",
+          "data",
+          "_ctx",
+          "id",
+          "String",
+          "__fictUseEffect",
+          "document",
+          "title",
+          "__fictElementNamespaceMatches",
+          "__fictUseMemo",
+          "__tmpl_1",
+          "template",
+          "__root_0",
+          "__el_2",
+          "resolvePath",
+          "addEventListener",
+          "__fictArgs",
+          "read",
+          "__end_3",
+          "getSlotEnd",
+          "insertBetween",
+          "__node",
+          "createElementInNamespace",
+          "bindAttribute",
+          "type",
+          "props",
+          "__fictReactive",
+          "onClick",
+          "children"
+        ],
+        "sources": ["/oracle/source-map/unicode.tsx"],
+        "sourcesContent": [
+          "import { $state, $effect, resource } from 'fict'\n\nexport function Unicode() {\n  const prefix = '😀'; let café = $state(prefix)\n  const data = resource(async (_ctx, id) => String(id))\n  $effect(() => { document.title = café })\n  return (\n    <p\n      title={café}\n      onClick={async () => {\n        café += '雪'\n        await data.read(café)\n      }}\n    >\n      {café}\n    </p>\n  )\n}\n"
+        ],
+        "mappings": ";SAA0BA,QAAQ,QAAQ,MAAM;AAAA,OAEzC,SAAAC,QAAA;EAAA,MAAAC,SAAA,GAAAC,gBAAA;EACC,MAAAC,MAAA,GAAS,cAAI;EAAA,MAAAC,IAAA,GAAAC,eAAA,CAAAJ,SAAA,EAAoBE,cAAM;IAAAG,IAAA;EAAA;EACvC,MAAAC,IAAA,GAAAR,QAAA,QAAAS,IAAA,EAAAC,EAAA,KAAAC,MAAA,CAAAD,EAAA;EACNE,eAAA,CAAAV,SAAA;IAAgBW,QAAA,CAAAC,KAAA,GAAAT,IAAA;EAAqB;EAAG,OAAAU,6BAAA,gBAAAC,aAAA,CAAAd,SAAA;IAAA,MAAAe,QAAA,GAAAC,QAAA;IAAA,MAAAC,QAAA,GAAAF,QAAA;IAAA,MAAAG,MAAA,GAAAC,WAAA,CAAAF,QAAA;IAAAG,gBAAA,CAAAH,QAAA,eAAAI,UAAA;MAAA,CAI3B;QAAAlB,IAAA,CAAAA,IAAA,KACC,QAAG;QACX,MAAAG,IAAA,CAAAgB,IAAA,CAAAnB,IAAA;MAAqB,CACtB,KAAAkB,UAAA;IAAA;IAAA,MAAAE,OAAA,GAAAC,UAAA,CAAAN,MAAA;IAAAO,aAAA,CAAAP,MAAA,EAAAK,OAAA,QAAApB,IAAA,IAAAuB,MAAA,IAAAC,wBAAA,CAAAD,MAAA;IAAAE,aAAA,CAAAX,QAAA,iBAAAd,IAAA;IAAA,OAAAc,QAAA;EAAA;IAAAY,IAAA;IAAAC,KAAA;MAAAlB,KAAA,EAAAmB,cAAA,OAAA5B,IAAA;MAAA6B,OAAA,EAAAA,CAAA,GAAAX,UAAA;QAAA,CAHQ;UAAAlB,IAAA,CAAAA,IAAA,KACC,QAAG;UACX,MAAAG,IAAA,CAAAgB,IAAA,CAAAnB,IAAA;QAAqB,CACtB,KAAAkB,UAAA;MAAA;MAAAY,QAAA,EAAAF,cAAA,OAAA5B,IAAA;IAAA;EAAA;AAAA",
+        "ignoreList": []
+      },
+      "probes": [
+        {
+          "id": "unicode-signal-initializer",
+          "kind": "utf16-signal",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 6,
+              "column": 15,
+              "needle": "__fictUseSignal",
+              "occurrence": 1,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/unicode.tsx", "line": 4, "column": 21 }
+          }
+        },
+        {
+          "id": "effect-registration",
+          "kind": "effect",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 10,
+              "column": 2,
+              "needle": "__fictUseEffect",
+              "occurrence": 1,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/unicode.tsx", "line": 6, "column": 2 }
+          }
+        },
+        {
+          "id": "effect-document-write",
+          "kind": "effect-write",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 11,
+              "column": 4,
+              "needle": "document.title",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/unicode.tsx", "line": 6, "column": 18 }
+          }
+        },
+        {
+          "id": "async-event-update",
+          "kind": "async-event-write",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 19,
+              "column": 13,
+              "needle": "café(café() +",
+              "occurrence": 0,
+              "offset": 5
+            },
+            "original": { "source": "/oracle/source-map/unicode.tsx", "line": 10, "column": 15 }
+          }
+        },
+        {
+          "id": "async-await-read",
+          "kind": "async-await",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 20,
+              "column": 8,
+              "needle": "await data.read",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/unicode.tsx", "line": 12, "column": 8 }
+          }
+        },
+        {
+          "id": "unicode-title-binding",
+          "kind": "attribute-binding",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 25,
+              "column": 43,
+              "needle": "bindAttribute(__root_0, \"title\", () => café())",
+              "occurrence": 0,
+              "offset": 39
+            },
+            "original": { "source": "/oracle/source-map/unicode.tsx", "line": 13, "column": 7 }
+          }
+        },
+        {
+          "id": "unicode-jsx-child-read",
+          "kind": "jsx-child-read",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 24,
+              "column": 41,
+              "needle": "() => café()",
+              "occurrence": 0,
+              "offset": 6
+            },
+            "original": { "source": "/oracle/source-map/unicode.tsx", "line": 13, "column": 7 }
+          }
+        }
+      ]
+    },
+    {
+      "id": "commonjs-typescript-rewrite",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "83f4d03adcf147ab7b55a4183c5918a300a877d0604a04499a42e0c2bae04128",
+      "babelMapSha256": "93ca03f9e00618b3575b451bc3bac572205313fb154a95156d04e89c26f27764",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.join = join;\nexports.separator = void 0;\nvar _nodePath = _interopRequireDefault(require(\"node:path\"));\nfunction _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }\nconst separator = exports.separator = _nodePath.default.sep;\nfunction join(a, b) {\n  return _nodePath.default.join(a, b);\n}",
+      "babelMap": {
+        "version": 3,
+        "names": [
+          "_nodePath",
+          "_interopRequireDefault",
+          "require",
+          "e",
+          "__esModule",
+          "default",
+          "separator",
+          "exports",
+          "sep",
+          "join",
+          "a",
+          "b"
+        ],
+        "sources": ["/oracle/source-map/entry.cts"],
+        "sourcesContent": [
+          "import path from 'node:path'\nexport const separator: string = path.sep\nexport function join(a: string, b: string) { return path.join(a, b) }\n"
+        ],
+        "mappings": ";;;;;;;AAAA,IAAAA,SAAA,GAAAC,sBAAA,CAAAC,OAAA;AAA4B,SAAAD,uBAAAE,CAAA,WAAAA,CAAA,IAAAA,CAAA,CAAAC,UAAA,GAAAD,CAAA,KAAAE,OAAA,EAAAF,CAAA;AACf,MAAAG,SAAA,GAAAC,OAAA,CAAAD,SAAA,GAAAN,SAAA,CAAAK,OAAA,CAAAG,GAAA;AACN,SAAAC,KAAAC,CAAA,EAAAC,CAAA;EAAA,OAAAX,SAAA,CAAAK,OAAA,CAAAI,IAAA,CAAAC,CAAA,EAAAC,CAAA;AAAA",
+        "ignoreList": []
+      },
+      "probes": [
+        {
+          "id": "commonjs-default-property",
+          "kind": "commonjs-property",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 10,
+              "column": 56,
+              "needle": "_nodePath.default.sep",
+              "occurrence": 0,
+              "offset": 18
+            },
+            "original": { "source": "/oracle/source-map/entry.cts", "line": 2, "column": 13 }
+          }
+        },
+        {
+          "id": "commonjs-function-declaration",
+          "kind": "commonjs-declaration",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 11,
+              "column": 0,
+              "needle": "function join",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": { "source": "/oracle/source-map/entry.cts", "line": 3, "column": 7 }
+          }
+        },
+        {
+          "id": "commonjs-method-call",
+          "kind": "commonjs-call",
+          "disposition": "rust-precision-improvement",
+          "babel": {
+            "generated": {
+              "line": 12,
+              "column": 27,
+              "needle": "_nodePath.default.join",
+              "occurrence": 0,
+              "offset": 18
+            },
+            "original": { "source": "/oracle/source-map/entry.cts", "line": 3, "column": 7 }
+          }
+        },
+        {
+          "id": "generated-commonjs-prelude",
+          "kind": "generated-unmapped",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 1,
+              "column": 0,
+              "needle": "\"use strict\"",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": null
+          }
+        }
+      ]
+    }
+  ]
+}

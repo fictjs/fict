@@ -334,15 +334,27 @@ issues, node identity, and observable updates. This proves the reviewed
 compiler-output behavior; it does not prove legacy-runtime ABI, streaming,
 Suspense, or every legacy SSR fixture.
 
+Source-map compatibility is also a cross-implementation oracle rather than an
+inference from map shape. Three fixtures retain the frozen Babel maps and trace
+23 reviewed generated tokens through reactivity, props, events, control flow,
+keyed lists, effects, async/await, JSX bindings, Unicode, TypeScript/CommonJS
+rewrites, and generated preludes. CI replays each frozen Babel trace and traces
+the corresponding live Rust token to its authored line and UTF-16 column. Ten
+positions are exact parity; thirteen are explicit, reviewed Rust precision
+improvements where Babel pointed at a coarser statement or JSX boundary. The
+comparison deliberately does not require identical generated positions or
+claim exhaustive token-map equivalence, because the two emitters have different
+layouts.
+
 The machine-readable [E-07 semantic coverage
 matrix](../../scripts/fixtures/compiler_semantic_coverage_matrix.json) binds the
 remaining reviewed categories to their actual evidence strength. Browser
 DOM/delegation and the 22 Rust
 capability expansions use native runtime evidence; module identity uses the
 request contract; rejected component roles and decorators use diagnostic
-contracts; and complex lowerings use exact source-map position probes. Those
-native-only or rejection contracts are not presented as cross-implementation
-runtime equivalence.
+contracts; and complex lowerings combine sampled Babel/Rust source-position
+traces with deeper native probes. Those native-only or rejection contracts are
+not presented as cross-implementation runtime equivalence.
 
 A second full-request matrix prevents the semantic probes from collapsing every
 input to `.tsx`/CommonJS. Eighteen of its 30 reviewed requests freeze output from

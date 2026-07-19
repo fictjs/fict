@@ -28,6 +28,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'babelDomSemanticOracle',
     'babelRequestOracle',
     'babelSemanticOracle',
+    'babelSourceMapOracle',
     'babelSsrSemanticOracle',
     'diagnosticDeviationReview',
     'legacyAssertionInventory',
@@ -262,6 +263,81 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(ci, /pnpm --filter @fictjs\/ssr build/)
   assert.match(ci, /babel-compiler-ssr-semantic-oracle\.test\.mjs/)
 
+  const sourceMapScope = scope.assets.babelSourceMapOracle
+  const sourceMapInputsText = read(sourceMapScope.inputs)
+  const sourceMapInputs = JSON.parse(sourceMapInputsText)
+  const sourceMapOracle = readJson(sourceMapScope.artifact)
+  const sourceMapProbes = sourceMapInputs.fixtures.flatMap(fixture => fixture.probes)
+  const sourceMapDispositionCounts = Object.groupBy(sourceMapProbes, probe => probe.disposition)
+  assert.equal(sourceMapScope.fixtureCount, sourceMapInputs.fixtures.length)
+  assert.equal(sourceMapScope.fixtureCount, sourceMapOracle.fixtures.length)
+  assert.equal(sourceMapScope.fixtureCount, 3)
+  assert.equal(sourceMapScope.probeCount, sourceMapProbes.length)
+  assert.equal(sourceMapScope.probeCount, 23)
+  assert.equal(
+    sourceMapScope.exactParityPositions,
+    sourceMapDispositionCounts['exact-parity'].length,
+  )
+  assert.equal(
+    sourceMapScope.reviewedRustPrecisionImprovements,
+    sourceMapDispositionCounts['rust-precision-improvement'].length,
+  )
+  assert.equal(sourceMapScope.exactParityPositions, 10)
+  assert.equal(sourceMapScope.reviewedRustPrecisionImprovements, 13)
+  assert.equal(sourceMapOracle.provenance.oracleInputsSha256, sha256(sourceMapInputsText))
+  assert.equal(
+    sourceMapOracle.provenance.sourceMapHarnessSha256,
+    sha256(read('scripts/lib/compiler-source-map-semantic-harness.mjs')),
+  )
+  assert.equal(
+    sourceMapOracle.provenance.traceMappingDependency,
+    '@jridgewell/trace-mapping@0.3.31',
+  )
+  assert.deepEqual(sourceMapScope.positionSurfaces, [
+    'reactivity-and-memos',
+    'props-and-component-inputs',
+    'events-control-flow-and-keyed-lists',
+    'effects-and-async-await',
+    'jsx-and-dom-bindings',
+    'unicode-utf16-columns',
+    'typescript-commonjs-rewrites',
+    'generated-unmapped-prelude',
+  ])
+  assert.equal(sourceMapScope.exactBabelCompilerExecutedDuringGeneration, true)
+  assert.equal(sourceMapScope.frozenBabelMapReplayedInCi, true)
+  assert.equal(sourceMapScope.currentRustMapTracedInCi, true)
+  assert.equal(sourceMapScope.assertionLevel, 'cross-implementation-source-map')
+  assert.ok(
+    sourceMapScope.proves.includes('reviewed-cross-implementation-authored-source-positions'),
+  )
+  assert.ok(
+    sourceMapScope.proves.includes('explicit-babel-to-rust-source-map-deviation-accounting'),
+  )
+  assert.ok(sourceMapScope.doesNotProve.includes('identical-generated-token-layout'))
+  assert.ok(sourceMapScope.doesNotProve.includes('exhaustive-source-map-token-equivalence'))
+  assert.deepEqual(
+    sourceMapOracle.fixtures.map(fixture => fixture.id),
+    sourceMapInputs.fixtures.map(fixture => fixture.id),
+  )
+  for (const fixture of sourceMapOracle.fixtures) {
+    assert.match(fixture.babelCodeSha256, sha256Pattern, fixture.id)
+    assert.match(fixture.babelMapSha256, sha256Pattern, fixture.id)
+    assert.equal(sha256(fixture.babelCode), fixture.babelCodeSha256, fixture.id)
+    assert.equal(sha256(JSON.stringify(fixture.babelMap)), fixture.babelMapSha256, fixture.id)
+    assert.ok(fixture.babelMap.mappings.length > 0, fixture.id)
+  }
+  const sourceMapTest = read(sourceMapScope.ciTest)
+  assert.match(sourceMapTest, /traceGeneratedPosition\(/)
+  assert.match(sourceMapTest, /assertProbeMapping\(/)
+  assert.match(sourceMapTest, /rust\.original, replayedBabel\.original/)
+  const sourceMapGenerator = read(sourceMapScope.generator)
+  assert.match(sourceMapGenerator, /sourceMaps: true/)
+  assert.match(sourceMapGenerator, /assertProbeMapping\(/)
+  assert.match(sourceMapGenerator, /resolveConfig\(path\.join\(repositoryRoot, 'package\.json'\)\)/)
+  assert.match(packageJson, /test:compiler:babel-source-map-oracle/)
+  assert.match(packageJson, /babel-compiler-source-map-oracle\.test\.mjs/)
+  assert.match(ci, /babel-compiler-source-map-oracle\.test\.mjs/)
+
   const coverageScope = scope.assets.semanticCoverageMatrix
   const coverage = readJson(coverageScope.artifact)
   assert.equal(coverageScope.categoryCount, coverage.categories.length)
@@ -342,6 +418,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
     'cross-implementation-dom-runtime',
     'cross-implementation-graph-runtime',
     'cross-implementation-runtime',
+    'cross-implementation-source-map',
     'cross-implementation-ssr-runtime',
     'native-runtime',
     'request-contract',

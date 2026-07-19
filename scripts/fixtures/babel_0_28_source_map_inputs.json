@@ -1,0 +1,260 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "reactive-jsx-control-flow",
+      "filename": "/oracle/source-map/reactive.tsx",
+      "language": "tsx",
+      "moduleKind": "module",
+      "source": "import { $state, $memo } from 'fict'\n\nfunction Child({ value, label = String(value), ...rest }) {\n  return <button {...rest}>{label}:{value}</button>\n}\n\nexport function App(props) {\n  let count = $state(props.start)\n  const doubled = $memo(() => count * 2)\n  let rows = $state([{ id: 'a', value: 4 }])\n  return (\n    <main title={doubled} onClick={() => count++}>\n      {count > 0 ? <Child value={count} data-count={doubled} /> : <i>zero</i>}\n      <svg viewBox=\"0 0 10 10\">\n        {rows.map(row => <circle key={row.id} cx={row.value} />)}\n      </svg>\n    </main>\n  )\n}\n",
+      "probes": [
+        {
+          "id": "signal-initializer",
+          "kind": "signal",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "$state", "occurrence": 1 },
+          "legacySource": { "needle": "function App" },
+          "babel": { "needle": "__fictUseSignal", "occurrence": 1 },
+          "rust": { "needle": "__fictUseSignal", "occurrence": 1 },
+          "reason": "Babel mapped the generated signal helper to the component declaration; Rust maps it to the authored $state call."
+        },
+        {
+          "id": "memo-initializer",
+          "kind": "memo",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "$memo", "occurrence": 1 },
+          "legacySource": { "needle": "function App" },
+          "babel": { "needle": "$memo", "occurrence": 1 },
+          "rust": { "needle": "__fictUseMemo", "occurrence": 1 },
+          "reason": "Babel mapped the emitted memo call to the component declaration; Rust retains the macro call position."
+        },
+        {
+          "id": "destructured-prop-default",
+          "kind": "prop-default",
+          "disposition": "exact-parity",
+          "source": { "needle": "String(value)" },
+          "babel": { "needle": "String(__propValue_0)" },
+          "rust": { "needle": "String(value())" }
+        },
+        {
+          "id": "destructured-prop-child-read",
+          "kind": "prop-read",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "{value}", "offset": 1 },
+          "legacySource": { "needle": "{...rest}", "offset": 8 },
+          "babel": { "needle": "value()" },
+          "rust": { "needle": "value()", "occurrence": 1 },
+          "reason": "Babel mapped the child value read to the preceding spread boundary; Rust maps the accessor to the authored JSX expression."
+        },
+        {
+          "id": "event-update",
+          "kind": "event-write",
+          "disposition": "exact-parity",
+          "source": { "needle": "count++" },
+          "babel": { "needle": "count(__prev_13)" },
+          "rust": { "needle": "count(__fict_previous + 1)" }
+        },
+        {
+          "id": "conditional-test",
+          "kind": "control-flow",
+          "disposition": "exact-parity",
+          "source": { "needle": "count > 0" },
+          "babel": { "needle": "count() > 0" },
+          "rust": { "needle": "count() > 0" }
+        },
+        {
+          "id": "component-value-prop-read",
+          "kind": "component-prop",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "value={count}", "offset": 7 },
+          "legacySource": { "needle": "<Child ", "offset": 6 },
+          "babel": {
+            "needle": "value: __fictProp(() => count())",
+            "offset": 24
+          },
+          "rust": { "needle": "value: count()", "offset": 7 },
+          "reason": "Babel mapped the component prop read to whitespace before the attribute; Rust maps the emitted read to the authored expression."
+        },
+        {
+          "id": "component-data-prop-read",
+          "kind": "component-prop",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "data-count={doubled}", "offset": 12 },
+          "legacySource": { "needle": "<Child ", "offset": 6 },
+          "babel": {
+            "needle": "\"data-count\": __fictProp(() => doubled())",
+            "offset": 31
+          },
+          "rust": { "needle": "\"data-count\": doubled()", "offset": 14 },
+          "reason": "Babel coarsened both component props to one pre-attribute position; Rust preserves the second expression position."
+        },
+        {
+          "id": "keyed-list-receiver",
+          "kind": "keyed-list-receiver",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "rows.map" },
+          "legacySource": { "needle": "</i>}", "offset": 4 },
+          "babel": { "needle": "rows()" },
+          "rust": { "needle": "rows()" },
+          "reason": "Babel mapped the fine-grained list receiver to the preceding conditional close; Rust maps it to rows.map."
+        },
+        {
+          "id": "keyed-list-key",
+          "kind": "keyed-list-key",
+          "disposition": "exact-parity",
+          "source": { "needle": "row.id" },
+          "babel": { "needle": "row.id" },
+          "rust": { "needle": "row.id" }
+        },
+        {
+          "id": "keyed-list-value",
+          "kind": "keyed-list-value",
+          "disposition": "exact-parity",
+          "source": { "needle": "row.value" },
+          "babel": { "needle": "row().value" },
+          "rust": { "needle": "row().value" }
+        },
+        {
+          "id": "reactive-title-binding",
+          "kind": "attribute-binding",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "title={doubled}", "offset": 7 },
+          "legacySource": { "needle": ")}" },
+          "babel": {
+            "needle": "bindAttribute(__root_9, \"title\", () => doubled())",
+            "offset": 39
+          },
+          "rust": {
+            "needle": "bindAttribute(__fict_jsx33, \"title\", () => doubled())",
+            "offset": 43
+          },
+          "reason": "Babel mapped the title expression to the later keyed-list close; Rust maps it to the title expression."
+        }
+      ]
+    },
+    {
+      "id": "unicode-effects-and-async-handler",
+      "filename": "/oracle/source-map/unicode.tsx",
+      "language": "tsx",
+      "moduleKind": "module",
+      "source": "import { $state, $effect, resource } from 'fict'\n\nexport function Unicode() {\n  const prefix = '😀'; let café = $state(prefix)\n  const data = resource(async (_ctx, id) => String(id))\n  $effect(() => { document.title = café })\n  return (\n    <p\n      title={café}\n      onClick={async () => {\n        café += '雪'\n        await data.read(café)\n      }}\n    >\n      {café}\n    </p>\n  )\n}\n",
+      "probes": [
+        {
+          "id": "unicode-signal-initializer",
+          "kind": "utf16-signal",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "$state", "occurrence": 1 },
+          "legacySource": { "needle": "'😀';", "offset": 4 },
+          "babel": { "needle": "__fictUseSignal", "occurrence": 1 },
+          "rust": { "needle": "__fictUseSignal", "occurrence": 1 },
+          "reason": "Babel mapped the helper to the preceding statement boundary; Rust preserves the UTF-16 column of the $state call after an emoji."
+        },
+        {
+          "id": "effect-registration",
+          "kind": "effect",
+          "disposition": "exact-parity",
+          "source": { "needle": "$effect", "occurrence": 1 },
+          "babel": { "needle": "__fictUseEffect", "occurrence": 1 },
+          "rust": { "needle": "__fictUseEffect", "occurrence": 1 }
+        },
+        {
+          "id": "effect-document-write",
+          "kind": "effect-write",
+          "disposition": "exact-parity",
+          "source": { "needle": "document.title" },
+          "babel": { "needle": "document.title" },
+          "rust": { "needle": "document.title" }
+        },
+        {
+          "id": "async-event-update",
+          "kind": "async-event-write",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "café += '雪'" },
+          "legacySource": { "needle": "async () =>" },
+          "babel": { "needle": "café(café() +", "offset": 5 },
+          "rust": { "needle": "café() + \"雪\"" },
+          "reason": "Babel mapped the rewritten read to the async handler boundary; Rust maps it to the authored compound update."
+        },
+        {
+          "id": "async-await-read",
+          "kind": "async-await",
+          "disposition": "exact-parity",
+          "source": { "needle": "await data.read" },
+          "babel": { "needle": "await data.read" },
+          "rust": { "needle": "await data.read" }
+        },
+        {
+          "id": "unicode-title-binding",
+          "kind": "attribute-binding",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "title={café}", "offset": 7 },
+          "legacySource": { "needle": "      }}", "offset": 7 },
+          "babel": {
+            "needle": "bindAttribute(__root_0, \"title\", () => café())",
+            "offset": 39
+          },
+          "rust": {
+            "needle": "bindAttribute(__fict_jsx16, \"title\", () => café())",
+            "offset": 43
+          },
+          "reason": "Babel mapped the title value to the event attribute close; Rust maps it to the authored title expression."
+        },
+        {
+          "id": "unicode-jsx-child-read",
+          "kind": "jsx-child-read",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "{café}", "occurrence": 1, "offset": 1 },
+          "legacySource": { "needle": "      }}", "offset": 7 },
+          "babel": { "needle": "() => café()", "offset": 6 },
+          "rust": { "needle": "() => café()", "occurrence": 1, "offset": 6 },
+          "reason": "Babel mapped the JSX child accessor to the preceding event attribute close; Rust maps it to the authored child expression."
+        }
+      ]
+    },
+    {
+      "id": "commonjs-typescript-rewrite",
+      "filename": "/oracle/source-map/entry.cts",
+      "language": "ts",
+      "moduleKind": "commonjs",
+      "source": "import path from 'node:path'\nexport const separator: string = path.sep\nexport function join(a: string, b: string) { return path.join(a, b) }\n",
+      "probes": [
+        {
+          "id": "commonjs-default-property",
+          "kind": "commonjs-property",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "path.sep", "offset": 5 },
+          "legacySource": { "needle": "separator" },
+          "babel": { "needle": "_nodePath.default.sep", "offset": 18 },
+          "rust": { "needle": "__fict_cjs_import.default.sep", "offset": 26 },
+          "reason": "Babel mapped the rewritten property to the exported binding; Rust maps the property token to path.sep."
+        },
+        {
+          "id": "commonjs-function-declaration",
+          "kind": "commonjs-declaration",
+          "disposition": "exact-parity",
+          "source": { "needle": "function join" },
+          "babel": { "needle": "function join" },
+          "rust": { "needle": "function join" }
+        },
+        {
+          "id": "commonjs-method-call",
+          "kind": "commonjs-call",
+          "disposition": "rust-precision-improvement",
+          "source": { "needle": "path.join", "offset": 5 },
+          "legacySource": { "needle": "function join" },
+          "babel": { "needle": "_nodePath.default.join", "offset": 18 },
+          "rust": { "needle": "__fict_cjs_import.default.join", "offset": 26 },
+          "reason": "Babel mapped the rewritten method token to the function declaration; Rust maps it to path.join."
+        },
+        {
+          "id": "generated-commonjs-prelude",
+          "kind": "generated-unmapped",
+          "disposition": "exact-parity",
+          "source": null,
+          "babel": { "needle": "\"use strict\"" },
+          "rust": { "needle": "const __fict_cjs_load" }
+        }
+      ]
+    }
+  ]
+}
