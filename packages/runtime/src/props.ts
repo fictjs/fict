@@ -400,11 +400,6 @@ export function mergeProps<T extends Record<string, unknown>>(
     return {}
   }
 
-  if (validSources.length === 1 && typeof validSources[0] === 'object') {
-    // Return source directly to preserve getter behavior (consistent with multi-source)
-    return validSources[0]!
-  }
-
   const resolveSource = (src: MergeSource<T>): T | undefined => {
     const value = isPropGetter(src) ? src() : src
     if (value == null) return undefined

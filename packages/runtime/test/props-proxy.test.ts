@@ -733,11 +733,34 @@ describe('mergeProps advanced', () => {
     expect(Object.keys(merged).length).toBe(0)
   })
 
-  it('returns source directly for single static source', () => {
+  it('wraps a single static source with object-spread semantics', () => {
     const source = { a: 1, b: 2 }
     const merged = mergeProps(source)
 
-    expect(merged).toBe(source)
+    expect(merged).not.toBe(source)
+    expect(Object.keys(merged)).toEqual(['a', 'b'])
+    expect(merged.a).toBe(1)
+    expect(merged.b).toBe(2)
+  })
+
+  it('filters non-spread properties from a single static source', () => {
+    const prototype = { inherited: 'hidden' }
+    const source = Object.create(prototype) as Record<string, unknown>
+    Object.defineProperty(source, 'nonEnumerable', {
+      enumerable: false,
+      value: 'hidden',
+    })
+    source.visible = 'shown'
+
+    const merged = mergeProps(source)
+
+    expect(merged).not.toBe(source)
+    expect(Object.keys(merged)).toEqual(['visible'])
+    expect('inherited' in merged).toBe(false)
+    expect('nonEnumerable' in merged).toBe(false)
+    expect(merged.inherited).toBeUndefined()
+    expect(merged.nonEnumerable).toBeUndefined()
+    expect(merged.visible).toBe('shown')
   })
 
   it('treats unmarked function sources as spread objects', () => {

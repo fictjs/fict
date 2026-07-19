@@ -1661,8 +1661,15 @@ test('static component spreads copy enumerable own properties only', async () =>
         const prototype = { secret: 'inherited' }
         const source = Object.create(prototype)
         source.visible = 'own'
+        const onlySource = Object.create(prototype)
+        onlySource.id = 'only'
+        onlySource.visible = 'own'
+        const hidden = { id: 'hidden', visible: 'own' }
+        Object.defineProperty(hidden, 'secret', { value: 'non-enumerable', enumerable: false })
         return (
           <section>
+            <Child {...onlySource} />
+            <Child {...hidden} />
             <Child {...source} id="single" />
             <Child id="merged" {...source} other="named" />
           </section>
@@ -1680,8 +1687,16 @@ test('static component spreads copy enumerable own properties only', async () =>
   const dispose = compiled.mount(container)
   await flushRuntime()
 
+  const only = container.querySelector('[data-id="only"]')
+  const hidden = container.querySelector('[data-id="hidden"]')
   const single = container.querySelector('[data-id="single"]')
   const merged = container.querySelector('[data-id="merged"]')
+  assert.equal(only?.getAttribute('data-has-secret'), 'no')
+  assert.equal(only?.getAttribute('data-keys'), 'id,visible')
+  assert.equal(only?.textContent, 'undefined')
+  assert.equal(hidden?.getAttribute('data-has-secret'), 'no')
+  assert.equal(hidden?.getAttribute('data-keys'), 'id,visible')
+  assert.equal(hidden?.textContent, 'undefined')
   assert.equal(single?.getAttribute('data-has-secret'), 'no')
   assert.equal(single?.getAttribute('data-keys'), 'visible,id')
   assert.equal(single?.textContent, 'undefined')
