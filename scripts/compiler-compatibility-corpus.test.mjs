@@ -29,6 +29,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'diagnosticDeviationReview',
     'legacyAssertionInventory',
     'legacyDomainLedger',
+    'legacyOptionBehaviorAudit',
     'r006SuppressionAudit',
     'rustCodegenCorpus',
     'semanticCoverageMatrix',
@@ -64,6 +65,27 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     domainScope.doesNotProve.includes('runtime-equivalence-for-structural-invariant-domains'),
   )
   assert.ok(read(domainScope.ciTest).length > 0)
+
+  const optionScope = scope.assets.legacyOptionBehaviorAudit
+  const optionAudit = readJson(optionScope.artifact)
+  const optionCorpus = readJson(compileCorpusPath)
+  assert.equal(optionScope.sourceAuditSha256, optionAudit.sourceAudit.sha256)
+  assert.equal(optionScope.sourceAuditSha256, optionCorpus.provenance.auditInputSha256)
+  assert.equal(optionScope.auditCallsites, optionAudit.summary.auditCallsites)
+  assert.equal(optionScope.normalizedInputs, optionAudit.cases.length)
+  assert.equal(optionScope.normalizedInputs, optionAudit.summary.normalizedInputs)
+  assert.equal(optionScope.assertionLevel, 'mixed-diagnostic-and-native-runtime')
+  assert.ok(optionScope.proves.includes('exact-legacy-option-callsite-accounting'))
+  assert.ok(optionScope.proves.includes('reviewed-execution-for-every-normalized-input'))
+  assert.ok(
+    optionScope.doesNotProve.includes(
+      'mount-mutate-update-for-inputs-without-a-reactive-mutation-path',
+    ),
+  )
+  const optionTest = read(optionScope.ciTest)
+  assert.match(optionTest, /compileExact\(fixture\)/)
+  assert.match(optionTest, /module\.probe/)
+  assert.match(optionTest, /module\.update/)
 
   const codegen = scope.assets.rustCodegenCorpus
   const codegenCorpus = readJson(codegen.artifact)

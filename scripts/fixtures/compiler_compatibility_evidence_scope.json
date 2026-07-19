@@ -44,6 +44,23 @@
         "runtime-equivalence-for-structural-invariant-domains"
       ]
     },
+    "legacyOptionBehaviorAudit": {
+      "artifact": "scripts/fixtures/compiler_legacy_option_behavior.json",
+      "ciTest": "scripts/native-compiler-legacy-options-audit.test.mjs",
+      "sourceAuditSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
+      "auditCallsites": 38,
+      "normalizedInputs": 37,
+      "assertionLevel": "mixed-diagnostic-and-native-runtime",
+      "proves": [
+        "exact-legacy-option-callsite-accounting",
+        "live-diagnostic-contract-for-every-callsite",
+        "reviewed-execution-for-every-normalized-input"
+      ],
+      "doesNotProve": [
+        "mount-mutate-update-for-inputs-without-a-reactive-mutation-path",
+        "full-babel-runtime-equivalence"
+      ]
+    },
     "rustCodegenCorpus": {
       "artifact": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
       "generator": "scripts/generate-rust-codegen-corpus.mjs",

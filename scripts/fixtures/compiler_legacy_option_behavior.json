@@ -1,0 +1,357 @@
+{
+  "schemaVersion": 1,
+  "sourceAudit": {
+    "release": "0.28.0",
+    "revision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "sha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f"
+  },
+  "sourceCorpus": "crates/fict-compiler/tests/rust_frozen_codegen_corpus.json",
+  "summary": {
+    "auditCallsites": 38,
+    "normalizedInputs": 37,
+    "optionFamilies": {
+      "dev=true": 2,
+      "getterCache=false": 1,
+      "inlineDerivedMemos=false": 2,
+      "lazyConditional=false": 1,
+      "optimizeLevel=full": 31
+    },
+    "executionLevels": {
+      "diagnostic-contract": 2,
+      "dom-reactivity": 1,
+      "dom-runtime": 1,
+      "pure-function": 31,
+      "reactive-function": 1,
+      "runtime-observation": 1
+    }
+  },
+  "claimBoundary": {
+    "diagnostic-contract": "Inputs intentionally rejected or downgraded to fallback are checked as diagnostic behavior, not claimed as reactive DOM equivalence.",
+    "dom-reactivity": "The exact option-bearing source shape is adapted only to expose its internal setter, then mounted, mutated, and checked for a DOM update.",
+    "dom-runtime": "The exact option-bearing component is mounted and its observable initial DOM is asserted; the source exposes no mutation path.",
+    "pure-function": "The exact source is compiled with its audited options and its authored function is exported only for direct calls with reviewed arguments and results.",
+    "reactive-function": "The exact source shape is adapted only to expose its setter and returned closure, then checked before and after mutation.",
+    "runtime-observation": "The exact source is executed and its authored observable side effect is asserted; it exposes no reactive output or mutation path."
+  },
+  "cases": [
+    {
+      "id": "packages/compiler/test/default-options.test.ts:170:transform",
+      "auditAliases": ["packages/compiler/test/spec-rules.test.ts:3548:transform"],
+      "optionFamily": "lazyConditional=false",
+      "execution": { "kind": "diagnostic-contract", "diagnosticCode": "FICT-R006" }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:17:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 5 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:30:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 10 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:42:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 7 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:54:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 0 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:66:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 15 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:78:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 20 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:90:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 3 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:102:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 1 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:112:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [7], "expected": 7 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:122:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [7], "expected": 0 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:136:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 5 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:148:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 10 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:160:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": true }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:172:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [
+          { "args": [0], "expected": 0 },
+          { "args": [7], "expected": true }
+        ]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:184:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 15 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:194:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [
+          { "args": [0], "expected": false },
+          { "args": [7], "expected": 7 }
+        ]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:206:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": false }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:218:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": true }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:232:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 5 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:244:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 10 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:256:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 42 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:269:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": false }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:280:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": true }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:292:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 5 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:307:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 5 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:320:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 10 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:332:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": 42 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:342:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "behaviorProbe": "preserved-side-effect"
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:355:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": true }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:366:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "test",
+        "calls": [{ "args": [], "expected": false }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-algebraic.test.ts:488:transform",
+      "optionFamily": "inlineDerivedMemos=false",
+      "execution": { "kind": "dom-reactivity", "behaviorProbe": "retained-derived-memo" }
+    },
+    {
+      "id": "packages/compiler/test/optimizer-semantics.test.ts:136:transform",
+      "optionFamily": "optimizeLevel=full",
+      "execution": {
+        "kind": "pure-function",
+        "exportName": "foo",
+        "calls": [{ "args": [4], "expected": 5 }]
+      }
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:2744:transform",
+      "optionFamily": "dev=true",
+      "execution": { "kind": "diagnostic-contract", "diagnosticCode": "FICT-R-CYCLE" }
+    },
+    {
+      "id": "packages/compiler/test/spec-rules.test.ts:3692:transform",
+      "optionFamily": "getterCache=false",
+      "execution": { "kind": "reactive-function", "behaviorProbe": "uncached-repeated-reads" }
+    },
+    {
+      "id": "packages/compiler/test/state-initializer-order.test.ts:123:transform",
+      "optionFamily": "dev=true",
+      "execution": { "kind": "dom-runtime", "behaviorProbe": "dev-state-initializer" }
+    },
+    {
+      "id": "packages/compiler/test/transform.test.ts:147:transformWithOptions",
+      "optionFamily": "inlineDerivedMemos=false",
+      "execution": {
+        "kind": "runtime-observation",
+        "behaviorProbe": "retained-derived-observation"
+      }
+    }
+  ]
+}
