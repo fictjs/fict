@@ -366,7 +366,7 @@ export default function fictWebpackLoader(
   }
   const compilerOptions: FictWebpackLoaderOptions = {
     ...options,
-    dev: options.dev ?? false,
+    dev: options.dev ?? this.mode !== 'production',
   }
   let nativeCompiler: NativeCompilerBinding
   try {

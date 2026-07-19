@@ -1366,7 +1366,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
     const fictOptions: FictPluginCompilerOptions = {
       ...compilerOptions,
-      dev: compilerOptions.dev ?? false,
+      dev: compilerOptions.dev ?? (config?.command === 'serve' || config?.mode === 'development'),
       sourcemap: compilerOptions.sourcemap ?? true,
       filename: normalizedFilename,
       // Build identities resolve through the manifest. Dev identities are directly serviceable

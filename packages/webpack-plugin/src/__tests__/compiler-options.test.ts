@@ -41,6 +41,46 @@ function compileResult(): CompileResult {
   }
 }
 
+async function compileWithLoaderOptions(
+  mode: string,
+  options: Record<string, unknown>,
+): Promise<CompileRequest> {
+  const resource = `/project/src/dev-default-${mode}.ts`
+  const module = {
+    buildInfo: {},
+    identifier: () => resource,
+    resource,
+  }
+  let callback: (error?: Error | null, content?: string) => void = () => undefined
+  const completed = new Promise<string>((resolve, reject) => {
+    callback = (error, content) => {
+      if (error) reject(error)
+      else resolve(content ?? '')
+    }
+  })
+  const loaderContext = {
+    async: () => callback,
+    addDependency: vi.fn(),
+    addMissingDependency: vi.fn(),
+    cacheable: vi.fn(),
+    getOptions: () => options,
+    mode,
+    resource,
+    resourcePath: resource,
+    rootContext: '/project',
+    sourceMap: true,
+  }
+  attachLoaderBinding(loaderContext, {
+    module: module as never,
+    state: createCompilationState(),
+  })
+
+  fictWebpackLoader.call(loaderContext as never, 'export const value = true')
+  await expect(completed).resolves.toBe('export const value = 1;\n')
+  const calls = native.transform.mock.calls
+  return calls[calls.length - 1]![0] as CompileRequest
+}
+
 describe('@fictjs/webpack-plugin compiler options', () => {
   beforeEach(() => {
     native.load.mockReset()
@@ -53,6 +93,17 @@ describe('@fictjs/webpack-plugin compiler options', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
+  })
+
+  it.each([
+    ['development default', 'development', {}, true],
+    ['production default', 'production', {}, false],
+    ['none-mode default', 'none', {}, true],
+    ['explicit development opt-out', 'development', { dev: false }, false],
+    ['explicit production opt-in', 'production', { dev: true }, true],
+  ])('derives compiler dev for %s', async (_label, mode, options, expected) => {
+    const request = await compileWithLoaderOptions(mode, options)
+    expect(request.options?.dev).toBe(expected)
   })
 
   it('forces strict guarantees in production through the shared compiler policy', async () => {

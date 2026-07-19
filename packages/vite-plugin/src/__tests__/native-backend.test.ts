@@ -171,6 +171,33 @@ describe('Rust compiler backend', () => {
     vi.unstubAllEnvs()
   })
 
+  it.each([
+    ['serve command', 'serve', 'production', {}, true],
+    ['development build', 'build', 'development', {}, true],
+    ['production build', 'build', 'production', {}, false],
+    ['explicit serve opt-out', 'serve', 'development', { dev: false }, false],
+    ['explicit production opt-in', 'build', 'production', { dev: true }, true],
+  ])('derives compiler dev for %s', async (_label, command, mode, compilerOptions, expected) => {
+    native.transform.mockResolvedValue(compileResult())
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+      ...compilerOptions,
+    })
+    plugin.configResolved?.({ ...config, command, mode } as never)
+
+    await plugin.transform?.call(
+      context() as never,
+      'export const value = true',
+      '/project/src/dev-default.ts',
+    )
+
+    const request = native.transform.mock.calls[0]![0] as CompileRequest
+    expect(request.options?.dev).toBe(expected)
+  })
+
   it('forces strict guarantees in production through the shared compiler policy', async () => {
     vi.stubEnv('NODE_ENV', 'production')
     vi.stubEnv('FICT_STRICT_GUARANTEE', 'false')
