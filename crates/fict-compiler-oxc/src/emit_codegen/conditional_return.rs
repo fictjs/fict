@@ -8,8 +8,8 @@ use oxc::{
             AssignmentTargetProperty, AssignmentTargetRest, BindingPattern, Class, Expression,
             ForInStatement, ForOfStatement, ForStatement, ForStatementInit, ForStatementLeft,
             FormalParameter, FormalParameterKind, FormalParameters, Function, FunctionBody,
-            IdentifierName, IfStatement, Statement, VariableDeclaration, VariableDeclarationKind,
-            VariableDeclarator,
+            IdentifierName, IfStatement, ObjectPropertyKind, PropertyKey, PropertyKind, Statement,
+            SwitchStatement, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{VisitMut, walk_mut},
@@ -23,14 +23,22 @@ pub(super) struct ConditionalReturnRewrite {
     helper: String,
     create_helper: String,
     cleanup_helper: String,
+    track_branch_reads: bool,
 }
 impl ConditionalReturnRewrite {
-    pub(super) fn new(target: &str, helper: &str, create: &str, cleanup: &str) -> Self {
+    pub(super) fn new(
+        target: &str,
+        helper: &str,
+        create: &str,
+        cleanup: &str,
+        track_branch_reads: bool,
+    ) -> Self {
         Self {
             target: target.to_owned(),
             helper: helper.to_owned(),
             create_helper: create.to_owned(),
             cleanup_helper: cleanup.to_owned(),
+            track_branch_reads,
         }
     }
 }
@@ -66,55 +74,118 @@ pub(super) fn lower_statements<'a>(
                 continue;
             }
         }
-        let Statement::IfStatement(statement) = &statements[index] else {
-            index += 1;
-            continue;
-        };
-        let location = (statement.span.start, statement.span.end);
-        let Some(rewrite) = rewrites.get(&location) else {
-            index += 1;
-            continue;
-        };
-        if matches!(
-            &statement.test,
-            Expression::Identifier(identifier)
-                if identifier.name.as_str() == rewrite.target.as_str()
-        ) {
-            index += 1;
-            continue;
-        }
-        let remove_count = if statement.alternate.is_some() {
-            0
-        } else {
-            let Some(count) = fallthrough_statement_count(&statements[index + 1..]) else {
+        if let Statement::IfStatement(statement) = &statements[index] {
+            let location = (statement.span.start, statement.span.end);
+            let Some(rewrite) = rewrites.get(&location) else {
                 index += 1;
                 continue;
             };
-            count
-        };
-        let statement_span = statement.span;
-        let test = statement.test.clone_in(allocator);
-        let (dispatcher, hoisted_vars) = statement_dispatcher_expression(
-            allocator,
-            rewrite,
-            statement,
-            &statements[index + 1..index + 1 + remove_count],
-        );
-        let replacement =
-            dispatcher_binding_expression(allocator, rewrite, test, dispatcher, statement_span);
-        statements[index] = Statement::new_return_statement(
-            statement_span,
-            Some(replacement),
-            &AstBuilder::new(allocator),
-        );
-        for _ in 0..remove_count {
-            statements.remove(index + 1);
-        }
-        if let Some(declaration) = hoisted_var_statement(allocator, hoisted_vars, statement_span) {
-            statements.insert(index, declaration);
+            if matches!(
+                &statement.test,
+                Expression::Identifier(identifier)
+                    if identifier.name.as_str() == rewrite.target.as_str()
+            ) {
+                index += 1;
+                continue;
+            }
+            let remove_count = if statement_returns_on_all_paths(&statements[index]) {
+                0
+            } else {
+                let Some(count) = fallthrough_statement_count(&statements[index + 1..]) else {
+                    index += 1;
+                    continue;
+                };
+                count
+            };
+            let statement_span = statement.span;
+            let fallthrough = &statements[index + 1..index + 1 + remove_count];
+            let (replacement, hoisted_vars) = if rewrite.track_branch_reads {
+                let (dispatcher, hoisted_vars) = tracked_statement_dispatcher_expression(
+                    allocator,
+                    &statements[index],
+                    fallthrough,
+                    statement_span,
+                );
+                (
+                    tracked_dispatcher_binding_expression(
+                        allocator,
+                        rewrite,
+                        dispatcher,
+                        statement_span,
+                    ),
+                    hoisted_vars,
+                )
+            } else {
+                let test = statement.test.clone_in(allocator);
+                let (dispatcher, hoisted_vars) =
+                    statement_dispatcher_expression(allocator, rewrite, statement, fallthrough);
+                (
+                    dispatcher_binding_expression(
+                        allocator,
+                        rewrite,
+                        test,
+                        dispatcher,
+                        statement_span,
+                    ),
+                    hoisted_vars,
+                )
+            };
+            replace_statement_with_dispatcher(
+                allocator,
+                statements,
+                index,
+                remove_count,
+                replacement,
+                hoisted_vars,
+                statement_span,
+            );
+            matched.insert(location);
             index += 1;
+            continue;
         }
-        matched.insert(location);
+        if let Statement::SwitchStatement(statement) = &statements[index] {
+            let location = (statement.span.start, statement.span.end);
+            let Some(rewrite) = rewrites
+                .get(&location)
+                .filter(|rewrite| rewrite.track_branch_reads)
+            else {
+                index += 1;
+                continue;
+            };
+            let remove_count = if switch_returns_on_all_paths(statement) {
+                0
+            } else {
+                // The EmitIR plan already proves that every CFG path reaches a JSX return.
+                // Empty or expression-only clauses can fall through to a later returning clause,
+                // so the AST-local direct-return check is intentionally only an optimization.
+                fallthrough_statement_count(&statements[index + 1..]).unwrap_or(0)
+            };
+            let statement_span = statement.span;
+            let (dispatcher, hoisted_vars) = tracked_statement_dispatcher_expression(
+                allocator,
+                &statements[index],
+                &statements[index + 1..index + 1 + remove_count],
+                statement_span,
+            );
+            let replacement = tracked_dispatcher_binding_expression(
+                allocator,
+                rewrite,
+                dispatcher,
+                statement_span,
+            );
+            replace_statement_with_dispatcher(
+                allocator,
+                statements,
+                index,
+                remove_count,
+                replacement,
+                hoisted_vars,
+                statement_span,
+            );
+            matched.insert(location);
+            index += 1;
+            continue;
+        }
         index += 1;
     }
 }
@@ -122,8 +193,61 @@ pub(super) fn lower_statements<'a>(
 fn fallthrough_statement_count(statements: &[Statement<'_>]) -> Option<usize> {
     statements
         .iter()
-        .position(statement_returns_value)
+        .position(statement_returns_on_all_paths)
         .map(|index| index.saturating_add(1))
+}
+
+fn replace_statement_with_dispatcher<'a>(
+    allocator: &'a Allocator,
+    statements: &mut ArenaVec<'a, Statement<'a>>,
+    index: usize,
+    remove_count: usize,
+    replacement: Expression<'a>,
+    hoisted_vars: Vec<(String, Span)>,
+    span: Span,
+) {
+    statements[index] =
+        Statement::new_return_statement(span, Some(replacement), &AstBuilder::new(allocator));
+    for _ in 0..remove_count {
+        statements.remove(index + 1);
+    }
+    if let Some(declaration) = hoisted_var_statement(allocator, hoisted_vars, span) {
+        statements.insert(index, declaration);
+    }
+}
+
+fn tracked_statement_dispatcher_expression<'a>(
+    allocator: &'a Allocator,
+    statement: &Statement<'a>,
+    fallthrough: &[Statement<'a>],
+    span: Span,
+) -> (Expression<'a>, Vec<(String, Span)>) {
+    let builder = AstBuilder::new(allocator);
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(statement.clone_in(allocator));
+    statements.extend(
+        fallthrough
+            .iter()
+            .map(|statement| statement.clone_in(allocator)),
+    );
+    let mut hoister = DispatcherVarHoister::new(allocator);
+    for statement in &mut statements {
+        hoister.visit_statement(statement);
+    }
+    let parameters = FormalParameters::boxed(
+        span,
+        FormalParameterKind::ArrowFormalParameters,
+        ArenaVec::new_in(&allocator),
+        NONE,
+        &builder,
+    );
+    let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
+    (
+        Expression::new_arrow_function_expression(
+            span, false, false, NONE, parameters, NONE, body, &builder,
+        ),
+        hoister.bindings,
+    )
 }
 
 fn statement_dispatcher_expression<'a>(
@@ -427,13 +551,34 @@ fn hoisted_var_statement<'a>(
     ))
 }
 
-fn statement_returns_value(statement: &Statement<'_>) -> bool {
+fn statement_returns_on_all_paths(statement: &Statement<'_>) -> bool {
     match statement {
         Statement::ReturnStatement(returned) => returned.argument.is_some(),
-        Statement::BlockStatement(block) => block.body.iter().any(statement_returns_value),
+        Statement::BlockStatement(block) => statements_return_on_all_paths(&block.body),
+        Statement::IfStatement(statement) => {
+            statement_returns_on_all_paths(&statement.consequent)
+                && statement
+                    .alternate
+                    .as_ref()
+                    .is_some_and(|alternate| statement_returns_on_all_paths(alternate))
+        }
+        Statement::SwitchStatement(statement) => switch_returns_on_all_paths(statement),
         _ => false,
     }
 }
+
+fn statements_return_on_all_paths(statements: &[Statement<'_>]) -> bool {
+    statements.iter().any(statement_returns_on_all_paths)
+}
+
+fn switch_returns_on_all_paths(statement: &SwitchStatement<'_>) -> bool {
+    statement.cases.iter().any(|case| case.test.is_none())
+        && statement
+            .cases
+            .iter()
+            .all(|case| statements_return_on_all_paths(&case.consequent))
+}
+
 fn binding_expression<'a>(
     allocator: &'a Allocator,
     rewrite: &ConditionalReturnRewrite,
@@ -442,7 +587,8 @@ fn binding_expression<'a>(
     alternate: Expression<'a>,
     span: Span,
 ) -> Expression<'a> {
-    let binding = conditional_expression(allocator, rewrite, test, consequent, alternate, span);
+    let binding =
+        conditional_expression(allocator, rewrite, test, consequent, alternate, span, false);
     finalized_binding_expression(allocator, rewrite, binding, span)
 }
 
@@ -469,9 +615,44 @@ fn dispatcher_binding_expression<'a>(
         dispatcher_call(true),
         dispatcher_call(false),
         span,
+        false,
     );
     // The allocated target is collision-free. Reusing it in nested, non-overlapping parameter
     // scopes materializes the dispatcher exactly once without inventing another local name.
+    let finalized = finalized_binding_expression(allocator, rewrite, binding, span);
+    let receive_dispatcher = expression_arrow(
+        allocator,
+        allocator.alloc_str(&rewrite.target),
+        finalized,
+        span,
+    );
+    call_with_argument(allocator, receive_dispatcher, dispatcher, span)
+}
+
+fn tracked_dispatcher_binding_expression<'a>(
+    allocator: &'a Allocator,
+    rewrite: &ConditionalReturnRewrite,
+    dispatcher: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let dispatcher_call = Expression::new_call_expression(
+        span,
+        Expression::new_identifier(span, allocator.alloc_str(&rewrite.target), &builder),
+        NONE,
+        ArenaVec::new_in(&allocator),
+        false,
+        &builder,
+    );
+    let binding = conditional_expression(
+        allocator,
+        rewrite,
+        Expression::new_boolean_literal(span, true, &builder),
+        dispatcher_call,
+        Expression::new_boolean_literal(span, false, &builder),
+        span,
+        true,
+    );
     let finalized = finalized_binding_expression(allocator, rewrite, binding, span);
     let receive_dispatcher = expression_arrow(
         allocator,
@@ -489,6 +670,7 @@ fn conditional_expression<'a>(
     consequent: Expression<'a>,
     alternate: Expression<'a>,
     span: Span,
+    track_branch_reads: bool,
 ) -> Expression<'a> {
     let builder = AstBuilder::new(allocator);
     let callee = Expression::new_identifier(span, allocator.alloc_str(&rewrite.helper), &builder);
@@ -501,6 +683,30 @@ fn conditional_expression<'a>(
             .map(|value| Argument::from(zero_parameter_expression_arrow(allocator, value, span))),
     );
     arguments.insert(2, Argument::from(create));
+    if track_branch_reads {
+        arguments.push(Argument::from(Expression::new_null_literal(span, &builder)));
+        arguments.push(Argument::from(Expression::new_null_literal(span, &builder)));
+        let key = PropertyKey::new_static_identifier(
+            span,
+            allocator.alloc_str("trackBranchReads"),
+            &builder,
+        );
+        let property = ObjectPropertyKind::new_object_property(
+            span,
+            PropertyKind::Init,
+            key,
+            Expression::new_boolean_literal(span, true, &builder),
+            false,
+            false,
+            false,
+            &builder,
+        );
+        arguments.push(Argument::from(Expression::new_object_expression(
+            span,
+            ArenaVec::from_array_in([property], &allocator),
+            &builder,
+        )));
+    }
     Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
 }
 

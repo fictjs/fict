@@ -1658,6 +1658,68 @@ test('lazyConditional false preserves authored control-flow returns', () => {
   assert.match(disabled.code, /if \(count\(\) > 10\)/)
 })
 
+test('else-if chains and switch returns rerender reactively', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setElseIf = () => {}
+      let setSwitch = () => {}
+
+      function ElseIfApp() {
+        let mode = $state(0)
+        setElseIf = value => (mode = value)
+        if (mode === 0) return <p data-id="else-if">zero</p>
+        else if (mode === 1) return <p data-id="else-if">one</p>
+        else return <p data-id="else-if">many</p>
+      }
+
+      function SwitchApp() {
+        let mode = $state(0)
+        setSwitch = value => (mode = value)
+        switch (mode) {
+          case 0: return <p data-id="switch">zero</p>
+          case 1: return <p data-id="switch">one</p>
+          default: return <p data-id="switch">many</p>
+        }
+      }
+
+      function App() {
+        return <main><ElseIfApp /><SwitchApp /></main>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function refresh(value) {
+        setElseIf(value)
+        setSwitch(value)
+      }
+    `,
+    'compound-conditional-returns',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  for (const [mode, expected] of [
+    [0, 'zero'],
+    [1, 'one'],
+    [2, 'many'],
+    [0, 'zero'],
+  ]) {
+    compiled.refresh(mode)
+    await flushRuntime()
+    assert.equal(container.querySelector('[data-id="else-if"]')?.textContent, expected)
+    assert.equal(container.querySelector('[data-id="switch"]')?.textContent, expected)
+  }
+
+  dispose()
+  container.remove()
+})
+
 test('getterCache controls safe repeated synchronous accessor reads', async () => {
   const source = `
     import { $memo, $state } from 'fict'

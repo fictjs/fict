@@ -2076,6 +2076,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                     helper,
                     create_helper,
                     cleanup_helper,
+                    track_branch_reads,
                     origin,
                 } => {
                     let Some(span) = origin.primary_span else {
@@ -2094,7 +2095,11 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         .zip(helper_names.get(cleanup_helper).copied())
                         .map(|(((target, helper), create), cleanup)| {
                             conditional_return::ConditionalReturnRewrite::new(
-                                target, helper, create, cleanup,
+                                target,
+                                helper,
+                                create,
+                                cleanup,
+                                *track_branch_reads,
                             )
                         });
                     if plan.is_none()

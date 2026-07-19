@@ -4109,6 +4109,53 @@ mod tests {
     }
 
     #[test]
+    fn lowers_compound_conditional_returns_with_tracked_dispatchers() {
+        let else_if = compile(request(
+            "import { $state } from 'fict'; export function App() { const mode = $state(0); if (mode === 0) return <Zero />; else if (mode === 1) return <One />; else return <Many />; }",
+            "else-if-return.tsx",
+        ));
+        assert!(else_if.diagnostics.is_empty(), "{:?}", else_if.diagnostics);
+        assert!(
+            else_if.code.contains("createConditional(() => true"),
+            "{}",
+            else_if.code
+        );
+        assert!(
+            else_if.code.contains("trackBranchReads: true"),
+            "{}",
+            else_if.code
+        );
+
+        let switch = compile(request(
+            "import { $state } from 'fict'; export function App() { const mode = $state(0); switch (mode) { case 0: return <Zero />; case 1: return <One />; default: return <Many />; } }",
+            "switch-return.tsx",
+        ));
+        assert!(switch.diagnostics.is_empty(), "{:?}", switch.diagnostics);
+        assert!(
+            switch.code.contains("createConditional(() => true"),
+            "{}",
+            switch.code
+        );
+        assert!(
+            switch.code.contains("trackBranchReads: true"),
+            "{}",
+            switch.code
+        );
+
+        let fallthrough_switch = compile(request(
+            "import { $state } from 'fict'; export function App() { const mode = $state(0); switch (mode) { case 0: 'fallthrough'; case 1: return <One />; default: return <Many />; } }",
+            "switch-fallthrough-return.tsx",
+        ));
+        assert!(
+            fallthrough_switch.diagnostics.is_empty()
+                && fallthrough_switch.code.contains("trackBranchReads: true"),
+            "{:?}\n{}",
+            fallthrough_switch.diagnostics,
+            fallthrough_switch.code
+        );
+    }
+
+    #[test]
     fn lazy_conditional_option_controls_control_flow_return_lowering() {
         let source = "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10) return <Big />; return <Small />; }";
         let enabled = compile(request(source, "lazy-conditional.tsx"));

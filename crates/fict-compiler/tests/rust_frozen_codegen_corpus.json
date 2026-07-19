@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "c4baad591fe2dfdb5bfe7c2141fafe0631546d9d",
+    "rustAuditRevision": "1f0ab8082612bb9b67d298aaa7d4b66a3309767e",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "c4baad591fe2dfdb5bfe7c2141fafe0631546d9d",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-f9908bba59a038b1f13d81bdd9b2c19af2ad056253e3690be96f4b1f43a96a13"
+    "reviewedRevision": "1f0ab8082612bb9b67d298aaa7d4b66a3309767e",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-a42f4756705686b5303acd5251826d6e66a92eb644e589f1ed0d64e27b025faf"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.",
@@ -6893,7 +6893,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "7498cfc0067e60a572da763e1afc6a32e76a56f748b862127bc6f820d01f9682"
+        "codeSha256": "6439ac2ed8d1fe970ffe98de7db4e3ca91a4ad43c6e751ba9c4c46f6015b039b"
       },
       "deviationPolicy": null
     },
@@ -13132,7 +13132,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "b48d89ca6fba3949770700199966d76cc3efacf620f1d218fce751009ca0f292"
+        "codeSha256": "3c70de20b59cff049bb66cce67fb140ab5c30695c4471bd4967b1dade3e1ab93"
       },
       "deviationPolicy": null
     },
@@ -13180,7 +13180,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "661cb2b5f9d92aaa431f96f7f707418bfebd46fce3fc0314b146eced753a2fcc"
+        "codeSha256": "5fa6dd37aeb4340f381d9d70f8698380acd46043e1400303a66aab1576a90f37"
       },
       "deviationPolicy": null
     },
@@ -13204,7 +13204,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "ec5aae1e9c2995321d868281dc2f69098105cd1e1160142c32cab01453c137b5"
+        "codeSha256": "c40266de86be720eb8f432f19fb25d89b2212d59df412bcbc81ffedf0b0c0364"
       },
       "deviationPolicy": null
     },
@@ -13228,7 +13228,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "70554582467065cdc87d90a320f26670ecd8b657b005ddae9131c221fe6748ca"
+        "codeSha256": "8d0cd08782cc6575f2f1c387db55bb8955767974c05dcfd3e9221f127cf97466"
       },
       "deviationPolicy": null
     },
@@ -13252,7 +13252,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "a02e57a65cb11b9f56a238d5bdc0553a0dce64c35058e01e33627d2c75c3831c"
+        "codeSha256": "815c2d74a73a7ab78e87b586a00e3af9acaa73664c0a93936af7b4bf466f5d89"
       },
       "deviationPolicy": null
     },
@@ -13276,7 +13276,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "59b7def400a0c1ac95a5b72ac5bbb91a4bb4102b58ad3be654b93d29a97fd3bf"
+        "codeSha256": "cfea77b80f6a22655682c0529f61e6c854a08879a7823857ea115e4b7129b668"
       },
       "deviationPolicy": null
     },
@@ -13599,7 +13599,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "50a568b9d4a7fc91999d22b3050e039431145d5c4241ad6e16f77f47ff7a93ed"
+        "codeSha256": "2a15a2321db6dcfb9d349ff78cb25d59c725c24add93ce402e29f11e1923d034"
       },
       "deviationPolicy": null
     },
@@ -13953,7 +13953,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "e0d014df0f9ed0e2e2886f82fafec5635211e3e1a09f12a1fb2cab3fbb319acc"
+        "codeSha256": "8a880a3d8785ea59d160bdcbe5c98dc9679d2c860003c370be0410b9ea69d912"
       },
       "deviationPolicy": null
     },
@@ -31922,7 +31922,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "cd446b4dd69e98f33bc5c6c7938ffd67f76644e6b94344d63018fa171d501f52"
+        "codeSha256": "84c4cce11110abaa80a8fc17b2f3f098f49608771f910a935cf3b74bb1268403"
       },
       "deviationPolicy": null
     },
@@ -32559,7 +32559,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "0e7657e167d439f02a2fcf1cc6a77fe886855b3ec5945b18ddf32f44775ad8dd"
+        "codeSha256": "04a16f9974e25a40b5b6a9d86ff83f8f0910f2c73060ca9fc566937d394f8b55"
       },
       "deviationPolicy": null
     },
@@ -47990,7 +47990,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "4025c4d5510c9462bae35c124961b981e85693ce8375479d6c21df49be36da0f"
+        "codeSha256": "432f4b05cac55b2173e2bbe9affa2895e92b770a72eea49b943b24b3810a9a61"
       },
       "deviationPolicy": null
     },
@@ -48026,7 +48026,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "6e07d34bf6325a8e0c883239a981ca6d02cf9bd9ee55e457ad4f28eb20ea2bb0"
+        "codeSha256": "52b146f1f91a075c4c6148bfb325eccfcf3298646988340e5c5531ebdc4a4e46"
       },
       "deviationPolicy": null
     },
@@ -50248,7 +50248,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "a7a6811b7ecc3b4f6c42ffd630161f41e78673981f79e4c389d451c0a55e689f"
+        "codeSha256": "bbafcb04ad3c3be270c34cd72748527cbdf5df6c857108ab74fb45202296469f"
       },
       "deviationPolicy": "rust-capability-expansion"
     },

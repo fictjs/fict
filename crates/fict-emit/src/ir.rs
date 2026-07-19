@@ -437,12 +437,14 @@ pub enum EmitOperation {
         cleanup: CleanupOwner,
         origin: Origin,
     },
-    /// Replace an authored reactive `if`/return pair with a root conditional binding.
+    /// Replace authored reactive return control flow with a root conditional binding.
     ConditionalReturn {
         target: EmitTemporaryId,
         helper: RuntimeHelper,
         create_helper: RuntimeHelper,
         cleanup_helper: RuntimeHelper,
+        /// Rerun the active branch when reads nested inside a compound dispatcher change.
+        track_branch_reads: bool,
         origin: Origin,
     },
     /// Materialize a binding-aware keyed `.map()` child between template-owned markers.

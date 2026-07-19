@@ -2,7 +2,8 @@ use crate::{
     EmitOperation, EmitTemporary, EmitTemporaryId, RuntimeHelper, name_allocator::NameAllocator,
 };
 use fict_hir::{
-    FunctionKind, HirFunction, HirInstructionKind, PlaceBase, SourceSpan, TerminatorKind, ValueId,
+    BlockId, FunctionKind, HirFunction, HirInstructionKind, PlaceBase, SourceSpan, TerminatorKind,
+    ValueId,
 };
 use fict_reactivity::{StructuredConstructKind, StructurizeAnalysis};
 use std::collections::BTreeSet;
@@ -40,7 +41,7 @@ pub(crate) fn lower_conditional_returns(
             && jsx_value(function, *alternate)
             && consequent != alternate
         {
-            plans.push(instruction.origin);
+            plans.push((instruction.origin, false));
         }
     }
     let mut dynamic_blocks = BTreeSet::new();
@@ -49,40 +50,44 @@ pub(crate) fn lower_conditional_returns(
         .iter()
         .filter_map(|id| control_flow.constructs.get(*id as usize))
     {
-        if !matches!(construct.kind, StructuredConstructKind::Conditional { .. }) {
+        if !matches!(
+            construct.kind,
+            StructuredConstructKind::Conditional { .. } | StructuredConstructKind::Switch { .. }
+        ) {
             continue;
         }
         let block = &function.blocks[construct.header.as_usize()];
         let Some(hint) = &block.source_hint else {
             continue;
         };
-        let TerminatorKind::Branch {
-            test,
-            consequent,
-            alternate,
-        } = block.terminator.kind
-        else {
-            continue;
-        };
-        let Some(test_span) = function.values[test.as_usize()].origin.primary_span else {
-            continue;
-        };
-        if !reactive_test(function, operations, test_span) {
-            continue;
-        }
-        let Some((consequent, consequent_blocks)) = returned_jsx(function, consequent) else {
-            continue;
-        };
-        let Some((alternate, alternate_blocks)) = returned_jsx(function, alternate) else {
-            continue;
-        };
-        if consequent != alternate {
-            plans.push(hint.origin);
+        if let StructuredConstructKind::Conditional { .. } = construct.kind
+            && let TerminatorKind::Branch {
+                test,
+                consequent,
+                alternate,
+            } = block.terminator.kind
+            && function.values[test.as_usize()]
+                .origin
+                .primary_span
+                .is_some_and(|span| reactive_test(function, operations, span))
+            && let Some((consequent, consequent_blocks)) = returned_jsx(function, consequent)
+            && let Some((alternate, alternate_blocks)) = returned_jsx(function, alternate)
+            && consequent != alternate
+        {
+            plans.push((hint.origin, false));
             dynamic_blocks.extend(consequent_blocks);
             dynamic_blocks.extend(alternate_blocks);
+            continue;
+        }
+        let Some((returned, story_blocks)) = returned_jsx_story(function, construct.header) else {
+            continue;
+        };
+        if returned.len() > 1 && story_has_reactive_control(function, operations, &story_blocks) {
+            plans.push((hint.origin, true));
+            dynamic_blocks.extend(story_blocks);
         }
     }
-    for origin in plans {
+    for (origin, track_branch_reads) in plans {
         let id = EmitTemporaryId::new(u32::try_from(temporaries.len()).unwrap_or(u32::MAX));
         temporaries.push(EmitTemporary {
             id,
@@ -94,6 +99,7 @@ pub(crate) fn lower_conditional_returns(
             helper: RuntimeHelper::Conditional,
             create_helper: RuntimeHelper::CreateElement,
             cleanup_helper: RuntimeHelper::OnDestroy,
+            track_branch_reads,
             origin,
         });
     }
@@ -186,4 +192,135 @@ fn returned_jsx(
             _ => return None,
         }
     }
+}
+
+fn returned_jsx_story(
+    function: &HirFunction,
+    start: BlockId,
+) -> Option<(BTreeSet<ValueId>, BTreeSet<BlockId>)> {
+    fn visit(
+        function: &HirFunction,
+        block_id: BlockId,
+        active: &mut BTreeSet<BlockId>,
+        complete: &mut BTreeSet<BlockId>,
+        blocks: &mut BTreeSet<BlockId>,
+        returned: &mut BTreeSet<ValueId>,
+    ) -> bool {
+        if complete.contains(&block_id) {
+            return true;
+        }
+        if !active.insert(block_id) {
+            return false;
+        }
+        blocks.insert(block_id);
+        let Some(block) = function.blocks.get(block_id.as_usize()) else {
+            active.remove(&block_id);
+            return false;
+        };
+        let valid = match &block.terminator.kind {
+            TerminatorKind::Return { value: Some(value) } if jsx_value(function, *value) => {
+                returned.insert(*value);
+                true
+            }
+            TerminatorKind::Goto { target } => {
+                visit(function, *target, active, complete, blocks, returned)
+            }
+            TerminatorKind::Branch {
+                consequent,
+                alternate,
+                ..
+            } => {
+                visit(function, *consequent, active, complete, blocks, returned)
+                    && visit(function, *alternate, active, complete, blocks, returned)
+            }
+            TerminatorKind::Switch { cases, .. }
+                if cases.iter().any(|case| case.test.is_none()) =>
+            {
+                cases
+                    .iter()
+                    .all(|case| visit(function, case.target, active, complete, blocks, returned))
+            }
+            TerminatorKind::Return { .. }
+            | TerminatorKind::Throw { .. }
+            | TerminatorKind::ForIn { .. }
+            | TerminatorKind::ForOf { .. }
+            | TerminatorKind::Switch { .. }
+            | TerminatorKind::Try { .. }
+            | TerminatorKind::Unreachable => false,
+        };
+        active.remove(&block_id);
+        if valid {
+            complete.insert(block_id);
+        }
+        valid
+    }
+
+    let mut active = BTreeSet::new();
+    let mut complete = BTreeSet::new();
+    let mut blocks = BTreeSet::new();
+    let mut returned = BTreeSet::new();
+    visit(
+        function,
+        start,
+        &mut active,
+        &mut complete,
+        &mut blocks,
+        &mut returned,
+    )
+    .then_some((returned, blocks))
+}
+
+fn story_has_reactive_control(
+    function: &HirFunction,
+    operations: &[EmitOperation],
+    blocks: &BTreeSet<BlockId>,
+) -> bool {
+    blocks.iter().any(|block| {
+        let controls: Vec<_> = match &function.blocks[block.as_usize()].terminator.kind {
+            TerminatorKind::Branch { test, .. } => vec![*test],
+            TerminatorKind::Switch {
+                discriminant,
+                cases,
+            } => std::iter::once(*discriminant)
+                .chain(cases.iter().filter_map(|case| case.test))
+                .collect(),
+            TerminatorKind::Return { .. }
+            | TerminatorKind::Throw { .. }
+            | TerminatorKind::Goto { .. }
+            | TerminatorKind::ForIn { .. }
+            | TerminatorKind::ForOf { .. }
+            | TerminatorKind::Try { .. }
+            | TerminatorKind::Unreachable => Vec::new(),
+        };
+        controls.into_iter().any(|control| {
+            reactive_control_value(function, operations, control, &mut BTreeSet::new())
+        })
+    })
+}
+
+fn reactive_control_value(
+    function: &HirFunction,
+    operations: &[EmitOperation],
+    value: ValueId,
+    visited: &mut BTreeSet<ValueId>,
+) -> bool {
+    if !visited.insert(value) {
+        return false;
+    }
+    if function.values[value.as_usize()]
+        .origin
+        .primary_span
+        .is_some_and(|span| reactive_test(function, operations, span))
+    {
+        return true;
+    }
+    function
+        .instruction_for_result(value)
+        .is_some_and(|instruction| match instruction.kind {
+            HirInstructionKind::Binary { left, right, .. } => {
+                reactive_control_value(function, operations, left, visited)
+                    || reactive_control_value(function, operations, right, visited)
+            }
+            _ => false,
+        })
 }
