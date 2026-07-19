@@ -48,8 +48,6 @@ const deviationPolicies = {
     'Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.',
   'structured-hook-return':
     'Rust 0.31 enforces readonly and setter rules for structured same-module hook return accessors.',
-  'namespace-macro-fail-closed':
-    'Rust 0.31 rejects compiler macros invoked through a Fict namespace instead of leaving an uncompiled runtime call.',
   'standard-decorator-fail-closed':
     'Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript.',
   'strict-reactivity-fail-closed':
@@ -59,7 +57,6 @@ const expectedPolicyCounts = {
   'rust-capability-expansion': 22,
   'narrow-component-role': 24,
   'structured-hook-return': 6,
-  'namespace-macro-fail-closed': 1,
   'standard-decorator-fail-closed': 3,
   'strict-reactivity-fail-closed': 4,
 }
@@ -223,7 +220,6 @@ function deviationPolicy(babelStatus, currentStatus, currentErrorCodes, requestV
   const codes = currentErrorCodes.join(',')
   if (codes === 'FICT-PLACEMENT-STATE-OWNER') return 'narrow-component-role'
   if (codes === 'FICT-M') return 'structured-hook-return'
-  if (codes === 'FICT-HIR-MACRO-NAMESPACE') return 'namespace-macro-fail-closed'
   if (
     currentErrorCodes.length > 0 &&
     currentErrorCodes.every(code => code === 'FICT-TS-DECORATOR-STANDARD')

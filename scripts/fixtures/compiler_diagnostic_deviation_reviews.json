@@ -10,10 +10,10 @@
     "rust-warning-set-change": "Rust intentionally replaces part of the Babel non-error diagnostic set instead of only adding or removing diagnostics."
   },
   "policyCounts": {
-    "rust-structured-rejection-diagnostics": 172,
+    "rust-structured-rejection-diagnostics": 171,
     "diagnostic-severity-reclassification": 23,
     "rust-warning-addition": 32,
-    "rust-warning-removal": 47,
+    "rust-warning-removal": 48,
     "rust-warning-set-change": 5
   },
   "deviationCount": 279,
@@ -1626,7 +1626,7 @@
     {
       "id": "packages/compiler/test/macro-binding.test.ts:138:transform",
       "babelStatus": "ok",
-      "rustStatus": "error",
+      "rustStatus": "ok",
       "babelDiagnostics": [
         {
           "code": "FICT-R002",
@@ -1637,14 +1637,8 @@
           "severity": "warning"
         }
       ],
-      "rustDiagnostics": [
-        {
-          "code": "FICT-HIR-MACRO-NAMESPACE",
-          "severity": "error",
-          "guaranteeClass": "unsupported"
-        }
-      ],
-      "policy": "rust-structured-rejection-diagnostics"
+      "rustDiagnostics": [],
+      "policy": "rust-warning-removal"
     },
     {
       "id": "packages/compiler/test/macro-binding.test.ts:155:transform",

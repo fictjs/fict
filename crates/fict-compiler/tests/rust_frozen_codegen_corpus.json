@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "e93c5153859daaf218da04e5ae833e4c2c91501d",
+    "rustAuditRevision": "d15d7688c47489a14b7845412dad78d2eff04b71",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,14 +25,13 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "e93c5153859daaf218da04e5ae833e4c2c91501d",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-90daeaa2cd0906710f67c6d2a56f8e23f182099a7604acb4b271d85772f2ddd7"
+    "reviewedRevision": "d15d7688c47489a14b7845412dad78d2eff04b71",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-11764f1b6c8f9e02393945fcada89a9996bde29f6c1bec4223d987606bc750d9"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.",
     "narrow-component-role": "Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.",
     "structured-hook-return": "Rust 0.31 enforces readonly and setter rules for structured same-module hook return accessors.",
-    "namespace-macro-fail-closed": "Rust 0.31 rejects compiler macros invoked through a Fict namespace instead of leaving an uncompiled runtime call.",
     "standard-decorator-fail-closed": "Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript.",
     "strict-reactivity-fail-closed": "Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution."
   },
@@ -40,7 +39,6 @@
     "rust-capability-expansion": 22,
     "narrow-component-role": 24,
     "structured-hook-return": 6,
-    "namespace-macro-fail-closed": 1,
     "standard-decorator-fail-closed": 3,
     "strict-reactivity-fail-closed": 4
   },
@@ -23323,17 +23321,11 @@
         "codeSha256": "c361805833b18a85e68ac4c4048e89c3b4f869e5ef743f4f40ea6f87ed5a8b35"
       },
       "expected": {
-        "status": "error",
-        "diagnostics": [
-          {
-            "code": "FICT-HIR-MACRO-NAMESPACE",
-            "severity": "error",
-            "guaranteeClass": "unsupported"
-          }
-        ],
-        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "status": "ok",
+        "diagnostics": [],
+        "codeSha256": "8b5405622a4471de0aa8c7ef6c2c448265627384a30ecd8aa21782419a64c2c3"
       },
-      "deviationPolicy": "namespace-macro-fail-closed"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/macro-binding.test.ts:155:transform",

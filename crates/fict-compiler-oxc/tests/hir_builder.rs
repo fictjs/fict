@@ -6652,6 +6652,10 @@ fn unsupported_macro_shapes_fail_closed_with_structured_codes() {
             "import * as Fict from 'fict'; Fict['$state'](1);",
             "FICT-HIR-MACRO-NAMESPACE",
         ),
+        (
+            "import * as Fict from 'fict/slim'; Fict.$effect(() => {});",
+            "FICT-HIR-MACRO-NAMESPACE",
+        ),
     ];
     for (source, code) in cases {
         let output = build_hir(
@@ -6662,6 +6666,67 @@ fn unsupported_macro_shapes_fail_closed_with_structured_codes() {
         assert!(output.hir.is_none());
         assert_eq!(output.diagnostics[0].code.as_str(), code);
     }
+}
+
+#[test]
+fn treats_namespace_memo_macros_as_runtime_memo_accessors() {
+    let source = r#"
+        import { $memo as namedMemo, $state } from 'fict';
+        import * as F from 'fict';
+        function App() {
+            let count = $state(1);
+            const named = namedMemo(() => count * 4);
+            const direct = F.$memo(() => count * 2);
+            const computed = F['$memo']?.(() => count * 3);
+            return <div>{named}{direct}{computed}</div>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified namespace memo HIR");
+    let runtime_memos: Vec<_> = hir
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks[0].instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call)
+                if call.reactive_kind == Some(ReactiveCallKind::Memo) =>
+            {
+                Some(call)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(runtime_memos.len(), 2);
+    assert!(runtime_memos.iter().all(|call| {
+        call.macro_kind.is_none()
+            && matches!(
+                &call.host,
+                CallHost::ReactiveScope(host)
+                    if host.kind == ReactiveScopeKind::MemoCallback
+            )
+    }));
+    assert!(!runtime_memos[0].optional);
+    assert!(runtime_memos[1].optional);
+    assert_eq!(
+        hir.functions
+            .iter()
+            .flat_map(|function| &function.blocks[0].instructions)
+            .filter(|instruction| {
+                matches!(
+                    instruction.kind,
+                    HirInstructionKind::Call(ref call)
+                        if call.macro_kind == Some(FictMacroKind::Memo)
+                )
+            })
+            .count(),
+        1,
+        "the named macro must not also be classified as a runtime creator"
+    );
 }
 #[test]
 fn applies_function_directives_and_erases_type_only_binding_ids() {

@@ -95,7 +95,7 @@
       "generator": "scripts/generate-compiler-diagnostic-deviation-review.mjs",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
       "deviationCount": 279,
-      "sameStatusDeviationCount": 241,
+      "sameStatusDeviationCount": 242,
       "assertionLevel": "diagnostic-contract",
       "proves": [
         "reviewed-diagnostic-code-and-severity-deltas",

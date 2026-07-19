@@ -764,13 +764,13 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 279)
   assert.equal(
     reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
-    241,
+    242,
   )
   assert.deepEqual(reviewed.policyCounts, {
-    'rust-structured-rejection-diagnostics': 172,
+    'rust-structured-rejection-diagnostics': 171,
     'diagnostic-severity-reclassification': 23,
     'rust-warning-addition': 32,
-    'rust-warning-removal': 47,
+    'rust-warning-removal': 48,
     'rust-warning-set-change': 5,
   })
   assert.ok(
@@ -982,7 +982,6 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
     'rust-capability-expansion': 22,
     'narrow-component-role': 24,
     'structured-hook-return': 6,
-    'namespace-macro-fail-closed': 1,
     'standard-decorator-fail-closed': 3,
     'strict-reactivity-fail-closed': 4,
   })

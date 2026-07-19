@@ -128,7 +128,8 @@ impl Builder<'_, '_> {
             .and_then(|binding| self.macro_bindings.get(&binding).copied())
             .or_else(|| match call.runtime_creation_kind? {
                 super::RuntimeReactiveCreationKind::Effect => Some(FictMacroKind::Effect),
-                super::RuntimeReactiveCreationKind::Memo => Some(FictMacroKind::Memo),
+                super::RuntimeReactiveCreationKind::Memo
+                | super::RuntimeReactiveCreationKind::NamespaceMemo => Some(FictMacroKind::Memo),
                 super::RuntimeReactiveCreationKind::Selector => None,
             })
     }

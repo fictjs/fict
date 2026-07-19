@@ -1741,7 +1741,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             true
         });
         apply_resolved_import_metadata(&mut frontend, &options.resolved_metadata);
-        let macro_bindings = frontend
+        let macro_bindings: BTreeMap<BindingId, FictMacroKind> = frontend
             .macro_imports
             .iter()
             .filter_map(|import| {
@@ -1762,6 +1762,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             };
             match &import.imported {
                 fict_hir::ImportedName::Named(name) => {
+                    if macro_bindings.contains_key(&mapped) {
+                        continue;
+                    }
                     if let Some(classification) =
                         runtime_reactive_call_classification(&import.source, name)
                     {
@@ -2514,7 +2517,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 call.binding
                     .and_then(|binding| self.macro_bindings.get(&binding))
                     == Some(&FictMacroKind::Memo)
-                    || call.runtime_creation_kind == Some(RuntimeReactiveCreationKind::Memo)
+                    || matches!(
+                        call.runtime_creation_kind,
+                        Some(
+                            RuntimeReactiveCreationKind::Memo
+                                | RuntimeReactiveCreationKind::NamespaceMemo
+                        )
+                    )
             })
             .map(|call| (call.span.start(), call.span.end()))
             .collect();
@@ -7159,6 +7168,7 @@ struct RuntimeReactiveClassification {
 enum RuntimeReactiveCreationKind {
     Effect,
     Memo,
+    NamespaceMemo,
     Selector,
 }
 
@@ -7166,7 +7176,7 @@ impl RuntimeReactiveCreationKind {
     const fn scope_kind(self) -> Option<ReactiveScopeKind> {
         match self {
             Self::Effect => Some(ReactiveScopeKind::EffectCallback),
-            Self::Memo => Some(ReactiveScopeKind::MemoCallback),
+            Self::Memo | Self::NamespaceMemo => Some(ReactiveScopeKind::MemoCallback),
             Self::Selector => None,
         }
     }
@@ -9076,13 +9086,18 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let state_arguments_allowed = store
             || local_hook
             || state_argument_import
+            || fact.runtime_creation_kind == Some(RuntimeReactiveCreationKind::NamespaceMemo)
             || matches!(
                 macro_kind,
                 Some(FictMacroKind::Effect | FictMacroKind::Memo)
             );
         self.emit_direct_state_warnings(arguments, state_arguments_allowed);
 
-        if store || macro_kind.is_some() || is_safe_global_call(self.scoping, &call.callee) {
+        if store
+            || macro_kind.is_some()
+            || fact.runtime_creation_kind == Some(RuntimeReactiveCreationKind::NamespaceMemo)
+            || is_safe_global_call(self.scoping, &call.callee)
+        {
             return;
         }
         if self.is_non_escaping_callback_host(&call.callee, binding) {
@@ -10362,6 +10377,7 @@ fn runtime_reactive_namespace_source(source: &str) -> bool {
     matches!(
         source,
         "fict"
+            | "fict/slim"
             | "fict/plus"
             | "fict/advanced"
             | "fict/internal"
@@ -10440,6 +10456,10 @@ fn runtime_reactive_call_classification(
         creation_kind,
     };
     match imported {
+        "$memo" if matches!(source, "fict" | "fict/slim" | "fict/plus") => Some(classified(
+            Some(ReactiveCallKind::Memo),
+            Some(RuntimeReactiveCreationKind::NamespaceMemo),
+        )),
         "$store" if matches!(source, "fict" | "fict/plus") => {
             Some(classified(Some(ReactiveCallKind::Store), None))
         }

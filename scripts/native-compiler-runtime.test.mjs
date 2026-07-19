@@ -1177,6 +1177,46 @@ test('reserved compiler macros fail closed without direct Fict imports', () => {
   }
 })
 
+test('namespace $memo remains a reactive runtime accessor', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+      import * as F from 'fict'
+
+      let increment = () => {}
+
+      function App() {
+        let count = $state(1)
+        const doubled = F.$memo(() => count * 2)
+        increment = () => { count++ }
+        return <button data-testid="value">{doubled}</button>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function advance() {
+        increment()
+      }
+    `,
+    'namespace-memo-runtime',
+    { options: { strictGuarantee: false } },
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-testid="value"]')?.textContent, '2')
+  compiled.advance()
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-testid="value"]')?.textContent, '4')
+
+  dispose()
+  container.remove()
+})
+
 test('same-module hook metadata protects structured reactive members', () => {
   const valid = binding.transformSync({
     code: `

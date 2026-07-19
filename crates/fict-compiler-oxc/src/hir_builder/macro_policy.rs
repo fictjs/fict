@@ -39,6 +39,9 @@ pub(super) fn unsupported_macro_diagnostics(frontend: &FrontendSummary) -> Vec<D
         );
     }
     for call in &frontend.namespace_macro_calls {
+        if call.kind == FictMacroKind::Memo {
+            continue;
+        }
         diagnostics.push(
             error(
                 "FICT-HIR-MACRO-NAMESPACE",

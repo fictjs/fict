@@ -705,13 +705,14 @@ binding imported from another package, remains an ordinary JavaScript call.
 
 **Severity:** Error
 
-**Why:** A Fict namespace import accesses a compiler macro through a static or statically known
+**Why:** A Fict namespace import accesses `$state` or `$effect` through a static or statically known
 computed property, such as `Fict.$state()` or `Fict['$state']()`.
 
 **Impact:** Namespace access cannot carry the direct imported binding identity required for macro
 lowering.
 
-**Fix:** Replace the namespace access with a named import and direct call.
+**Fix:** Replace the namespace access with a named import and direct call. Namespace `$memo` is a
+supported runtime accessor creator and does not produce this diagnostic.
 
 ### FICT-HIR-MACRO-VALUE: Compiler macro used as a runtime value
 
