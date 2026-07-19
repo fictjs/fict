@@ -329,6 +329,14 @@ jobs:
           name: fict-native-certification-${{ github.sha }}
           path: ${{ runner.temp }}/native-certification
 
+      - name: Verify compiler release identity and frozen corpus
+        run: >-
+          node scripts/verify-compiler-release-unit.mjs
+          --plan "${RUNNER_TEMP}/npm-publish-plan.json"
+          --certification "${RUNNER_TEMP}/native-certification/native-certification.json"
+          --artifacts "${RUNNER_TEMP}/native-packages"
+          --revision "${GITHUB_SHA}"
+
       - name: Preflight the complete atomic native publish set
         run: >-
           node scripts/publish-native-compiler-packages.mjs

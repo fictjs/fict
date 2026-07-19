@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import {
   NATIVE_COMPILER_TARGETS,
   nativeArtifactName,
+  nativeHostTarget,
   repositoryRoot,
   verifyNativeBundle,
 } from './native-compiler-packages.mjs'
@@ -36,6 +37,22 @@ const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'))
+}
+
+function verifyPreparedCompilerTarball(prepared, nativeArtifactsRoot, outputDirectory) {
+  const compiler = prepared.artifacts.find(artifact => artifact.name === '@fictjs/compiler')
+  if (!compiler || compiler.status === 'already-published') return
+  if (!compiler.tarball) throw new Error('Prepared compiler facade tarball is missing')
+  const target = nativeHostTarget()
+  run(process.execPath, [
+    path.join(repositoryRoot, 'scripts/native-compiler-package-smoke.mjs'),
+    '--bundle',
+    path.join(nativeArtifactsRoot, nativeArtifactName(target)),
+    '--target',
+    target,
+    '--compiler-tarball',
+    path.join(outputDirectory, compiler.tarball),
+  ])
 }
 
 function hashFile(filePath) {
@@ -304,6 +321,7 @@ async function main() {
     nativeArtifactsRoot: options.nativeArtifactsRoot,
     outputDirectory: options.outputDirectory,
   })
+  verifyPreparedCompilerTarball(prepared, options.nativeArtifactsRoot, options.outputDirectory)
   if (options.publish) await publishPreparedArtifacts(plan, options.outputDirectory)
   process.stdout.write(`${JSON.stringify(prepared, null, 2)}\n`)
 }

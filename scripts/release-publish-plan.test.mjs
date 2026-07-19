@@ -9,6 +9,7 @@ import {
   normalizeRegistryDocument,
   validateAtomicNativeReleaseConfiguration,
   validateReleaseConfiguration,
+  validateReleaseTag,
 } from './release-publish-plan.mjs'
 import { NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
@@ -207,4 +208,22 @@ test('rejects contradictory private package publish metadata', () => {
   })
 
   assert.deepEqual(failures, ['@fictjs/internal is private and must not define publishConfig'])
+})
+
+test('binds a stable release tag to the compiler package version', () => {
+  const packages = [{ name: '@fictjs/compiler', version: '1.2.3' }]
+  assert.deepEqual(validateReleaseTag(null, packages), [])
+  assert.deepEqual(validateReleaseTag('v1.2.3', packages), [])
+  assert.deepEqual(validateReleaseTag('v1.2.2', packages), [
+    'release tag v1.2.2 must equal compiler package tag v1.2.3',
+  ])
+})
+
+test('keeps development compiler prereleases out of the stable tag workflow', () => {
+  assert.deepEqual(
+    validateReleaseTag('v0.32.0-next.0', [{ name: '@fictjs/compiler', version: '0.32.0-next.0' }]),
+    [
+      'compiler 0.32.0-next.0 is a development prerelease; finalize a stable version before tagging',
+    ],
+  )
 })

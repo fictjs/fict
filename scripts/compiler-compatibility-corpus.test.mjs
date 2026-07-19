@@ -1425,6 +1425,7 @@ test('binds native cache identity to the complete Rust build input set', () => {
   const runtime = read('scripts/native-compiler-build-id.test.mjs')
   for (const marker of [
     'fict-compiler-build-id-v1',
+    'packages/compiler/compiler-capabilities.json',
     'rust-toolchain.toml',
     "entry.name.startsWith('fict-')",
     'compilerBuildRevision',

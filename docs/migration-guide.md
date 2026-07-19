@@ -30,14 +30,15 @@ export default {
 }
 ```
 
-The completed compatibility line is:
+The compiler release line is:
 
-| Release  | Compiler role                                                                                        |
-| -------- | ---------------------------------------------------------------------------------------------------- |
-| `0.29.0` | First published Rust-default release; whole-build legacy rollback remains available.                 |
-| `0.30.0` | Subsequent stable compatibility minor; Rust remains the default and legacy remains release-blocking. |
-| `0.30.1` | Final release of the Babel preset, `@fictjs/compiler/legacy`, and in-tree rollback implementation.   |
-| `0.31.0` | Pre-1.0 Rust-only breaking release; rollback means pinning the whole application to `0.30.1`.        |
+| Release         | Compiler role                                                                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| `0.29.0`        | First published Rust-default release; whole-build legacy rollback remains available.                 |
+| `0.30.0`        | Subsequent stable compatibility minor; Rust remains the default and legacy remains release-blocking. |
+| `0.30.1`        | Final release of the Babel preset, `@fictjs/compiler/legacy`, and in-tree rollback implementation.   |
+| `0.31.0`        | Pre-1.0 Rust-only breaking release; rollback means pinning the whole application to `0.30.1`.        |
+| `0.32.0-next.0` | Post-0.31 compiler capability and compatibility fixes under prerelease certification.                |
 
 Before changing versions, make the migration explicit:
 
@@ -222,7 +223,7 @@ fallback and carry `FICT-R006`.
 Direct compiler hosts must also account for request-identity differences that
 do not appear in a source-only `.tsx` corpus:
 
-| Request policy             | Babel 0.28 versus Rust 0.31                                                                                                                                                                                                           |
+| Request policy             | Babel 0.28 versus the current Rust compiler                                                                                                                                                                                           |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `jsx-extension-required`   | Babel accepts JSX in a `.js` request. Rust infers plain JavaScript and rejects JSX unless the filename uses `.jsx` or the host passes `language: "jsx"`.                                                                              |
 | `cts-top-level-return`     | Rust infers CommonJS for `.cts` and accepts a top-level `return`; Babel 0.28 rejects the audited request. Treat this as a capability expansion and confirm that the downstream CommonJS host supports the emitted form.               |

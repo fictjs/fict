@@ -197,6 +197,25 @@ export function validateReleaseConfiguration({ packages, allowedPackageNames, re
   return failures
 }
 
+export function validateReleaseTag(tag, packages) {
+  if (tag == null) return []
+  const compiler = packages.find(pkg => pkg.name === '@fictjs/compiler')
+  if (!compiler || typeof compiler.version !== 'string') {
+    return ['release tag validation requires the @fictjs/compiler package version']
+  }
+  const expectedTag = `v${compiler.version}`
+  const failures = []
+  if (tag !== expectedTag) {
+    failures.push(`release tag ${tag} must equal compiler package tag ${expectedTag}`)
+  }
+  if (compiler.version.includes('-')) {
+    failures.push(
+      `compiler ${compiler.version} is a development prerelease; finalize a stable version before tagging`,
+    )
+  }
+  return failures
+}
+
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'))
 }
@@ -335,6 +354,7 @@ async function main() {
     allowedPackageNames: config.packages ?? [],
     registry: config.registry,
   })
+  failures.push(...validateReleaseTag(options.tag, workspacePackages))
 
   if (failures.length > 0) {
     throw new Error(`invalid npm release configuration:\n- ${failures.join('\n- ')}`)

@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import {
   existsSync,
   mkdirSync,
@@ -24,6 +25,7 @@ import {
   repositoryRoot,
   verifyNativeBundle,
 } from './native-compiler-packages.mjs'
+import { replayCompilerCorpus } from './lib/compiler-corpus-replay.mjs'
 
 const packageManager = 'pnpm'
 const windowsPackageManagerCommand = /^(?:npm|pnpm)(?:\.cmd)?$/i
@@ -256,7 +258,12 @@ function main() {
       })
     }
     const nativeBundle = verifyNativeBundle({ target, bundleDirectory })
-    const compilerTarball = packCompilerFacade(packsDirectory)
+    const compilerTarball = options['compiler-tarball']
+      ? path.resolve(options['compiler-tarball'])
+      : packCompilerFacade(packsDirectory)
+    if (!existsSync(compilerTarball)) {
+      throw new Error(`Compiler facade tarball does not exist: ${compilerTarball}`)
+    }
     const compilerDependency = relativeFileDependency(consumerDirectory, compilerTarball)
     const nativeDependency = relativeFileDependency(consumerDirectory, nativeBundle.tarballPath)
     const nativeTarballs = packResolutionOnlyNativePackages(
@@ -330,15 +337,38 @@ function main() {
       assert.equal(result.info.nativeTarget, host.rustTarget)
       assert.equal(result.info.nodeApiVersion, 10)
       assert.equal(result.info.compilerBuildId, result.compilerBuildId)
+      assert.equal(result.info.compilerCapabilityManifestVersion, 1)
+      assert.match(result.info.compilerCapabilityManifestDigest, /^sha256:[0-9a-f]{64}$/)
+      assert.equal(
+        result.info.compilerCapabilityPackageVersion,
+        nativeBundle.packageManifest.version,
+      )
       if (expectedRevision !== null) {
         assert.equal(result.info.compilerBuildRevision, expectedRevision)
       }
     }
     assert.equal(esm.info.compilerBuildId, cjs.info.compilerBuildId)
     assert.equal(esm.info.compilerBuildRevision, cjs.info.compilerBuildRevision)
+    assert.equal(
+      esm.info.compilerCapabilityManifestDigest,
+      cjs.info.compilerCapabilityManifestDigest,
+    )
+
+    const consumerRequire = createRequire(path.join(consumerDirectory, 'package.json'))
+    const installedFacade = consumerRequire('@fictjs/compiler/native')
+    const installedBinding = installedFacade.loadNativeCompilerBinding()
+    const corpusSource = readFileSync(
+      path.join(repositoryRoot, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
+      'utf8',
+    )
+    const compatibilityCorpus = replayCompilerCorpus(
+      installedBinding,
+      JSON.parse(corpusSource),
+      corpusSource,
+    )
 
     const evidence = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       target,
       rustTarget: host.rustTarget,
       nodeLane,
@@ -355,6 +385,10 @@ function main() {
       sizeGate: nativeBundle.buildEvidence.sizeGate,
       compilerBuildId: esm.info.compilerBuildId,
       compilerBuildRevision: esm.info.compilerBuildRevision,
+      compilerCapabilityManifestVersion: esm.info.compilerCapabilityManifestVersion,
+      compilerCapabilityManifestDigest: esm.info.compilerCapabilityManifestDigest,
+      compilerCapabilityPackageVersion: esm.info.compilerCapabilityPackageVersion,
+      compatibilityCorpus,
       formats: [esm.format, cjs.format],
       syncAndAsync: true,
       rustToolchainRequired: false,

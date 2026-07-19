@@ -1,5 +1,12 @@
 # @fictjs/runtime
 
+## 0.32.0-next.0
+
+### Patch Changes
+
+- Preserve native string coercion for raw-text JSX content and isolate component spread inputs so
+  compiler-generated component properties cannot leak across instances.
+
 ## 0.31.0
 
 ## 0.30.1

@@ -118,6 +118,41 @@ test('binds bootstrap to the complete certified bundle matrix and exact revision
   )
 })
 
+test('accepts current certification only when capability and corpus identities are bound', () => {
+  const { bundles, certification } = fixture()
+  const payload = structuredClone(certification)
+  delete payload.certificationDigest
+  payload.schemaVersion = 3
+  payload.compilerCapabilityManifestVersion = 1
+  payload.compilerCapabilityManifestDigest = `sha256:${'c'.repeat(64)}`
+  payload.compilerCapabilityPackageVersion = packageVersion
+  payload.compatibilityCorpus = {
+    schemaVersion: 1,
+    corpusSchemaVersion: 5,
+    corpusSha256: `sha256:${'d'.repeat(64)}`,
+    fixtures: 1_950,
+    reviewedRevision: 'e'.repeat(40),
+    reviewedCompilerBuildId: 'fict-rust-reviewed-build',
+  }
+  const current = {
+    ...payload,
+    certificationDigest: `sha256:${createHash('sha256')
+      .update(JSON.stringify(payload))
+      .digest('hex')}`,
+  }
+
+  assert.equal(
+    validateNativeBootstrapCertification(current, bundles, revision).packageVersion,
+    packageVersion,
+  )
+  const missingCorpus = structuredClone(current)
+  delete missingCorpus.compatibilityCorpus
+  assert.throws(
+    () => validateNativeBootstrapCertification(missingCorpus, bundles, revision),
+    /replayed compatibility corpus/,
+  )
+})
+
 test('only bootstraps package names after the certified facade version exists', () => {
   const { bundles, certification } = fixture()
   const certified = validateNativeBootstrapCertification(certification, bundles, revision)

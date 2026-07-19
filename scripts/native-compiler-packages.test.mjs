@@ -48,6 +48,15 @@ import { prepareReleaseArtifacts, validateReleasePublishPlan } from './publish-r
 
 const RUNTIME_REVISION = 'a'.repeat(40)
 const RUNTIME_BUILD_ID = `fict-rust-p1-oxc0.139.0-m1-${'b'.repeat(64)}`
+const CAPABILITY_MANIFEST_DIGEST = `sha256:${'c'.repeat(64)}`
+const COMPATIBILITY_CORPUS = {
+  schemaVersion: 1,
+  corpusSchemaVersion: 5,
+  corpusSha256: `sha256:${'d'.repeat(64)}`,
+  fixtures: 1_950,
+  reviewedRevision: 'e'.repeat(40),
+  reviewedCompilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'f'.repeat(64)}`,
+}
 
 function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
   const hashCharacters = '123456789abcdef0'
@@ -69,7 +78,7 @@ function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
       violations: [],
     }
     return NATIVE_COMPILER_NODE_LANES.map(nodeLane => ({
-      schemaVersion: 2,
+      schemaVersion: 3,
       target: target.target,
       rustTarget: target.rustTarget,
       nodeLane,
@@ -86,6 +95,10 @@ function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
       sizeGate: structuredClone(sizeGate),
       compilerBuildId: RUNTIME_BUILD_ID,
       compilerBuildRevision: RUNTIME_REVISION,
+      compilerCapabilityManifestVersion: 1,
+      compilerCapabilityManifestDigest: CAPABILITY_MANIFEST_DIGEST,
+      compilerCapabilityPackageVersion: releaseBundle?.packageVersion ?? '1.2.3',
+      compatibilityCorpus: structuredClone(COMPATIBILITY_CORPUS),
       formats: ['esm', 'cjs'],
       syncAndAsync: true,
       rustToolchainRequired: false,
@@ -150,6 +163,10 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       packageVersion,
       compilerBuildId,
       compilerBuildRevision,
+      compilerCapabilityManifestVersion,
+      compilerCapabilityManifestDigest,
+      compilerCapabilityPackageVersion,
+      compatibilityCorpus,
     }) => ({
       schemaVersion,
       status,
@@ -160,9 +177,13 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       packageVersion,
       compilerBuildId,
       compilerBuildRevision,
+      compilerCapabilityManifestVersion,
+      compilerCapabilityManifestDigest,
+      compilerCapabilityPackageVersion,
+      compatibilityCorpus,
     }))(result),
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
       status: 'pass',
       targets: 8,
       nodeLanes: ['22.18.0', '24'],
@@ -171,6 +192,10 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       packageVersion: '1.2.3',
       compilerBuildId: RUNTIME_BUILD_ID,
       compilerBuildRevision: RUNTIME_REVISION,
+      compilerCapabilityManifestVersion: 1,
+      compilerCapabilityManifestDigest: CAPABILITY_MANIFEST_DIGEST,
+      compilerCapabilityPackageVersion: '1.2.3',
+      compatibilityCorpus: COMPATIBILITY_CORPUS,
     },
   )
   assert.equal(result.certifiedPairs.length, 16)
@@ -277,6 +302,14 @@ test('rejects incomplete, duplicate, mixed-build, and mixed-bundle runtime evide
   const mixedBuild = structuredClone(complete)
   mixedBuild[0].compilerBuildId = `${RUNTIME_BUILD_ID}-different`
   assert.throws(() => validate(mixedBuild), /must report one compiler build ID/)
+
+  const mixedCapability = structuredClone(complete)
+  mixedCapability[0].compilerCapabilityManifestDigest = `sha256:${'0'.repeat(64)}`
+  assert.throws(() => validate(mixedCapability), /one compiler capability manifest/)
+
+  const mixedCorpus = structuredClone(complete)
+  mixedCorpus[0].compatibilityCorpus.corpusSha256 = `sha256:${'0'.repeat(64)}`
+  assert.throws(() => validate(mixedCorpus), /one frozen compatibility corpus/)
 
   const mixedBundle = structuredClone(complete)
   mixedBundle[1].binarySha256 = 'd'.repeat(64)

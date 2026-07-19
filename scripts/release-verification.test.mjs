@@ -71,6 +71,7 @@ test('release verification retains regression, tarball, SSR, browser, and clean-
 
 test('CI validates the live compiler rollout state', () => {
   assert.match(ciWorkflow, /pnpm test:compiler:rollout-state/)
+  assert.match(ciWorkflow, /pnpm guardrails:compiler-capabilities/)
   assert.match(
     rootPackage.scripts['test:compiler:rollout-state'],
     /node scripts\/compiler-rollout-readiness\.mjs$/,
@@ -81,6 +82,16 @@ test('release publishing uses one dependency-ordered publisher after native cert
   assert.match(releaseWorkflow, /name: Build native compiler packages/)
   assert.match(releaseWorkflow, /name: Certify native compiler packages/)
   assert.match(releaseWorkflow, /node scripts\/publish-release-packages\.mjs/)
+  assert.match(releaseWorkflow, /name: Verify compiler release identity and frozen corpus/)
+  assert.match(releaseWorkflow, /node scripts\/verify-compiler-release-unit\.mjs/)
+  assert.match(releaseWorkflow, /--revision "\$\{GITHUB_SHA\}"/)
+  const compilerIdentityGate = releaseWorkflow.indexOf(
+    'name: Verify compiler release identity and frozen corpus',
+  )
+  const packagePublisher = releaseWorkflow.indexOf(
+    'name: Preflight and publish the dependency-ordered release set',
+  )
+  assert.ok(compilerIdentityGate >= 0 && compilerIdentityGate < packagePublisher)
   assert.doesNotMatch(releaseWorkflow, /changeset publish/)
   assert.equal(rootPackage.scripts.release, 'pnpm release:plan --require-existing-packages')
 })

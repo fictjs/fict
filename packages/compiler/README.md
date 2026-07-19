@@ -1,6 +1,6 @@
 # @fictjs/compiler
 
-OXC/Rust compiler facade for Fict. Fict 0.31 has no TypeScript/Babel compiler,
+OXC/Rust compiler facade for Fict. Since Fict 0.31 there is no TypeScript/Babel compiler,
 `./legacy` export, or per-file fallback path.
 
 Most applications should use `@fictjs/vite-plugin` or
@@ -17,6 +17,8 @@ The package root exposes serializable synchronous and asynchronous APIs:
 
 ```ts
 import {
+  COMPILER_CAPABILITY_MANIFEST,
+  COMPILER_CAPABILITY_MANIFEST_DIGEST,
   COMPILER_PROTOCOL_VERSION,
   nativeCompilerInfo,
   scanSync,
@@ -25,6 +27,12 @@ import {
 
 const info = nativeCompilerInfo()
 if (info.backend !== 'rust') throw new Error('Unexpected compiler binding')
+if (
+  info.compilerCapabilityManifestDigest !== COMPILER_CAPABILITY_MANIFEST_DIGEST ||
+  info.compilerCapabilityPackageVersion !== COMPILER_CAPABILITY_MANIFEST.packageVersion
+) {
+  throw new Error('Compiler facade and native capabilities do not match')
+}
 
 const scan = scanSync({
   protocolVersion: COMPILER_PROTOCOL_VERSION,

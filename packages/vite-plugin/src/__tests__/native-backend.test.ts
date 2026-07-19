@@ -21,6 +21,9 @@ const native = vi.hoisted(() => {
     compilerBuildRevision: null,
     compilerProtocolVersion: 1,
     metadataSchemaVersion: 1,
+    compilerCapabilityManifestVersion: 1,
+    compilerCapabilityManifestDigest: `sha256:${'0'.repeat(64)}`,
+    compilerCapabilityPackageVersion: 'test-capability-package',
   }
   return {
     info,

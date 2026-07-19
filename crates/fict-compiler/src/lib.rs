@@ -8,6 +8,7 @@
 mod analysis;
 #[cfg(test)]
 mod build_id_input;
+mod capabilities;
 mod control_flow_diagnostics;
 mod diagnostic_policy;
 mod metadata_analysis;
@@ -22,6 +23,10 @@ pub use analysis::{
     AnalyzeDiagnostic, AnalyzeDiagnosticSeverity, AnalyzeResult, ComponentAnalysis, LineTrace,
     RegionInfo, TraceMarker, TraceMarkerKind, analyze, internal_analyze_error_result,
     invalid_analyze_request_result,
+};
+pub use capabilities::{
+    COMPILER_CAPABILITY_MANIFEST_DIGEST, COMPILER_CAPABILITY_MANIFEST_VERSION,
+    COMPILER_CAPABILITY_PACKAGE_VERSION,
 };
 pub use fict_compiler_oxc::{OXC_VERSION, ParseProbe};
 pub use fict_metadata::MODULE_REACTIVE_METADATA_VERSION;

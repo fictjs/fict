@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "0.32.0-next.0",
+  "backend": "rust",
+  "options": {
+    "dev": {
+      "default": false,
+      "supported": [false, true]
+    },
+    "lazyConditional": {
+      "default": true,
+      "supported": [false, true]
+    },
+    "getterCache": {
+      "default": true,
+      "supported": [false, true]
+    },
+    "optimizeLevel": {
+      "default": "safe",
+      "supported": ["safe", "full"]
+    },
+    "inlineDerivedMemos": {
+      "default": true,
+      "supported": [false, true]
+    }
+  }
+}

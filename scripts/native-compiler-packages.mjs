@@ -756,6 +756,8 @@ export function validateNativeRuntimeEvidenceMatrix(
   const compilerBuildIds = new Set()
   const packageVersions = new Set()
   const budgetFingerprints = new Set()
+  const capabilityManifestDigests = new Set()
+  const compatibilityCorpusIdentities = new Set()
   const failures = []
 
   if (documents.length !== expectedPairs.size) {
@@ -795,8 +797,8 @@ export function validateNativeRuntimeEvidenceMatrix(
       else evidenceByPair.set(pair, evidence)
     }
 
-    if (evidence.schemaVersion !== 2) {
-      failures.push(`${evidenceLabel} must use runtime evidence schema v2`)
+    if (evidence.schemaVersion !== 3) {
+      failures.push(`${evidenceLabel} must use runtime evidence schema v3`)
     }
     if (definition) {
       for (const [field, expected] of [
@@ -840,6 +842,30 @@ export function validateNativeRuntimeEvidenceMatrix(
       failures.push(
         `${evidenceLabel}.compilerBuildRevision must equal release source revision ${expectedRevision}`,
       )
+    }
+    if (
+      evidence.compilerCapabilityManifestVersion !== 1 ||
+      !/^sha256:[0-9a-f]{64}$/.test(evidence.compilerCapabilityManifestDigest ?? '') ||
+      evidence.compilerCapabilityPackageVersion !== evidence.packageVersion
+    ) {
+      failures.push(`${evidenceLabel} compiler capability manifest is incomplete or mismatched`)
+    } else {
+      capabilityManifestDigests.add(evidence.compilerCapabilityManifestDigest)
+    }
+    const compatibilityCorpus = evidence.compatibilityCorpus
+    if (
+      compatibilityCorpus?.schemaVersion !== 1 ||
+      compatibilityCorpus.corpusSchemaVersion !== 5 ||
+      !/^sha256:[0-9a-f]{64}$/.test(compatibilityCorpus.corpusSha256 ?? '') ||
+      !Number.isSafeInteger(compatibilityCorpus.fixtures) ||
+      compatibilityCorpus.fixtures <= 0 ||
+      !GIT_REVISION_PATTERN.test(compatibilityCorpus.reviewedRevision ?? '') ||
+      typeof compatibilityCorpus.reviewedCompilerBuildId !== 'string' ||
+      !compatibilityCorpus.reviewedCompilerBuildId
+    ) {
+      failures.push(`${evidenceLabel}.compatibilityCorpus is incomplete`)
+    } else {
+      compatibilityCorpusIdentities.add(JSON.stringify(compatibilityCorpus))
     }
     if (!sameMembers(evidence.formats, ['cjs', 'esm'])) {
       failures.push(`${evidenceLabel}.formats must contain exactly cjs and esm`)
@@ -893,16 +919,29 @@ export function validateNativeRuntimeEvidenceMatrix(
   if (budgetFingerprints.size !== 1) {
     failures.push('all runtime certifications must use one native package size budget')
   }
+  if (capabilityManifestDigests.size !== 1) {
+    failures.push('all runtime certifications must report one compiler capability manifest')
+  }
+  if (compatibilityCorpusIdentities.size !== 1) {
+    failures.push('all runtime certifications must replay one frozen compatibility corpus')
+  }
 
-  const bundleFields = [
+  const releaseBundleFields = [
     'packageVersion',
     'binarySha256',
     'tarballSha256',
     'tarballBytes',
     'unpackedBytes',
+    'sizeGate',
+  ]
+  const laneIdentityFields = [
+    ...releaseBundleFields,
     'compilerBuildId',
     'compilerBuildRevision',
-    'sizeGate',
+    'compilerCapabilityManifestVersion',
+    'compilerCapabilityManifestDigest',
+    'compilerCapabilityPackageVersion',
+    'compatibilityCorpus',
   ]
   for (const definition of NATIVE_COMPILER_TARGETS) {
     const certifications = NATIVE_COMPILER_NODE_LANES.map(nodeLane =>
@@ -910,7 +949,7 @@ export function validateNativeRuntimeEvidenceMatrix(
     )
     if (certifications.some(evidence => !evidence)) continue
     const [baseline, comparison] = certifications
-    const changedFields = bundleFields.filter(
+    const changedFields = laneIdentityFields.filter(
       field => JSON.stringify(baseline[field]) !== JSON.stringify(comparison[field]),
     )
     if (changedFields.length > 0) {
@@ -924,9 +963,9 @@ export function validateNativeRuntimeEvidenceMatrix(
       failures.push(`missing release bundle for ${definition.target}`)
       continue
     }
-    const mismatchedReleaseFields = bundleFields
-      .filter(field => field !== 'compilerBuildId' && field !== 'compilerBuildRevision')
-      .filter(field => JSON.stringify(baseline[field]) !== JSON.stringify(releaseBundle[field]))
+    const mismatchedReleaseFields = releaseBundleFields.filter(
+      field => JSON.stringify(baseline[field]) !== JSON.stringify(releaseBundle[field]),
+    )
     if (mismatchedReleaseFields.length > 0) {
       failures.push(
         `${definition.target} runtime evidence does not match the release bundle; changed ${mismatchedReleaseFields.join(', ')}`,
@@ -945,7 +984,7 @@ export function validateNativeRuntimeEvidenceMatrix(
   }
 
   const payload = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: 'pass',
     targets: NATIVE_COMPILER_TARGETS.length,
     nodeLanes: Object.freeze([...NATIVE_COMPILER_NODE_LANES]),
@@ -977,6 +1016,10 @@ export function validateNativeRuntimeEvidenceMatrix(
     packageVersion: [...packageVersions][0],
     compilerBuildId: [...compilerBuildIds][0],
     compilerBuildRevision: expectedRevision,
+    compilerCapabilityManifestVersion: 1,
+    compilerCapabilityManifestDigest: [...capabilityManifestDigests][0],
+    compilerCapabilityPackageVersion: [...packageVersions][0],
+    compatibilityCorpus: JSON.parse([...compatibilityCorpusIdentities][0]),
   }
   return Object.freeze({
     ...payload,

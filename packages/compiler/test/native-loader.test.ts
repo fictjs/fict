@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  COMPILER_CAPABILITY_MANIFEST,
+  COMPILER_CAPABILITY_MANIFEST_DIGEST,
+} from '../src/compiler-capabilities.generated'
 import { resolveStrictGuarantee } from '../src/environment-policy'
 import {
   NativeCompilerLoadError,
@@ -79,6 +83,9 @@ function createBinding(nativeTarget = 'aarch64-apple-darwin'): NativeCompilerBin
       compilerBuildRevision: null,
       compilerProtocolVersion: 1,
       metadataSchemaVersion: 1,
+      compilerCapabilityManifestVersion: COMPILER_CAPABILITY_MANIFEST.schemaVersion,
+      compilerCapabilityManifestDigest: COMPILER_CAPABILITY_MANIFEST_DIGEST,
+      compilerCapabilityPackageVersion: COMPILER_CAPABILITY_MANIFEST.packageVersion,
     }),
     parseTsxProbeSync: () => ({ statementCount: 1, diagnosticCount: 0 }),
     parseTsxProbeAsync: async () => ({ statementCount: 1, diagnosticCount: 0 }),
@@ -396,6 +403,27 @@ describe('native compiler loader', () => {
     binding.nativeCompilerInfo = () => ({
       ...createBinding().nativeCompilerInfo(),
       compilerProtocolVersion: 2,
+    })
+
+    expect(() =>
+      loadNativeCompilerBinding({
+        nativePath: '/tmp/incompatible.node',
+        platform: 'darwin',
+        arch: 'arm64',
+        load: () => binding,
+      }),
+    ).toThrow('reported incompatible compiler metadata')
+  })
+
+  it.each([
+    ['compilerCapabilityManifestVersion', 2],
+    ['compilerCapabilityManifestDigest', `sha256:${'f'.repeat(64)}`],
+    ['compilerCapabilityPackageVersion', '0.31.0'],
+  ] as const)('rejects a binding with mismatched %s', (field, value) => {
+    const binding = createBinding()
+    binding.nativeCompilerInfo = () => ({
+      ...createBinding().nativeCompilerInfo(),
+      [field]: value,
     })
 
     expect(() =>

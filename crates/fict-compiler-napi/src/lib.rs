@@ -12,8 +12,10 @@ use convert::{
     serialize_analyze_result, serialize_result, serialize_scan_result,
 };
 use fict_compiler::{
-    COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe,
-    compiler_build_id, compiler_build_revision, parse_tsx_probe,
+    COMPILER_CAPABILITY_MANIFEST_DIGEST, COMPILER_CAPABILITY_MANIFEST_VERSION,
+    COMPILER_CAPABILITY_PACKAGE_VERSION, COMPILER_PROTOCOL_VERSION,
+    MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe, compiler_build_id,
+    compiler_build_revision, parse_tsx_probe,
 };
 use napi::{
     Env, Result, Task,
@@ -42,6 +44,12 @@ pub struct NativeCompilerInfo {
     pub compiler_protocol_version: u32,
     /// Module metadata schema accepted by this artifact.
     pub metadata_schema_version: u32,
+    /// Machine-readable compiler capability manifest schema embedded in this artifact.
+    pub compiler_capability_manifest_version: u32,
+    /// Canonical capability manifest digest embedded in this artifact.
+    pub compiler_capability_manifest_digest: String,
+    /// Facade package version whose behavior this native artifact implements.
+    pub compiler_capability_package_version: String,
 }
 
 /// Arena-independent parse result returned across N-API.
@@ -77,6 +85,9 @@ pub fn native_compiler_info() -> NativeCompilerInfo {
         },
         compiler_protocol_version: COMPILER_PROTOCOL_VERSION,
         metadata_schema_version: MODULE_REACTIVE_METADATA_VERSION,
+        compiler_capability_manifest_version: COMPILER_CAPABILITY_MANIFEST_VERSION,
+        compiler_capability_manifest_digest: COMPILER_CAPABILITY_MANIFEST_DIGEST.to_owned(),
+        compiler_capability_package_version: COMPILER_CAPABILITY_PACKAGE_VERSION.to_owned(),
     }
 }
 

@@ -14,5 +14,9 @@ export {
 } from './environment-policy'
 export type { CompilerEnvironmentPolicyInput } from './environment-policy'
 export { COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION } from './types'
+export {
+  COMPILER_CAPABILITY_MANIFEST,
+  COMPILER_CAPABILITY_MANIFEST_DIGEST,
+} from './compiler-capabilities.generated'
 export type * from './types'
 export type * from './tooling/types'

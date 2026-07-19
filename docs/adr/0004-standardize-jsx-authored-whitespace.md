@@ -24,7 +24,7 @@ behavior while making Fict JSX disagree with the established JSX source model.
 
 ## Decision
 
-The native behavior is the Fict 0.31 contract. Multiline authored JSX text is
+The native behavior is the Fict 0.32 line contract. Multiline authored JSX text is
 normalized before template, VNode, DOM, or SSR lowering. Element names do not
 opt out, including `<pre>`, raw-text, and RCDATA elements.
 

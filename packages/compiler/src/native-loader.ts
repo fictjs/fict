@@ -1,6 +1,10 @@
 import { createRequire } from 'node:module'
 
 import {
+  COMPILER_CAPABILITY_MANIFEST,
+  COMPILER_CAPABILITY_MANIFEST_DIGEST,
+} from './compiler-capabilities.generated'
+import {
   applyAnalyzeRequestEnvironmentPolicy,
   applyCompileRequestEnvironmentPolicy,
 } from './environment-policy'
@@ -39,6 +43,9 @@ export interface NativeCompilerInfo {
   compilerBuildRevision: string | null
   compilerProtocolVersion: number
   metadataSchemaVersion: number
+  compilerCapabilityManifestVersion: number
+  compilerCapabilityManifestDigest: string
+  compilerCapabilityPackageVersion: string
 }
 
 export interface NativeParseProbeResult {
@@ -156,6 +163,9 @@ function toNativeBinding(
     info.oxcVersion !== EXPECTED_OXC_VERSION ||
     info.compilerProtocolVersion !== EXPECTED_COMPILER_PROTOCOL_VERSION ||
     info.metadataSchemaVersion !== EXPECTED_METADATA_SCHEMA_VERSION ||
+    info.compilerCapabilityManifestVersion !== COMPILER_CAPABILITY_MANIFEST.schemaVersion ||
+    info.compilerCapabilityManifestDigest !== COMPILER_CAPABILITY_MANIFEST_DIGEST ||
+    info.compilerCapabilityPackageVersion !== COMPILER_CAPABILITY_MANIFEST.packageVersion ||
     !info.compilerBuildId?.startsWith(expectedBuildPrefix) ||
     !/^[0-9a-f]{64}$/.test(sourceHash ?? '') ||
     (info.compilerBuildRevision !== null &&

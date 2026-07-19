@@ -1,5 +1,16 @@
 # @fictjs/vite-plugin
 
+## 0.32.0-next.0
+
+### Patch Changes
+
+- Derive native compiler development metadata from Vite's resolved command and mode unless the
+  user explicitly supplies `compiler.dev`.
+- Require a target-compatible pre-transform for standard decorators before native Fict
+  compilation.
+- Updated dependencies
+  - @fictjs/compiler@0.32.0-next.0
+
 ## 0.31.0
 
 ### Breaking Changes
@@ -9,7 +20,6 @@
   - `@fictjs/vite-plugin` no longer accepts legacy or shadow backend selection and always uses the native compiler.
   - `@fictjs/webpack-plugin` no longer provides the Babel preset/legacy loader path and requires the native compiler.
   - `@fictjs/babel-preset` is retired; `0.30.1` remains the final legacy-compatible release and rollback target.
-  - Standard decorators require a target-compatible Vite pre-transform registered before Fict; downstream lowering can no longer recover raw syntax.
 
   Follow `docs/migration-guide.md` before upgrading. Native compiler installation failures now fail closed instead of falling back to Babel.
 

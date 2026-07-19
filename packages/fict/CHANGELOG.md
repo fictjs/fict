@@ -1,5 +1,13 @@
 # fict
 
+## 0.32.0-next.0
+
+### Patch Changes
+
+- Publish the top-level entrypoints with the runtime fixes for raw-text JSX coercion and isolated
+  component spread inputs.
+- @fictjs/runtime@0.32.0-next.0
+
 ## 0.31.0
 
 ### Breaking Changes
@@ -9,13 +17,11 @@
   - `@fictjs/vite-plugin` no longer accepts legacy or shadow backend selection and always uses the native compiler.
   - `@fictjs/webpack-plugin` no longer provides the Babel preset/legacy loader path and requires the native compiler.
   - `@fictjs/babel-preset` is retired; `0.30.1` remains the final legacy-compatible release and rollback target.
-  - Multiline authored JSX text now follows standard JSX whitespace normalization. Use expression strings for exact whitespace, including inside `<pre>`.
 
   Follow `docs/migration-guide.md` before upgrading. Native compiler installation failures now fail closed instead of falling back to Babel.
 
 ### Patch Changes
 
-- Preserve Babel 0.28 call semantics for function-valued `$state` bindings, including optional calls, direct function assignments, and nested callable-state chains.
 - @fictjs/runtime@0.31.0
 
 ## 0.30.1

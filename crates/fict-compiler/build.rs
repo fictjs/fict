@@ -27,6 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut inputs = vec![
         workspace_root.join("Cargo.lock"),
         workspace_root.join("Cargo.toml"),
+        workspace_root.join("packages/compiler/compiler-capabilities.json"),
         workspace_root.join("rust-toolchain.toml"),
     ];
     collect_native_crate_inputs(&workspace_root.join("crates"), &mut inputs)?;

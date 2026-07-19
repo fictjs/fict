@@ -61,8 +61,8 @@ export function validateNativeBootstrapCertification(certification, bundles, exp
     .update(JSON.stringify(payload))
     .digest('hex')}`
 
-  if (payload.schemaVersion !== 2 || payload.status !== 'pass') {
-    failures.push('certification must be a passing schema v2 record')
+  if (![2, 3].includes(payload.schemaVersion) || payload.status !== 'pass') {
+    failures.push('certification must be a passing schema v2 or v3 record')
   }
   if (
     payload.targets !== NATIVE_COMPILER_TARGETS.length ||
@@ -79,6 +79,27 @@ export function validateNativeBootstrapCertification(certification, bundles, exp
     !payload.compilerBuildId
   ) {
     failures.push('certification does not bind the expected compiler build revision')
+  }
+  if (
+    payload.schemaVersion === 3 &&
+    (payload.compilerCapabilityManifestVersion !== 1 ||
+      !/^sha256:[0-9a-f]{64}$/.test(payload.compilerCapabilityManifestDigest ?? '') ||
+      payload.compilerCapabilityPackageVersion !== payload.packageVersion)
+  ) {
+    failures.push('certification does not bind one compiler capability manifest')
+  }
+  if (
+    payload.schemaVersion === 3 &&
+    (payload.compatibilityCorpus?.schemaVersion !== 1 ||
+      payload.compatibilityCorpus.corpusSchemaVersion !== 5 ||
+      !/^sha256:[0-9a-f]{64}$/.test(payload.compatibilityCorpus.corpusSha256 ?? '') ||
+      !Number.isSafeInteger(payload.compatibilityCorpus.fixtures) ||
+      payload.compatibilityCorpus.fixtures <= 0 ||
+      !GIT_REVISION.test(payload.compatibilityCorpus.reviewedRevision ?? '') ||
+      typeof payload.compatibilityCorpus.reviewedCompilerBuildId !== 'string' ||
+      !payload.compatibilityCorpus.reviewedCompilerBuildId)
+  ) {
+    failures.push('certification does not bind a replayed compatibility corpus')
   }
   if (certificationDigest !== computedDigest) {
     failures.push('certification digest does not match its payload')

@@ -25,9 +25,12 @@ function collectRustSources(directory, inputs) {
 }
 
 function collectBuildInputs() {
-  const inputs = ['Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml'].map(relative =>
-    path.join(repositoryRoot, relative),
-  )
+  const inputs = [
+    'Cargo.lock',
+    'Cargo.toml',
+    'packages/compiler/compiler-capabilities.json',
+    'rust-toolchain.toml',
+  ].map(relative => path.join(repositoryRoot, relative))
   const cratesDirectory = path.join(repositoryRoot, 'crates')
   for (const entry of readdirSync(cratesDirectory, { withFileTypes: true }).sort((left, right) =>
     left.name.localeCompare(right.name),
@@ -107,6 +110,17 @@ test('native build identity changes when a compiler source input changes', () =>
     mutate: {
       relative: 'crates/fict-compiler/src/lib.rs',
       apply: source => Buffer.concat([source, Buffer.from('\n// simulated source change\n')]),
+    },
+  })
+  assert.notEqual(changed, baseline)
+})
+
+test('native build identity changes when the compiler capability manifest changes', () => {
+  const baseline = computeSourceHash()
+  const changed = computeSourceHash({
+    mutate: {
+      relative: 'packages/compiler/compiler-capabilities.json',
+      apply: source => Buffer.concat([source, Buffer.from('\n')]),
     },
   })
   assert.notEqual(changed, baseline)

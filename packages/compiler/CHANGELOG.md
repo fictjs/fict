@@ -1,5 +1,27 @@
 # @fictjs/compiler
 
+## 0.32.0-next.0
+
+### Minor Changes
+
+- Implement the non-default Rust compiler modes for development metadata, eager conditionals,
+  uncached getters, full optimization, and retained derived memos.
+
+### Patch Changes
+
+- Publish a machine-readable compiler capability manifest and reject native binaries whose
+  capability digest or package version does not match the JavaScript facade.
+- Bind release certification to the exact package version, tag revision, native build, and frozen
+  Babel 0.28 compatibility corpus, including replay through clean-installed release tarballs.
+- Preserve effective unambiguous module kinds, partial metadata states, awaited JSX bindings, and
+  function-valued state call semantics across the Rust compiler pipeline.
+- Reject malformed or over-depth module metadata consistently in JavaScript graph hosts and the
+  Rust compiler.
+- Require standard decorators to be lowered by a target-compatible transform before native Fict
+  compilation; raw decorator syntax fails closed.
+- Normalize multiline authored JSX text using standard JSX whitespace rules. Use expression
+  strings when exact whitespace is required, including inside `<pre>`.
+
 ## 0.31.0
 
 ### Breaking Changes
@@ -9,14 +31,8 @@
   - `@fictjs/vite-plugin` no longer accepts legacy or shadow backend selection and always uses the native compiler.
   - `@fictjs/webpack-plugin` no longer provides the Babel preset/legacy loader path and requires the native compiler.
   - `@fictjs/babel-preset` is retired; `0.30.1` remains the final legacy-compatible release and rollback target.
-  - Standard decorators must be lowered by a target-compatible transform before native Fict compilation; raw decorator syntax now fails closed.
-  - Multiline authored JSX text now follows standard JSX whitespace normalization. Use expression strings for exact whitespace, including inside `<pre>`.
 
   Follow `docs/migration-guide.md` before upgrading. Native compiler installation failures now fail closed instead of falling back to Babel.
-
-### Patch Changes
-
-- Preserve Babel 0.28 call semantics for function-valued `$state` bindings, including optional calls, direct function assignments, and nested callable-state chains.
 
 ## 0.30.1
 

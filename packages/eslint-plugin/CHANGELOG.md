@@ -1,5 +1,12 @@
 # @fictjs/eslint-plugin
 
+## 0.32.0-next.0
+
+### Patch Changes
+
+- Publish the ESLint plugin with the compiler/runtime prerelease train; no lint rule behavior
+  changed in this release.
+
 ## 0.31.0
 
 ## 0.30.1

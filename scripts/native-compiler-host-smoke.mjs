@@ -1,12 +1,20 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const root = process.cwd()
+const capabilityManifest = JSON.parse(
+  readFileSync(path.join(root, 'packages/compiler/compiler-capabilities.json'), 'utf8'),
+)
+const capabilityManifestDigest = `sha256:${createHash('sha256')
+  .update(JSON.stringify(capabilityManifest))
+  .digest('hex')}`
 const nativePath = path.resolve(
   process.env.FICT_COMPILER_NATIVE_PATH ??
     path.join(root, 'target', 'release', 'fict_compiler_napi.node'),
@@ -74,6 +82,9 @@ for (const [format, facade] of [
   assert.equal(info.nodeApiVersion, 10)
   assert.equal(info.compilerProtocolVersion, 1)
   assert.equal(info.metadataSchemaVersion, 1)
+  assert.equal(info.compilerCapabilityManifestVersion, capabilityManifest.schemaVersion)
+  assert.equal(info.compilerCapabilityManifestDigest, capabilityManifestDigest)
+  assert.equal(info.compilerCapabilityPackageVersion, capabilityManifest.packageVersion)
   assert.match(info.compilerBuildId, /^fict-rust-p1-oxc0\.139\.0-m1-[0-9a-f]{64}$/)
   assert.ok(
     info.compilerBuildRevision === null || /^[0-9a-f]{40}$/.test(info.compilerBuildRevision),

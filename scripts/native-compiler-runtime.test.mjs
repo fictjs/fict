@@ -2,6 +2,8 @@
 
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -11,6 +13,12 @@ const require = createRequire(import.meta.url)
 const root = path.resolve(import.meta.dirname, '..')
 const { JSDOM } = require('../packages/runtime/node_modules/jsdom')
 const binding = require(path.join(root, 'target', 'release', 'fict_compiler_napi.node'))
+const capabilityManifest = JSON.parse(
+  readFileSync(path.join(root, 'packages/compiler/compiler-capabilities.json'), 'utf8'),
+)
+const capabilityManifestDigest = `sha256:${createHash('sha256')
+  .update(JSON.stringify(capabilityManifest))
+  .digest('hex')}`
 
 let dom
 
@@ -1923,6 +1931,9 @@ test('native binding reports the Rust-only compiler protocol', () => {
   assert.equal(info.compilerProtocolVersion, 1)
   assert.equal(info.metadataSchemaVersion, 1)
   assert.equal(info.oxcVersion, '0.139.0')
+  assert.equal(info.compilerCapabilityManifestVersion, capabilityManifest.schemaVersion)
+  assert.equal(info.compilerCapabilityManifestDigest, capabilityManifestDigest)
+  assert.equal(info.compilerCapabilityPackageVersion, capabilityManifest.packageVersion)
 })
 
 test('native pipeline follows the authored runtime helper package family', () => {
