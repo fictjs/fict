@@ -222,13 +222,26 @@ const probes = [
   {
     id: 'packages/compiler/test/warnings-as-errors.test.ts:156:transform',
     suffix: `
-      export function probe() {
-        return App({ mode: 2 })
+      import { $state } from 'fict'
+      let setMode
+      function AuditApp() {
+        let mode = $state(2)
+        setMode = next => { mode = next }
+        return <App mode={mode} />
       }
+      export function probe() {
+        return <AuditApp />
+      }
+      export function update(next) { setMode(next) }
     `,
-    diagnosticCodes: ['FICT-R006'],
     renderToDom: true,
-    expected: ['span', '2'],
+    expected: [
+      ['span', '2'],
+      ['div', '0'],
+      ['div', '1'],
+      ['span', '3'],
+    ],
+    updates: [0, 1, 3],
   },
 ]
 
@@ -275,7 +288,7 @@ function loadProbe(code) {
 }
 
 for (const probe of probes) {
-  test(`executes reviewed Rust capability expansion: ${probe.id}`, () => {
+  test(`executes reviewed Rust capability expansion: ${probe.id}`, async () => {
     const compiled = loadProbe(compileProbe(probe))
     const entry = compiled[probe.exportName ?? 'probe']
     assert.equal(typeof entry, 'function', probe.id)
@@ -288,18 +301,39 @@ for (const probe of probes) {
             () => runtime.__fictRender({ slots: [], cursor: 0 }, () => entry()),
             container,
           )
-          try {
-            return [container.firstElementChild?.tagName.toLowerCase(), container.textContent]
-          } finally {
-            dispose()
+          if (probe.updates === undefined) {
+            try {
+              return [container.firstElementChild?.tagName.toLowerCase(), container.textContent]
+            } finally {
+              dispose()
+            }
           }
+          return (async () => {
+            try {
+              const snapshot = () => [
+                container.firstElementChild?.tagName.toLowerCase(),
+                container.textContent,
+              ]
+              const snapshots = [snapshot()]
+              const update = compiled.update
+              assert.equal(typeof update, 'function', `${probe.id}: update export`)
+              for (const value of probe.updates) {
+                update(value)
+                await new Promise(resolve => queueMicrotask(resolve))
+                snapshots.push(snapshot())
+              }
+              return snapshots
+            } finally {
+              dispose()
+            }
+          })()
         }
         return runtime.__fictRender({ slots: [], cursor: 0 }, () => entry())
       }
       if (probe.expectedError !== undefined) {
         assert.throws(invoke, error => error?.constructor?.name === probe.expectedError)
       } else {
-        const value = invoke()
+        const value = await invoke()
         assert.deepEqual(probe.resolveAccessor ? value() : value, probe.expected)
       }
     } finally {

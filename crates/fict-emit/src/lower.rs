@@ -1803,15 +1803,36 @@ fn lower_function(
                                 GuaranteeClass::Internal,
                             )]));
                         };
-                        operations.push(EmitOperation::CreateVNode {
-                            template: *template,
-                            source_result,
-                            reactive_helper: RuntimeHelper::ReactiveGetter,
-                            fragment_helper: hir.templates[template.as_usize()]
-                                .contains_fragment
-                                .then_some(RuntimeHelper::Fragment),
-                            origin: instruction.origin,
-                        });
+                        let jsx_template = &hir.templates[template.as_usize()];
+                        let root_is_component = matches!(
+                            &jsx_template.root,
+                            JsxNode::Element(element)
+                                if !matches!(element.name, JsxElementName::Intrinsic(_))
+                        );
+                        let mut component_targets = BTreeMap::new();
+                        register_component_nodes(
+                            hir,
+                            function_id,
+                            &jsx_template.root,
+                            root_is_component.then_some(source_result),
+                            &mut temporaries,
+                            &mut temporary_names,
+                            &mut value_temporaries,
+                            &mut operations,
+                            &mut component_targets,
+                            jsx_getter_bindings,
+                        )?;
+                        if !root_is_component {
+                            operations.push(EmitOperation::CreateVNode {
+                                template: *template,
+                                source_result,
+                                reactive_helper: RuntimeHelper::ReactiveGetter,
+                                fragment_helper: jsx_template
+                                    .contains_fragment
+                                    .then_some(RuntimeHelper::Fragment),
+                                origin: instruction.origin,
+                            });
+                        }
                     }
                 }
                 _ => preserve(&mut operations, block.id, instruction_index, instruction),

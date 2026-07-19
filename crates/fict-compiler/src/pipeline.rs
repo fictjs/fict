@@ -5386,6 +5386,51 @@ mod tests {
         assert!(result.code.contains("...props.extra"), "{}", result.code);
         assert!(result.code.contains("children:"), "{}", result.code);
         assert!(result.code.contains("type: Child"), "{}", result.code);
+        assert!(
+            result.code.contains("value: __fictProp(() => props.value)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result
+                .code
+                .contains("value: __fictReactive(() => props.value)"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn preserves_reactive_component_inputs_in_vnode_fallbacks() {
+        let mut input = request(
+            "import { $state } from 'fict'; function Child({ mode, label, children }) { return <span>{mode}:{label}:{children}</span>; } export function App() { let mode = $state(2); let extra = $state({ label: 'two' }); return <Child mode={mode} {...extra}>{mode}</Child>; }",
+            "vnode-component-inputs.tsx",
+        );
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("mode: __fictProp(() => mode())"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("__fictProp(() => extra())"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("children: prop(() => mode())"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("mergeProps("), "{}", result.code);
+        assert!(
+            !result.code.contains("mode: __fictReactive(() => mode())"),
+            "{}",
+            result.code
+        );
     }
 
     #[test]
@@ -5477,7 +5522,11 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(result.code.contains("render: () => ({"), "{}", result.code);
+        assert!(
+            result.code.contains("render: nonReactive(() => ({"),
+            "{}",
+            result.code
+        );
         assert!(result.code.contains("type: Fragment"), "{}", result.code);
         assert!(!result.code.contains("<i>"), "{}", result.code);
     }
