@@ -20,7 +20,9 @@ export default [
   {
     name: 'Fict (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    limit: '22.6 KB',
+    // Approved compatibility cost for materializing JSX values before
+    // raw-text/RCDATA coercion; CJS also retains its interop wrapper overhead.
+    limit: '22.7 KB',
     modifyEsbuildConfig: production,
   },
 ]

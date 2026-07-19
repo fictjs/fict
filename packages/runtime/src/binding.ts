@@ -529,25 +529,22 @@ function formatTextValue(value: unknown): string {
   if (value == null || typeof value === 'boolean') {
     return ''
   }
-  return String(materializeTextValue(value))
+  return String(registeredCreateElement ? materializeTextValue(value) : value)
 }
 
 function materializeTextValue(value: unknown): unknown {
-  if (!registeredCreateElement) return value
   if (Array.isArray(value)) return value.map(materializeTextValue)
-  if (!isVNodeTextValue(value)) return value
-  return registeredCreateElement(value)
-}
-
-function isVNodeTextValue(value: unknown): value is FictVNode {
-  if (!value || typeof value !== 'object' || isNodeLike(value)) return false
+  if (!value || typeof value !== 'object' || isNodeLike(value)) return value
   const candidate = value as Partial<FictVNode>
-  return (
+  if (
     (typeof candidate.type === 'string' ||
       typeof candidate.type === 'symbol' ||
       typeof candidate.type === 'function') &&
-    Object.prototype.hasOwnProperty.call(candidate, 'props')
-  )
+    hasOwn.call(candidate, 'props')
+  ) {
+    return registeredCreateElement!(candidate as FictVNode)
+  }
+  return value
 }
 
 // ============================================================================
