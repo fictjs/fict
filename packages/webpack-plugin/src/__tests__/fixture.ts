@@ -225,7 +225,15 @@ export function closeWatching(watching: Watching, compiler: Compiler): Promise<v
   })
 }
 
-export function waitForWatchingReady(watching: Watching, timeoutMs = 10_000): Promise<void> {
+export interface WatchReadinessOptions {
+  files?: readonly string[]
+  timeoutMs?: number
+}
+
+export function waitForWatchingReady(
+  watching: Watching,
+  { files = [], timeoutMs = 10_000 }: WatchReadinessOptions = {},
+): Promise<void> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return Promise.reject(new Error('Watch readiness timeout must be a positive finite number.'))
   }
@@ -238,16 +246,29 @@ export function waitForWatchingReady(watching: Watching, timeoutMs = 10_000): Pr
       else resolve()
     }
     const check = (): void => {
-      if (watching.watcher) {
-        finish()
-        return
+      const watcher = watching.watcher
+      if (watcher) {
+        const entries =
+          files.length === 0
+            ? undefined
+            : (watcher.getInfo?.().fileTimeInfoEntries ?? watcher.getFileTimeInfoEntries())
+        if (
+          !entries ||
+          files.every(filename => entries.has(filename) && entries.get(filename) !== 'ignore')
+        ) {
+          finish()
+          return
+        }
       }
       if (watching.closed) {
         finish(new Error('Webpack watcher closed before it became ready.'))
         return
       }
       if (Date.now() >= deadline) {
-        finish(new Error(`Timed out after ${timeoutMs}ms waiting for the Webpack watcher.`))
+        const target = files.length === 0 ? '' : ` to snapshot ${files.join(', ')}`
+        finish(
+          new Error(`Timed out after ${timeoutMs}ms waiting for the Webpack watcher${target}.`),
+        )
         return
       }
       timer = setTimeout(check, 5)

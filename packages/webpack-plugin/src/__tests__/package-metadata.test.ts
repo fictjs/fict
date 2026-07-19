@@ -151,7 +151,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       expect(firstStored.metadataDependencies).toEqual([packagePath, sidecarPath].sort())
       expect(firstStats.compilation.fileDependencies).toContain(packagePath)
       expect(firstStats.compilation.fileDependencies).toContain(sidecarPath)
-      await waitForWatchingReady(watching)
+      await waitForWatchingReady(watching, { files: [packagePath, sidecarPath] })
 
       const sidecarBuild = builds.nextMatching(
         stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
@@ -165,7 +165,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       expect(builtFixtureFiles(sidecarStats, root)).toContain(entryPath)
       const sidecarStored = storedMetadata(sidecarStats, entryPath)
       expect(sidecarStored.dependencyFingerprint).not.toBe(firstStored.dependencyFingerprint)
-      await waitForWatchingReady(watching)
+      await waitForWatchingReady(watching, { files: [packagePath, sidecarPath] })
 
       const manifestBuild = builds.nextMatching(
         stats => buildAssetMatches(stats, /count\(\)\s*\*\s*2/),
@@ -294,7 +294,9 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       expect(storedMetadata(firstStats, entryPath).metadataDependencies).toEqual(
         [lexicalPackagePath, lexicalSidecarPath, realPackagePath, realSidecarPath].sort(),
       )
-      await waitForWatchingReady(watching)
+      await waitForWatchingReady(watching, {
+        files: [lexicalPackagePath, lexicalSidecarPath, realPackagePath, realSidecarPath],
+      })
 
       const rebuilt = builds.nextMatching(
         stats => buildAssetMatches(stats, /return count\s*\*\s*2/),

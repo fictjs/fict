@@ -2,9 +2,31 @@ import { readFile } from 'node:fs/promises'
 
 import type { Stats } from 'webpack'
 
-import { createBuildQueue } from './fixture'
+import { createBuildQueue, waitForWatchingReady } from './fixture'
 
 describe('@fictjs/webpack-plugin build queue', () => {
+  it('waits for requested files to enter the underlying watcher snapshot', async () => {
+    const filename = '/fixture/hook.fict.meta.json'
+    let snapshotReads = 0
+    const watching = {
+      closed: false,
+      watcher: {
+        getInfo: () => ({
+          changes: null,
+          removals: null,
+          fileTimeInfoEntries: new Map<string, null>(
+            ++snapshotReads >= 2 ? [[filename, null]] : [],
+          ),
+          contextTimeInfoEntries: new Map(),
+        }),
+      },
+    } as unknown as Parameters<typeof waitForWatchingReady>[0]
+
+    await waitForWatchingReady(watching, { files: [filename], timeoutMs: 100 })
+
+    expect(snapshotReads).toBe(2)
+  })
+
   it('removes a timed-out matcher before the next build arrives', async () => {
     const builds = createBuildQueue()
 
