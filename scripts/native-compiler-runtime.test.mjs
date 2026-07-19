@@ -1539,6 +1539,59 @@ test('raw-text and RCDATA expressions bind literal textContent', async () => {
   container.remove()
 })
 
+test('static component spreads copy enumerable own properties only', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { render } from 'fict'
+
+      function Child(props) {
+        return (
+          <div
+            data-id={props.id}
+            data-has-secret={'secret' in props ? 'yes' : 'no'}
+            data-keys={Object.keys(props).join(',')}
+          >
+            {String(props.secret)}
+          </div>
+        )
+      }
+
+      function App() {
+        const prototype = { secret: 'inherited' }
+        const source = Object.create(prototype)
+        source.visible = 'own'
+        return (
+          <section>
+            <Child {...source} id="single" />
+            <Child id="merged" {...source} other="named" />
+          </section>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'component-spread-own-properties',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const single = container.querySelector('[data-id="single"]')
+  const merged = container.querySelector('[data-id="merged"]')
+  assert.equal(single?.getAttribute('data-has-secret'), 'no')
+  assert.equal(single?.getAttribute('data-keys'), 'visible,id')
+  assert.equal(single?.textContent, 'undefined')
+  assert.equal(merged?.getAttribute('data-has-secret'), 'no')
+  assert.equal(merged?.getAttribute('data-keys'), 'id,visible,other')
+  assert.equal(merged?.textContent, 'undefined')
+
+  dispose()
+  container.remove()
+})
+
 test('dynamic annotation-xml children use the final live encoding namespace', async () => {
   const compiled = await compileAndImport(
     `

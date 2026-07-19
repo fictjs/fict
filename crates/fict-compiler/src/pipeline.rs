@@ -3051,6 +3051,21 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_non_reactive_component_spreads_before_merging() {
+        let result = compile(request(
+            "function Child(_props) { return null; } export function App() { const props = Object.create(null); props.value = 1; return <Child {...props} />; }",
+            "static-component-spread.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("props: mergeProps({ ...props })"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn emits_reactive_component_prop_getters() {
         let mut input = request(
             "import { $state } from 'fict'; const Card = (_props) => null; const handler = makeHandler(); export function App() { let count = $state(0); return <Card value={count} onSelect={handler} />; } export function Router(props) { const owns = !props.history; const history = props.history || makeHistory(); if (owns) history.destroy?.(); return <Card history={history} />; }",

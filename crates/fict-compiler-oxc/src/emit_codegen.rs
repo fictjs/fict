@@ -5944,6 +5944,20 @@ impl<'a> AstRewriter<'a, '_> {
                                 GuaranteeClass::Internal,
                             ));
                         }
+                    } else {
+                        // A non-reactive JSX spread has ordinary object-spread semantics:
+                        // copy only enumerable own properties and snapshot accessor values.
+                        // `mergeProps(source)` deliberately returns a lone static source as-is,
+                        // so passing the source directly would leak inherited properties to the
+                        // child component. Materialize the spread snapshot before merging.
+                        let builder = AstBuilder::new(self.allocator);
+                        let mut snapshot = ArenaVec::new_in(&self.allocator);
+                        snapshot.push(ObjectPropertyKind::new_spread_property(
+                            spread.span,
+                            value,
+                            &builder,
+                        ));
+                        value = Expression::new_object_expression(spread.span, snapshot, &builder);
                     }
                     prop_segments.push(value);
                 }
