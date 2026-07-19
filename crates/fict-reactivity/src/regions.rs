@@ -5,7 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     BlockId, EvaluationMode, FictMacroKind, HirFile, HirFunction, HirInstructionKind, RegionId,
-    ScopeId, SsaName, TerminatorKind,
+    ScopeId, SsaName,
 };
 
 use crate::effects::imported_reactive_dependency;
@@ -350,10 +350,7 @@ pub fn verify_regions(
                     && read.location.block == range.block
                     && read.location.instruction >= range.start
                     && read.location.instruction < range.end
-            }) && function
-                .blocks
-                .get(range.block.as_usize())
-                .is_some_and(|block| terminator_owns_reactive_control_flow(&block.terminator.kind))
+            })
         });
         if region.has_control_flow != expected_control_flow {
             diagnostics.push(region_error(
@@ -704,7 +701,7 @@ fn build_region(
             && read.location.block == range.block
             && read.location.instruction >= range.start
             && read.location.instruction < range.end
-    }) && terminator_owns_reactive_control_flow(&block.terminator.kind);
+    });
     let cycle_blocked = outputs.iter().any(|output| cyclic_nodes.contains(output));
     let should_memoize = !function.flags.no_memo
         && !inputs.is_empty()
@@ -729,17 +726,6 @@ fn build_region(
         cycle_blocked,
         should_memoize,
     }
-}
-
-fn terminator_owns_reactive_control_flow(terminator: &TerminatorKind) -> bool {
-    matches!(
-        terminator,
-        TerminatorKind::Branch { .. }
-            | TerminatorKind::ForIn { .. }
-            | TerminatorKind::ForOf { .. }
-            | TerminatorKind::Switch { .. }
-            | TerminatorKind::Try { .. }
-    )
 }
 
 fn assign_hierarchy(

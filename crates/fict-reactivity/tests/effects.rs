@@ -80,7 +80,7 @@ fn user_local(binding: Option<BindingId>) -> HirLocal {
 }
 
 #[test]
-fn tracks_static_dynamic_control_and_escape_paths_with_barriers() {
+fn tracks_exact_static_dynamic_control_and_escape_paths_with_barriers() {
     let number = LiteralValue::Number(NumberLiteral::from_f64(1.0));
     let key = LiteralValue::String("dynamic".into());
     let static_place = Place {
@@ -129,6 +129,11 @@ fn tracks_static_dynamic_control_and_escape_paths_with_barriers() {
             kind: ValueKind::InstructionResult,
             origin: origin(),
         },
+        HirValue {
+            id: ValueId::new(5),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
     ];
     let function = HirFunction {
         id: FunctionId::new(0),
@@ -156,6 +161,14 @@ fn tracks_static_dynamic_control_and_escape_paths_with_barriers() {
                         origin: origin(),
                     },
                     literal(2, key),
+                    HirInstruction {
+                        result: Some(ValueId::new(5)),
+                        kind: HirInstructionKind::Read {
+                            place: static_place.clone(),
+                        },
+                        semantics: InstructionSemantics::PURE_EAGER,
+                        origin: origin(),
+                    },
                     HirInstruction {
                         result: Some(ValueId::new(1)),
                         kind: HirInstructionKind::Read {
@@ -227,8 +240,23 @@ fn tracks_static_dynamic_control_and_escape_paths_with_barriers() {
     let ssa = analyze_ssa(&file.functions[0]).expect("SSA");
     let analysis = analyze_dependencies(&file, FunctionId::new(0), &ssa).expect("dependencies");
 
-    assert_eq!(analysis.reads.len(), 2);
-    assert!(analysis.reads.iter().all(|read| read.controls_flow));
+    assert_eq!(analysis.reads.len(), 3);
+    assert_eq!(
+        analysis
+            .reads
+            .iter()
+            .filter(|read| read.controls_flow)
+            .count(),
+        2
+    );
+    assert!(
+        !analysis
+            .reads
+            .iter()
+            .find(|read| read.location.instruction == 3)
+            .expect("unrelated read of the same path")
+            .controls_flow
+    );
     assert_eq!(analysis.control_flow_reads.len(), 2);
     assert!(analysis.reads.iter().any(|read| {
         matches!(read.path.base, DependencyBase::Ssa(_))

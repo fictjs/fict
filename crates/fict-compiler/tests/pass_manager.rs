@@ -2141,6 +2141,14 @@ fn analyzes_frontend_for_of_cfg_with_iteration_definitions_and_reactive_source()
             .iter()
             .any(|path| path.local() == Some(items))
     );
+    assert!(
+        analysis
+            .regions
+            .regions
+            .iter()
+            .any(|region| region.has_control_flow),
+        "the preheader region that evaluates the reactive iterable owns the loop control"
+    );
     assert!(analysis.structurize.constructs.iter().any(|construct| {
         matches!(
             construct.kind,
@@ -2151,6 +2159,56 @@ fn analyzes_frontend_for_of_cfg_with_iteration_definitions_and_reactive_source()
         )
     }));
     assert!(analysis.structurize.fallback.is_none());
+}
+
+#[test]
+fn analyzes_composite_for_of_iterables_as_reactive_control() {
+    let frontend = build_hir(
+        r#"
+            import { $state } from 'fict';
+            export function App() {
+                let item = $state(1);
+                for (const value of [item]) {
+                    if (value) item = value;
+                }
+                return item;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScriptJsx,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified composite for-of CFG"),
+        CorePassOptions::default(),
+    )
+    .expect("core passes over composite for-of CFG");
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    let analysis = &output.functions[app.id.as_usize()];
+    assert!(
+        analysis
+            .regions
+            .regions
+            .iter()
+            .any(|region| region.has_control_flow),
+        "composite iterable reads: {:?}; regions: {:?}",
+        analysis.dependencies.reads,
+        analysis.regions.regions
+    );
 }
 
 #[test]

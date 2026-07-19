@@ -99,7 +99,7 @@ pub struct ReadFact {
     pub path: DependencyPath,
     /// Read location.
     pub location: InstructionLocation,
-    /// Whether the value directly controls a branch/switch.
+    /// Whether this exact read contributes to a branch, switch, or loop control value.
     pub controls_flow: bool,
 }
 
@@ -232,7 +232,7 @@ pub struct DependencyAnalysis {
     pub reads: Vec<ReadFact>,
     /// Writes in source HIR order.
     pub writes: Vec<WriteFact>,
-    /// Dependencies directly controlling branch/switch decisions.
+    /// Dependencies directly controlling branch, switch, or loop decisions.
     pub control_flow_reads: Vec<DependencyPath>,
     /// Escapes in deterministic reason/location/path order.
     pub escapes: Vec<EscapeFact>,
@@ -277,6 +277,7 @@ pub fn analyze_dependencies(
         }
     }
     let mut direct_dependencies = vec![BTreeSet::new(); function.values.len()];
+    let mut direct_read_origins = vec![BTreeSet::new(); function.values.len()];
     let mut input_edges = vec![Vec::new(); function.values.len()];
     let mut fragment_reads: BTreeMap<(BlockId, u32), Vec<DependencyPath>> = BTreeMap::new();
     for block in &function.blocks {
@@ -288,6 +289,10 @@ pub fn analyze_dependencies(
             current_versions[phi.target.local.as_usize()] = Some(phi.target);
         }
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            let location = InstructionLocation {
+                block: block.id,
+                instruction: count_u32(instruction_index),
+            };
             let fragment = match &instruction.kind {
                 HirInstructionKind::SyntaxFragment { fragment, .. }
                 | HirInstructionKind::Iteration {
@@ -335,7 +340,8 @@ pub fn analyze_dependencies(
                                 SsaUseKind::Read,
                                 &use_names,
                             ) {
-                                direct_dependencies[result_index].insert(path);
+                                direct_dependencies[result_index].insert(path.clone());
+                                direct_read_origins[result_index].insert((location, path));
                             }
                             input_edges[result_index].extend(projection_values(place));
                         }
@@ -363,6 +369,9 @@ pub fn analyze_dependencies(
                         HirInstructionKind::SyntaxFragment { .. } => {
                             direct_dependencies[result_index]
                                 .extend(implicit_paths.iter().cloned());
+                            direct_read_origins[result_index].extend(
+                                implicit_paths.iter().cloned().map(|path| (location, path)),
+                            );
                             input_edges[result_index].extend(instruction_inputs(instruction, file));
                         }
                         HirInstructionKind::Call(call) => {
@@ -414,6 +423,7 @@ pub fn analyze_dependencies(
     }
 
     let mut value_dependencies = direct_dependencies;
+    let mut value_read_origins = direct_read_origins;
     let maximum_iterations = function.values.len().saturating_add(2);
     let mut iterations = 0_usize;
     loop {
@@ -425,6 +435,7 @@ pub fn analyze_dependencies(
             )]));
         }
         let previous = value_dependencies.clone();
+        let previous_read_origins = value_read_origins.clone();
         let mut changed = false;
         for (result, inputs) in input_edges.iter().enumerate() {
             for input in inputs {
@@ -432,6 +443,11 @@ pub fn analyze_dependencies(
                     let before = value_dependencies[result].len();
                     value_dependencies[result].extend(dependencies.iter().cloned());
                     changed |= before != value_dependencies[result].len();
+                }
+                if let Some(origins) = previous_read_origins.get(input.as_usize()) {
+                    let before = value_read_origins[result].len();
+                    value_read_origins[result].extend(origins.iter().cloned());
+                    changed |= before != value_read_origins[result].len();
                 }
             }
         }
@@ -686,16 +702,16 @@ pub fn analyze_dependencies(
                 &mut escapes,
             ),
             TerminatorKind::Branch { test, .. } => {
-                mark_control_dependencies(*test, &value_dependencies, &mut reads)
+                mark_control_dependencies(*test, &value_read_origins, &mut reads)
             }
             TerminatorKind::Switch { discriminant, .. } => {
-                mark_control_dependencies(*discriminant, &value_dependencies, &mut reads)
+                mark_control_dependencies(*discriminant, &value_read_origins, &mut reads)
             }
             TerminatorKind::ForIn { object, .. } => {
-                mark_control_dependencies(*object, &value_dependencies, &mut reads)
+                mark_control_dependencies(*object, &value_read_origins, &mut reads)
             }
             TerminatorKind::ForOf { iterable, .. } => {
-                mark_control_dependencies(*iterable, &value_dependencies, &mut reads)
+                mark_control_dependencies(*iterable, &value_read_origins, &mut reads)
             }
             TerminatorKind::Goto { .. }
             | TerminatorKind::Try { .. }
@@ -1493,14 +1509,14 @@ fn jsx_values(root: &JsxNode) -> Vec<ValueId> {
 
 fn mark_control_dependencies(
     value: ValueId,
-    value_dependencies: &[BTreeSet<DependencyPath>],
+    value_read_origins: &[BTreeSet<(InstructionLocation, DependencyPath)>],
     reads: &mut [ReadFact],
 ) {
-    let Some(dependencies) = value_dependencies.get(value.as_usize()) else {
+    let Some(origins) = value_read_origins.get(value.as_usize()) else {
         return;
     };
     for read in reads {
-        if dependencies.contains(&read.path) {
+        if origins.contains(&(read.location, read.path.clone())) {
             read.controls_flow = true;
         }
     }
