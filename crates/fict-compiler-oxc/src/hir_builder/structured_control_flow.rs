@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use fict_diagnostics::SourceSpan;
 use fict_hir::{
-    BlockId, FunctionId, IterationKind, Origin, ScopeId, StructuredSourceKind,
+    BlockId, FunctionId, GeneratedOrigin, IterationKind, Origin, ScopeId, StructuredSourceKind,
     StructuredSwitchCaseHint,
 };
 use oxc::{
@@ -59,7 +59,7 @@ pub(super) struct PlannedBlock {
 pub(super) enum PlannedTerminator {
     Return {
         value: Option<SourceSpan>,
-        origin: SourceSpan,
+        origin: Origin,
     },
     Throw {
         value: SourceSpan,
@@ -247,7 +247,7 @@ impl<'semantic> PlanBuilder<'semantic> {
         if let Some(current) = current {
             self.blocks[current.as_usize()].terminator = PlannedTerminator::Return {
                 value: None,
-                origin: self.body_span,
+                origin: Origin::generated(Some(self.body_span), GeneratedOrigin::ControlFlow),
             };
         }
         self.finish()
@@ -261,7 +261,7 @@ impl<'semantic> PlanBuilder<'semantic> {
         });
         self.blocks[0].terminator = PlannedTerminator::Return {
             value: Some(span),
-            origin: span,
+            origin: Origin::source(span),
         };
         self.finish()
     }
@@ -316,7 +316,7 @@ impl<'semantic> PlanBuilder<'semantic> {
                 }
                 self.blocks[current.as_usize()].terminator = PlannedTerminator::Return {
                     value,
-                    origin: source_span(statement.span),
+                    origin: Origin::source(source_span(statement.span)),
                 };
                 None
             }

@@ -7,19 +7,20 @@ use fict_hir::{
     ArrayElement, BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
     CallInstruction, CompoundAssignmentOperator, ContextValueKind, DeclarationKind, DeleteTarget,
     DesugaringKind, EvaluationMode, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind,
-    GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind,
-    HirLocal, HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
-    HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope, HirTerminator, HirValue,
-    ImportPhase, ImportedHookMember, ImportedHookReturn, ImportedReactiveKind,
-    ImportedReactiveMember, ImportedReactiveMemberMatch, ImportedReactiveProperty,
-    InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute, JsxAttributeValue,
-    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
-    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport, ModuleLocalExport,
-    ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
-    PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
-    RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId,
-    SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId, TerminatorKind,
-    UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir, verify_module_plan,
+    GeneratedOrigin, GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction,
+    HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
+    HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope,
+    HirTerminator, HirValue, ImportPhase, ImportedHookMember, ImportedHookReturn,
+    ImportedReactiveKind, ImportedReactiveMember, ImportedReactiveMemberMatch,
+    ImportedReactiveProperty, InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute,
+    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression,
+    JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport,
+    ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind,
+    Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost,
+    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment,
+    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId,
+    TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    verify_module_plan,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -3040,7 +3041,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     instructions: declarations,
                     terminator: HirTerminator {
                         kind: TerminatorKind::Return { value: None },
-                        origin,
+                        origin: Origin::generated(
+                            Some(fact.body_span),
+                            GeneratedOrigin::ControlFlow,
+                        ),
                     },
                     source_hint: None,
                     origin,
@@ -5144,15 +5148,17 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
         for block in plan.blocks {
             let origin = match &block.terminator {
-                structured_control_flow::PlannedTerminator::Return { origin, .. }
-                | structured_control_flow::PlannedTerminator::Throw { origin, .. }
+                structured_control_flow::PlannedTerminator::Return { origin, .. } => *origin,
+                structured_control_flow::PlannedTerminator::Throw { origin, .. }
                 | structured_control_flow::PlannedTerminator::Goto { origin, .. }
                 | structured_control_flow::PlannedTerminator::Branch { origin, .. }
                 | structured_control_flow::PlannedTerminator::ForEach { origin, .. }
                 | structured_control_flow::PlannedTerminator::SwitchDispatch { origin, .. }
                 | structured_control_flow::PlannedTerminator::SwitchCase { origin, .. }
                 | structured_control_flow::PlannedTerminator::Try { origin, .. }
-                | structured_control_flow::PlannedTerminator::Unreachable { origin } => *origin,
+                | structured_control_flow::PlannedTerminator::Unreachable { origin } => {
+                    Origin::source(*origin)
+                }
             };
             let kind = match block.terminator {
                 structured_control_flow::PlannedTerminator::Return { value, .. } => {
@@ -5294,10 +5300,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 }
             };
             self.functions[owner.as_usize()].blocks[block.id.as_usize()].terminator =
-                HirTerminator {
-                    kind,
-                    origin: Origin::source(origin),
-                };
+                HirTerminator { kind, origin };
         }
     }
 

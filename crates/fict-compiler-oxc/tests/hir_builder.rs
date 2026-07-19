@@ -3,12 +3,13 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, ContextValueKind,
-    DeclarationKind, DeleteTarget, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind,
-    ImportPhase, ImportedHookReturn, ImportedReactiveKind, ImportedReactiveProperty, IterationKind,
-    JavaScriptString, LiteralValue, ModuleExport, ModuleLocalExport, MutationEffect, ObjectEntry,
-    ObjectPropertyKind, PlaceBase, Projection, PropertyKey, Purity, ReactiveCallKind,
-    ReactiveScopeKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator,
-    UpdateOperator, ValueKind, verify_module_plan,
+    DeclarationKind, DeleteTarget, EvaluationMode, FictMacroKind, FunctionKind, GeneratedOrigin,
+    HirInstructionKind, ImportPhase, ImportedHookReturn, ImportedReactiveKind,
+    ImportedReactiveProperty, IterationKind, JavaScriptString, LiteralValue, ModuleExport,
+    ModuleLocalExport, MutationEffect, ObjectEntry, ObjectPropertyKind, OriginKind, PlaceBase,
+    Projection, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeKind, StructuredSourceKind,
+    SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    verify_module_plan,
 };
 use fict_metadata::{
     MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
@@ -380,6 +381,59 @@ fn retains_simple_explicit_and_arrow_return_values_in_terminators() {
         named("empty").blocks[0].terminator.kind,
         TerminatorKind::Return { value: None }
     ));
+}
+
+#[test]
+fn distinguishes_source_bare_returns_from_implicit_control_flow_returns() {
+    let output = build_hir(
+        r#"
+            function bare() { return; }
+            function fallthrough() {}
+            function partial(flag) { if (flag) return; }
+        "#,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let named = |name: &str| {
+        hir.functions
+            .iter()
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .unwrap_or_else(|| panic!("missing function {name}"))
+    };
+
+    assert_eq!(
+        named("bare").blocks[0].terminator.origin.kind,
+        OriginKind::Source
+    );
+    assert_eq!(
+        named("fallthrough").blocks[0].terminator.origin.kind,
+        OriginKind::Generated(GeneratedOrigin::ControlFlow)
+    );
+
+    let partial_return_origins: Vec<_> = named("partial")
+        .blocks
+        .iter()
+        .filter(|block| {
+            matches!(
+                block.terminator.kind,
+                TerminatorKind::Return { value: None }
+            )
+        })
+        .map(|block| block.terminator.origin.kind)
+        .collect();
+    assert_eq!(
+        partial_return_origins,
+        [
+            OriginKind::Source,
+            OriginKind::Generated(GeneratedOrigin::ControlFlow),
+        ]
+    );
 }
 #[test]
 fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
