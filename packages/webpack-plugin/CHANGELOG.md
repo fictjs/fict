@@ -9,6 +9,7 @@
   - `@fictjs/vite-plugin` no longer accepts legacy or shadow backend selection and always uses the native compiler.
   - `@fictjs/webpack-plugin` no longer provides the Babel preset/legacy loader path and requires the native compiler.
   - `@fictjs/babel-preset` is retired; `0.30.1` remains the final legacy-compatible release and rollback target.
+  - Standard decorators require a target-compatible loader to the right of the Fict loader so Webpack lowers them before native compilation.
 
   Follow `docs/migration-guide.md` before upgrading. Native compiler installation failures now fail closed instead of falling back to Babel.
 

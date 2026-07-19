@@ -61,8 +61,11 @@ not need it.
 
 Custom Babel or TypeScript transforms may run as separate downstream stages.
 They must not compile Fict reactivity, and source maps must be composed by the
-host. Decorator syntax is parsed and preserved by Fict; a downstream transform
-owns decorator runtime lowering.
+host. Standard decorators must instead be lowered before native Fict
+compilation: register a target-compatible `enforce: 'pre'` transform before
+`fict()` in the Vite plugin list. Raw standard decorator syntax fails with
+`FICT-TS-DECORATOR-STANDARD`; legacy TypeScript parameter decorators remain on
+Fict's explicit legacy lowering path.
 
 ## Preview resumability
 

@@ -35,9 +35,12 @@ a Webpack deployment. Use `@fictjs/vite-plugin` for resumable builds.
 
 If another Babel transform is needed, place its loader to the left of the Fict loader so it runs
 after Fict compilation. That stage must not compile Fict reactivity.
-This is also the required handoff for decorators: Fict accepts and preserves current standard
-decorators and legacy parameter decorators, while the downstream Babel or TypeScript loader owns
-their runtime lowering.
+
+Standard decorators are the exception: the native compiler rejects raw standard decorator syntax
+with `FICT-TS-DECORATOR-STANDARD`. Because Webpack executes loaders from right to left, place a
+target-compatible decorator loader to the right of the Fict loader so it removes the decorators
+first. Legacy TypeScript parameter decorators remain supported by Fict's explicit legacy lowering
+path.
 
 Local reactive metadata and importer dependency fingerprints are persisted in Webpack module build
 information, so watch rebuilds and filesystem-cache restores keep unchanged importers correct.

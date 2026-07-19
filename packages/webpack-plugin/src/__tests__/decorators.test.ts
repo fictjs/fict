@@ -10,7 +10,10 @@ const decoratorLoweringLoader = fileURLToPath(
   new URL('./typescript-decorators-loader.cjs', import.meta.url),
 )
 
-function addDecoratorLowering(configuration: Configuration, legacy: boolean): void {
+function addDecoratorLowering(
+  configuration: Configuration,
+  options: { legacy: boolean; beforeFict: boolean },
+): void {
   const rule = configuration.module?.rules?.[0] as RuleSetRule | undefined
   if (!rule) throw new Error('Missing Fict fixture loader rule.')
   const fictLoaders = Array.isArray(rule.use)
@@ -18,13 +21,38 @@ function addDecoratorLowering(configuration: Configuration, legacy: boolean): vo
     : rule.use
       ? ([rule.use] as RuleSetUseItem[])
       : []
-  // Webpack executes loaders from right to left: Fict sees the original
-  // decorators first and TypeScript lowers the preserved syntax afterwards.
-  rule.use = [{ loader: decoratorLoweringLoader, options: { legacy } }, ...fictLoaders]
+  const loweringLoader = {
+    loader: decoratorLoweringLoader,
+    options: { legacy: options.legacy },
+  }
+  // Webpack executes loaders from right to left. Standard decorators must be
+  // lowered before Fict; the legacy parameter-decorator path remains native.
+  rule.use = options.beforeFict
+    ? [...fictLoaders, loweringLoader]
+    : [loweringLoader, ...fictLoaders]
 }
 
 describe('@fictjs/webpack-plugin decorator handoff', () => {
-  it('hands 2023-11 decorators to downstream lowering in a real build', async () => {
+  it('fails closed when standard decorators reach native compilation', async () => {
+    const root = await createFixture({
+      'entry.ts': `
+        function registered(value: unknown, context: { kind: string }) {}
+
+        @registered
+        export class Model {}
+      `,
+    })
+
+    try {
+      await expect(runCompiler(createWebpackConfiguration(root))).rejects.toThrow(
+        /FICT-TS-DECORATOR-STANDARD/,
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('lowers 2023-11 decorators before native compilation in a real build', async () => {
     const root = await createFixture({
       'entry.ts': `
         const calls: string[] = []
@@ -50,7 +78,7 @@ describe('@fictjs/webpack-plugin decorator handoff', () => {
 
     try {
       const configuration = createWebpackConfiguration(root)
-      addDecoratorLowering(configuration, false)
+      addDecoratorLowering(configuration, { legacy: false, beforeFict: true })
       await runCompiler(configuration)
 
       expect(runApp(root)).toBe(23)
@@ -84,7 +112,7 @@ describe('@fictjs/webpack-plugin decorator handoff', () => {
 
     try {
       const configuration = createWebpackConfiguration(root)
-      addDecoratorLowering(configuration, true)
+      addDecoratorLowering(configuration, { legacy: true, beforeFict: false })
       await runCompiler(configuration)
 
       expect(runApp(root)).toBe(12)
