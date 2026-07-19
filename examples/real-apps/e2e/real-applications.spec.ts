@@ -1,8 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
 
-const operationsUrl = 'http://127.0.0.1:43173'
-const resumableSsrUrl = 'http://127.0.0.1:43174'
-const streamingSsrUrl = 'http://127.0.0.1:43175'
+import { realAppOrigins } from '../server-origins'
+
+const operationsUrl = realAppOrigins.operations
+const resumableSsrUrl = realAppOrigins.resumableSsr
+const streamingSsrUrl = realAppOrigins.streamingSsr
 const soakMs = Math.min(
   10 * 60_000,
   Math.max(1_000, Number.parseInt(process.env.FICT_REAL_APP_SOAK_MS ?? '10000', 10) || 10_000),

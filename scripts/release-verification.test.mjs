@@ -55,6 +55,7 @@ const zigRequirements = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const realAppE2eRunner = readFileSync(new URL('./run-real-app-e2e.mjs', import.meta.url), 'utf8')
 const productionAudit = readFileSync(
   new URL('./audit-production-dependencies.mjs', import.meta.url),
   'utf8',
@@ -346,9 +347,24 @@ test('legacy-removal approval binds the final release window and evidence digest
 test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
   assert.match(rootPackage.scripts['test:e2e'], /pnpm test:real-apps/)
   assert.match(rootPackage.scripts['test:real-apps'], /examples:build-real-apps/)
-  assert.match(rootPackage.scripts['test:real-apps'], /playwright\.config\.ts/)
+  assert.match(rootPackage.scripts['test:real-apps'], /run-real-app-e2e\.mjs/)
+  assert.match(realAppE2eRunner, /examples\/real-apps\/playwright\.config\.ts/)
   assert.match(ciWorkflow, /FICT_REAL_APP_SOAK_MS/)
   assert.match(ciWorkflow, /180000/)
+})
+
+test('real-app E2E reserves per-run ports and preserves web-server startup output', () => {
+  const realAppsConfig = readFileSync(
+    new URL('../examples/real-apps/playwright.config.ts', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(realAppE2eRunner, /reserveRealAppPorts/)
+  assert.match(realAppE2eRunner, /FICT_REAL_APP_OPERATIONS_PORT/)
+  assert.match(realAppE2eRunner, /FICT_REAL_APP_RESUMABLE_SSR_PORT/)
+  assert.match(realAppE2eRunner, /FICT_REAL_APP_STREAMING_SSR_PORT/)
+  assert.match(realAppsConfig, /stdout: 'pipe'/)
+  assert.match(realAppsConfig, /stderr: 'pipe'/)
 })
 
 test('browser E2E failures retain annotations, reports, and retry traces', () => {

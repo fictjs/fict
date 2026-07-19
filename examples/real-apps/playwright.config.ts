@@ -1,4 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
+import { fileURLToPath } from 'node:url'
+
+import { realAppOrigins, realAppPorts } from './server-origins'
 
 const soakMs = Math.min(
   10 * 60_000,
@@ -27,21 +30,31 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'pnpm preview --host 127.0.0.1 --port 43173 --strictPort',
-      url: 'http://127.0.0.1:43173',
+      command: `pnpm preview --host 127.0.0.1 --port ${realAppPorts.operations} --strictPort`,
+      url: realAppOrigins.operations,
       reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
       timeout: 15_000,
     },
     {
-      command: 'PORT=43174 NODE_ENV=production pnpm -C ../ssr-basic preview',
-      url: 'http://127.0.0.1:43174',
+      command: 'node server.js',
+      cwd: fileURLToPath(new URL('../ssr-basic', import.meta.url)),
+      env: { NODE_ENV: 'production', PORT: String(realAppPorts.resumableSsr) },
+      url: realAppOrigins.resumableSsr,
       reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
       timeout: 15_000,
     },
     {
-      command: 'PORT=43175 NODE_ENV=production pnpm -C ../ssr-streaming preview',
-      url: 'http://127.0.0.1:43175',
+      command: 'node server.js',
+      cwd: fileURLToPath(new URL('../ssr-streaming', import.meta.url)),
+      env: { NODE_ENV: 'production', PORT: String(realAppPorts.streamingSsr) },
+      url: realAppOrigins.streamingSsr,
       reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
       timeout: 15_000,
     },
   ],
