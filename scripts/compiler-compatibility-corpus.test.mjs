@@ -1116,6 +1116,17 @@ test('records the authored JSX whitespace compatibility decision', () => {
   assert.match(index, /0004-standardize-jsx-authored-whitespace\.md/)
 })
 
+test('records the function-valued state call decision', () => {
+  const adr = read('docs/adr/0005-invoke-function-valued-state.md')
+  const index = read('docs/adr/index.md')
+
+  assert.match(adr, /status: accepted/)
+  assert.match(adr, /Preserve the Babel 0\.28 value-level call contract/)
+  assert.match(adr, /callback\(\)\(\)/)
+  assert.match(adr, /callable-value proof/)
+  assert.match(index, /0005-invoke-function-valued-state\.md/)
+})
+
 test('keeps native recovery diagnostics free of removed legacy paths', () => {
   const pipeline = read('crates/fict-compiler/src/pipeline.rs')
   const scanner = read('crates/fict-compiler/src/scan.rs')

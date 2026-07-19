@@ -12,3 +12,6 @@
 - [ADR-0004 — Standardize authored JSX whitespace](0004-standardize-jsx-authored-whitespace.md) -
   Keep conventional JSX multiline text normalization and record the Babel 0.28
   rendered-text migration boundary.
+- [ADR-0005 — Invoke function-valued state through its accessor](0005-invoke-function-valued-state.md) -
+  Preserve the released authored-call contract when a state binding is proven
+  to contain a callable value.
