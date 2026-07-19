@@ -5,6 +5,7 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceIndex,
     SourceSpan,
 };
+use fict_emit::{NoJsxLoweringOptions, lower_core_with_hook_returns};
 use fict_hir::{FictMacroKind, FunctionKind, HirFile, HirFunction, HirInstructionKind, SsaName};
 use fict_reactivity::{DependencyBase, DependencyPath, DependencySegment, ReactiveRegion};
 use serde::{Deserialize, Serialize};
@@ -340,9 +341,56 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
         .as_ref()
         .map(|frontend| infer_local_hook_returns(&core, frontend))
         .unwrap_or_default();
+    let regions: Vec<_> = core
+        .functions
+        .iter()
+        .map(|analysis| analysis.regions.clone())
+        .collect();
+    let cycles: Vec<_> = core
+        .functions
+        .iter()
+        .map(|analysis| analysis.cycles.clone())
+        .collect();
+    let scopes: Vec<_> = core
+        .functions
+        .iter()
+        .map(|analysis| analysis.scopes.clone())
+        .collect();
+    let emit = build.frontend.as_ref().and_then(|frontend| {
+        match lower_core_with_hook_returns(
+            &core.hir,
+            &regions,
+            &cycles,
+            Some(&scopes),
+            &local_hook_returns,
+            NoJsxLoweringOptions {
+                runtime_family: frontend.runtime_family,
+                dev: request.compiler_options.dev,
+                lazy_conditional: request.compiler_options.lazy_conditional,
+                getter_cache: request.compiler_options.getter_cache,
+                full_optimization: false,
+                optimize: false,
+                inline_derived_memos: request.compiler_options.inline_derived_memos,
+                strict_guarantee: request.compiler_options.strict_guarantee,
+                preview: request
+                    .compiler_options
+                    .preview
+                    .as_ref()
+                    .is_some_and(|preview| preview.resumable),
+                fine_grained_dom: request.compiler_options.fine_grained_dom,
+            },
+        ) {
+            Ok(emit) => Some(emit),
+            Err(findings) => {
+                diagnostics.extend(findings.into_sorted());
+                None
+            }
+        }
+    });
     diagnostics.extend(reactive_control_flow_diagnostics(
         &core,
         &local_hook_returns,
+        emit.as_ref(),
     ));
 
     result.components = core
@@ -1051,6 +1099,28 @@ mod tests {
         assert!(compiled.diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "FICT-R006"
                 && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+    }
+
+    #[test]
+    fn derives_r006_suppression_from_the_same_emit_capability_as_compilation() {
+        let source = "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 0) return <strong>on</strong>; return <span>off</span>; }";
+        let supported = analyze(request(source, "supported-conditional.tsx"));
+        assert!(
+            supported
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "FICT-R006"),
+            "{:?}",
+            supported.diagnostics
+        );
+
+        let mut disabled_request = request(source, "disabled-conditional.tsx");
+        disabled_request.options.compiler_options.lazy_conditional = false;
+        let disabled = analyze(disabled_request);
+        assert!(disabled.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "FICT-R006"
+                && diagnostic.severity == AnalyzeDiagnosticSeverity::Error
         }));
     }
 

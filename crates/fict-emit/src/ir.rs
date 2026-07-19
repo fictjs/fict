@@ -1,7 +1,7 @@
 use fict_hir::{
     BindingId, BlockId, CompoundAssignmentOperator, FunctionId, FunctionKind,
     ImportedHookPropertyMatch, ImportedHookReturn, LiteralValue, LocalId, Origin, Projection,
-    RegionId, SsaName, SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
+    RegionId, SourceSpan, SsaName, SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
 };
 use std::collections::BTreeMap;
 
@@ -257,6 +257,18 @@ pub struct ControlFlowRegionOutput {
     pub references: Vec<Origin>,
 }
 
+/// Runtime re-execution guarantee materialized by a verified EmitIR operation.
+///
+/// Diagnostics use this contract instead of predicting what a later lowering pass might emit.
+/// Adding a new statement-level reactive lowering therefore cannot silently widen diagnostic
+/// suppression until the operation advertises the corresponding capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReactiveExecutionCapability {
+    ConditionalReturn,
+    ControlFlowRegion,
+    StatementEffect,
+}
+
 /// Verified operation between HIR analysis and output AST construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitOperation {
@@ -465,6 +477,9 @@ pub enum EmitOperation {
         cleanup_helper: RuntimeHelper,
         /// Rerun the active branch when reads nested inside a compound dispatcher change.
         track_branch_reads: bool,
+        /// Exact statement control-flow origins executed by this dispatcher. Diagnostics may
+        /// suppress a fallback warning only for one of these verified source identities.
+        covered_control_flow: Vec<SourceSpan>,
         origin: Origin,
     },
     /// Re-execute a statement-level conditional/switch and expose locals assigned by its arms.
@@ -529,6 +544,30 @@ impl EventOptions {
 }
 
 impl EmitOperation {
+    /// Statement-level reactive execution guarantee supplied by this operation, if any.
+    #[must_use]
+    pub const fn reactive_execution_capability(&self) -> Option<ReactiveExecutionCapability> {
+        match self {
+            Self::ConditionalReturn { .. } => Some(ReactiveExecutionCapability::ConditionalReturn),
+            Self::ControlFlowRegion { .. } => Some(ReactiveExecutionCapability::ControlFlowRegion),
+            Self::RegisterReactiveStatementEffect { .. } => {
+                Some(ReactiveExecutionCapability::StatementEffect)
+            }
+            _ => None,
+        }
+    }
+
+    /// Authored source identity governed by a statement-level reactive execution capability.
+    #[must_use]
+    pub const fn reactive_execution_origin(&self) -> Option<Origin> {
+        match self {
+            Self::ConditionalReturn { origin, .. }
+            | Self::ControlFlowRegion { origin, .. }
+            | Self::RegisterReactiveStatementEffect { origin, .. } => Some(*origin),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub const fn helper(&self) -> Option<RuntimeHelper> {
         match self {
@@ -796,6 +835,39 @@ impl EmitOperation {
             }
             _ => {}
         }
+    }
+}
+
+impl EmitProgram {
+    /// Whether lowering materialized an exact reactive execution capability for one source span.
+    #[must_use]
+    pub fn has_reactive_execution_capability(
+        &self,
+        source: FunctionId,
+        span: SourceSpan,
+        capability: ReactiveExecutionCapability,
+    ) -> bool {
+        self.functions
+            .iter()
+            .filter(|function| function.source == source)
+            .flat_map(|function| &function.operations)
+            .any(|operation| {
+                if operation.reactive_execution_capability() != Some(capability) {
+                    return false;
+                }
+                match operation {
+                    EmitOperation::ConditionalReturn {
+                        covered_control_flow,
+                        ..
+                    } => covered_control_flow.binary_search(&span).is_ok(),
+                    _ => {
+                        operation
+                            .reactive_execution_origin()
+                            .and_then(|origin| origin.primary_span)
+                            == Some(span)
+                    }
+                }
+            })
     }
 }
 

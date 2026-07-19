@@ -76,7 +76,10 @@ The native options include:
 - `dev`: attach authored source labels to signal, memo, and effect DevTools
   registrations;
 - `lazyConditional`: lower supported reactive control-flow returns through
-  runtime branch bindings; `false` preserves the authored control flow;
+  runtime branch bindings; `false` preserves authored control flow but removes
+  that re-execution capability, so reactive branch returns report `FICT-R006`
+  and fail closed unless a non-production build explicitly opts out of
+  `strictGuarantee`;
 - `getterCache`: cache repeated signal/accessor reads inside safe synchronous
   callbacks; `false` emits every read directly;
 - `fineGrainedDom` and `optimize`: lowering controls;

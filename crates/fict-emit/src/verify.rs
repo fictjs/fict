@@ -1680,11 +1680,22 @@ fn verify_helper_semantics(
             helper,
             create_helper,
             cleanup_helper,
+            track_branch_reads,
+            covered_control_flow,
+            origin,
             ..
         } => {
             *helper == RuntimeHelper::Conditional
                 && *create_helper == RuntimeHelper::CreateElement
                 && *cleanup_helper == RuntimeHelper::OnDestroy
+                && !covered_control_flow.is_empty()
+                && origin
+                    .primary_span
+                    .is_some_and(|span| covered_control_flow.binary_search(&span).is_ok())
+                && covered_control_flow
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+                && (*track_branch_reads || covered_control_flow.len() == 1)
         }
         EmitOperation::ControlFlowRegion {
             helper, outputs, ..

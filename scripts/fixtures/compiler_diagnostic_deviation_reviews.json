@@ -12,11 +12,11 @@
   "policyCounts": {
     "rust-structured-rejection-diagnostics": 172,
     "diagnostic-severity-reclassification": 23,
-    "rust-warning-addition": 34,
-    "rust-warning-removal": 50,
+    "rust-warning-addition": 33,
+    "rust-warning-removal": 48,
     "rust-warning-set-change": 5
   },
-  "deviationCount": 284,
+  "deviationCount": 281,
   "deviations": [
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:153:transform",
@@ -1095,20 +1095,6 @@
       "policy": "rust-structured-rejection-diagnostics"
     },
     {
-      "id": "packages/compiler/test/control-flow.test.ts:1004:runTransform",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [],
-      "rustDiagnostics": [
-        {
-          "code": "FICT-R006",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        }
-      ],
-      "policy": "rust-warning-addition"
-    },
-    {
       "id": "packages/compiler/test/control-flow.test.ts:1189:runTransform",
       "babelStatus": "ok",
       "rustStatus": "ok",
@@ -1135,13 +1121,7 @@
           "severity": "warning"
         }
       ],
-      "rustDiagnostics": [
-        {
-          "code": "FICT-R006",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        }
-      ],
+      "rustDiagnostics": [],
       "policy": "rust-warning-removal"
     },
     {
@@ -1520,19 +1500,6 @@
         }
       ],
       "policy": "rust-structured-rejection-diagnostics"
-    },
-    {
-      "id": "packages/compiler/test/default-options.test.ts:170:transform",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [
-        {
-          "code": "FICT-R006",
-          "severity": "warning"
-        }
-      ],
-      "rustDiagnostics": [],
-      "policy": "rust-warning-removal"
     },
     {
       "id": "packages/compiler/test/default-options.test.ts:205:transformWithCompilerDefaults:strictGuarantee=true",
@@ -2760,9 +2727,70 @@
           "code": "FICT-R002",
           "severity": "warning",
           "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
         }
       ],
       "policy": "rust-warning-removal"
+    },
+    {
+      "id": "packages/compiler/test/sourcemap.test.ts:2161:compileWithSourcemap",
+      "babelStatus": "ok",
+      "rustStatus": "ok",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R002",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R005",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning"
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning"
+        }
+      ],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R005",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        }
+      ],
+      "policy": "rust-warning-addition"
     },
     {
       "id": "packages/compiler/test/sourcemap.test.ts:2257:compileWithSourcemap",
@@ -2862,6 +2890,11 @@
         }
       ],
       "rustDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        },
         {
           "code": "FICT-X003",
           "severity": "warning",
@@ -3084,7 +3117,13 @@
           "severity": "warning"
         }
       ],
-      "rustDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        }
+      ],
       "policy": "rust-warning-removal"
     },
     {
@@ -3105,7 +3144,13 @@
           "severity": "warning"
         }
       ],
-      "rustDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        }
+      ],
       "policy": "rust-warning-removal"
     },
     {
@@ -3938,19 +3983,6 @@
       "policy": "rust-warning-addition"
     },
     {
-      "id": "packages/compiler/test/spec-rules.test.ts:3548:transform",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [
-        {
-          "code": "FICT-R006",
-          "severity": "warning"
-        }
-      ],
-      "rustDiagnostics": [],
-      "policy": "rust-warning-removal"
-    },
-    {
       "id": "packages/compiler/test/state-write-expression-semantics.test.ts:198:transformCommonJS",
       "babelStatus": "ok",
       "rustStatus": "ok",
@@ -4655,20 +4687,6 @@
         }
       ],
       "policy": "rust-structured-rejection-diagnostics"
-    },
-    {
-      "id": "packages/compiler/test/warnings-as-errors.test.ts:156:transform",
-      "babelStatus": "error",
-      "rustStatus": "ok",
-      "babelDiagnostics": [],
-      "rustDiagnostics": [
-        {
-          "code": "FICT-R006",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        }
-      ],
-      "policy": "rust-warning-addition"
     },
     {
       "id": "packages/compiler/test/warnings-as-errors.test.ts:192:transform:strictGuarantee=true",

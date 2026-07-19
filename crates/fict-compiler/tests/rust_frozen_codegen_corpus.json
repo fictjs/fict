@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "ddda4a5bb894b01384ac05ff8456e13e3690dae8",
+    "rustAuditRevision": "c366a3f6b81a7e18b8dad5459f7c23c17e9b0aeb",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "ddda4a5bb894b01384ac05ff8456e13e3690dae8",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-71866474dcee91a02bafc03a09e8c629918a95723ae0f37f3d4023332a37783c"
+    "reviewedRevision": "c366a3f6b81a7e18b8dad5459f7c23c17e9b0aeb",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-c33d692abab8aa81da1edd037f8ad147430bceadaca79ebe22436f4ae72fd0c6"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.",
@@ -13606,13 +13606,7 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [
-          {
-            "code": "FICT-R006",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          }
-        ],
+        "diagnostics": [],
         "codeSha256": "2a15a2321db6dcfb9d349ff78cb25d59c725c24add93ce402e29f11e1923d034"
       },
       "deviationPolicy": null
@@ -13960,13 +13954,7 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [
-          {
-            "code": "FICT-R006",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          }
-        ],
+        "diagnostics": [],
         "codeSha256": "8a880a3d8785ea59d160bdcbe5c98dc9679d2c860003c370be0410b9ea69d912"
       },
       "deviationPolicy": null
@@ -21206,7 +21194,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "8b407d44e456d59d9e7b38d774a07bea940d184960ddc43f2d4decc8c9eefbb6"
       },
       "deviationPolicy": null
@@ -32446,6 +32440,11 @@
             "code": "FICT-R002",
             "severity": "warning",
             "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
           }
         ],
         "codeSha256": "e5f9b5929217f5da44858d4d8339e76cea649a20f3b394c0a0e905ead65c8e2f"
@@ -32550,7 +32549,17 @@
             "guaranteeClass": "fallback"
           },
           {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
             "code": "FICT-R002",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R006",
             "severity": "warning",
             "guaranteeClass": "fallback"
           }
@@ -33070,6 +33079,11 @@
       "expected": {
         "status": "ok",
         "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
           {
             "code": "FICT-X003",
             "severity": "warning",
@@ -35123,7 +35137,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "59d47b4618b1aa10733671e7510bec0a5208c84becb1b155f1a66c1c552c2d39"
       },
       "deviationPolicy": null
@@ -35147,7 +35167,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "5df5cb2e1f8d7ee2bc916f8cb8efc62bb521908065e5ec9e4f38f7cccfba1954"
       },
       "deviationPolicy": null
@@ -38562,7 +38588,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "8b407d44e456d59d9e7b38d774a07bea940d184960ddc43f2d4decc8c9eefbb6"
       },
       "deviationPolicy": null
@@ -50363,13 +50395,7 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [
-          {
-            "code": "FICT-R006",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          }
-        ],
+        "diagnostics": [],
         "codeSha256": "bbafcb04ad3c3be270c34cd72748527cbdf5df6c857108ab74fb45202296469f"
       },
       "deviationPolicy": "rust-capability-expansion"

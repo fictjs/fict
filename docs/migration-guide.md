@@ -214,7 +214,10 @@ cases. Those are no longer deviations: native compilation now implements
 `dev: true`, `lazyConditional: false`, `getterCache: false`,
 `optimizeLevel: "full"`, and `inlineDerivedMemos: false`, with executable
 option-specific regressions. Do not retain an application workaround for
-`FICT-OPTION-UNIMPLEMENTED` for these values.
+`FICT-OPTION-UNIMPLEMENTED` for these values. `lazyConditional: false` preserves
+authored returns but intentionally disables their runtime branch capability;
+reactive returns therefore require a non-production `strictGuarantee: false`
+fallback and carry `FICT-R006`.
 
 Direct compiler hosts must also account for request-identity differences that
 do not appear in a source-only `.tsx` corpus:

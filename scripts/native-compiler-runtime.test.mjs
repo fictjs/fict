@@ -831,6 +831,104 @@ test('reactive switch assignments re-execute as one fallback region', async () =
   container.remove()
 })
 
+test('inert reactive control flow stays diagnostic-free without claiming an emit capability', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    export let update
+
+    function App() {
+      let mode = $state(0)
+      update = value => { mode = value }
+
+      if (mode) {
+        'inert conditional'
+      }
+      switch (mode) {
+        case 0:
+          'inert zero'
+          break
+        default:
+          'inert other'
+      }
+
+      return <p data-id="inert-control">{mode}</p>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+  `
+  const transformed = binding.transformSync({
+    code: source,
+    filename: '/fixtures/inert-reactive-control.tsx',
+  })
+  assert.deepEqual(transformed.diagnostics, [])
+  assert.doesNotMatch(transformed.code, /createConditional|__fict_region/)
+
+  const compiled = await importCompiledModule(transformed.code, 'inert-reactive-control')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const value = () => container.querySelector('[data-id="inert-control"]')?.textContent
+  assert.equal(value(), '0')
+  for (const mode of [1, 2, 0]) {
+    compiled.update(mode)
+    await flushRuntime()
+    assert.equal(value(), String(mode))
+  }
+
+  dispose()
+  container.remove()
+})
+
+test('reactive statement expressions re-execute through their declared effect capability', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    export const events = []
+    export let update
+
+    function App() {
+      let count = $state(0)
+      update = value => { count = value }
+      events.push('count:' + count)
+      return <p data-id="statement-effect">{count}</p>
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+  `
+  const transformed = binding.transformSync({
+    code: source,
+    filename: '/fixtures/reactive-statement-effect.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.deepEqual(
+    transformed.diagnostics.map(({ code, severity }) => [code, severity]),
+    [['FICT-R002', 'warning']],
+  )
+  assert.match(transformed.code, /__fictUseEffect/)
+
+  const compiled = await importCompiledModule(transformed.code, 'reactive-statement-effect')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.deepEqual(compiled.events, ['count:0'])
+  compiled.update(2)
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="statement-effect"]')?.textContent, '2')
+  assert.deepEqual(compiled.events, ['count:0', 'count:2'])
+
+  dispose()
+  container.remove()
+})
+
 test('named function expression hooks use their public binding role', async () => {
   const source = `
     import { $state, render } from 'fict'
@@ -1986,7 +2084,7 @@ test('dev compiler mode labels authored reactive creations for DevTools', () => 
   assert.doesNotMatch(production.code, /devToolsSource/)
 })
 
-test('lazyConditional false preserves authored control-flow returns', () => {
+test('lazyConditional false fails closed without a conditional-return capability', () => {
   const source = `
     import { $state } from 'fict'
     export function App() {
@@ -2007,9 +2105,23 @@ test('lazyConditional false preserves authored control-flow returns', () => {
     filename: '/fixtures/lazy-conditional.tsx',
     options: { lazyConditional: false },
   })
-  assert.deepEqual(disabled.diagnostics, [])
-  assert.doesNotMatch(disabled.code, /createConditional/)
-  assert.match(disabled.code, /if \(count\(\) > 10\)/)
+  assert.equal(disabled.code, '')
+  assert.deepEqual(
+    disabled.diagnostics.map(({ code, severity }) => [code, severity]),
+    [['FICT-R006', 'error']],
+  )
+
+  const fallback = binding.transformSync({
+    code: source,
+    filename: '/fixtures/lazy-conditional.tsx',
+    options: { lazyConditional: false, strictGuarantee: false },
+  })
+  assert.deepEqual(
+    fallback.diagnostics.map(({ code, severity }) => [code, severity]),
+    [['FICT-R006', 'warning']],
+  )
+  assert.doesNotMatch(fallback.code, /createConditional/)
+  assert.match(fallback.code, /if \(count\(\) > 10\)/)
 })
 
 test('else-if chains and switch returns rerender reactively', async () => {
@@ -2069,6 +2181,79 @@ test('else-if chains and switch returns rerender reactively', async () => {
     assert.equal(container.querySelector('[data-id="else-if"]')?.textContent, expected)
     assert.equal(container.querySelector('[data-id="switch"]')?.textContent, expected)
   }
+
+  dispose()
+  container.remove()
+})
+
+test('conditional-return capability covers nested and sequential branch spans', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export const nestedEvents = []
+      let setNested = () => {}
+      let setSequential = () => {}
+
+      function NestedApp() {
+        let mode = $state(0)
+        setNested = value => (mode = value)
+        if (mode >= 2) {
+          if (mode % 2 === 0) nestedEvents.push('even')
+          else nestedEvents.push('odd')
+          return <p data-id="nested-coverage">high:{mode}</p>
+        }
+        nestedEvents.push('low')
+        return <p data-id="nested-coverage">low:{mode}</p>
+      }
+
+      function SequentialApp() {
+        let mode = $state(0)
+        setSequential = value => (mode = value)
+        if (mode === 0) return <p data-id="sequential-coverage">zero</p>
+        if (mode === 1) return <p data-id="sequential-coverage">one</p>
+        return <p data-id="sequential-coverage">many</p>
+      }
+
+      function App() {
+        return <main><NestedApp /><SequentialApp /></main>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function refresh(value) {
+        setNested(value)
+        setSequential(value)
+      }
+    `,
+    'conditional-return-capability-coverage',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="nested-coverage"]')?.textContent, 'low:0')
+  assert.equal(container.querySelector('[data-id="sequential-coverage"]')?.textContent, 'zero')
+  assert.deepEqual(compiled.nestedEvents, ['low'])
+
+  for (const [mode, nested, sequential] of [
+    [2, 'high:2', 'many'],
+    [3, 'high:3', 'many'],
+    [1, 'low:1', 'one'],
+    [0, 'low:0', 'zero'],
+  ]) {
+    compiled.refresh(mode)
+    await flushRuntime()
+    assert.equal(container.querySelector('[data-id="nested-coverage"]')?.textContent, nested)
+    assert.equal(
+      container.querySelector('[data-id="sequential-coverage"]')?.textContent,
+      sequential,
+    )
+  }
+  assert.deepEqual(compiled.nestedEvents, ['low', 'even', 'odd', 'low', 'low'])
 
   dispose()
   container.remove()

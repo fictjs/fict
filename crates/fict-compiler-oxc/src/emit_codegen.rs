@@ -2119,6 +2119,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                     create_helper,
                     cleanup_helper,
                     track_branch_reads,
+                    covered_control_flow: _,
                     origin,
                 } => {
                     let Some(span) = origin.primary_span else {

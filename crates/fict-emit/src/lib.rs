@@ -18,8 +18,8 @@ pub use ir::{
     EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture, EmitPreviewPropRestCapture,
     EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault, EmitPropsPlan,
     EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, EventOptions,
-    PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
-    RuntimeImportIntent,
+    PropsOperation, ReactiveExecutionCapability, ReactivePatternTarget, ReactiveSlot,
+    ReactiveSlotKind, ReactiveSlotStorage, RuntimeImportIntent,
 };
 pub use lower::{
     NoJsxLoweringOptions, lower_core, lower_core_with_hook_returns, lower_no_jsx,

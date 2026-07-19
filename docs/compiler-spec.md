@@ -587,6 +587,10 @@ Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
 `warningLevels` let you turn warnings into errors or suppress specific codes.
 Set `strictReactivity: true` to escalate the `FICT-R006` control-flow fallback diagnostic into a
 hard build error by default.
+R006 suppression for reactive return control flow is derived from the verified EmitIR
+`ConditionalReturn` capability, not from a diagnostic-side prediction. Consequently,
+`lazyConditional: false` preserves authored control flow but reports R006 for reactive branch
+returns because no runtime re-execution capability is emitted.
 `strictGuarantee` is enabled by default for fail-closed compilation: non-guaranteed
 reactivity diagnostics are treated as hard errors and cannot be suppressed/downgraded.
 This includes unknown call boundaries (`FICT-R002`), reactive callback/closure escapes

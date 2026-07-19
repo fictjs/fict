@@ -220,10 +220,6 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result.unresolved_metadata_requests.dedup();
     result.metadata_incomplete |= metadata.incomplete;
     result.diagnostics.extend(metadata.diagnostics);
-    result.diagnostics.extend(reactive_control_flow_diagnostics(
-        &core,
-        &local_hook_returns,
-    ));
     finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
@@ -275,6 +271,11 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     ) {
         Ok(emit) => emit,
         Err(diagnostics) => {
+            result.diagnostics.extend(reactive_control_flow_diagnostics(
+                &core,
+                &local_hook_returns,
+                None,
+            ));
             result.diagnostics.extend(diagnostics.into_sorted());
             finalize_source_diagnostics(&mut result, &request, &suppressions);
             attach_explain_if_requested(&mut result, &request, &source_events, &[]);
@@ -283,6 +284,16 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     };
     #[allow(unused_mut)]
     let mut emit = emit;
+    result.diagnostics.extend(reactive_control_flow_diagnostics(
+        &core,
+        &local_hook_returns,
+        Some(&emit),
+    ));
+    finalize_source_diagnostics(&mut result, &request, &suppressions);
+    if result.has_errors() {
+        attach_explain_if_requested(&mut result, &request, &source_events, &[]);
+        return result;
+    }
     #[cfg(feature = "preview")]
     if let Some(preview) = request
         .options
@@ -4389,6 +4400,21 @@ mod tests {
             fallthrough_switch.diagnostics,
             fallthrough_switch.code
         );
+
+        let sequential = compile(request(
+            "import { $state } from 'fict'; export function App() { const mode = $state(0); if (mode === 0) return <Zero />; if (mode === 1) return <One />; return <Many />; }",
+            "sequential-return.tsx",
+        ));
+        assert!(
+            sequential.diagnostics.is_empty(),
+            "{:?}",
+            sequential.diagnostics
+        );
+        assert!(
+            sequential.code.contains("trackBranchReads: true"),
+            "{}",
+            sequential.code
+        );
     }
 
     #[test]
@@ -4405,9 +4431,24 @@ mod tests {
         let mut disabled_request = request(source, "lazy-conditional.tsx");
         disabled_request.options.lazy_conditional = false;
         let disabled = compile(disabled_request);
-        assert!(!disabled.has_errors());
-        assert!(!disabled.code.contains("createConditional"));
-        assert!(disabled.code.contains("if (count() > 10)"));
+        assert!(disabled.has_errors(), "{:?}", disabled.diagnostics);
+        assert!(disabled.code.is_empty());
+        assert!(disabled.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+
+        let mut fallback_request = request(source, "lazy-conditional.tsx");
+        fallback_request.options.lazy_conditional = false;
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(!fallback.code.contains("createConditional"));
+        assert!(fallback.code.contains("if (count() > 10)"));
     }
 
     #[test]

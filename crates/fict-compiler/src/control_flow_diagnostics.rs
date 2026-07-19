@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
+use fict_emit::{EmitProgram, ReactiveExecutionCapability};
 use fict_hir::{
     BindingId, BlockId, CallHost, DeleteTarget, FunctionKind, HirFile, HirFunction, HirInstruction,
     HirInstructionKind, ImportedHookReturn, MutationEffect, PlaceBase, Projection, Purity,
@@ -17,6 +18,7 @@ use crate::CorePassOutput;
 pub(crate) fn reactive_control_flow_diagnostics(
     core: &CorePassOutput,
     local_hook_returns: &BTreeMap<BindingId, ImportedHookReturn>,
+    emit: Option<&EmitProgram>,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for analysis in &core.functions {
@@ -76,20 +78,13 @@ pub(crate) fn reactive_control_flow_diagnostics(
                         test,
                         &mut BTreeSet::new(),
                     );
-                    // A throw inside a try is not a function exit: it may enter the associated
-                    // catch/finally story. Keep branch-return suppression disabled until that
-                    // enclosing exception construct has been proven as one unit.
-                    let enclosing_try_story = enclosing_try_story_is_closed(
-                        function,
-                        construct,
-                        &analysis.structurize.constructs,
-                    );
-                    let has_try_ancestor = enclosing_try_story.is_some();
-                    let branch_return =
-                        !has_try_ancestor && is_branch_return_construct(function, construct, *join);
                     if !condition_invokes_user_code
-                        && (branch_return
-                            || construct_body_is_proven_inert(function, construct, *join))
+                        && (construct_has_emit_capability(
+                            emit,
+                            function,
+                            construct,
+                            ReactiveExecutionCapability::ConditionalReturn,
+                        ) || construct_body_is_proven_inert(function, construct, *join))
                     {
                         continue;
                     }
@@ -132,7 +127,7 @@ pub(crate) fn reactive_control_flow_diagnostics(
                         );
                     }
                 }
-                StructuredConstructKind::Switch { arms, join } => {
+                StructuredConstructKind::Switch { join, .. } => {
                     let mut reactive_paths = BTreeSet::new();
                     let mut condition_invokes_user_code = false;
                     let mut switch_primary_span = None;
@@ -172,19 +167,13 @@ pub(crate) fn reactive_control_flow_diagnostics(
                         continue;
                     }
 
-                    let switch_return = arms.iter().any(|arm| arm.is_default)
-                        && arms.iter().all(|arm| {
-                            terminates_before_join(
-                                function,
-                                arm.target,
-                                *join,
-                                &mut BTreeSet::new(),
-                                function.blocks.len(),
-                            )
-                        });
                     if !condition_invokes_user_code
-                        && (switch_return
-                            || construct_body_is_proven_inert(function, construct, *join))
+                        && (construct_has_emit_capability(
+                            emit,
+                            function,
+                            construct,
+                            ReactiveExecutionCapability::ConditionalReturn,
+                        ) || construct_body_is_proven_inert(function, construct, *join))
                     {
                         continue;
                     }
@@ -425,71 +414,20 @@ fn record_primary_span(primary: &mut Option<SourceSpan>, candidate: Option<Sourc
     }
 }
 
-fn enclosing_try_story_is_closed(
+fn construct_has_emit_capability(
+    emit: Option<&EmitProgram>,
     function: &HirFunction,
     construct: &StructuredConstruct,
-    constructs: &[StructuredConstruct],
-) -> Option<bool> {
-    let mut parent = construct.parent;
-    let mut remaining = constructs.len();
-    while let Some(parent_id) = parent {
-        if remaining == 0 {
-            return Some(false);
-        }
-        let Some(owner) = constructs.get(parent_id as usize) else {
-            return Some(false);
-        };
-        if matches!(owner.kind, StructuredConstructKind::Try { .. }) {
-            return Some(try_story_handles_abrupt_completion(function, owner));
-        }
-        parent = owner.parent;
-        remaining = remaining.saturating_sub(1);
-    }
-    None
-}
-
-fn try_story_handles_abrupt_completion(
-    function: &HirFunction,
-    construct: &StructuredConstruct,
+    capability: ReactiveExecutionCapability,
 ) -> bool {
-    let StructuredConstructKind::Try { catch, finally, .. } = construct.kind else {
-        return false;
-    };
-    let clause_span = |entry: Option<BlockId>| {
-        entry
-            .and_then(|entry| function.blocks.get(entry.as_usize()))
-            .and_then(|block| block.source_hint.as_ref())
-            .and_then(|hint| hint.origin.primary_span)
-    };
-    let catch_span = clause_span(catch);
-    let finally_span = clause_span(finally);
-    for block in construct
+    let span = function
         .blocks
-        .iter()
-        .filter_map(|block| function.blocks.get(block.as_usize()))
-    {
-        let abrupt_span = block.terminator.origin.primary_span;
-        match block.terminator.kind {
-            TerminatorKind::Return { .. } => return false,
-            TerminatorKind::Throw { .. } => {
-                let escapes_from_clause = abrupt_span.is_some_and(|span| {
-                    catch_span.is_some_and(|clause| contains(clause, span))
-                        || finally_span.is_some_and(|clause| contains(clause, span))
-                });
-                if catch.is_none() || escapes_from_clause {
-                    return false;
-                }
-            }
-            TerminatorKind::Goto { .. }
-            | TerminatorKind::Branch { .. }
-            | TerminatorKind::ForIn { .. }
-            | TerminatorKind::ForOf { .. }
-            | TerminatorKind::Switch { .. }
-            | TerminatorKind::Try { .. }
-            | TerminatorKind::Unreachable => {}
-        }
-    }
-    true
+        .get(construct.header.as_usize())
+        .and_then(|block| block.source_hint.as_ref())
+        .and_then(|hint| hint.origin.primary_span);
+    emit.zip(span).is_some_and(|(emit, span)| {
+        emit.has_reactive_execution_capability(function.id, span, capability)
+    })
 }
 
 fn display_names(function: &HirFunction, paths: &BTreeSet<DependencyPath>) -> Vec<String> {
@@ -502,40 +440,6 @@ fn display_names(function: &HirFunction, paths: &BTreeSet<DependencyPath>) -> Ve
     names.sort();
     names.dedup();
     names
-}
-
-fn is_branch_return_construct(
-    function: &HirFunction,
-    construct: &StructuredConstruct,
-    join: Option<BlockId>,
-) -> bool {
-    let StructuredConstructKind::Conditional {
-        consequent,
-        alternate,
-        ..
-    } = construct.kind
-    else {
-        return false;
-    };
-    let consequent_returns = terminates_before_join(
-        function,
-        consequent,
-        join,
-        &mut BTreeSet::new(),
-        function.blocks.len(),
-    );
-    let alternate_returns = terminates_before_join(
-        function,
-        alternate,
-        join,
-        &mut BTreeSet::new(),
-        function.blocks.len(),
-    );
-    if join.is_none() {
-        consequent_returns && alternate_returns
-    } else {
-        consequent_returns || alternate_returns
-    }
 }
 
 fn construct_body_is_proven_inert(
@@ -584,68 +488,6 @@ fn construct_body_is_proven_inert(
                 | TerminatorKind::Unreachable => false,
             }
         })
-}
-
-fn terminates_before_join(
-    function: &HirFunction,
-    block: BlockId,
-    join: Option<BlockId>,
-    visiting: &mut BTreeSet<BlockId>,
-    remaining: usize,
-) -> bool {
-    if remaining == 0 || Some(block) == join || !visiting.insert(block) {
-        return false;
-    }
-    let Some(block_data) = function.blocks.get(block.as_usize()) else {
-        return false;
-    };
-    let result = match &block_data.terminator.kind {
-        TerminatorKind::Return { .. } | TerminatorKind::Throw { .. } => true,
-        TerminatorKind::Goto { target } => terminates_before_join(
-            function,
-            *target,
-            join,
-            visiting,
-            remaining.saturating_sub(1),
-        ),
-        TerminatorKind::Branch {
-            consequent,
-            alternate,
-            ..
-        } => {
-            terminates_before_join(
-                function,
-                *consequent,
-                join,
-                visiting,
-                remaining.saturating_sub(1),
-            ) && terminates_before_join(
-                function,
-                *alternate,
-                join,
-                visiting,
-                remaining.saturating_sub(1),
-            )
-        }
-        TerminatorKind::Switch { cases, .. } => {
-            !cases.is_empty()
-                && cases.iter().all(|case| {
-                    terminates_before_join(
-                        function,
-                        case.target,
-                        join,
-                        visiting,
-                        remaining.saturating_sub(1),
-                    )
-                })
-        }
-        TerminatorKind::ForIn { .. }
-        | TerminatorKind::ForOf { .. }
-        | TerminatorKind::Try { .. }
-        | TerminatorKind::Unreachable => false,
-    };
-    visiting.remove(&block);
-    result
 }
 
 fn value_has_unsafe_control_work(
@@ -759,8 +601,4 @@ fn instruction_is_unsafe(file: &HirFile, instruction: &HirInstruction) -> bool {
             .is_some_and(|fragment| fragment.summary.has_side_effects),
         _ => false,
     }
-}
-
-fn contains(container: SourceSpan, candidate: SourceSpan) -> bool {
-    container.start() <= candidate.start() && container.end() >= candidate.end()
 }

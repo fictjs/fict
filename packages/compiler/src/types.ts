@@ -118,7 +118,10 @@ export interface NativeCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
   explain?: boolean
-  /** Lower supported reactive control-flow returns through lazy runtime branches. */
+  /**
+   * Lower supported reactive control-flow returns through lazy runtime branches. Disabling this
+   * capability makes reactive branch returns a strict FICT-R006 fallback.
+   */
   lazyConditional?: boolean
   /** Cache repeated signal/accessor reads within safe synchronous callback blocks. */
   getterCache?: boolean

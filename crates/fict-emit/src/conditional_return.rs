@@ -41,7 +41,11 @@ pub(crate) fn lower_conditional_returns(
             && jsx_value(function, *alternate)
             && consequent != alternate
         {
-            plans.push((instruction.origin, false));
+            plans.push((
+                instruction.origin,
+                false,
+                exact_control_flow_coverage(instruction.origin),
+            ));
         }
     }
     let mut dynamic_blocks = BTreeSet::new();
@@ -74,7 +78,7 @@ pub(crate) fn lower_conditional_returns(
             && let Some((alternate, alternate_blocks)) = returned_jsx(function, alternate)
             && consequent != alternate
         {
-            plans.push((hint.origin, false));
+            plans.push((hint.origin, false, exact_control_flow_coverage(hint.origin)));
             dynamic_blocks.extend(consequent_blocks);
             dynamic_blocks.extend(alternate_blocks);
             continue;
@@ -83,11 +87,15 @@ pub(crate) fn lower_conditional_returns(
             continue;
         };
         if returned.len() > 1 && story_has_reactive_control(function, operations, &story_blocks) {
-            plans.push((hint.origin, true));
+            plans.push((
+                hint.origin,
+                true,
+                story_control_flow_coverage(function, control_flow, &story_blocks),
+            ));
             dynamic_blocks.extend(story_blocks);
         }
     }
-    for (origin, track_branch_reads) in plans {
+    for (origin, track_branch_reads, covered_control_flow) in plans {
         let id = EmitTemporaryId::new(u32::try_from(temporaries.len()).unwrap_or(u32::MAX));
         temporaries.push(EmitTemporary {
             id,
@@ -100,10 +108,40 @@ pub(crate) fn lower_conditional_returns(
             create_helper: RuntimeHelper::CreateElement,
             cleanup_helper: RuntimeHelper::OnDestroy,
             track_branch_reads,
+            covered_control_flow,
             origin,
         });
     }
     use_dynamic_branch_helpers(function, &dynamic_blocks, operations);
+}
+
+fn exact_control_flow_coverage(origin: fict_hir::Origin) -> Vec<SourceSpan> {
+    origin.primary_span.into_iter().collect()
+}
+
+fn story_control_flow_coverage(
+    function: &HirFunction,
+    control_flow: &StructurizeAnalysis,
+    story_blocks: &BTreeSet<BlockId>,
+) -> Vec<SourceSpan> {
+    let mut spans: Vec<_> = control_flow
+        .constructs
+        .iter()
+        .filter(|construct| {
+            story_blocks.contains(&construct.header)
+                && matches!(
+                    construct.kind,
+                    StructuredConstructKind::Conditional { .. }
+                        | StructuredConstructKind::Switch { .. }
+                )
+        })
+        .filter_map(|construct| function.blocks.get(construct.header.as_usize()))
+        .filter_map(|block| block.source_hint.as_ref())
+        .filter_map(|hint| hint.origin.primary_span)
+        .collect();
+    spans.sort_unstable();
+    spans.dedup();
+    spans
 }
 
 fn use_dynamic_branch_helpers(

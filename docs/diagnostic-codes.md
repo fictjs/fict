@@ -426,6 +426,8 @@ inside a guaranteed branch-return lowering or memoized control-flow region. Comm
 call-based predicates (`if (state > 0 && maybe())`) and loop/branch shapes that cannot be lowered
 as a supported branch binding. Same-module hook-return accessors inferred after core region
 planning also fail closed here when the surrounding control flow is not a supported branch return.
+The diagnostic is also required when `lazyConditional: false` disables the EmitIR
+`ConditionalReturn` capability for an otherwise supported reactive return.
 
 **Impact:** In opt-out builds, reactivity remains semantic-first, but updates may execute broader
 code paths than supported branch-return or story-block regions. For active branch reads, branch
@@ -436,6 +438,7 @@ cleanup semantics correct. DOM identity inside that remounted branch is not guar
 story block that assigns locals consumed by JSX, or expression-only branching in JSX
 (`cond ? <A/> : <B/>`, logical expressions). Keep arbitrary calls out of control-flow predicates
 unless you intentionally compile that boundary with non-production `strictGuarantee: false`.
+Keep `lazyConditional` enabled when branch returns must update after mount.
 
 **Strict mode:** Set compiler `strictReactivity: true` to treat `FICT-R006` as a build error by
 default. You can still override it with `warningLevels`.
