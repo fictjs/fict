@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "phase": "legacy-removal",
   "viteDefaultBackend": "rust",
   "rollbackBackend": "rust",
@@ -8,7 +8,7 @@
   "finalLegacyRelease": "0.30.1",
   "legacyRemovalRelease": "0.31.0",
   "candidateEvidencePath": ".github/compiler-rollout-evidence.json",
-  "nativeCertificationPath": ".github/compiler-native-certification.json",
+  "rustDefaultNativeCertificationPath": ".github/compiler-native-certifications/v0.28.0-7ec8778545d50f77eb5aaef5a3906ca951b1a866.json",
   "reviewPath": ".github/compiler-rollout-review.json",
   "legacyRemovalReviewPath": ".github/compiler-legacy-removal-review.json",
   "legacyRemovalEvidencePath": ".github/compiler-legacy-removal-evidence.json"

@@ -21,6 +21,9 @@ import {
 } from './release-verify-clean.mjs'
 
 const rootPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const compilerPackage = JSON.parse(
+  readFileSync(new URL('../packages/compiler/package.json', import.meta.url), 'utf8'),
+)
 const rolloutState = JSON.parse(
   readFileSync(new URL('../.github/compiler-rollout-state.json', import.meta.url), 'utf8'),
 )
@@ -40,7 +43,10 @@ const legacyRemovalEvidence = JSON.parse(
   ),
 )
 const nativeCertification = JSON.parse(
-  readFileSync(new URL('../.github/compiler-native-certification.json', import.meta.url), 'utf8'),
+  readFileSync(
+    new URL(`../${rolloutState.rustDefaultNativeCertificationPath}`, import.meta.url),
+    'utf8',
+  ),
 )
 const rolloutReadiness = readFileSync(
   new URL('./compiler-rollout-readiness.mjs', import.meta.url),
@@ -302,8 +308,12 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
 })
 
 test('Rust-default approval binds the complete native certification to its candidate', () => {
-  assert.equal(rolloutState.schemaVersion, 4)
-  assert.equal(rolloutState.nativeCertificationPath, '.github/compiler-native-certification.json')
+  assert.equal(rolloutState.schemaVersion, 5)
+  assert.equal(
+    rolloutState.rustDefaultNativeCertificationPath,
+    `.github/compiler-native-certifications/v${nativeCertification.packageVersion}-${nativeCertification.compilerBuildRevision}.json`,
+  )
+  assert.notEqual(nativeCertification.packageVersion, compilerPackage.version)
   assert.equal(
     rolloutState.legacyRemovalEvidencePath,
     '.github/compiler-legacy-removal-evidence.json',
@@ -312,7 +322,10 @@ test('Rust-default approval binds the complete native certification to its candi
   assert.equal(rolloutReview.status, 'approved')
   assert.equal(rolloutReview.candidateDigest, rolloutEvidence.candidateDigest)
   assert.equal(rolloutReview.nativeCertificationDigest, nativeCertification.certificationDigest)
-  assert.match(rolloutReadiness, /assertNativeCertification\(nativeCertification, evidence\)/)
+  assert.match(
+    rolloutReadiness,
+    /assertRustDefaultNativeCertification\(nativeCertification, evidence\)/,
+  )
   assert.match(rolloutReadiness, /payload\.compilerBuildRevision !== evidence\.sourceRevision/)
   assert.match(rolloutReadiness, /payload\.compilerBuildId !== evidence\.compilerBuildId/)
   assert.match(

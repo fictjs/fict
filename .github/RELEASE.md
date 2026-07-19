@@ -89,7 +89,10 @@ confirm `consecutiveGreenCandidates >= 2`. Copy the reviewed candidate record
 to the candidate path named by `.github/compiler-rollout-state.json`. Manually
 dispatch `release.yml` for that exact candidate source revision, download its
 `fict-native-certification-<sha>` artifact, and copy the JSON record to the
-state's native-certification path. The certification digest, source revision,
+state's Rust-default certification path. That checked-in historical path must be
+`.github/compiler-native-certifications/v<packageVersion>-<compilerBuildRevision>.json`;
+there is no generic checked-in current-certification path. The certification
+digest, source revision,
 compiler build ID, 16 raw-evidence digests, and recorded Node versions must
 remain intact, and the source/build must match the candidate. Then
 have a maintainer bind every item in `.github/compiler-rollout-review.json` to
@@ -102,7 +105,7 @@ eight release bundles.
 Rollout evidence/review paths are restricted to the repository, and CI validates
 the exact pending/approved checklist shape even during beta. Do not stage a
 partial approval: update both digests, reviewer, status, and all areas
-atomically. The state schema is v4; older state or review documents fail closed.
+atomically. The state schema is v5; older state or review documents fail closed.
 
 Do not manufacture a second candidate by running the sealer twice locally.
 Controlled CI and release builds embed `github.sha`; a local binary without an
@@ -349,7 +352,8 @@ run whose facade version is **already published**. Do not bootstrap artifacts at
 the version of a pending release: those binaries would not be built from the
 future tag revision. Download its `fict-native-certification-<sha>` and all eight
 `fict-native-package-*` artifacts into one directory, preserving each artifact
-subdirectory. The repository command validates the certification digest, exact
+subdirectory. The repository command requires an explicit `--certification`
+artifact and validates the certification digest, exact
 revision, 16 runtime records, eight bundle hashes, size gates, package versions,
 and registry state before publishing anything:
 

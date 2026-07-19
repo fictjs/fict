@@ -705,7 +705,7 @@ function assertReview(review, evidence, nativeCertification) {
     throw new Error('Reviewer approval does not bind the current candidate evidence')
   }
   if (review.nativeCertificationDigest !== nativeCertification.certificationDigest) {
-    throw new Error('Reviewer approval does not bind the current native certification')
+    throw new Error('Reviewer approval does not bind the historical Rust-default certification')
   }
   const reviewAreas = review.areas ?? {}
   const missingAreas = Object.entries(reviewAreas)
@@ -716,7 +716,7 @@ function assertReview(review, evidence, nativeCertification) {
   }
 }
 
-function assertNativeCertification(certification, evidence) {
+function assertRustDefaultNativeCertification(certification, evidence) {
   if (!certification || typeof certification !== 'object' || Array.isArray(certification)) {
     throw new Error('Rust-default rollout requires one intact complete native certification')
   }
@@ -815,6 +815,18 @@ function assertNativeCertification(certification, evidence) {
     payload.compilerBuildId !== evidence.compilerBuildId
   ) {
     throw new Error('Native certification does not bind the rollout candidate source and build')
+  }
+}
+
+function assertHistoricalNativeCertificationPath(workspaceRoot, certificationPath, certification) {
+  const relativePath = path.relative(workspaceRoot, certificationPath).split(path.sep).join('/')
+  const expectedPath =
+    `.github/compiler-native-certifications/v${certification.packageVersion}-` +
+    `${certification.compilerBuildRevision}.json`
+  if (relativePath !== expectedPath) {
+    throw new Error(
+      `Historical Rust-default certification must use immutable version-and-revision path ${expectedPath}`,
+    )
   }
 }
 
@@ -1243,7 +1255,7 @@ export function validateCompilerRolloutReadiness(options = {}) {
   )
   const state = readJson(statePath, 'Compiler rollout state')
   if (
-    state.schemaVersion !== 4 ||
+    state.schemaVersion !== 5 ||
     !['beta', 'rust-default', 'legacy-removal'].includes(state.phase)
   ) {
     throw new Error('Compiler rollout state has an unsupported phase')
@@ -1263,10 +1275,10 @@ export function validateCompilerRolloutReadiness(options = {}) {
     state.candidateEvidencePath,
     'candidateEvidencePath',
   )
-  const nativeCertificationPath = resolveWorkspaceStatePath(
+  const rustDefaultNativeCertificationPath = resolveWorkspaceStatePath(
     workspaceRoot,
-    state.nativeCertificationPath,
-    'nativeCertificationPath',
+    state.rustDefaultNativeCertificationPath,
+    'rustDefaultNativeCertificationPath',
   )
   const reviewPath = resolveWorkspaceStatePath(workspaceRoot, state.reviewPath, 'reviewPath')
   const legacyRemovalReviewPath = resolveWorkspaceStatePath(
@@ -1298,9 +1310,17 @@ export function validateCompilerRolloutReadiness(options = {}) {
   const requiresApproval = state.phase !== 'beta' || options.requireDefaultReady === true
   if (requiresApproval) {
     const evidence = readJson(candidateEvidencePath, 'Compiler candidate evidence')
-    const nativeCertification = readJson(nativeCertificationPath, 'Compiler native certification')
+    const nativeCertification = readJson(
+      rustDefaultNativeCertificationPath,
+      'Historical Rust-default native certification',
+    )
     assertCandidate(evidence)
-    assertNativeCertification(nativeCertification, evidence)
+    assertRustDefaultNativeCertification(nativeCertification, evidence)
+    assertHistoricalNativeCertificationPath(
+      workspaceRoot,
+      rustDefaultNativeCertificationPath,
+      nativeCertification,
+    )
     assertReview(review, evidence, nativeCertification)
   }
   if (state.phase === 'legacy-removal') {

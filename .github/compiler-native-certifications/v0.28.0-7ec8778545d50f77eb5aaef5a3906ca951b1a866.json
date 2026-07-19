@@ -2,10 +2,7 @@
   "schemaVersion": 2,
   "status": "pass",
   "targets": 8,
-  "nodeLanes": [
-    "22.18.0",
-    "24"
-  ],
+  "nodeLanes": ["22.18.0", "24"],
   "certifications": 16,
   "bundles": 8,
   "certifiedPairs": [

@@ -21,10 +21,6 @@ import {
 import { waitForPublishedVersion } from './publish-native-compiler-packages.mjs'
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
-const defaultCertificationPath = path.join(
-  repositoryRoot,
-  '.github/compiler-native-certification.json',
-)
 const releaseConfigPath = path.join(repositoryRoot, '.github/npm-publish-packages.json')
 const GIT_REVISION = /^[0-9a-f]{40}$/
 
@@ -264,8 +260,8 @@ function assertBootstrapToolchain() {
   return { npmVersion: version, npmUser: reviewer }
 }
 
-function parseArguments(args) {
-  const options = { certificationPath: defaultCertificationPath, publish: false }
+export function parseNativeBootstrapArguments(args) {
+  const options = { publish: false }
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
     if (argument === '--publish') {
@@ -280,8 +276,17 @@ function parseArguments(args) {
     else if (argument === '--expected-revision') options.expectedRevision = value
     else throw new Error(`Unknown argument: ${argument}`)
   }
-  if (!options.artifactsRoot || !options.expectedRevision) {
-    throw new Error('--artifacts and --expected-revision are required')
+  const missingArguments = [
+    ['artifactsRoot', '--artifacts'],
+    ['certificationPath', '--certification'],
+    ['expectedRevision', '--expected-revision'],
+  ]
+    .filter(([field]) => !options[field])
+    .map(([, argument]) => argument)
+  if (missingArguments.length > 0) {
+    throw new Error(
+      `${missingArguments.join(', ')} ${missingArguments.length === 1 ? 'is' : 'are'} required`,
+    )
   }
   return options
 }
@@ -303,7 +308,7 @@ async function readRegistryState(registry, packageVersion) {
 }
 
 async function main() {
-  const options = parseArguments(process.argv.slice(2))
+  const options = parseNativeBootstrapArguments(process.argv.slice(2))
   const releaseConfig = JSON.parse(readFileSync(releaseConfigPath, 'utf8'))
   const certification = JSON.parse(readFileSync(options.certificationPath, 'utf8'))
   const bundles = new Map(

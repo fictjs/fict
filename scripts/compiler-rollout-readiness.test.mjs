@@ -467,6 +467,20 @@ async function fixture(
         ? nativeCertification(evidence)
         : null
       : certificationOverride
+  const certificationIdentity = certification ?? (evidence ? nativeCertification(evidence) : null)
+  const defaultHistoricalCertificationPath =
+    `.github/compiler-native-certifications/v${certificationIdentity?.packageVersion ?? '0.28.0'}-` +
+    `${certificationIdentity?.compilerBuildRevision ?? 'c'.repeat(40)}.json`
+  const configuredHistoricalCertificationPath =
+    state.rustDefaultNativeCertificationPath ?? defaultHistoricalCertificationPath
+  const resolvedCertificationPath = path.resolve(root, configuredHistoricalCertificationPath)
+  const relativeCertificationPath = path.relative(root, resolvedCertificationPath)
+  const certificationWritePath =
+    path.isAbsolute(configuredHistoricalCertificationPath) ||
+    relativeCertificationPath === '..' ||
+    relativeCertificationPath.startsWith(`..${path.sep}`)
+      ? path.join(root, defaultHistoricalCertificationPath)
+      : resolvedCertificationPath
   await mkdir(path.join(root, '.github'), { recursive: true })
   await mkdir(path.join(root, 'docs'), { recursive: true })
   await mkdir(path.join(root, 'packages', 'compiler', 'src'), { recursive: true })
@@ -474,14 +488,14 @@ async function fixture(
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-state.json'),
     JSON.stringify({
-      schemaVersion: 4,
+      schemaVersion: 5,
       rollbackBackend: 'legacy',
       rustDefaultRelease: null,
       compatibilityRelease: null,
       finalLegacyRelease: null,
       legacyRemovalRelease: null,
       candidateEvidencePath: '.github/compiler-rollout-evidence.json',
-      nativeCertificationPath: '.github/compiler-native-certification.json',
+      rustDefaultNativeCertificationPath: defaultHistoricalCertificationPath,
       reviewPath: '.github/compiler-rollout-review.json',
       legacyRemovalReviewPath: '.github/compiler-legacy-removal-review.json',
       legacyRemovalEvidencePath: '.github/compiler-legacy-removal-evidence.json',
@@ -515,10 +529,8 @@ async function fixture(
     )
   }
   if (certification) {
-    await writeFile(
-      path.join(root, '.github', 'compiler-native-certification.json'),
-      JSON.stringify(certification),
-    )
+    await mkdir(path.dirname(certificationWritePath), { recursive: true })
+    await writeFile(certificationWritePath, JSON.stringify(certification))
   }
   await writeFile(
     path.join(root, '.github', 'compiler-legacy-removal-review.json'),
@@ -702,7 +714,23 @@ test('human approval binds both candidate and native certification digests', asy
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
-    /does not bind the current native certification/,
+    /does not bind the historical Rust-default certification/,
+  )
+})
+
+test('historical certification requires an immutable version-and-revision path', async t => {
+  const evidence = candidateEvidence()
+  const root = await fixture(
+    rustDefaultState({
+      rustDefaultNativeCertificationPath: '.github/compiler-native-certification.json',
+    }),
+    approvedReview(evidence),
+    evidence,
+  )
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /must use immutable version-and-revision path/,
   )
 })
 
@@ -858,12 +886,12 @@ test('rollout state evidence paths cannot escape the workspace', async t => {
   const nativeRoot = await fixture({
     phase: 'beta',
     viteDefaultBackend: 'legacy',
-    nativeCertificationPath: '/tmp/compiler-native-certification.json',
+    rustDefaultNativeCertificationPath: '/tmp/compiler-native-certification.json',
   })
   t.after(() => rm(nativeRoot, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root: nativeRoot }),
-    /nativeCertificationPath must remain inside/,
+    /rustDefaultNativeCertificationPath must remain inside/,
   )
 
   const removalEvidenceRoot = await fixture({

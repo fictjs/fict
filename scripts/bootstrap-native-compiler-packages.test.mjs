@@ -7,12 +7,42 @@ import {
   nativeBootstrapNpmStdio,
   nativeBootstrapPublishArgs,
   nativeTrustedPublisherArgs,
+  parseNativeBootstrapArguments,
   validateNativeBootstrapCertification,
 } from './bootstrap-native-compiler-packages.mjs'
 import { NATIVE_COMPILER_NODE_LANES, NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
 const revision = 'a'.repeat(40)
 const packageVersion = '1.2.3'
+
+test('requires callers to select an explicit certification artifact', () => {
+  assert.throws(
+    () =>
+      parseNativeBootstrapArguments([
+        '--artifacts',
+        '/tmp/native-artifacts',
+        '--expected-revision',
+        revision,
+      ]),
+    /--certification is required/,
+  )
+  assert.deepEqual(
+    parseNativeBootstrapArguments([
+      '--artifacts',
+      '/tmp/native-artifacts',
+      '--certification',
+      '/tmp/native-certification.json',
+      '--expected-revision',
+      revision,
+    ]),
+    {
+      artifactsRoot: '/tmp/native-artifacts',
+      certificationPath: '/tmp/native-certification.json',
+      expectedRevision: revision,
+      publish: false,
+    },
+  )
+})
 
 function fixture() {
   const hashCharacters = '123456789abcdef0'
