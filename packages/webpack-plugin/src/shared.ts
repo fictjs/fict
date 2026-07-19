@@ -1,6 +1,7 @@
 import path from 'node:path'
 
 import type { ModuleReactiveMetadata } from '@fictjs/compiler'
+import { parseModuleReactiveMetadata } from '@fictjs/compiler/graph-host'
 import type { NormalModule } from 'webpack'
 
 import type { FictWebpackPackageResolutionState } from './package-metadata'
@@ -210,20 +211,8 @@ export function restoreFictModuleMetadata(
     throw new Error('[fict] Cached Webpack module metadata is malformed.')
   }
 
-  let metadata: unknown
-  try {
-    metadata = JSON.parse(candidate.metadataJson)
-  } catch {
-    throw new Error(`[fict] Cached Webpack module metadata for ${candidate.identifier} is invalid.`)
-  }
-  if (
-    !metadata ||
-    typeof metadata !== 'object' ||
-    Array.isArray(metadata) ||
-    !(metadata as { exports?: unknown }).exports ||
-    typeof (metadata as { exports?: unknown }).exports !== 'object' ||
-    Array.isArray((metadata as { exports?: unknown }).exports)
-  ) {
+  const metadata = parseModuleReactiveMetadata(candidate.metadataJson)
+  if (!metadata) {
     throw new Error(`[fict] Cached Webpack module metadata for ${candidate.identifier} is invalid.`)
   }
 
@@ -248,7 +237,7 @@ export function restoreFictModuleMetadata(
   return {
     identifier,
     resource,
-    metadata: metadata as ModuleReactiveMetadata,
+    metadata,
     incomplete: identityChanged || candidate.incomplete,
     dependencyFingerprint: identityChanged ? null : candidate.dependencyFingerprint,
     metadataDependencies: [

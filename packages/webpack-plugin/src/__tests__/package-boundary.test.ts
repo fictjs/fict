@@ -85,6 +85,21 @@ describe('Webpack package metadata boundaries', () => {
       '[fict] Cached Webpack module metadata is malformed.',
     )
 
+    stored.version = 7
+    for (const invalidMetadata of [
+      { exports: {} },
+      { version: 1, exports: {}, hooks: { useCounter: { directAccessor: 'invalid' } } },
+      Array.from({ length: 34 }).reduce(
+        metadata => ({ version: 1, exports: {}, namespaces: { nested: metadata } }),
+        { version: 1, exports: {} },
+      ),
+    ]) {
+      stored.metadataJson = JSON.stringify(invalidMetadata)
+      expect(() => restoreFictModuleMetadata(module)).toThrow(
+        `[fict] Cached Webpack module metadata for ${identifier} is invalid.`,
+      )
+    }
+
     const buildInfo = module.buildInfo as unknown as Record<string, unknown>
     delete buildInfo.fictWebpackMetadataV7
     buildInfo.fictWebpackMetadata = stored
