@@ -322,6 +322,18 @@ events, async and generator order, class fields, and TypeScript namespace/enum
 lowering. It is a real semantic gate for those domains, not a claim of full
 language equivalence.
 
+SSR is a separate executable oracle instead of an inference from client DOM
+tests. Three ESM fixtures run frozen 0.28.0 Babel output and live Rust output
+through the same current `@fictjs/ssr` and runtime builds. They compare
+`renderToString` structure, strict hydration claims that retain existing nodes,
+eager click and exported-state updates, snapshot creation, component resume,
+and two resumable click updates. The harness deliberately canonicalizes
+adjacent text-node segmentation and excludes compiler-private QRL/scope values
+while retaining public elements, attributes, namespaces, form state, hydration
+issues, node identity, and observable updates. This proves the reviewed
+compiler-output behavior; it does not prove legacy-runtime ABI, streaming,
+Suspense, or every legacy SSR fixture.
+
 The machine-readable [E-07 semantic coverage
 matrix](../../scripts/fixtures/compiler_semantic_coverage_matrix.json) binds the
 remaining reviewed categories to their actual evidence strength. Browser

@@ -195,10 +195,40 @@
       ],
       "doesNotProve": ["all-legacy-dom-fixture-equivalence", "legacy-runtime-version-equivalence"]
     },
+    "babelSsrSemanticOracle": {
+      "inputs": "scripts/fixtures/babel_0_28_ssr_semantic_inputs.json",
+      "artifact": "crates/fict-compiler/tests/babel_0_28_ssr_semantic_oracle.json",
+      "generator": "scripts/generate-babel-ssr-semantic-oracle.mjs",
+      "ciTest": "scripts/babel-compiler-ssr-semantic-oracle.test.mjs",
+      "fixtureCount": 3,
+      "executionSurfaces": [
+        "render-to-string",
+        "hydration-node-claim",
+        "eager-event-update",
+        "snapshot-resume",
+        "resumable-event-update"
+      ],
+      "exactBabelCompilerExecutedDuringGeneration": true,
+      "frozenBabelOutputExecutedInCi": true,
+      "currentRustOutputExecutedInCi": true,
+      "sharedCurrentRuntime": true,
+      "sharedCurrentSsr": true,
+      "assertionLevel": "ssr-runtime-semantics",
+      "proves": [
+        "reviewed-cross-implementation-ssr-structure-semantics",
+        "hydration-claim-and-eager-update-semantics",
+        "snapshot-resume-and-resumable-update-semantics"
+      ],
+      "doesNotProve": [
+        "all-legacy-ssr-fixture-equivalence",
+        "legacy-runtime-version-equivalence",
+        "streaming-or-suspense-equivalence"
+      ]
+    },
     "semanticCoverageMatrix": {
       "artifact": "scripts/fixtures/compiler_semantic_coverage_matrix.json",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
-      "categoryCount": 10,
+      "categoryCount": 11,
       "assertionLevel": "mixed-evidence-matrix",
       "proves": ["report-e07-category-accounting", "evidence-level-and-claim-boundary-validation"],
       "doesNotProve": [

@@ -131,7 +131,8 @@ jobs:
         run: |
           pnpm --filter @fictjs/runtime build
           pnpm --filter fict build
-          node --test scripts/babel-compiler-cross-module-semantic-oracle.test.mjs scripts/babel-compiler-dom-semantic-oracle.test.mjs scripts/babel-compiler-semantic-oracle.test.mjs scripts/native-compiler-auto-extract.test.mjs scripts/native-compiler-build-id.test.mjs scripts/native-compiler-capability-expansions.test.mjs scripts/native-compiler-expression-deps.test.mjs scripts/native-compiler-legacy-options-audit.test.mjs scripts/native-compiler-optimizer-diff.test.mjs scripts/native-compiler-r006-audit.test.mjs scripts/native-compiler-reactive-accessors.test.mjs scripts/native-compiler-request-matrix.test.mjs scripts/native-compiler-runtime.test.mjs scripts/native-compiler-state-machine-name-collision.test.mjs scripts/native-compiler-vnode-props-order.test.mjs
+          pnpm --filter @fictjs/ssr build
+          node --test scripts/babel-compiler-cross-module-semantic-oracle.test.mjs scripts/babel-compiler-dom-semantic-oracle.test.mjs scripts/babel-compiler-semantic-oracle.test.mjs scripts/babel-compiler-ssr-semantic-oracle.test.mjs scripts/native-compiler-auto-extract.test.mjs scripts/native-compiler-build-id.test.mjs scripts/native-compiler-capability-expansions.test.mjs scripts/native-compiler-expression-deps.test.mjs scripts/native-compiler-legacy-options-audit.test.mjs scripts/native-compiler-optimizer-diff.test.mjs scripts/native-compiler-r006-audit.test.mjs scripts/native-compiler-reactive-accessors.test.mjs scripts/native-compiler-request-matrix.test.mjs scripts/native-compiler-runtime.test.mjs scripts/native-compiler-state-machine-name-collision.test.mjs scripts/native-compiler-vnode-props-order.test.mjs
 
       - name: Typecheck ESM and CommonJS native facades
         if: matrix.node == '24'

@@ -95,6 +95,12 @@ with source, artifact, dependency, and input digests. CI executes that output
 and current Rust output through one isolated semantic harness; the legacy
 compiler itself is not installed or loaded during verification.
 
+SSR and startup behavior use their own ESM oracle. Frozen Babel output and live
+Rust output share the current SSR/runtime pair for static `renderToString`,
+strict DOM-node claiming with eager updates, and Preview snapshot/resume clicks.
+This closes the reviewed compiler-output SSR/hydration blind spot without
+claiming legacy-runtime, streaming, Suspense, or exhaustive SSR equivalence.
+
 Filename and request-protocol evidence is retained separately from the Rust
 codegen goldens. The exact 0.28.0 preset oracle covers real extension inference,
 strict defaults, input-map composition, and explain output. Reviewed native-only

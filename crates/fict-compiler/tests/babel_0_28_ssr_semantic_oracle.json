@@ -1,0 +1,390 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "legacyRelease": "0.28.0",
+    "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "legacyCompilerSourceSha256": "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a",
+    "legacyCompilerArtifactSha256": "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789",
+    "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
+    "legacyPackageManager": "pnpm@9.1.1",
+    "babelDependencies": {
+      "@babel/core": "7.29.7",
+      "@babel/plugin-transform-typescript": "7.28.5"
+    },
+    "oracleInputsSha256": "625df354cf6799bd2b438cc40fc620462870321a20d1c073e3fa8bd8cbd04812",
+    "semanticHarnessSha256": "6b6d6f6ff61297de45c80984d1558653b48caf6dd5389a9d01d5a12d2590a49d",
+    "sharedRuntimePackage": "@fictjs/runtime@0.31.0",
+    "sharedSsrPackage": "@fictjs/ssr@0.28.4",
+    "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-ssr-runtime-and-client-runtime"
+  },
+  "fixtures": [
+    {
+      "id": "static-ssr-structure",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-J002",
+          "severity": "warning",
+          "message": "Missing key prop in list rendering."
+        }
+      ],
+      "babelCodeSha256": "6b3bc14c988ec89fc1a5179b22e6be0fd0ffb3979cb9f2a0ad0e5a003417a9f1",
+      "babelCode": "import { __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, createConditional, onDestroy, __fictReactive, bindAttribute, __fictElementNamespaceMatches, __fictUseContext } from \"fict/internal\";\nexport function App(props) {\n  const __fictCtx = __fictUseContext();\n  return __fictElementNamespaceMatches(\"main\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<main><h1><!--fict:slot:start--><!--fict:slot:end--></h1><!--fict:slot:start--><!--fict:slot:end--><ul><!--fict:slot:start--><!--fict:slot:end--></ul><svg viewBox=\\\"0 0 10 10\\\" aria-label=\\\"shape\\\"><circle cy=\\\"5\\\" r=\\\"2\\\"></circle></svg></main>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0, 0]);\n    const __el_3 = resolvePath(__root_0, [1]);\n    const __el_4 = resolvePath(__root_0, [2, 0]);\n    const __el_5 = resolvePath(__root_0, [3, 0]);\n    const __end_6 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_6, () => props.title, __node => createElementInNamespace(__node, \"html\"));\n    const __end_7 = getSlotEnd(__el_3);\n    const __cond_14 = createConditional(() => props.visible, () => (() => {\n      const __tmpl_9 = template(\"<p><!--fict:slot:start--><!--fict:slot:end--></p>\");\n      const __root_8 = __tmpl_9();\n      const __el_10 = resolvePath(__root_8, [0]);\n      const __end_11 = getSlotEnd(__el_10);\n      insertBetween(__el_10, __end_11, () => props.message, __node => createElementInNamespace(__node, \"html\"));\n      return __root_8;\n    })(), __node => createElementInNamespace(__node, \"html\"), () => (() => {\n      const __tmpl_13 = template(\"<p>hidden</p>\");\n      const __root_12 = __tmpl_13();\n      return __root_12;\n    })(), __el_3, __end_7);\n    __cond_14?.flush?.();\n    onDestroy(__cond_14.dispose);\n    const __end_15 = getSlotEnd(__el_4);\n    insertBetween(__el_4, __end_15, () => props.items.map(item => ({\n      type: \"li\",\n      props: {\n        \"data-id\": __fictReactive(() => item.id),\n        children: __fictReactive(() => item.label)\n      }\n    })), __node => createElementInNamespace(__node, \"html\"));\n    bindAttribute(__root_0, \"data-mode\", () => props.mode);\n    bindAttribute(__root_0, \"aria-label\", () => props.label);\n    bindAttribute(__el_5, \"cx\", () => props.radius);\n    return __root_0;\n  }, 1000)() : {\n    type: \"main\",\n    props: {\n      \"data-mode\": __fictReactive(() => props.mode),\n      \"aria-label\": __fictReactive(() => props.label),\n      children: [{\n        type: \"h1\",\n        props: {\n          children: __fictReactive(() => props.title)\n        }\n      }, __fictReactive(() => props.visible ? __fictElementNamespaceMatches(\"p\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n        const __tmpl_17 = template(\"<p><!--fict:slot:start--><!--fict:slot:end--></p>\");\n        const __root_16 = __tmpl_17();\n        const __el_18 = resolvePath(__root_16, [0]);\n        const __end_19 = getSlotEnd(__el_18);\n        insertBetween(__el_18, __end_19, () => props.message, __node => createElementInNamespace(__node, \"html\"));\n        return __root_16;\n      }, 1001)() : {\n        type: \"p\",\n        props: {\n          children: __fictReactive(() => props.message)\n        }\n      } : __fictElementNamespaceMatches(\"p\", \"html\") ? (() => {\n        const __tmpl_21 = template(\"<p>hidden</p>\");\n        const __root_20 = __tmpl_21();\n        return __root_20;\n      })() : {\n        type: \"p\",\n        props: {\n          children: \"hidden\"\n        }\n      }), {\n        type: \"ul\",\n        props: {\n          children: __fictReactive(() => props.items.map(item => ({\n            type: \"li\",\n            props: {\n              \"data-id\": item.id,\n              children: item.label\n            }\n          })))\n        }\n      }, {\n        type: \"svg\",\n        props: {\n          viewBox: \"0 0 10 10\",\n          \"aria-label\": \"shape\",\n          children: {\n            type: \"circle\",\n            props: {\n              cx: __fictReactive(() => props.radius),\n              cy: \"5\",\n              r: \"2\"\n            }\n          }\n        }\n      }]\n    }\n  };\n}",
+      "expected": {
+        "initial": {
+          "framework": {
+            "fineGrainedRootCount": 0,
+            "handlerAttributeCount": 0,
+            "resumableHostCount": 1,
+            "snapshotScopeCount": 0,
+            "snapshotVersion": null
+          },
+          "tree": [
+            {
+              "type": "element",
+              "localName": "fict-host",
+              "namespaceURI": "http://www.w3.org/1999/xhtml",
+              "attributes": [
+                ["data-fict-host", ""],
+                ["data-fict-t", "App"],
+                ["style", "display:contents"]
+              ],
+              "children": [
+                {
+                  "type": "element",
+                  "localName": "main",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [
+                    ["aria-label", "status <ready>"],
+                    ["data-mode", "server"]
+                  ],
+                  "children": [
+                    {
+                      "type": "element",
+                      "localName": "h1",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [],
+                      "children": [{ "type": "text", "value": "SSR & hydration" }]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "p",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [],
+                      "children": [{ "type": "text", "value": "safe <script> & text" }]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "ul",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [],
+                      "children": [
+                        {
+                          "type": "element",
+                          "localName": "li",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [["data-id", "a&b"]],
+                          "children": [{ "type": "text", "value": "Alpha & Beta" }]
+                        },
+                        {
+                          "type": "element",
+                          "localName": "li",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [["data-id", "quoted"]],
+                          "children": [{ "type": "text", "value": "<quoted>" }]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "svg",
+                      "namespaceURI": "http://www.w3.org/2000/svg",
+                      "attributes": [
+                        ["aria-label", "shape"],
+                        ["viewBox", "0 0 10 10"]
+                      ],
+                      "children": [
+                        {
+                          "type": "element",
+                          "localName": "circle",
+                          "namespaceURI": "http://www.w3.org/2000/svg",
+                          "attributes": [
+                            ["cx", "4"],
+                            ["cy", "5"],
+                            ["r", "2"]
+                          ],
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "hydration-claim-and-updates",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "a4c7b232dd41e9880e71385743dfa37eaf5d00f7ba74b4fa81a26e9a99be1242",
+      "babelCode": "import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, addEventListener, bindAttribute, bindProperty, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from \"fict/internal\";\nlet increaseByTwo = void 0;\nexport function App(props) {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, props.start, {\n    name: \"count\"\n  });\n  increaseByTwo = () => {\n    count(count() + 2);\n  };\n  return __fictElementNamespaceMatches(\"article\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<article><span><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></span><button>add</button><input aria-label=\\\"count\\\"></article>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0, 0]);\n    const __el_3 = resolvePath(__root_0, [0, 2]);\n    const __el_4 = resolvePath(__root_0, [1]);\n    const __el_5 = resolvePath(__root_0, [2]);\n    const __end_6 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_6, () => props.prefix, __node => createElementInNamespace(__node, \"html\"));\n    const __end_7 = getSlotEnd(__el_3);\n    insertBetween(__el_3, __end_7, () => count(), __node => createElementInNamespace(__node, \"html\"));\n    addEventListener(__el_4, \"click\", (...__fictArgs) => {\n      (() => (__prev_8 => (__old_9 => (count(__prev_8), __old_9))(__prev_8++))(count()))(...__fictArgs);\n    }, true);\n    bindAttribute(__root_0, \"data-kind\", () => props.kind);\n    bindProperty(__el_5, \"value\", () => count());\n    return __root_0;\n  }, 1000)() : {\n    type: \"article\",\n    props: {\n      \"data-kind\": __fictReactive(() => props.kind),\n      children: [{\n        type: \"span\",\n        props: {\n          children: [__fictReactive(() => props.prefix), \":\", __fictReactive(() => count())]\n        }\n      }, {\n        type: \"button\",\n        props: {\n          onClick: (...__fictArgs) => {\n            (() => (__prev_10 => (__old_11 => (count(__prev_10), __old_11))(__prev_10++))(count()))(...__fictArgs);\n          },\n          children: \"add\"\n        }\n      }, {\n        type: \"input\",\n        props: {\n          \"aria-label\": \"count\",\n          value: __fictReactive(() => count())\n        }\n      }]\n    }\n  };\n}\nexport function advance() {\n  increaseByTwo();\n}",
+      "expected": {
+        "initial": {
+          "framework": {
+            "fineGrainedRootCount": 0,
+            "handlerAttributeCount": 0,
+            "resumableHostCount": 1,
+            "snapshotScopeCount": 0,
+            "snapshotVersion": null
+          },
+          "tree": [
+            {
+              "type": "element",
+              "localName": "fict-host",
+              "namespaceURI": "http://www.w3.org/1999/xhtml",
+              "attributes": [
+                ["data-fict-host", ""],
+                ["data-fict-t", "App"],
+                ["style", "display:contents"]
+              ],
+              "children": [
+                {
+                  "type": "element",
+                  "localName": "article",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [["data-kind", "counter"]],
+                  "children": [
+                    {
+                      "type": "element",
+                      "localName": "span",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [],
+                      "children": [{ "type": "text", "value": "value:2" }]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "button",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [],
+                      "children": [{ "type": "text", "value": "add" }]
+                    },
+                    {
+                      "type": "element",
+                      "localName": "input",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [
+                        ["aria-label", "count"],
+                        ["value", "2"]
+                      ],
+                      "children": [],
+                      "formState": { "checked": false, "value": "2" }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "client": {
+          "claimed": true,
+          "issues": [],
+          "trace": [
+            {
+              "kind": "click",
+              "tree": [
+                {
+                  "type": "element",
+                  "localName": "fict-host",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [
+                    ["data-fict-host", ""],
+                    ["data-fict-t", "App"],
+                    ["style", "display:contents"]
+                  ],
+                  "children": [
+                    {
+                      "type": "element",
+                      "localName": "article",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [["data-kind", "counter"]],
+                      "children": [
+                        {
+                          "type": "element",
+                          "localName": "span",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [],
+                          "children": [{ "type": "text", "value": "value:3" }]
+                        },
+                        {
+                          "type": "element",
+                          "localName": "button",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [],
+                          "children": [{ "type": "text", "value": "add" }]
+                        },
+                        {
+                          "type": "element",
+                          "localName": "input",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [
+                            ["aria-label", "count"],
+                            ["value", "2"]
+                          ],
+                          "children": [],
+                          "formState": { "checked": false, "value": "3" }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "call",
+              "tree": [
+                {
+                  "type": "element",
+                  "localName": "fict-host",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [
+                    ["data-fict-host", ""],
+                    ["data-fict-t", "App"],
+                    ["style", "display:contents"]
+                  ],
+                  "children": [
+                    {
+                      "type": "element",
+                      "localName": "article",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [["data-kind", "counter"]],
+                      "children": [
+                        {
+                          "type": "element",
+                          "localName": "span",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [],
+                          "children": [{ "type": "text", "value": "value:5" }]
+                        },
+                        {
+                          "type": "element",
+                          "localName": "button",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [],
+                          "children": [{ "type": "text", "value": "add" }]
+                        },
+                        {
+                          "type": "element",
+                          "localName": "input",
+                          "namespaceURI": "http://www.w3.org/1999/xhtml",
+                          "attributes": [
+                            ["aria-label", "count"],
+                            ["value", "2"]
+                          ],
+                          "children": [],
+                          "formState": { "checked": false, "value": "5" }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "resumable-click-updates",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "991a6900957745b28da87b5475d553fb1a32e3390960d9c71ab01aa249b328e1",
+      "babelCode": "import { __fictUseSignal, __fictUseMemo, template, resolvePath, __fictUseLexicalScope, __fictQrl, getSlotEnd, createElementInNamespace, insertBetween, bindAttribute, __fictElementNamespaceMatches, __fictReactive, __fictUseContext, __fictGetSSRScope, __fictEnsureScope, __fictPrepareContext, __fictPushContext, __fictPopContext, hydrateComponent, __fictSetComponentMeta, __fictRegisterResume } from \"fict/internal\";\nexport function App(props) {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, props.start, {\n    name: \"count\"\n  });\n  return __fictElementNamespaceMatches(\"button\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<button><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></button>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0]);\n    const __el_3 = resolvePath(__root_0, [2]);\n    __root_0.setAttribute(\"on:click\", __fictQrl(\"fict:oracle:ssr-entry\", \"__fict_e0\"));\n    const __end_6 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_6, () => props.label, __node => createElementInNamespace(__node, \"html\"));\n    const __end_7 = getSlotEnd(__el_3);\n    insertBetween(__el_3, __end_7, () => count(), __node => createElementInNamespace(__node, \"html\"));\n    bindAttribute(__root_0, \"data-kind\", () => props.kind);\n    return __root_0;\n  }, 1000)() : {\n    type: \"button\",\n    props: {\n      \"data-kind\": __fictReactive(() => props.kind),\n      \"attr:on:click\": __fictQrl(\"fict:oracle:ssr-entry\", \"__fict_e0\"),\n      children: [__fictReactive(() => props.label), \":\", __fictReactive(() => count())]\n    }\n  };\n}\nexport const __fict_e0 = (scopeId, event, el) => {\n  const [count] = __fictUseLexicalScope(scopeId, [\"count\"]);\n  const __handler = (...__fictArgs) => {\n    (() => (__prev_4 => (__old_5 => (count(__prev_4), __old_5))(__prev_4++))(count()))(...__fictArgs);\n  };\n  if (typeof __handler === \"function\") {\n    const __result = __handler.call(el, event);\n    if (typeof __result === \"function\" && __result !== __handler) {\n      return __result.call(el, event);\n    }\n    if (__result && typeof __result.handleEvent === \"function\") {\n      return __result.handleEvent.call(__result, event);\n    }\n    return __result;\n  }\n  if (__handler && typeof __handler.handleEvent === \"function\") {\n    return __handler.handleEvent.call(__handler, event);\n  }\n};\nexport const __fict_r0 = (scopeId, host) => {\n  const snapshot = __fictGetSSRScope(scopeId);\n  if (!snapshot) return;\n  const ctx = __fictEnsureScope(scopeId, host, snapshot);\n  try {\n    __fictPrepareContext(ctx);\n    __fictPushContext();\n    hydrateComponent(() => App(snapshot.props || {}), host);\n  } finally {\n    __fictPopContext();\n  }\n};\n__fictRegisterResume(__fictQrl(import.meta.url, \"__fict_r0\"), __fict_r0);\nconst __fict_meta_App = {\n  id: \"App@\" + \"fict:oracle:ssr-entry\",\n  resume: __fictQrl(\"fict:oracle:ssr-entry\", \"__fict_r0\")\n};\n__fictSetComponentMeta(App, __fict_meta_App);",
+      "expected": {
+        "initial": {
+          "framework": {
+            "fineGrainedRootCount": 0,
+            "handlerAttributeCount": 1,
+            "resumableHostCount": 1,
+            "snapshotScopeCount": 1,
+            "snapshotVersion": 2
+          },
+          "tree": [
+            {
+              "type": "element",
+              "localName": "fict-host",
+              "namespaceURI": "http://www.w3.org/1999/xhtml",
+              "attributes": [
+                ["data-fict-host", ""],
+                ["data-fict-t", "App@fict:oracle:ssr-entry"],
+                ["style", "display:contents"]
+              ],
+              "children": [
+                {
+                  "type": "element",
+                  "localName": "button",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [["data-kind", "resumable-counter"]],
+                  "children": [{ "type": "text", "value": "resumed:5" }]
+                }
+              ]
+            }
+          ]
+        },
+        "client": {
+          "claimed": true,
+          "issues": [],
+          "trace": [
+            {
+              "kind": "click",
+              "tree": [
+                {
+                  "type": "element",
+                  "localName": "fict-host",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [
+                    ["data-fict-host", ""],
+                    ["data-fict-t", "App@fict:oracle:ssr-entry"],
+                    ["style", "display:contents"]
+                  ],
+                  "children": [
+                    {
+                      "type": "element",
+                      "localName": "button",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [["data-kind", "resumable-counter"]],
+                      "children": [{ "type": "text", "value": "resumed:6" }]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "click",
+              "tree": [
+                {
+                  "type": "element",
+                  "localName": "fict-host",
+                  "namespaceURI": "http://www.w3.org/1999/xhtml",
+                  "attributes": [
+                    ["data-fict-host", ""],
+                    ["data-fict-t", "App@fict:oracle:ssr-entry"],
+                    ["style", "display:contents"]
+                  ],
+                  "children": [
+                    {
+                      "type": "element",
+                      "localName": "button",
+                      "namespaceURI": "http://www.w3.org/1999/xhtml",
+                      "attributes": [["data-kind", "resumable-counter"]],
+                      "children": [{ "type": "text", "value": "resumed:7" }]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

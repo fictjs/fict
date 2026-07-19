@@ -28,6 +28,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'babelDomSemanticOracle',
     'babelRequestOracle',
     'babelSemanticOracle',
+    'babelSsrSemanticOracle',
     'diagnosticDeviationReview',
     'legacyAssertionInventory',
     'legacyDomainLedger',
@@ -218,6 +219,49 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const domSemanticGenerator = read(domSemantic.generator)
   assert.match(domSemanticGenerator, /resolveConfig\(options\.output\)/)
 
+  const ssrSemantic = scope.assets.babelSsrSemanticOracle
+  const ssrSemanticInputsText = read(ssrSemantic.inputs)
+  const ssrSemanticInputs = JSON.parse(ssrSemanticInputsText)
+  const ssrSemanticOracle = readJson(ssrSemantic.artifact)
+  assert.equal(ssrSemantic.fixtureCount, ssrSemanticInputs.fixtures.length)
+  assert.equal(ssrSemantic.fixtureCount, ssrSemanticOracle.fixtures.length)
+  assert.equal(ssrSemantic.fixtureCount, 3)
+  assert.equal(ssrSemanticOracle.provenance.oracleInputsSha256, sha256(ssrSemanticInputsText))
+  assert.equal(
+    ssrSemanticOracle.provenance.semanticHarnessSha256,
+    sha256(read('scripts/lib/compiler-ssr-semantic-harness.mjs')),
+  )
+  assert.deepEqual(ssrSemantic.executionSurfaces, [
+    'render-to-string',
+    'hydration-node-claim',
+    'eager-event-update',
+    'snapshot-resume',
+    'resumable-event-update',
+  ])
+  assert.equal(ssrSemantic.exactBabelCompilerExecutedDuringGeneration, true)
+  assert.equal(ssrSemantic.frozenBabelOutputExecutedInCi, true)
+  assert.equal(ssrSemantic.currentRustOutputExecutedInCi, true)
+  assert.equal(ssrSemantic.sharedCurrentRuntime, true)
+  assert.equal(ssrSemantic.sharedCurrentSsr, true)
+  assert.equal(ssrSemantic.assertionLevel, 'ssr-runtime-semantics')
+  assert.ok(ssrSemantic.proves.includes('reviewed-cross-implementation-ssr-structure-semantics'))
+  assert.ok(ssrSemantic.proves.includes('snapshot-resume-and-resumable-update-semantics'))
+  assert.ok(ssrSemantic.doesNotProve.includes('all-legacy-ssr-fixture-equivalence'))
+  assert.ok(ssrSemantic.doesNotProve.includes('streaming-or-suspense-equivalence'))
+  const ssrSemanticTest = read(ssrSemantic.ciTest)
+  assert.match(ssrSemanticTest, /executeSsrEsm\(/)
+  assert.match(ssrSemanticTest, /expected\.babelCode/)
+  assert.match(ssrSemanticTest, /executeSsrEsm\(result, fixture/)
+  const ssrSemanticGenerator = read(ssrSemantic.generator)
+  assert.match(ssrSemanticGenerator, /executeSsrEsm\(/)
+  assert.match(ssrSemanticGenerator, /resolveConfig\(options\.output\)/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:babel-ssr-semantic-oracle/)
+  assert.match(packageJson, /babel-compiler-ssr-semantic-oracle\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /pnpm --filter @fictjs\/ssr build/)
+  assert.match(ci, /babel-compiler-ssr-semantic-oracle\.test\.mjs/)
+
   const coverageScope = scope.assets.semanticCoverageMatrix
   const coverage = readJson(coverageScope.artifact)
   assert.equal(coverageScope.categoryCount, coverage.categories.length)
@@ -298,6 +342,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
     'cross-implementation-dom-runtime',
     'cross-implementation-graph-runtime',
     'cross-implementation-runtime',
+    'cross-implementation-ssr-runtime',
     'native-runtime',
     'request-contract',
     'diagnostic-contract',
@@ -312,6 +357,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
     'cross-module-metadata',
     'module-and-source-identity-matrix',
     'async-generator-class-decorator-and-typescript',
+    'ssr-hydration-and-resume',
     'complex-source-map-lowering',
     'capability-expansion-runtime-results',
   ]

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "publicModuleId": "fict:oracle:ssr-entry",
+  "fixtures": [
+    {
+      "id": "static-ssr-structure",
+      "mode": "ssr",
+      "expectedInitialText": "SSR & hydrationsafe <script> & textAlpha & Beta<quoted>",
+      "source": "export function App(props) {\n  return (\n    <main data-mode={props.mode} aria-label={props.label}>\n      <h1>{props.title}</h1>\n      {props.visible ? <p>{props.message}</p> : <p>hidden</p>}\n      <ul>\n        {props.items.map(item => (\n          <li data-id={item.id}>{item.label}</li>\n        ))}\n      </ul>\n      <svg viewBox=\"0 0 10 10\" aria-label=\"shape\">\n        <circle cx={props.radius} cy=\"5\" r=\"2\" />\n      </svg>\n    </main>\n  )\n}\n",
+      "props": {
+        "label": "status <ready>",
+        "items": [
+          { "id": "a&b", "label": "Alpha & Beta" },
+          { "id": "quoted", "label": "<quoted>" }
+        ],
+        "message": "safe <script> & text",
+        "mode": "server",
+        "radius": 4,
+        "title": "SSR & hydration",
+        "visible": true
+      }
+    },
+    {
+      "id": "hydration-claim-and-updates",
+      "mode": "hydrate",
+      "expectedInitialText": "value:2add",
+      "source": "import { $state } from 'fict'\n\nlet increaseByTwo\n\nexport function App(props) {\n  let count = $state(props.start)\n  increaseByTwo = () => {\n    count += 2\n  }\n  return (\n    <article data-kind={props.kind}>\n      <span>{props.prefix}:{count}</span>\n      <button onClick={() => count++}>add</button>\n      <input aria-label=\"count\" value={count} />\n    </article>\n  )\n}\n\nexport function advance() {\n  increaseByTwo()\n}\n",
+      "props": {
+        "kind": "counter",
+        "prefix": "value",
+        "start": 2
+      },
+      "steps": [
+        { "kind": "click", "selector": "button", "expectedText": "value:3add" },
+        { "kind": "call", "exportName": "advance", "expectedText": "value:5add" }
+      ]
+    },
+    {
+      "id": "resumable-click-updates",
+      "mode": "resume",
+      "expectedInitialText": "resumed:5",
+      "source": "import { $state } from 'fict'\n\nexport function App(props) {\n  let count = $state(props.start)\n  return (\n    <button data-kind={props.kind} onClick$={() => count++}>\n      {props.label}:{count}\n    </button>\n  )\n}\n",
+      "props": {
+        "kind": "resumable-counter",
+        "label": "resumed",
+        "start": 5
+      },
+      "steps": [
+        { "kind": "click", "selector": "button", "expectedText": "resumed:6" },
+        { "kind": "click", "selector": "button", "expectedText": "resumed:7" }
+      ]
+    }
+  ]
+}

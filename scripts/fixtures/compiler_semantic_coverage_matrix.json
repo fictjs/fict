@@ -174,6 +174,22 @@
       "claimBoundary": "Compares reviewed async, generator, class-field, namespace, and enum results; raw standard decorators are an explicit fail-closed diagnostic contract, not runtime parity."
     },
     {
+      "id": "ssr-hydration-and-resume",
+      "requirement": "SSR output, hydration claims, and Preview resume behavior",
+      "evidence": [
+        {
+          "assertionLevel": "cross-implementation-ssr-runtime",
+          "path": "scripts/babel-compiler-ssr-semantic-oracle.test.mjs",
+          "markers": [
+            "Rust matches Babel 0.28 SSR and hydration semantics",
+            "executeSsrEsm(\n        { code: expected.babelCode, artifacts: [] }",
+            "executeSsrEsm(result, fixture, inputs.publicModuleId)"
+          ]
+        }
+      ],
+      "claimBoundary": "Compares static renderToString structure, strict DOM-node claiming with eager updates, and snapshot-driven resumable clicks across compiler outputs using one shared current SSR/runtime pair. It does not claim legacy-runtime ABI, streaming, Suspense, or exhaustive SSR equivalence."
+    },
+    {
       "id": "complex-source-map-lowering",
       "requirement": "per-position source maps through complex lowering",
       "evidence": [
