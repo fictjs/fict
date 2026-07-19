@@ -20,10 +20,10 @@ use fict_hir::{
     ValueKind,
 };
 use fict_reactivity::{
-    ReactiveBindingKind, ReactiveCycleAnalysis, ReactiveScopeAnalysis, RegionAnalysis,
-    SsaDefinitionLocation, analyze_cfg, structurize_cfg,
+    DependencyPath, ReactiveBindingKind, ReactiveCycleAnalysis, ReactiveScopeAnalysis,
+    RegionAnalysis, SsaDefinitionLocation, analyze_cfg, structurize_cfg,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 /// Phase-1 Core lowering configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoJsxLoweringOptions {
@@ -423,6 +423,145 @@ fn declaration_initializer(
         _ => None,
     }
 }
+fn instruction_reads_local(instruction: &HirInstruction, local: LocalId) -> bool {
+    match &instruction.kind {
+        HirInstructionKind::Read { place } | HirInstructionKind::ReadWrite { place, .. } => {
+            place_local(place.base) == Some(local)
+        }
+        HirInstructionKind::Call(call) => {
+            call.callee_reference
+                .as_ref()
+                .and_then(|place| place_local(place.base))
+                == Some(local)
+        }
+        _ => false,
+    }
+}
+fn place_uses_any_local(place: &fict_hir::Place, locals: &BTreeSet<LocalId>) -> bool {
+    place_local(place.base).is_some_and(|local| locals.contains(&local))
+}
+fn call_callee_uses_any_local(
+    function: &HirFunction,
+    call: &fict_hir::CallInstruction,
+    locals: &BTreeSet<LocalId>,
+) -> bool {
+    call.callee_reference
+        .as_ref()
+        .is_some_and(|place| place.projections.is_empty() && place_uses_any_local(place, locals))
+        || function
+            .instruction_for_result(call.callee)
+            .is_some_and(|instruction| {
+                matches!(&instruction.kind, HirInstructionKind::Read { place }
+                    if place.projections.is_empty() && place_uses_any_local(place, locals))
+            })
+}
+fn instruction_writes_any_dependency(
+    function: &HirFunction,
+    instruction: &HirInstruction,
+    dependency_locals: &BTreeSet<LocalId>,
+) -> bool {
+    match &instruction.kind {
+        HirInstructionKind::Write { place, .. } | HirInstructionKind::ReadWrite { place, .. } => {
+            place_uses_any_local(place, dependency_locals)
+        }
+        HirInstructionKind::Delete {
+            target: DeleteTarget::Place(place),
+        } => place_uses_any_local(place, dependency_locals),
+        HirInstructionKind::PatternAssignment { writes, .. } => writes
+            .iter()
+            .any(|write| dependency_locals.contains(&write.local)),
+        HirInstructionKind::Iteration { targets, .. } => targets
+            .iter()
+            .any(|target| dependency_locals.contains(target)),
+        HirInstructionKind::Call(call) => {
+            !call.arguments.is_empty()
+                && call_callee_uses_any_local(function, call, dependency_locals)
+        }
+        _ => false,
+    }
+}
+fn derived_initializer_is_explicit_snapshot(
+    function: &HirFunction,
+    result: ValueId,
+    reassigned: &BTreeSet<LocalId>,
+    tracked_locals: &BTreeSet<LocalId>,
+) -> bool {
+    function
+        .instruction_for_result(result)
+        .is_some_and(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => {
+                call.arguments.is_empty()
+                    && call_callee_uses_any_local(function, call, tracked_locals)
+            }
+            HirInstructionKind::Read { place } if place.projections.is_empty() => {
+                place_local(place.base).is_some_and(|local| reassigned.contains(&local))
+            }
+            _ => false,
+        })
+}
+fn derived_read_crosses_dependency_write(
+    function: &HirFunction,
+    definition_block: BlockId,
+    definition_instruction: u32,
+    local: LocalId,
+    dependencies: &[DependencyPath],
+    tracked_locals: &BTreeSet<LocalId>,
+) -> bool {
+    let Ok(cfg) = analyze_cfg(function) else {
+        // The normal lowering path reports the CFG diagnostic. Until then, fail closed by
+        // retaining the authored eager initializer instead of attempting a lazy rewrite.
+        return true;
+    };
+    let dependency_locals: BTreeSet<_> = dependencies
+        .iter()
+        .filter_map(DependencyPath::local)
+        .filter(|local| tracked_locals.contains(local))
+        .collect();
+    if dependency_locals.is_empty() {
+        return false;
+    }
+    let mut pending = VecDeque::from([(
+        definition_block,
+        definition_instruction.saturating_add(1) as usize,
+        false,
+    )]);
+    let mut visited = BTreeSet::new();
+    while let Some((block_id, start, mut crossed_write)) = pending.pop_front() {
+        if !visited.insert((block_id, start, crossed_write)) {
+            continue;
+        }
+        let Some(block) = function.blocks.get(block_id.as_usize()) else {
+            return true;
+        };
+        let mut reached_read = false;
+        for instruction in block.instructions.iter().skip(start) {
+            if instruction_reads_local(instruction, local) {
+                if crossed_write {
+                    return true;
+                }
+                reached_read = true;
+                break;
+            }
+            // A derived initializer may remain lazy across unrelated work, but not across a
+            // write to one of its tracked inputs. Doing so would make the first read observe the
+            // post-write value instead of the source-ordered snapshot.
+            crossed_write |=
+                instruction_writes_any_dependency(function, instruction, &dependency_locals);
+        }
+        if reached_read {
+            continue;
+        }
+        for successor in cfg
+            .successors
+            .get(block_id.as_usize())
+            .into_iter()
+            .flatten()
+        {
+            pending.push_back((*successor, 0, crossed_write));
+        }
+    }
+    false
+}
 fn derived_declarations(
     hir: &HirFile,
     function: &HirFunction,
@@ -441,6 +580,11 @@ fn derived_declarations(
         return Vec::new();
     }
     let reassigned = reassigned_locals(function);
+    let tracked_locals: BTreeSet<_> = scopes
+        .bindings
+        .iter()
+        .map(|binding| binding.name.local)
+        .collect();
     let mut declarations = BTreeMap::new();
     for (local, site) in scopes.bindings.iter().filter_map(|fact| {
         let local = &function.locals[fact.name.local.as_usize()];
@@ -457,6 +601,18 @@ fn derived_declarations(
         };
         let source = &function.blocks[block.as_usize()].instructions[instruction as usize];
         let (result, local) = declaration_initializer(function, source)?;
+        if derived_initializer_is_explicit_snapshot(function, result, &reassigned, &tracked_locals)
+            && derived_read_crosses_dependency_write(
+                function,
+                block,
+                instruction,
+                fact.name.local,
+                &fact.dependencies,
+                &tracked_locals,
+            )
+        {
+            return None;
+        }
         if function
             .instruction_for_result(result)
             .is_some_and(|instruction| {

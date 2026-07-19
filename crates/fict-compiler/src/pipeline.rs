@@ -1133,6 +1133,45 @@ mod tests {
     }
 
     #[test]
+    fn preserves_derived_snapshots_before_eager_barriers() {
+        let mut input = request(
+            r#"
+                import { $state } from "fict";
+                export function Scenario() {
+                    const utils = { renderHook: callback => callback() };
+                    return utils.renderHook(() => {
+                        const count = $state(1);
+                        const before = count();
+                        count(3);
+                        return [before + 0, count() + 0];
+                    });
+                }
+            "#,
+            "derived-barrier.tsx",
+        );
+        input.options.strict_guarantee = false;
+        input.options.reactive_scopes = vec!["renderHook".into()];
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("const before = count();"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("count(3);"), "{}", result.code);
+        assert!(
+            result.code.contains("return [before + 0, count() + 0]"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("const before = __fictUseMemo"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn runs_module_effects_through_hir_emit_ir_and_oxc_codegen() {
         let mut input = request(
             "import { $effect, batch } from 'fict'; $effect(() => batch(() => 1)); export { batch };",
