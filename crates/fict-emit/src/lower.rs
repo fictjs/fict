@@ -1023,6 +1023,9 @@ fn lower_function(
             matches!(
                 site.kind,
                 ReactiveSiteKind::Macro(FictMacroKind::State | FictMacroKind::Memo)
+                    | ReactiveSiteKind::Runtime(
+                        ReactiveCallKind::Memo | ReactiveCallKind::Selector
+                    )
             )
             .then_some(site.local)
             .flatten()

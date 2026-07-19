@@ -4881,6 +4881,58 @@ mod tests {
     }
 
     #[test]
+    fn unwraps_runtime_accessors_before_member_invocation() {
+        let mut input = request(
+            r#"
+                import { createMemo } from "fict";
+                const calls = [];
+                export function Component() {
+                    const fn = createMemo(() => value => calls.push(value));
+                    fn.call(null, "call");
+                    fn.apply(null, ["apply"]);
+                    fn.bind(null, "bind")();
+                    fn?.call(null, "optional");
+                    return <div>{fn()("render")}</div>;
+                }
+            "#,
+            "runtime-accessor-members.tsx",
+        );
+        input.options.strict_guarantee = false;
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("__fictUseEffect(__fictCtx").count(),
+            4,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => fn().call(null"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => fn().apply(null"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => fn().bind(null"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("fn()?.call(null"), "{}", result.code);
+        assert!(result.code.contains("fn()(\"render\")"), "{}", result.code);
+        assert!(
+            !result.code.contains("fn()()(\"render\")"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn enforces_nested_state_mutation_guarantees() {
         let source = "import { $state } from 'fict'; function App() { const user = $state({ name: 'Ada' }); user.name = 'Grace'; return user.name; }";
         let strict = compile(request(source, "nested.js"));
