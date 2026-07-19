@@ -220,9 +220,10 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result.unresolved_metadata_requests.dedup();
     result.metadata_incomplete |= metadata.incomplete;
     result.diagnostics.extend(metadata.diagnostics);
-    result
-        .diagnostics
-        .extend(reactive_control_flow_diagnostics(&core));
+    result.diagnostics.extend(reactive_control_flow_diagnostics(
+        &core,
+        &local_hook_returns,
+    ));
     finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
@@ -3934,6 +3935,107 @@ mod tests {
                 .diagnostics
                 .iter()
                 .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
+        );
+    }
+
+    #[test]
+    fn fails_closed_for_late_inferred_hook_accessors_in_setup_control_flow() {
+        let sources = [
+            (
+                "structured-hook-story.tsx",
+                r#"
+                    import { $state } from 'fict';
+                    function useBucket() {
+                        const count = $state(1);
+                        return { count };
+                    }
+                    export function App() {
+                        const bucket = useBucket();
+                        let label = 'off';
+                        if (bucket.count) label = 'on';
+                        return <span>{label}</span>;
+                    }
+                "#,
+            ),
+            (
+                "direct-hook-loop.tsx",
+                r#"
+                    import { $state } from 'fict';
+                    function useCount() {
+                        const count = $state(2);
+                        return count;
+                    }
+                    export function App() {
+                        const count = useCount();
+                        const seen = [];
+                        while (count && seen.length < 2) seen.push(count);
+                        return <span>{seen.length}</span>;
+                    }
+                "#,
+            ),
+        ];
+
+        for (filename, source) in sources {
+            let strict = compile(request(source, filename));
+            assert!(strict.has_errors(), "{filename}: {:?}", strict.diagnostics);
+            assert!(strict.code.is_empty(), "{filename}: {}", strict.code);
+            let finding = strict
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.code.as_str() == "FICT-R006")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{filename}: missing late hook control-flow diagnostic: {:?}",
+                        strict.diagnostics
+                    )
+                });
+            assert_eq!(finding.severity, DiagnosticSeverity::Error);
+            assert_eq!(finding.guarantee_class, GuaranteeClass::Fallback);
+            assert!(finding.primary_span.is_some());
+        }
+
+        let mut fallback_request = request(sources[0].1, sources[0].0);
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(
+            fallback.code.contains("if (bucket.count())"),
+            "{}",
+            fallback.code
+        );
+
+        let supported = compile(request(
+            r#"
+                import { $state } from 'fict';
+                function useBucket() {
+                    const count = $state(1);
+                    return { count };
+                }
+                export function App() {
+                    const bucket = useBucket();
+                    if (bucket.count) return <strong>on</strong>;
+                    return <span>off</span>;
+                }
+            "#,
+            "structured-hook-branch-return.tsx",
+        ));
+        assert!(!supported.has_errors(), "{:?}", supported.diagnostics);
+        assert!(
+            supported
+                .diagnostics
+                .iter()
+                .all(|diagnostic| { diagnostic.code.as_str() != "FICT-R006" })
+        );
+        assert!(
+            supported
+                .code
+                .contains("createConditional(() => bucket.count()"),
+            "{}",
+            supported.code
         );
     }
 

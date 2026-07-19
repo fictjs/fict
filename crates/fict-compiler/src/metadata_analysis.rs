@@ -267,6 +267,17 @@ pub(crate) fn generate_module_metadata(
     generation
 }
 
+pub(crate) fn infer_local_hook_returns(
+    core: &CorePassOutput,
+    frontend: &FrontendSummary,
+) -> BTreeMap<BindingId, ImportedHookReturn> {
+    collect_local_facts(core, frontend)
+        .hooks
+        .iter()
+        .map(|(binding, hook)| (*binding, imported_hook_return(hook)))
+        .collect()
+}
+
 fn imported_hook_return(info: &HookReturnInfo) -> ImportedHookReturn {
     ImportedHookReturn {
         direct_accessor: info.direct_accessor.as_ref().map(imported_reactive_kind),

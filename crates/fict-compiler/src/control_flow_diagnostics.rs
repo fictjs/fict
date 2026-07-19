@@ -1,17 +1,23 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
-    BlockId, DeleteTarget, FunctionKind, HirFile, HirFunction, HirInstruction, HirInstructionKind,
-    MutationEffect, PlaceBase, Projection, TerminatorKind, ValueId,
+    BindingId, BlockId, CallHost, DeleteTarget, FunctionKind, HirFile, HirFunction, HirInstruction,
+    HirInstructionKind, ImportedHookReturn, MutationEffect, PlaceBase, Projection, TerminatorKind,
+    ValueId,
 };
-use fict_reactivity::{DependencyPath, StructuredConstruct, StructuredConstructKind};
+use fict_reactivity::{
+    DependencyBase, DependencyPath, DependencySegment, StructuredConstruct, StructuredConstructKind,
+};
 
 use crate::CorePassOutput;
 
-pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Diagnostic> {
+pub(crate) fn reactive_control_flow_diagnostics(
+    core: &CorePassOutput,
+    local_hook_returns: &BTreeMap<BindingId, ImportedHookReturn>,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for analysis in &core.functions {
         let function = &core.hir.functions[analysis.function.as_usize()];
@@ -31,6 +37,13 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
             .iter()
             .map(|binding| binding.name.local)
             .collect();
+        let core_reactive_control_paths: BTreeSet<_> = analysis
+            .scopes
+            .blocks
+            .iter()
+            .flat_map(|block| &block.control_flow_reads)
+            .cloned()
+            .collect();
         let mut unsupported = BTreeSet::new();
         let mut primary_span: Option<SourceSpan> = None;
         for construct in &analysis.structurize.constructs {
@@ -42,13 +55,16 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                     let TerminatorKind::Branch { test, .. } = block.terminator.kind else {
                         continue;
                     };
-                    let reactive_paths = reactive_control_paths(
+                    let (reactive_paths, has_late_hook_path) = reactive_control_paths(
                         analysis
                             .dependencies
                             .value_dependencies
                             .get(test.as_usize())
                             .map(Vec::as_slice),
                         &tracked_locals,
+                        &core_reactive_control_paths,
+                        function,
+                        local_hook_returns,
                     );
                     if reactive_paths.is_empty() {
                         continue;
@@ -78,7 +94,9 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                                 !construct_has_unsafe_control_work(&core.hir, function, construct)
                             }
                         };
-                    if !condition_invokes_user_code && (branch_return || memoizable_story) {
+                    if !condition_invokes_user_code
+                        && (branch_return || (memoizable_story && !has_late_hook_path))
+                    {
                         continue;
                     }
 
@@ -94,13 +112,16 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                 }
                 StructuredConstructKind::Loop { .. } => {
                     for (control, block_id) in loop_control_values(function, construct) {
-                        let reactive_paths = reactive_control_paths(
+                        let (reactive_paths, _) = reactive_control_paths(
                             analysis
                                 .dependencies
                                 .value_dependencies
                                 .get(control.as_usize())
                                 .map(Vec::as_slice),
                             &tracked_locals,
+                            &core_reactive_control_paths,
+                            function,
+                            local_hook_returns,
                         );
                         if reactive_paths.is_empty() {
                             continue;
@@ -119,20 +140,25 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                 }
                 StructuredConstructKind::Switch { arms, join } => {
                     let mut reactive_paths = BTreeSet::new();
+                    let mut has_late_hook_path = false;
                     let mut condition_invokes_user_code = false;
                     let mut switch_primary_span = None;
                     for (control, block_id) in switch_control_values(function, construct) {
-                        let paths = reactive_control_paths(
+                        let (paths, control_has_late_hook_path) = reactive_control_paths(
                             analysis
                                 .dependencies
                                 .value_dependencies
                                 .get(control.as_usize())
                                 .map(Vec::as_slice),
                             &tracked_locals,
+                            &core_reactive_control_paths,
+                            function,
+                            local_hook_returns,
                         );
                         if paths.is_empty() {
                             continue;
                         }
+                        has_late_hook_path |= control_has_late_hook_path;
                         reactive_paths.extend(paths);
                         condition_invokes_user_code |= value_has_unsafe_control_work(
                             &core.hir,
@@ -176,7 +202,9 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                     let memoizable_story = !function.flags.no_memo
                         && !contains_nested_switch
                         && !construct_has_unsafe_control_work(&core.hir, function, construct);
-                    if !condition_invokes_user_code && (switch_return || memoizable_story) {
+                    if !condition_invokes_user_code
+                        && (switch_return || (memoizable_story && !has_late_hook_path))
+                    {
                         continue;
                     }
 
@@ -223,16 +251,127 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
 fn reactive_control_paths(
     paths: Option<&[DependencyPath]>,
     tracked_locals: &BTreeSet<fict_hir::LocalId>,
-) -> Vec<DependencyPath> {
-    paths
+    core_reactive_control_paths: &BTreeSet<DependencyPath>,
+    function: &HirFunction,
+    local_hook_returns: &BTreeMap<BindingId, ImportedHookReturn>,
+) -> (Vec<DependencyPath>, bool) {
+    let mut has_late_hook_path = false;
+    let reactive = paths
         .into_iter()
         .flatten()
-        .filter(|path| {
-            path.local()
-                .is_some_and(|local| tracked_locals.contains(&local))
+        .filter_map(|path| {
+            let core_reactive = core_reactive_control_paths.contains(path)
+                || path
+                    .local()
+                    .is_some_and(|local| tracked_locals.contains(&local));
+            if core_reactive {
+                return Some(path.clone());
+            }
+            if local_hook_reactive_dependency(function, path, local_hook_returns) {
+                has_late_hook_path = true;
+                return Some(path.clone());
+            }
+            None
         })
-        .cloned()
-        .collect()
+        .collect();
+    (reactive, has_late_hook_path)
+}
+
+fn local_hook_reactive_dependency(
+    function: &HirFunction,
+    path: &DependencyPath,
+    local_hook_returns: &BTreeMap<BindingId, ImportedHookReturn>,
+) -> bool {
+    let call_result = match path.base {
+        DependencyBase::Value(value) => value,
+        DependencyBase::Ssa(name) => {
+            if hook_root_reassigned(function, name.local) {
+                return false;
+            }
+            let Some(initializer) = function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find_map(|instruction| match instruction.kind {
+                    HirInstructionKind::Declare {
+                        local,
+                        initializer: Some(initializer),
+                        ..
+                    } if local == name.local => Some(initializer),
+                    _ => None,
+                })
+            else {
+                return false;
+            };
+            initializer
+        }
+        DependencyBase::Global(_) => return false,
+    };
+    let Some(instruction) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(call_result))
+    else {
+        return false;
+    };
+    let HirInstructionKind::Call(call) = &instruction.kind else {
+        return false;
+    };
+    let CallHost::Binding(binding) = call.host else {
+        return false;
+    };
+    if call
+        .callee_reference
+        .as_ref()
+        .is_some_and(|place| !place.projections.is_empty())
+    {
+        return false;
+    }
+    let Some(shape) = local_hook_returns.get(&binding) else {
+        return false;
+    };
+    if path.segments.is_empty() {
+        return shape.direct_accessor.is_some();
+    }
+    if shape.direct_accessor.is_some() {
+        return false;
+    }
+    let projection = match &path.segments[0] {
+        DependencySegment::Static { name, optional } => Projection::StaticProperty {
+            name: name.clone(),
+            optional: *optional,
+        },
+        DependencySegment::Index { index, optional } => Projection::Index {
+            index: *index,
+            optional: *optional,
+        },
+        DependencySegment::Dynamic { .. } => return false,
+    };
+    shape.resolve_property(&projection).is_some()
+}
+
+fn hook_root_reassigned(function: &HirFunction, local: fict_hir::LocalId) -> bool {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .any(|instruction| match &instruction.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. }
+                if place.projections.is_empty() =>
+            {
+                match place.base {
+                    PlaceBase::Local(candidate) => candidate == local,
+                    PlaceBase::Ssa(name) => name.local == local,
+                    PlaceBase::Global(_) | PlaceBase::Value(_) => false,
+                }
+            }
+            HirInstructionKind::PatternAssignment { writes, .. } => {
+                writes.iter().any(|write| write.local == local)
+            }
+            _ => false,
+        })
 }
 
 fn loop_control_values(

@@ -13,8 +13,8 @@
     "rust-structured-rejection-diagnostics": 168,
     "diagnostic-severity-reclassification": 23,
     "rust-warning-addition": 26,
-    "rust-warning-removal": 69,
-    "rust-warning-set-change": 4
+    "rust-warning-removal": 68,
+    "rust-warning-set-change": 5
   },
   "deviationCount": 290,
   "deviations": [
@@ -563,8 +563,14 @@
           "severity": "warning"
         }
       ],
-      "rustDiagnostics": [],
-      "policy": "rust-warning-removal"
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
+        }
+      ],
+      "policy": "rust-warning-set-change"
     },
     {
       "id": "packages/compiler/test/codegen.test.ts:1286:transform",

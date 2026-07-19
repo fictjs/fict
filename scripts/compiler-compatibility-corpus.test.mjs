@@ -423,8 +423,8 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
     'rust-structured-rejection-diagnostics': 168,
     'diagnostic-severity-reclassification': 23,
     'rust-warning-addition': 26,
-    'rust-warning-removal': 69,
-    'rust-warning-set-change': 4,
+    'rust-warning-removal': 68,
+    'rust-warning-set-change': 5,
   })
   assert.ok(
     reviewed.deviations.every(

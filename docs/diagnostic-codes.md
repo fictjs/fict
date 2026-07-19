@@ -424,7 +424,8 @@ or route reactive work through a known Fict scheduling primitive such as `batch`
 **Why:** Reactive values are read in a control-flow predicate that the compiler cannot place
 inside a guaranteed branch-return lowering or memoized control-flow region. Common examples are
 call-based predicates (`if (state > 0 && maybe())`) and loop/branch shapes that cannot be lowered
-as a supported branch binding.
+as a supported branch binding. Same-module hook-return accessors inferred after core region
+planning also fail closed here when the surrounding control flow is not a supported branch return.
 
 **Impact:** In opt-out builds, reactivity remains semantic-first, but updates may execute broader
 code paths than supported branch-return or story-block regions. For active branch reads, branch

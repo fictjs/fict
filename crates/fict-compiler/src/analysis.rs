@@ -13,6 +13,7 @@ use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{
     apply_diagnostic_policy, apply_diagnostic_suppressions, configured_diagnostic_severity,
 };
+use crate::metadata_analysis::infer_local_hook_returns;
 use crate::pipeline::{oxc_language, oxc_module_kind};
 use crate::{
     AnalyzeRequest, AnalyzeVerbosity, CompileRequestError, CompilerOptions, CorePassOptions,
@@ -334,7 +335,15 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
             return result;
         }
     };
-    diagnostics.extend(reactive_control_flow_diagnostics(&core));
+    let local_hook_returns = build
+        .frontend
+        .as_ref()
+        .map(|frontend| infer_local_hook_returns(&core, frontend))
+        .unwrap_or_default();
+    diagnostics.extend(reactive_control_flow_diagnostics(
+        &core,
+        &local_hook_returns,
+    ));
 
     result.components = core
         .hir
@@ -998,6 +1007,51 @@ mod tests {
         let result = analyze(input);
         assert!(result.components.is_empty());
         assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn reports_late_inferred_hook_accessor_control_flow_like_compilation() {
+        let source = r#"
+            import { $state } from 'fict';
+            function useBucket() {
+                const count = $state(1);
+                return { count };
+            }
+            export function App() {
+                const bucket = useBucket();
+                let label = 'off';
+                if (bucket.count) label = 'on';
+                return <span>{label}</span>;
+            }
+        "#;
+        let analyzed = analyze(request(source, "late-hook-control-flow.tsx"));
+        let finding = analyzed
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "FICT-R006")
+            .expect("analysis control-flow diagnostic");
+        assert_eq!(finding.severity, AnalyzeDiagnosticSeverity::Error);
+        assert!(finding.line > 0);
+        assert!(finding.column > 0);
+
+        let compiled = compile(CompileRequest {
+            protocol_version: COMPILER_PROTOCOL_VERSION,
+            code: source.to_owned(),
+            filename: "late-hook-control-flow.tsx".to_owned(),
+            module_id: None,
+            public_module_id: None,
+            language: None,
+            module_kind: None,
+            input_source_map: None,
+            options: Default::default(),
+            metadata: Vec::new(),
+            integration_diagnostics: Vec::new(),
+        });
+        assert!(compiled.has_errors());
+        assert!(compiled.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
     }
 
     #[test]

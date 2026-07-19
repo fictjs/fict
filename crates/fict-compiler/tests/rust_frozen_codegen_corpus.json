@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "32af7361ac4d95d29154491c017ba974f28ba8f2",
+    "rustAuditRevision": "3fc93952beacdb89cc9230ab8feb2aececf371f2",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "32af7361ac4d95d29154491c017ba974f28ba8f2",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-6f9b9dde269203392a061cbf48391f221b6554d739d580b15f509d03f82fa63b"
+    "reviewedRevision": "3fc93952beacdb89cc9230ab8feb2aececf371f2",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-ad1b01960c7aa759697b6189dc4ad8dce10803fc8c91484884fe013478540e90"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.",
@@ -4639,7 +4639,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "58f82fb4beaa01861aa4a4e3cec38e2abebfd811e8a2ffde0cc388b56e36202b"
       },
       "deviationPolicy": null
