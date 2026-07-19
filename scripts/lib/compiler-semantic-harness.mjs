@@ -136,19 +136,33 @@ function reactiveRuntime() {
     return () => detach(node)
   }
 
+  const store = (...arguments_) => (arguments_[0] === CONTEXT ? arguments_[1] : arguments_[0])
+
   return {
     __fictUseContext: () => CONTEXT,
     __fictUseSignal: signal,
     __fictUseMemo: memo,
     __fictUseEffect: effect,
+    __fictUseStore: store,
     __fictReactive: callback => callback,
     createSignal: signal,
     createMemo: memo,
     createEffect: effect,
+    createStore: store,
     $state: signal,
     $memo: memo,
     $effect: effect,
+    $store: store,
   }
+}
+
+function isRuntimeRequest(request) {
+  return (
+    request === 'fict' ||
+    request.startsWith('fict/') ||
+    request === '@fictjs/runtime' ||
+    request.startsWith('@fictjs/runtime/')
+  )
 }
 
 function invokeCommonJs(code, invocation) {
@@ -158,16 +172,7 @@ function invokeCommonJs(code, invocation) {
 
   const runtime = reactiveRuntime()
   const requireForOracle = request => {
-    if (
-      request === 'fict/internal' ||
-      request === 'fict' ||
-      request === '@fictjs/runtime' ||
-      request === '@fictjs/runtime/internal' ||
-      request === 'fict/internal/list' ||
-      request === '@fictjs/runtime/internal/list'
-    ) {
-      return runtime
-    }
+    if (isRuntimeRequest(request)) return runtime
     throw new Error(
       `Semantic oracle output requested unsupported module ${JSON.stringify(request)}`,
     )
@@ -188,6 +193,61 @@ function invokeCommonJs(code, invocation) {
     `module.exports[${JSON.stringify(invocation.exportName)}](...__oracleArguments)`,
     { filename: 'semantic-oracle-invocation.cjs' },
   ).runInContext(context, { timeout: 1_000 })
+}
+
+function invokeCommonJsGraph(modules, entryId, invocation) {
+  assert.ok(Array.isArray(modules))
+  assert.equal(typeof entryId, 'string')
+  assert.equal(typeof invocation?.exportName, 'string')
+  assert.ok(Array.isArray(invocation.arguments))
+
+  const definitions = new Map()
+  for (const module of modules) {
+    assert.equal(typeof module?.id, 'string')
+    assert.equal(typeof module?.code, 'string', `${module?.id}: code`)
+    assert.equal(typeof module?.dependencies, 'object', `${module?.id}: dependencies`)
+    assert.equal(definitions.has(module.id), false, `duplicate graph module ${module.id}`)
+    definitions.set(module.id, module)
+  }
+  assert.ok(definitions.has(entryId), `missing graph entry ${entryId}`)
+
+  const runtime = reactiveRuntime()
+  const cache = new Map()
+  const context = createContext({}, { codeGeneration: { strings: false, wasm: false } })
+
+  const load = id => {
+    const cached = cache.get(id)
+    if (cached) return cached.exports
+
+    const definition = definitions.get(id)
+    assert.ok(definition, `missing graph module ${id}`)
+    const module = { exports: {} }
+    cache.set(id, module)
+
+    const requireForModule = request => {
+      if (isRuntimeRequest(request)) return runtime
+      const dependency = definition.dependencies[request]
+      assert.equal(typeof dependency, 'string', `${id}: unresolved module ${request}`)
+      return load(dependency)
+    }
+
+    context.__oracleRequire = requireForModule
+    context.__oracleModule = module
+    context.__oracleExports = module.exports
+    new Script(
+      `(function (require, module, exports) {\n"use strict";\n${definition.code}\n})(__oracleRequire, __oracleModule, __oracleExports)`,
+      { filename: id },
+    ).runInContext(context, { timeout: 1_000 })
+    return module.exports
+  }
+
+  const entry = load(entryId)[invocation.exportName]
+  assert.equal(typeof entry, 'function', `missing export ${invocation.exportName}`)
+  context.__oracleEntry = entry
+  context.__oracleArguments = structuredClone(invocation.arguments)
+  return new Script('__oracleEntry(...__oracleArguments)', {
+    filename: `${entryId}#${invocation.exportName}`,
+  }).runInContext(context, { timeout: 1_000 })
 }
 
 export function executeCommonJs(code, invocation) {
@@ -215,4 +275,12 @@ export async function executeCommonJsAsync(code, invocation) {
   } finally {
     clearTimeout(timer)
   }
+}
+
+export function executeCommonJsGraph(modules, entryId, invocation) {
+  const result = invokeCommonJsGraph(modules, entryId, invocation)
+  if (result && typeof result.then === 'function') {
+    throw new TypeError('Semantic graph oracle returned a Promise')
+  }
+  return normalize(result)
 }

@@ -24,6 +24,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const scope = readJson(evidenceScopePath)
   assert.equal(scope.schemaVersion, 1)
   assert.deepEqual(Object.keys(scope.assets).sort(), [
+    'babelCrossModuleSemanticOracle',
     'babelDomSemanticOracle',
     'babelRequestOracle',
     'babelSemanticOracle',
@@ -120,6 +121,49 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(semanticTest, /executeCommonJsAsync\(expected\.babelCode/)
   assert.match(semanticTest, /executeCommonJsAsync\(result\.code/)
   assert.ok(read(semantic.generator).length > 0)
+
+  const crossModuleSemantic = scope.assets.babelCrossModuleSemanticOracle
+  const crossModuleInputs = readJson(crossModuleSemantic.inputs)
+  const crossModuleOracle = readJson(crossModuleSemantic.artifact)
+  const crossModuleCount = crossModuleInputs.fixtures.reduce(
+    (count, fixture) => count + fixture.modules.length,
+    0,
+  )
+  assert.equal(crossModuleSemantic.fixtureCount, crossModuleInputs.fixtures.length)
+  assert.equal(crossModuleSemantic.fixtureCount, crossModuleOracle.fixtures.length)
+  assert.equal(crossModuleSemantic.moduleCount, crossModuleCount)
+  assert.equal(crossModuleSemantic.moduleCount, 18)
+  assert.deepEqual(crossModuleSemantic.graphSurfaces, [
+    'hook-return-shapes',
+    'reactive-export-barrels',
+    'namespace-reexports',
+    'hook-wrapper-chains',
+    'prototype-named-exports',
+    'type-only-barrels',
+    'reactive-namespace-imports',
+  ])
+  assert.equal(crossModuleSemantic.exactBabelCompilerExecutedDuringGeneration, true)
+  assert.equal(crossModuleSemantic.frozenBabelOutputExecutedInCi, true)
+  assert.equal(crossModuleSemantic.currentRustOutputExecutedInCi, true)
+  assert.equal(crossModuleSemantic.babelAndRustMetadataComparedInCi, true)
+  assert.equal(crossModuleSemantic.sharedSyntheticRuntime, true)
+  assert.equal(crossModuleSemantic.assertionLevel, 'cross-module-runtime-semantics')
+  assert.ok(
+    crossModuleSemantic.proves.includes(
+      'reviewed-cross-implementation-multi-file-runtime-semantics',
+    ),
+  )
+  assert.ok(crossModuleSemantic.proves.includes('cross-implementation-module-metadata-equivalence'))
+  assert.ok(
+    crossModuleSemantic.doesNotProve.includes('all-legacy-cross-module-fixture-equivalence'),
+  )
+  const crossModuleTest = read(crossModuleSemantic.ciTest)
+  assert.match(crossModuleTest, /executeCommonJsGraph\(/)
+  assert.match(crossModuleTest, /module\.result\.moduleMetadata/)
+  assert.match(crossModuleTest, /compileRustCrossModuleSemanticFixture/)
+  const crossModuleGenerator = read(crossModuleSemantic.generator)
+  assert.match(crossModuleGenerator, /moduleMetadata = new Map\(\)/)
+  assert.match(crossModuleGenerator, /resolveConfig\(options\.output\)/)
 
   const domSemantic = scope.assets.babelDomSemanticOracle
   const domSemanticInputs = readJson(domSemantic.inputs)
@@ -252,6 +296,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
   const semanticIds = new Set(semanticInputs.fixtures.map(fixture => fixture.id))
   const allowedLevels = new Set([
     'cross-implementation-dom-runtime',
+    'cross-implementation-graph-runtime',
     'cross-implementation-runtime',
     'native-runtime',
     'request-contract',
@@ -824,6 +869,48 @@ test('retains the independently generated Babel 0.28 semantic oracle', () => {
   assert.match(packageJson, /test:compiler:babel-semantic-oracle/)
   const ci = read('.github/workflows/ci.yml')
   assert.match(ci, /babel-compiler-semantic-oracle\.test\.mjs/)
+})
+
+test('executes independently generated Babel 0.28 multi-file graphs in CI', () => {
+  const inputsText = read('scripts/fixtures/babel_0_28_cross_module_semantic_inputs.json')
+  const inputs = JSON.parse(inputsText)
+  const oracle = readJson('crates/fict-compiler/tests/babel_0_28_cross_module_semantic_oracle.json')
+  assert.equal(inputs.schemaVersion, 1)
+  assert.equal(oracle.schemaVersion, 1)
+  assert.equal(oracle.provenance.oracleInputsSha256, sha256(inputsText))
+  assert.equal(
+    oracle.provenance.semanticHarnessSha256,
+    sha256(read('scripts/lib/compiler-semantic-harness.mjs')),
+  )
+  assert.equal(inputs.fixtures.length, 7)
+  assert.equal(oracle.fixtures.length, inputs.fixtures.length)
+  assert.equal(
+    inputs.fixtures.reduce((count, fixture) => count + fixture.modules.length, 0),
+    18,
+  )
+  assert.deepEqual(
+    oracle.fixtures.map(fixture => fixture.id),
+    inputs.fixtures.map(fixture => fixture.id),
+  )
+  for (const fixture of oracle.fixtures) {
+    assert.ok(fixture.modules.length > 1, fixture.id)
+    assert.ok(fixture.expected !== undefined, fixture.id)
+    for (const module of fixture.modules) {
+      assert.match(module.babelCodeSha256, sha256Pattern, module.id)
+      assert.equal(sha256(module.babelCode), module.babelCodeSha256, module.id)
+      assert.equal(typeof module.babelMetadata, 'object', module.id)
+    }
+  }
+
+  const runtimeTest = read('scripts/babel-compiler-cross-module-semantic-oracle.test.mjs')
+  assert.match(runtimeTest, /executeCommonJsGraph\(/)
+  assert.match(runtimeTest, /compileRustCrossModuleSemanticFixture/)
+  assert.match(runtimeTest, /module\.result\.moduleMetadata/)
+  const packageJson = read('package.json')
+  assert.match(packageJson, /test:compiler:babel-cross-module-semantic-oracle/)
+  assert.match(packageJson, /babel-compiler-cross-module-semantic-oracle\.test\.mjs/)
+  const ci = read('.github/workflows/ci.yml')
+  assert.match(ci, /babel-compiler-cross-module-semantic-oracle\.test\.mjs/)
 })
 
 test('retains full request dimensions with an exact Babel preset oracle', () => {

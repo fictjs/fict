@@ -104,6 +104,15 @@
       "requirement": "cross-module reactive metadata",
       "evidence": [
         {
+          "assertionLevel": "cross-implementation-graph-runtime",
+          "path": "scripts/babel-compiler-cross-module-semantic-oracle.test.mjs",
+          "markers": [
+            "Rust matches Babel 0.28 cross-module semantics",
+            "executeCommonJsGraph(",
+            "module.result.moduleMetadata"
+          ]
+        },
+        {
           "assertionLevel": "native-runtime",
           "path": "scripts/native-compiler-runtime.test.mjs",
           "markers": ["compile and analyze consume the same resolved metadata snapshot"]
@@ -118,7 +127,7 @@
           ]
         }
       ],
-      "claimBoundary": "Exercises the versioned Rust metadata snapshot and real Vite graph convergence; Babel 0.28 process-global metadata APIs are intentionally not represented as the same host protocol."
+      "claimBoundary": "Compares seven reviewed Babel and Rust CommonJS graphs across hook return shapes, reactive exports, barrels, namespaces, wrapper chains, type-only edges, and reserved export names. It also exercises the versioned Rust host snapshot and real Vite graph convergence, but does not claim equivalence for every isolated legacy import fixture."
     },
     {
       "id": "module-and-source-identity-matrix",

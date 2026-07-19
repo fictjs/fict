@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "hook-return-shapes",
+      "entryId": "/oracle/cross-module/hook-return-shapes/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/hook-return-shapes/hooks.tsx",
+          "dependencies": {},
+          "source": "import { $state } from 'fict'\nexport function useObject() { let count = $state(1); return { count, increment: () => count++ } }\nexport function useArray() { let count = $state(2); return [count, () => count++] }\nexport function useDirect() { let count = $state(3); return count }\n"
+        },
+        {
+          "id": "/oracle/cross-module/hook-return-shapes/entry.tsx",
+          "dependencies": {
+            "./hooks": "/oracle/cross-module/hook-return-shapes/hooks.tsx"
+          },
+          "source": "import { useArray, useDirect, useObject } from './hooks'\nexport function Scenario() {\n  const object = useObject()\n  const array = useArray()\n  const direct = useDirect()\n  const values = []\n  values.push(object.count, array[0], direct)\n  object.increment()\n  array[1]()\n  values.push(object.count, array[0])\n  return values\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "reactive-exports-through-barrel",
+      "entryId": "/oracle/cross-module/reactive-exports-through-barrel/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/reactive-exports-through-barrel/state.tsx",
+          "dependencies": {},
+          "source": "import { createMemo, createSignal } from 'fict/advanced'\nexport const count = createSignal(2)\nexport const doubled = createMemo(() => count() * 2)\nexport function increment() { count(count() + 1) }\n"
+        },
+        {
+          "id": "/oracle/cross-module/reactive-exports-through-barrel/barrel.tsx",
+          "dependencies": {
+            "./state": "/oracle/cross-module/reactive-exports-through-barrel/state.tsx"
+          },
+          "source": "export { count as total, doubled, increment } from './state'\n"
+        },
+        {
+          "id": "/oracle/cross-module/reactive-exports-through-barrel/entry.tsx",
+          "dependencies": {
+            "./barrel": "/oracle/cross-module/reactive-exports-through-barrel/barrel.tsx"
+          },
+          "source": "import { doubled, increment, total } from './barrel'\nexport function Scenario() {\n  const values = []\n  values.push(total, doubled)\n  increment()\n  values.push(total, doubled)\n  return values\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "namespace-hook-reexport",
+      "entryId": "/oracle/cross-module/namespace-hook-reexport/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/namespace-hook-reexport/hooks.tsx",
+          "dependencies": {},
+          "source": "import { $state } from 'fict'\nexport function useCounter() { let count = $state(4); return { count, increment: () => count++ } }\n"
+        },
+        {
+          "id": "/oracle/cross-module/namespace-hook-reexport/barrel.tsx",
+          "dependencies": {
+            "./hooks": "/oracle/cross-module/namespace-hook-reexport/hooks.tsx"
+          },
+          "source": "import * as Hooks from './hooks'\nexport { Hooks }\n"
+        },
+        {
+          "id": "/oracle/cross-module/namespace-hook-reexport/entry.tsx",
+          "dependencies": {
+            "./barrel": "/oracle/cross-module/namespace-hook-reexport/barrel.tsx"
+          },
+          "source": "import { Hooks } from './barrel'\nexport function Scenario() {\n  const counter = Hooks.useCounter()\n  const values = []\n  values.push(counter.count)\n  counter.increment()\n  values.push(counter.count)\n  return values\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "hook-call-wrapper-chain",
+      "entryId": "/oracle/cross-module/hook-call-wrapper-chain/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/hook-call-wrapper-chain/source.tsx",
+          "dependencies": {},
+          "source": "import { $state } from 'fict'\nexport function useSource() { let value = $state(5); return { value, increment: () => value++ } }\n"
+        },
+        {
+          "id": "/oracle/cross-module/hook-call-wrapper-chain/wrapper.tsx",
+          "dependencies": {
+            "./source": "/oracle/cross-module/hook-call-wrapper-chain/source.tsx"
+          },
+          "source": "import { useSource as importedSource } from './source'\nexport function useWrapped() { return importedSource() }\n"
+        },
+        {
+          "id": "/oracle/cross-module/hook-call-wrapper-chain/entry.tsx",
+          "dependencies": {
+            "./wrapper": "/oracle/cross-module/hook-call-wrapper-chain/wrapper.tsx"
+          },
+          "source": "import { useWrapped } from './wrapper'\nexport function Scenario() {\n  const wrapped = useWrapped()\n  const values = []\n  values.push(wrapped.value)\n  wrapped.increment()\n  values.push(wrapped.value)\n  return values\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "special-hook-export-names",
+      "entryId": "/oracle/cross-module/special-hook-export-names/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/special-hook-export-names/hooks.tsx",
+          "dependencies": {},
+          "source": "import { $state } from 'fict'\nfunction useDirect() { let value = $state(6); return value }\nfunction useObject() { let value = $state(7); return { value } }\nfunction useArray() { let value = $state(8); return [value] }\nexport { useDirect as \"__proto__\", useObject as \"constructor\", useArray as \"toString\" }\n"
+        },
+        {
+          "id": "/oracle/cross-module/special-hook-export-names/entry.tsx",
+          "dependencies": {
+            "./hooks": "/oracle/cross-module/special-hook-export-names/hooks.tsx"
+          },
+          "source": "import { \"__proto__\" as useProto, constructor as useConstructor, toString as useToString } from './hooks'\nexport function Scenario() {\n  const direct = useProto()\n  const object = useConstructor()\n  const array = useToString()\n  return [direct, object.value, array[0]]\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "type-only-barrel",
+      "entryId": "/oracle/cross-module/type-only-barrel/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/type-only-barrel/source.tsx",
+          "dependencies": {},
+          "source": "import { $state } from 'fict'\nexport type Label = string\nexport function useCounter() { let count = $state(9); return { count } }\n"
+        },
+        {
+          "id": "/oracle/cross-module/type-only-barrel/barrel.tsx",
+          "dependencies": {
+            "./source": "/oracle/cross-module/type-only-barrel/source.tsx"
+          },
+          "source": "export { useCounter, type Label } from './source'\n"
+        },
+        {
+          "id": "/oracle/cross-module/type-only-barrel/entry.tsx",
+          "dependencies": {
+            "./barrel": "/oracle/cross-module/type-only-barrel/barrel.tsx"
+          },
+          "source": "import { useCounter, type Label } from './barrel'\nexport function Scenario(): Label {\n  const counter = useCounter()\n  return String(counter.count)\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "reactive-namespace-import",
+      "entryId": "/oracle/cross-module/reactive-namespace-import/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/reactive-namespace-import/state.tsx",
+          "dependencies": {},
+          "source": "import { createMemo, createSignal } from 'fict/advanced'\nexport const count = createSignal(10)\nexport const doubled = createMemo(() => count() * 2)\nexport function increment() { count(count() + 1) }\n"
+        },
+        {
+          "id": "/oracle/cross-module/reactive-namespace-import/entry.tsx",
+          "dependencies": {
+            "./state": "/oracle/cross-module/reactive-namespace-import/state.tsx"
+          },
+          "source": "import * as state from './state'\nexport function Scenario() {\n  const values = []\n  values.push(state.count, state.doubled)\n  state.increment()\n  values.push(state.count, state.doubled)\n  return values\n}\n"
+        }
+      ]
+    }
+  ]
+}

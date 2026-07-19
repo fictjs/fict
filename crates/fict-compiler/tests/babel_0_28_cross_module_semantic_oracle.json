@@ -1,0 +1,345 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "legacyRelease": "0.28.0",
+    "legacyRevision": "b99ff5b185e3eed701e2d4f3521832dac67c979f",
+    "legacyCompilerSourceSha256": "cbbaf8e6c3697e62bb5889cfebd472bada4063749140445c5098605866fd463a",
+    "legacyCompilerArtifactSha256": "07c4f89c35419434b1a6762e05b08340a0c080f8ff7dd09005cb782ed9621789",
+    "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
+    "legacyPackageManager": "pnpm@9.1.1",
+    "babelDependencies": {
+      "@babel/core": "7.29.7",
+      "@babel/plugin-transform-modules-commonjs": "7.28.6",
+      "@babel/plugin-transform-typescript": "7.28.5"
+    },
+    "oracleInputsSha256": "aa69fc90fb8a1611b760d09ed6b3713847f208570619106040fefd31f9af205f",
+    "semanticHarnessSha256": "50d0509a05ba1c98724cfdb8e59de0c2d100378d34305abc04fd1609551c32cb",
+    "runtimeExecutionModel": "frozen-babel-and-live-rust-graphs-share-synthetic-runtime"
+  },
+  "fixtures": [
+    {
+      "id": "hook-return-shapes",
+      "entryId": "/oracle/cross-module/hook-return-shapes/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/hook-return-shapes/hooks.tsx",
+          "dependencies": {},
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "hooks": {
+              "useObject": { "objectProps": { "count": "signal" } },
+              "useArray": { "arrayProps": { "0": "signal" } },
+              "useDirect": { "directAccessor": "signal" }
+            }
+          },
+          "babelCodeSha256": "c89c17539421adb64e9de177f4a0b2d741ca36efda7dfe2cb12c7977fb0d86b9",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.useArray = useArray;\nexports.useDirect = useDirect;\nexports.useObject = useObject;\nvar _internal = require(\"fict/internal\");\nfunction useObject() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  return {\n    count,\n    increment: () => (__prev_0 => (__old_1 => (count(__prev_0), __old_1))(__prev_0++))(count())\n  };\n}\nfunction useArray() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 2, {\n    name: \"count\"\n  });\n  return [count, () => (__prev_2 => (__old_3 => (count(__prev_2), __old_3))(__prev_2++))(count())];\n}\nfunction useDirect() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 3, {\n    name: \"count\"\n  });\n  return count;\n}"
+        },
+        {
+          "id": "/oracle/cross-module/hook-return-shapes/entry.tsx",
+          "dependencies": { "./hooks": "/oracle/cross-module/hook-return-shapes/hooks.tsx" },
+          "babelDiagnostics": [
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise"
+            },
+            {
+              "code": "FICT-R005",
+              "severity": "warning",
+              "message": "Function captures reactive variable(s): object. Pass them as parameters or memoize explicitly to avoid hidden dependencies."
+            },
+            {
+              "code": "FICT-R005",
+              "severity": "warning",
+              "message": "Function captures reactive variable(s): object. Pass them as parameters or memoize explicitly to avoid hidden dependencies."
+            }
+          ],
+          "babelMetadata": { "version": 1, "exports": {} },
+          "babelCodeSha256": "5cdf235f3c8950c0f2459fd242e89d3982558de909fa4d0c2e60678523054bec",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _hooks = require(\"./hooks\");\nfunction Scenario() {\n  const object = (0, _hooks.useObject)();\n  const array = (0, _hooks.useArray)();\n  const direct = (0, _hooks.useDirect)();\n  const values = [];\n  values.push(object.count(), array[0](), direct());\n  object.increment();\n  array[1]();\n  values.push(object.count(), array[0]());\n  return values;\n}"
+        }
+      ],
+      "expected": [1, 2, 3, 2, 3]
+    },
+    {
+      "id": "reactive-exports-through-barrel",
+      "entryId": "/oracle/cross-module/reactive-exports-through-barrel/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/reactive-exports-through-barrel/state.tsx",
+          "dependencies": {},
+          "babelDiagnostics": [
+            {
+              "code": "FICT-M001",
+              "severity": "warning",
+              "message": "Memo has no reactive dependencies and could be a constant."
+            }
+          ],
+          "babelMetadata": { "version": 1, "exports": { "count": "signal", "doubled": "memo" } },
+          "babelCodeSha256": "a2d98b33f180a51ea6c3a2023cc701b6fee7ffc412b132d906b9e9d7a6448b1f",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.doubled = exports.count = void 0;\nexports.increment = increment;\nvar _advanced = require(\"fict/advanced\");\nconst count = exports.count = (0, _advanced.createSignal)(2);\nconst doubled = exports.doubled = (0, _advanced.createMemo)(() => count() * 2);\nfunction increment() {\n  count(count() + 1);\n}"
+        },
+        {
+          "id": "/oracle/cross-module/reactive-exports-through-barrel/barrel.tsx",
+          "dependencies": {
+            "./state": "/oracle/cross-module/reactive-exports-through-barrel/state.tsx"
+          },
+          "babelDiagnostics": [],
+          "babelMetadata": { "version": 1, "exports": { "total": "signal", "doubled": "memo" } },
+          "babelCodeSha256": "5f564eb675fec884184d36863ed657803898a47b0180895fdca5a98cca143466",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nObject.defineProperty(exports, \"doubled\", {\n  enumerable: true,\n  get: function () {\n    return _state.doubled;\n  }\n});\nObject.defineProperty(exports, \"increment\", {\n  enumerable: true,\n  get: function () {\n    return _state.increment;\n  }\n});\nObject.defineProperty(exports, \"total\", {\n  enumerable: true,\n  get: function () {\n    return _state.count;\n  }\n});\nvar _state = require(\"./state\");"
+        },
+        {
+          "id": "/oracle/cross-module/reactive-exports-through-barrel/entry.tsx",
+          "dependencies": {
+            "./barrel": "/oracle/cross-module/reactive-exports-through-barrel/barrel.tsx"
+          },
+          "babelDiagnostics": [
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise"
+            },
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise"
+            }
+          ],
+          "babelMetadata": { "version": 1, "exports": {} },
+          "babelCodeSha256": "8fa17b70a9fa91fb7563080c2094130381370a8f92429ee17226e7cbd2fa02ea",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _barrel = require(\"./barrel\");\nfunction Scenario() {\n  const values = [];\n  values.push((0, _barrel.total)(), (0, _barrel.doubled)());\n  (0, _barrel.increment)();\n  values.push((0, _barrel.total)(), (0, _barrel.doubled)());\n  return values;\n}"
+        }
+      ],
+      "expected": [2, 4, 3, 6]
+    },
+    {
+      "id": "namespace-hook-reexport",
+      "entryId": "/oracle/cross-module/namespace-hook-reexport/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/namespace-hook-reexport/hooks.tsx",
+          "dependencies": {},
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "hooks": { "useCounter": { "objectProps": { "count": "signal" } } }
+          },
+          "babelCodeSha256": "da4da5f05c86ea2c1885a4dfdce567395ba0fc58c8acd12492b4e3f58d916b86",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.useCounter = useCounter;\nvar _internal = require(\"fict/internal\");\nfunction useCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 4, {\n    name: \"count\"\n  });\n  return {\n    count,\n    increment: () => (__prev_0 => (__old_1 => (count(__prev_0), __old_1))(__prev_0++))(count())\n  };\n}"
+        },
+        {
+          "id": "/oracle/cross-module/namespace-hook-reexport/barrel.tsx",
+          "dependencies": { "./hooks": "/oracle/cross-module/namespace-hook-reexport/hooks.tsx" },
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "namespaces": {
+              "Hooks": {
+                "version": 1,
+                "exports": {},
+                "hooks": { "useCounter": { "objectProps": { "count": "signal" } } }
+              }
+            }
+          },
+          "babelCodeSha256": "39186e284ed4ebad22801122c5de996843467ac25d42c30f2dd8044b3c8f1fbb",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Hooks = void 0;\nvar Hooks = _interopRequireWildcard(require(\"./hooks\"));\nexports.Hooks = Hooks;\nfunction _interopRequireWildcard(e, t) { if (\"function\" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || \"object\" != typeof e && \"function\" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) \"default\" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }"
+        },
+        {
+          "id": "/oracle/cross-module/namespace-hook-reexport/entry.tsx",
+          "dependencies": { "./barrel": "/oracle/cross-module/namespace-hook-reexport/barrel.tsx" },
+          "babelDiagnostics": [
+            {
+              "code": "FICT-R005",
+              "severity": "warning",
+              "message": "Function captures reactive variable(s): counter. Pass them as parameters or memoize explicitly to avoid hidden dependencies."
+            },
+            {
+              "code": "FICT-R005",
+              "severity": "warning",
+              "message": "Function captures reactive variable(s): counter. Pass them as parameters or memoize explicitly to avoid hidden dependencies."
+            }
+          ],
+          "babelMetadata": { "version": 1, "exports": {} },
+          "babelCodeSha256": "4f8b19a867f341620ea57efe3b93e523c2611d020aba8bf3b4d54d635b225152",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _barrel = require(\"./barrel\");\nfunction Scenario() {\n  const counter = _barrel.Hooks.useCounter();\n  const values = [];\n  values.push(counter.count());\n  counter.increment();\n  values.push(counter.count());\n  return values;\n}"
+        }
+      ],
+      "expected": [4, 5]
+    },
+    {
+      "id": "hook-call-wrapper-chain",
+      "entryId": "/oracle/cross-module/hook-call-wrapper-chain/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/hook-call-wrapper-chain/source.tsx",
+          "dependencies": {},
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "hooks": { "useSource": { "objectProps": { "value": "signal" } } }
+          },
+          "babelCodeSha256": "19891d4ec6a2b4f3682376d7bf600abb20b6d05a97f36d1b58210045a14be886",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.useSource = useSource;\nvar _internal = require(\"fict/internal\");\nfunction useSource() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const value = (0, _internal.__fictUseSignal)(__fictCtx, 5, {\n    name: \"value\"\n  });\n  return {\n    value,\n    increment: () => (__prev_0 => (__old_1 => (value(__prev_0), __old_1))(__prev_0++))(value())\n  };\n}"
+        },
+        {
+          "id": "/oracle/cross-module/hook-call-wrapper-chain/wrapper.tsx",
+          "dependencies": { "./source": "/oracle/cross-module/hook-call-wrapper-chain/source.tsx" },
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "hooks": { "useWrapped": { "objectProps": { "value": "signal" } } }
+          },
+          "babelCodeSha256": "625da1badaa5716f91cac0ae4bc9de9f784de64c85e2c92fa5299774abc3c46c",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.useWrapped = useWrapped;\nvar _source = require(\"./source\");\nfunction useWrapped() {\n  return (0, _source.useSource)();\n}"
+        },
+        {
+          "id": "/oracle/cross-module/hook-call-wrapper-chain/entry.tsx",
+          "dependencies": {
+            "./wrapper": "/oracle/cross-module/hook-call-wrapper-chain/wrapper.tsx"
+          },
+          "babelDiagnostics": [
+            {
+              "code": "FICT-R005",
+              "severity": "warning",
+              "message": "Function captures reactive variable(s): wrapped. Pass them as parameters or memoize explicitly to avoid hidden dependencies."
+            },
+            {
+              "code": "FICT-R005",
+              "severity": "warning",
+              "message": "Function captures reactive variable(s): wrapped. Pass them as parameters or memoize explicitly to avoid hidden dependencies."
+            }
+          ],
+          "babelMetadata": { "version": 1, "exports": {} },
+          "babelCodeSha256": "fb0e049e67ee674d2bdaaa50e9b5051cd5e66158a90c0943668a291ad999978d",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _wrapper = require(\"./wrapper\");\nfunction Scenario() {\n  const wrapped = (0, _wrapper.useWrapped)();\n  const values = [];\n  values.push(wrapped.value());\n  wrapped.increment();\n  values.push(wrapped.value());\n  return values;\n}"
+        }
+      ],
+      "expected": [5, 6]
+    },
+    {
+      "id": "special-hook-export-names",
+      "entryId": "/oracle/cross-module/special-hook-export-names/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/special-hook-export-names/hooks.tsx",
+          "dependencies": {},
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "hooks": {
+              "__proto__": { "directAccessor": "signal" },
+              "constructor": { "objectProps": { "value": "signal" } },
+              "toString": { "arrayProps": { "0": "signal" } }
+            }
+          },
+          "babelCodeSha256": "1d468a1c34e7348f3a68a3eae12a6923adc7c5bb9b8ae29a95f9182c3fa602c6",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nObject.defineProperty(exports, \"__proto__\", {\n  enumerable: true,\n  value: void 0,\n  writable: true\n})[\"__proto__\"] = useDirect;\nexports.constructor = useObject;\nexports.toString = useArray;\nvar _internal = require(\"fict/internal\");\nfunction useDirect() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const value = (0, _internal.__fictUseSignal)(__fictCtx, 6, {\n    name: \"value\"\n  });\n  return value;\n}\nfunction useObject() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const value = (0, _internal.__fictUseSignal)(__fictCtx, 7, {\n    name: \"value\"\n  });\n  return {\n    value\n  };\n}\nfunction useArray() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const value = (0, _internal.__fictUseSignal)(__fictCtx, 8, {\n    name: \"value\"\n  });\n  return [value];\n}"
+        },
+        {
+          "id": "/oracle/cross-module/special-hook-export-names/entry.tsx",
+          "dependencies": { "./hooks": "/oracle/cross-module/special-hook-export-names/hooks.tsx" },
+          "babelDiagnostics": [],
+          "babelMetadata": { "version": 1, "exports": {} },
+          "babelCodeSha256": "aab64065600430f990f57b8f6a9d20deed2a092767fa2ee516fc24c83bff2174",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _hooks = require(\"./hooks\");\nfunction Scenario() {\n  const direct = (0, _hooks.__proto__)();\n  const object = (0, _hooks.constructor)();\n  const array = (0, _hooks.toString)();\n  return [direct(), object.value(), array[0]()];\n}"
+        }
+      ],
+      "expected": [6, 7, 8]
+    },
+    {
+      "id": "type-only-barrel",
+      "entryId": "/oracle/cross-module/type-only-barrel/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/type-only-barrel/source.tsx",
+          "dependencies": {},
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "hooks": { "useCounter": { "objectProps": { "count": "signal" } } }
+          },
+          "babelCodeSha256": "f9d07fd56ec9099b2ee00ed234acf594d44c20693b7bd76d718bdbcc003d77c5",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.useCounter = useCounter;\nvar _internal = require(\"fict/internal\");\nfunction useCounter() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 9, {\n    name: \"count\"\n  });\n  return {\n    count\n  };\n}"
+        },
+        {
+          "id": "/oracle/cross-module/type-only-barrel/barrel.tsx",
+          "dependencies": { "./source": "/oracle/cross-module/type-only-barrel/source.tsx" },
+          "babelDiagnostics": [],
+          "babelMetadata": {
+            "version": 1,
+            "exports": {},
+            "hooks": { "useCounter": { "objectProps": { "count": "signal" } } }
+          },
+          "babelCodeSha256": "f6bbdfb5e9c67392cd4413346f28af95ecc5c819a9bd2032214b6ee855362a7a",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nObject.defineProperty(exports, \"useCounter\", {\n  enumerable: true,\n  get: function () {\n    return _source.useCounter;\n  }\n});\nvar _source = require(\"./source\");"
+        },
+        {
+          "id": "/oracle/cross-module/type-only-barrel/entry.tsx",
+          "dependencies": { "./barrel": "/oracle/cross-module/type-only-barrel/barrel.tsx" },
+          "babelDiagnostics": [],
+          "babelMetadata": { "version": 1, "exports": {} },
+          "babelCodeSha256": "a46f93bf37cd73186c78ff23593bdc07a87472dd1ba1180b3127bcdeea88f77c",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _barrel = require(\"./barrel\");\nfunction Scenario() {\n  const counter = (0, _barrel.useCounter)();\n  return String(counter.count());\n}"
+        }
+      ],
+      "expected": "9"
+    },
+    {
+      "id": "reactive-namespace-import",
+      "entryId": "/oracle/cross-module/reactive-namespace-import/entry.tsx",
+      "invocation": { "exportName": "Scenario", "arguments": [] },
+      "modules": [
+        {
+          "id": "/oracle/cross-module/reactive-namespace-import/state.tsx",
+          "dependencies": {},
+          "babelDiagnostics": [
+            {
+              "code": "FICT-M001",
+              "severity": "warning",
+              "message": "Memo has no reactive dependencies and could be a constant."
+            }
+          ],
+          "babelMetadata": { "version": 1, "exports": { "count": "signal", "doubled": "memo" } },
+          "babelCodeSha256": "353378e2e039e1dfa3b7ddf164e62d68134841237821da9c187c36f9fd70a7ba",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.doubled = exports.count = void 0;\nexports.increment = increment;\nvar _advanced = require(\"fict/advanced\");\nconst count = exports.count = (0, _advanced.createSignal)(10);\nconst doubled = exports.doubled = (0, _advanced.createMemo)(() => count() * 2);\nfunction increment() {\n  count(count() + 1);\n}"
+        },
+        {
+          "id": "/oracle/cross-module/reactive-namespace-import/entry.tsx",
+          "dependencies": { "./state": "/oracle/cross-module/reactive-namespace-import/state.tsx" },
+          "babelDiagnostics": [
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise"
+            },
+            {
+              "code": "FICT-R002",
+              "severity": "warning",
+              "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise"
+            }
+          ],
+          "babelMetadata": { "version": 1, "exports": {} },
+          "babelCodeSha256": "eaf3ceda51b285461b5c3d96695a7f9962bd97f55ab2e44dd631707e6fabad3d",
+          "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar state = _interopRequireWildcard(require(\"./state\"));\nfunction _interopRequireWildcard(e, t) { if (\"function\" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || \"object\" != typeof e && \"function\" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) \"default\" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }\nfunction Scenario() {\n  const values = [];\n  values.push(state.count(), state.doubled());\n  state.increment();\n  values.push(state.count(), state.doubled());\n  return values;\n}"
+        }
+      ],
+      "expected": [10, 20, 11, 22]
+    }
+  ]
+}
