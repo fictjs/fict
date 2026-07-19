@@ -17,7 +17,7 @@ use fict_compiler::{
 };
 use napi::{
     Env, Result, Task,
-    bindgen_prelude::{AsyncTask, Either, Null},
+    bindgen_prelude::{AsyncTask, Either, Null, Object},
 };
 use napi_derive::napi;
 use panic_boundary::{analyze_safely, catch_panic, compile_safely, scan_safely};
@@ -112,15 +112,15 @@ pub fn parse_tsx_probe_async(source: String) -> AsyncTask<ParseTsxTask> {
 
 /// Execute native compilation synchronously for editor and synchronous build APIs.
 #[napi]
-pub fn transform_sync(request: Value) -> Result<Value> {
+pub fn transform_sync(env: Env, request: Value) -> Result<Object<'static>> {
     let work = catch_panic(|| prepare_compile(request))
         .unwrap_or_else(|_| CompileWork::Immediate(fict_compiler::internal_error_result()));
     let result = match work {
         CompileWork::Request(request) => compile_safely(request),
         CompileWork::Immediate(result) => result,
     };
-    catch_panic(|| serialize_result(result))
-        .unwrap_or_else(|_| serialize_result(fict_compiler::internal_error_result()))
+    catch_panic(|| serialize_result(&env, result))
+        .unwrap_or_else(|_| serialize_result(&env, fict_compiler::internal_error_result()))
 }
 
 /// Schedule native compilation in the libuv worker pool after JS-value conversion.
@@ -133,15 +133,16 @@ pub fn transform(request: Value) -> AsyncTask<CompileTask> {
 
 /// Scan static module requests synchronously without running compiler passes.
 #[napi]
-pub fn scan_sync(request: Value) -> Result<Value> {
+pub fn scan_sync(env: Env, request: Value) -> Result<Object<'static>> {
     let work = catch_panic(|| prepare_scan(request))
         .unwrap_or_else(|_| ScanWork::Immediate(fict_compiler::internal_scan_error_result()));
     let result = match work {
         ScanWork::Request(request) => scan_safely(request),
         ScanWork::Immediate(result) => result,
     };
-    catch_panic(|| serialize_scan_result(result))
-        .unwrap_or_else(|_| serialize_scan_result(fict_compiler::internal_scan_error_result()))
+    catch_panic(|| serialize_scan_result(&env, result)).unwrap_or_else(|_| {
+        serialize_scan_result(&env, fict_compiler::internal_scan_error_result())
+    })
 }
 
 /// Scan static module requests in the libuv worker pool after JS-value conversion.
@@ -154,15 +155,15 @@ pub fn scan(request: Value) -> AsyncTask<ScanTask> {
 
 /// Analyze one source file synchronously for editor and local tooling consumers.
 #[napi]
-pub fn analyze_sync(request: Value) -> Result<Value> {
+pub fn analyze_sync(env: Env, request: Value) -> Result<Object<'static>> {
     let work = catch_panic(|| prepare_analyze(request))
         .unwrap_or_else(|_| AnalyzeWork::Immediate(fict_compiler::internal_analyze_error_result()));
     let result = match work {
         AnalyzeWork::Request(request) => analyze_safely(request),
         AnalyzeWork::Immediate(result) => result,
     };
-    catch_panic(|| serialize_analyze_result(result)).unwrap_or_else(|_| {
-        serialize_analyze_result(fict_compiler::internal_analyze_error_result())
+    catch_panic(|| serialize_analyze_result(&env, result)).unwrap_or_else(|_| {
+        serialize_analyze_result(&env, fict_compiler::internal_analyze_error_result())
     })
 }
 

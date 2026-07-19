@@ -2,8 +2,11 @@ use fict_compiler::{
     AnalyzeRequest, AnalyzeResult, CompileRequest, CompileResult, ScanRequest, ScanResult,
     invalid_analyze_request_result, invalid_request_result, invalid_scan_request_result,
 };
-use napi::{Error, Result, Status};
-use serde_json::Value;
+use napi::{
+    Env, Error, Property, Result, Status,
+    bindgen_prelude::{Array, JsObjectValue, Null, Object},
+};
+use serde_json::{Map, Value};
 
 /// Work prepared on the JavaScript thread before async scheduling.
 pub(crate) enum CompileWork {
@@ -56,31 +59,95 @@ pub(crate) fn prepare_analyze(value: Value) -> AnalyzeWork {
     }
 }
 
-pub(crate) fn serialize_result(result: CompileResult) -> Result<Value> {
-    serde_json::to_value(result).map_err(|error| {
+/// Define JSON map entries as own data properties so names such as `__proto__`
+/// cannot invoke inherited setters while crossing the N-API boundary.
+fn create_json_object(env: &Env, values: Map<String, Value>) -> Result<Object<'static>> {
+    let mut object = Object::new(env)?;
+    let properties = values
+        .into_iter()
+        .map(|(key, value)| create_json_property(env, &key, value))
+        .collect::<Result<Vec<_>>>()?;
+    object.define_properties(&properties)?;
+    Ok(object)
+}
+
+fn create_json_array(env: &Env, values: Vec<Value>) -> Result<Array<'static>> {
+    let mut array = Array::from_vec(env, Vec::<Null>::new())?;
+    for (index, value) in values.into_iter().enumerate() {
+        set_json_array_value(env, &mut array, index as u32, value)?;
+    }
+    Ok(array)
+}
+
+fn create_json_property(env: &Env, key: &str, value: Value) -> Result<Property> {
+    let property = Property::new().with_utf8_name(key)?;
+    match value {
+        Value::Null => property.with_napi_value(env, Null),
+        Value::Bool(value) => property.with_napi_value(env, value),
+        Value::Number(value) => property.with_napi_value(env, value),
+        Value::String(value) => property.with_napi_value(env, value),
+        Value::Array(values) => Ok(property.with_value(&create_json_array(env, values)?)),
+        Value::Object(values) => Ok(property.with_value(&create_json_object(env, values)?)),
+    }
+}
+
+fn set_json_array_value(
+    env: &Env,
+    array: &mut Array<'static>,
+    index: u32,
+    value: Value,
+) -> Result<()> {
+    match value {
+        Value::Null => array.set(index, Null),
+        Value::Bool(value) => array.set(index, value),
+        Value::Number(value) => array.set(index, value),
+        Value::String(value) => array.set(index, value),
+        Value::Array(values) => array.set(index, create_json_array(env, values)?),
+        Value::Object(values) => array.set(index, create_json_object(env, values)?),
+    }
+}
+
+fn serialize_json(env: &Env, value: Value, context: &str) -> Result<Object<'static>> {
+    let Value::Object(values) = value else {
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!("native compiler {context} did not serialize to an object"),
+        ));
+    };
+    create_json_object(env, values)
+}
+
+pub(crate) fn serialize_result(env: &Env, result: CompileResult) -> Result<Object<'static>> {
+    let value = serde_json::to_value(result).map_err(|error| {
         Error::new(
             Status::GenericFailure,
             format!("failed to serialize native compiler result: {error}"),
         )
-    })
+    })?;
+    serialize_json(env, value, "result")
 }
 
-pub(crate) fn serialize_scan_result(result: ScanResult) -> Result<Value> {
-    serde_json::to_value(result).map_err(|error| {
+pub(crate) fn serialize_scan_result(env: &Env, result: ScanResult) -> Result<Object<'static>> {
+    let value = serde_json::to_value(result).map_err(|error| {
         Error::new(
             Status::GenericFailure,
             format!("failed to serialize native compiler scan result: {error}"),
         )
-    })
+    })?;
+    serialize_json(env, value, "scan result")
 }
 
-pub(crate) fn serialize_analyze_result(result: AnalyzeResult) -> Result<Value> {
-    serde_json::to_value(result).map_err(|error| {
+pub(crate) fn serialize_analyze_result(
+    env: &Env,
+    result: AnalyzeResult,
+) -> Result<Object<'static>> {
+    let value = serde_json::to_value(result).map_err(|error| {
         Error::new(
             Status::GenericFailure,
             format!("failed to serialize native compiler analysis result: {error}"),
         )
-    })
+    })?;
+    serialize_json(env, value, "analysis result")
 }
 
 #[cfg(test)]

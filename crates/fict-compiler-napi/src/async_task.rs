@@ -2,7 +2,7 @@ use fict_compiler::{
     AnalyzeResult, CompileResult, ScanResult, internal_analyze_error_result, internal_error_result,
     internal_scan_error_result,
 };
-use napi::{Env, Result, Task, bindgen_prelude::Unknown};
+use napi::{Env, Result, Task, bindgen_prelude::Object};
 
 use crate::{
     convert::{
@@ -35,7 +35,7 @@ impl AnalyzeTask {
 
 impl Task for AnalyzeTask {
     type Output = AnalyzeResult;
-    type JsValue = Unknown<'static>;
+    type JsValue = Object<'static>;
 
     fn compute(&mut self) -> Result<Self::Output> {
         let result = match self.work.take() {
@@ -47,9 +47,8 @@ impl Task for AnalyzeTask {
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        let value = catch_panic(|| serialize_analyze_result(output))
-            .unwrap_or_else(|_| serialize_analyze_result(internal_analyze_error_result()))?;
-        env.to_js_value(&value)
+        catch_panic(|| serialize_analyze_result(&env, output))
+            .unwrap_or_else(|_| serialize_analyze_result(&env, internal_analyze_error_result()))
     }
 }
 
@@ -61,7 +60,7 @@ impl ScanTask {
 
 impl Task for ScanTask {
     type Output = ScanResult;
-    type JsValue = Unknown<'static>;
+    type JsValue = Object<'static>;
 
     fn compute(&mut self) -> Result<Self::Output> {
         let result = match self.work.take() {
@@ -73,9 +72,8 @@ impl Task for ScanTask {
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        let value = catch_panic(|| serialize_scan_result(output))
-            .unwrap_or_else(|_| serialize_scan_result(internal_scan_error_result()))?;
-        env.to_js_value(&value)
+        catch_panic(|| serialize_scan_result(&env, output))
+            .unwrap_or_else(|_| serialize_scan_result(&env, internal_scan_error_result()))
     }
 }
 
@@ -87,7 +85,7 @@ impl CompileTask {
 
 impl Task for CompileTask {
     type Output = CompileResult;
-    type JsValue = Unknown<'static>;
+    type JsValue = Object<'static>;
 
     fn compute(&mut self) -> Result<Self::Output> {
         let result = match self.work.take() {
@@ -99,8 +97,7 @@ impl Task for CompileTask {
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        let value = catch_panic(|| serialize_result(output))
-            .unwrap_or_else(|_| serialize_result(internal_error_result()))?;
-        env.to_js_value(&value)
+        catch_panic(|| serialize_result(&env, output))
+            .unwrap_or_else(|_| serialize_result(&env, internal_error_result()))
     }
 }

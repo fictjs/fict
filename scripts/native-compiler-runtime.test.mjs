@@ -1229,6 +1229,84 @@ test('same-module hook metadata protects structured reactive members', () => {
   }
 })
 
+test('native metadata preserves prototype-named hooks across module boundaries', async () => {
+  const dependencyRequest = {
+    code: `
+      import { $state } from 'fict'
+      function useDirect() {
+        const value = $state(1)
+        return value
+      }
+      function useObject() {
+        const value = $state(1)
+        return { value }
+      }
+      function useArray() {
+        const value = $state(1)
+        return [value]
+      }
+      export {
+        useDirect as "__proto__",
+        useObject as "constructor",
+        useArray as "toString",
+      }
+    `,
+    filename: '/fixtures/prototype-hook-dependency.ts',
+    moduleId: '/fixtures/prototype-hook-dependency.ts',
+    options: { strictGuarantee: false },
+  }
+
+  for (const [name, transform] of [
+    ['sync', request => binding.transformSync(request)],
+    ['async', request => binding.transform(request)],
+  ]) {
+    const dependency = await transform(dependencyRequest)
+    assert.deepEqual(dependency.diagnostics, [], name)
+    assert.equal(Object.getPrototypeOf(dependency.moduleMetadata.hooks), Object.prototype, name)
+    assert.deepEqual(
+      dependency.moduleMetadata.hooks,
+      {
+        ['__proto__']: { directAccessor: 'signal' },
+        constructor: { objectProps: { value: 'signal' } },
+        toString: { arrayProps: { 0: 'signal' } },
+      },
+      name,
+    )
+
+    const consumer = await transform({
+      code: `
+        import {
+          "__proto__" as useDirect,
+          "constructor" as useObject,
+          "toString" as useArray,
+        } from './prototype-hook-dependency.js'
+        export function App() {
+          const direct = useDirect()
+          const object = useObject()
+          const array = useArray()
+          return [direct, object.value, array[0]]
+        }
+      `,
+      filename: '/fixtures/prototype-hook-consumer.ts',
+      moduleId: '/fixtures/prototype-hook-consumer.ts',
+      metadata: [
+        {
+          request: './prototype-hook-dependency.js',
+          resolvedId: '/fixtures/prototype-hook-dependency.ts',
+          status: 'resolved',
+          metadata: dependency.moduleMetadata,
+          fingerprint: 'sha256:prototype-hook-dependency',
+        },
+      ],
+      options: { strictGuarantee: false },
+    })
+    assert.deepEqual(consumer.diagnostics, [], name)
+    assert.match(consumer.code, /direct\(\)/, name)
+    assert.match(consumer.code, /object\.value\(\)/, name)
+    assert.match(consumer.code, /array\[0\]\(\)/, name)
+  }
+})
+
 test('compile and analyze consume the same resolved metadata snapshot', () => {
   const code = `
     import { count, useCounter } from './dep.js'
