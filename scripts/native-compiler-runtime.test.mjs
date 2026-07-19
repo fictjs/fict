@@ -265,6 +265,114 @@ test('later explicit JSX props keep precedence when an earlier spread reruns', a
   container.remove()
 })
 
+test('legacy DOM binding targets and forced prefixes update through native output', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let updateBindings = () => {}
+
+      function App() {
+        let mode = $state(0)
+        let leading = $state({
+          title: 'spread-title',
+          textContent: 'spread text',
+          'data-active': true,
+          someProp: 'spread custom',
+        })
+        updateBindings = () => {
+          mode = 1
+          leading = {
+            title: 'spread-title-updated',
+            textContent: 'spread text updated',
+            'data-active': false,
+            someProp: 'spread custom updated',
+          }
+        }
+        return (
+          <main>
+            <div data-id="html" dangerouslySetInnerHTML={{ __html: mode ? '<b>on</b>' : '<i>off</i>' }} />
+            <textarea data-id="default-value" defaultValue="seed" />
+            <input data-id="default-checked" type="checkbox" defaultChecked indeterminate={mode} />
+            <select data-id="multiple" multiple={mode}><option defaultSelected>one</option></select>
+            <audio data-id="muted" defaultMuted muted={mode} />
+            <div data-id="inner-text" innerText="label" />
+            <div data-id="class-list" classList={{ active: mode === 1, idle: mode === 0 }} />
+            <div
+              data-id="forced"
+              {...leading}
+              attr:title={mode ? 'forced-on' : 'forced-off'}
+              bool:data-active={mode}
+              prop:textContent={mode ? 'forced on' : 'forced off'}
+            />
+            <my-widget data-id="custom" {...leading} some-prop={mode} config={{ value: mode }} />
+          </main>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update() {
+        updateBindings()
+      }
+    `,
+    'dom-binding-targets',
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-J003', 'FICT-J003'],
+    },
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const html = container.querySelector('[data-id="html"]')
+  const defaultValue = container.querySelector('[data-id="default-value"]')
+  const defaultChecked = container.querySelector('[data-id="default-checked"]')
+  const multiple = container.querySelector('[data-id="multiple"]')
+  const muted = container.querySelector('[data-id="muted"]')
+  const innerText = container.querySelector('[data-id="inner-text"]')
+  const classList = container.querySelector('[data-id="class-list"]')
+  const forced = container.querySelector('[data-id="forced"]')
+  const custom = container.querySelector('my-widget')
+
+  assert.equal(html?.innerHTML, '<i>off</i>')
+  assert.equal(defaultValue?.defaultValue, 'seed')
+  assert.equal(defaultChecked?.defaultChecked, true)
+  assert.equal(defaultChecked?.indeterminate, false)
+  assert.equal(multiple?.multiple, false)
+  assert.equal(multiple?.querySelector('option')?.defaultSelected, true)
+  assert.equal(muted?.defaultMuted, true)
+  assert.equal(muted?.muted, false)
+  assert.equal(innerText?.innerText, 'label')
+  assert.equal(classList?.className, 'idle')
+  assert.equal(forced?.getAttribute('title'), 'forced-off')
+  assert.equal(forced?.hasAttribute('data-active'), false)
+  assert.equal(forced?.textContent, 'forced off')
+  assert.equal(custom?.someProp, 0)
+  assert.deepEqual(custom?.config, { value: 0 })
+
+  compiled.update()
+  await flushRuntime()
+
+  assert.equal(html?.innerHTML, '<b>on</b>')
+  assert.equal(defaultChecked?.indeterminate, true)
+  assert.equal(multiple?.multiple, true)
+  assert.equal(muted?.muted, true)
+  assert.equal(classList?.className, 'active')
+  assert.equal(forced?.getAttribute('title'), 'forced-on')
+  assert.equal(forced?.getAttribute('data-active'), '')
+  assert.equal(forced?.textContent, 'forced on')
+  assert.equal(custom?.someProp, 1)
+  assert.deepEqual(custom?.config, { value: 1 })
+
+  dispose()
+  container.remove()
+})
+
 test('native template extraction preserves static HTML and live binding paths', async () => {
   const result = binding.transformSync({
     code: `
@@ -309,12 +417,12 @@ test('native template extraction preserves static HTML and live binding paths', 
   assert.ok(template)
   assert.equal(
     JSON.parse(template[1]),
-    '<section><div data-case="static" id="test" class="foo">Hello</div><button data-case="boolean" disabled>Click</button><div data-case="dynamic-attr"></div><div data-case="child">Text <!----> <span>Static</span></div><ul data-case="nested"><li><!----></li></ul></section>',
+    '<section><div data-case="static" id="test" class="foo">Hello</div><button data-case="boolean">Click</button><div data-case="dynamic-attr"></div><div data-case="child">Text <!----> <span>Static</span></div><ul data-case="nested"><li><!----></li></ul></section>',
   )
   const paths = [...result.code.matchAll(/resolvePath\([^,]+,\s*(\[[\s\d,]*\])\)/g)].map(match =>
     JSON.parse(match[1]),
   )
-  assert.deepEqual(paths, [[2], [3], [3, 1], [4, 0], [4, 0, 0]])
+  assert.deepEqual(paths, [[1], [2], [3], [3, 1], [4, 0], [4, 0, 0]])
 
   const compiled = await importCompiledModule(result.code, 'template-extractor')
   const container = document.createElement('div')

@@ -78,7 +78,10 @@ fn resolves_svg_integration_points_and_normalizes_attributes() {
     assert!(serialized.html.contains("stroke-width=\"2\""));
     assert!(serialized.bindings.iter().any(|binding| matches!(
         binding,
-        TemplateBinding::Attribute { name, .. } if name == "xlink:href"
+        TemplateBinding::Attribute {
+            kind: DomBindingKind::Attribute(name),
+            ..
+        } if name == "xlink:href"
     )));
     let spread_namespaces: Vec<_> = serialized
         .bindings

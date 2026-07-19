@@ -17,7 +17,9 @@ import {
   bindText,
   bindTextContent,
   bindAttribute,
+  bindBooleanAttribute,
   bindProperty,
+  setBooleanAttribute,
   setProp,
   bindStyle,
   setStyle,
@@ -777,7 +779,47 @@ describe('Binding Edge Cases', () => {
     })
   })
 
+  describe('bindBooleanAttribute', () => {
+    it('uses presence semantics even for attributes that normally stringify booleans', async () => {
+      const el = document.createElement('div')
+      const enabled = createSignal(false)
+
+      setBooleanAttribute(el, 'data-enabled', true)
+      expect(el.getAttribute('data-enabled')).toBe('')
+      setBooleanAttribute(el, 'data-enabled', false)
+      expect(el.hasAttribute('data-enabled')).toBe(false)
+
+      bindBooleanAttribute(el, 'data-enabled', () => enabled())
+      expect(el.hasAttribute('data-enabled')).toBe(false)
+
+      enabled(true)
+      await tick()
+      expect(el.getAttribute('data-enabled')).toBe('')
+
+      enabled(false)
+      await tick()
+      expect(el.hasAttribute('data-enabled')).toBe(false)
+    })
+  })
+
   describe('bindProperty', () => {
+    it('unwraps and reactively patches dangerouslySetInnerHTML payloads', async () => {
+      const el = document.createElement('div')
+      const html = createSignal('<b>first</b>')
+      const enabled = createSignal(true)
+
+      bindProperty(el, 'dangerouslySetInnerHTML', () => (enabled() ? { __html: html } : null))
+      expect(el.innerHTML).toBe('<b>first</b>')
+
+      html('<i>second</i>')
+      await tick()
+      expect(el.innerHTML).toBe('<i>second</i>')
+
+      enabled(false)
+      await tick()
+      expect(el.innerHTML).toBe('')
+    })
+
     it('selects only the first duplicate value in a single select', () => {
       const select = document.createElement('select')
       select.innerHTML =

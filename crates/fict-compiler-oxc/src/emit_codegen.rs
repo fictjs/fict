@@ -4810,7 +4810,9 @@ impl<'a> AstRewriter<'a, '_> {
                     let mut arguments = ArenaVec::new_in(&self.allocator);
                     arguments.push(Argument::from(element));
                     match kind {
-                        DomBindingKind::Attribute(name) | DomBindingKind::Property(name) => {
+                        DomBindingKind::Attribute(name)
+                        | DomBindingKind::BooleanAttribute(name)
+                        | DomBindingKind::Property(name) => {
                             arguments.push(Argument::from(Expression::new_string_literal(
                                 span,
                                 self.allocator.alloc_str(&name),

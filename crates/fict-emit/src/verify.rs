@@ -1590,6 +1590,12 @@ fn verify_helper_semantics(
                     (crate::DomBindingKind::Attribute(_), false) => {
                         *helper == RuntimeHelper::SetAttr
                     }
+                    (crate::DomBindingKind::BooleanAttribute(_), true) => {
+                        *helper == RuntimeHelper::BindBooleanAttribute
+                    }
+                    (crate::DomBindingKind::BooleanAttribute(_), false) => {
+                        *helper == RuntimeHelper::SetBooleanAttribute
+                    }
                     (crate::DomBindingKind::Property(_), true) => {
                         *helper == RuntimeHelper::BindProperty
                     }

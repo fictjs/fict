@@ -2749,6 +2749,147 @@ mod tests {
     }
 
     #[test]
+    fn restores_legacy_dom_binding_targets_and_forced_prefixes() {
+        let result = compile(request(
+            r#"
+                export function Bindings() {
+                    return <main>
+                        <div dangerouslySetInnerHTML={{ __html: "<b>safe</b>" }} />
+                        <textarea defaultValue="seed" />
+                        <input defaultChecked indeterminate={true} />
+                        <option defaultSelected>choice</option>
+                        <audio defaultMuted muted={1} />
+                        <select multiple={0}><option>one</option></select>
+                        <div innerText="label" classList={{ active: true }} />
+                        <div attr:title="forced" bool:data-active={true} prop:textContent="forced text" />
+                        <my-widget config={{ ready: true }} some-prop="custom" />
+                        <button is="fancy-button" custom-prop="value" />
+                    </main>;
+                }
+            "#,
+            "dom-binding-targets.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        for attribute in [
+            "dangerouslySetInnerHTML",
+            "defaultValue",
+            "defaultChecked",
+            "defaultSelected",
+            "defaultMuted",
+            "indeterminate",
+            "innerText",
+            "multiple",
+            "muted",
+            "classList",
+            "attr:title",
+            "bool:data-active",
+            "prop:textContent",
+            "config",
+            "some-prop",
+            "custom-prop",
+        ] {
+            assert!(
+                !result.code.contains(&format!("{attribute}=\\\"")),
+                "{}",
+                result.code
+            );
+        }
+        assert!(
+            result.code.contains("\"dangerouslySetInnerHTML\""),
+            "{}",
+            result.code
+        );
+        for property in [
+            "defaultValue",
+            "defaultChecked",
+            "defaultSelected",
+            "defaultMuted",
+            "indeterminate",
+            "innerText",
+            "multiple",
+            "muted",
+            "textContent",
+            "config",
+            "someProp",
+            "customProp",
+        ] {
+            assert!(
+                result.code.contains(&format!("\"{property}\"")),
+                "{}",
+                result.code
+            );
+        }
+        assert!(result.code.contains("bindClass("), "{}", result.code);
+        assert!(result.code.contains("setAttr("), "{}", result.code);
+        assert!(
+            result.code.contains("bindBooleanAttribute("),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn rejects_dangerously_set_inner_html_with_authored_children() {
+        let result = compile(request(
+            "export function Invalid() { return <div dangerouslySetInnerHTML={{ __html: '<b>x</b>' }}>child</div>; }",
+            "dangerous-html-children.tsx",
+        ));
+
+        assert!(result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.code.as_str() == "FICT-J004" }),
+            "{:?}",
+            result.diagnostics
+        );
+        assert!(result.code.is_empty());
+    }
+
+    #[test]
+    fn excludes_forced_and_custom_property_targets_from_earlier_spreads() {
+        let mut input = request(
+            "export function Widget(first) { return <my-widget {...first} some-prop=\"custom\" prop:textContent=\"text\" bool:data-on />; }",
+            "custom-spread-exclusions.tsx",
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J003")
+                .count(),
+            1
+        );
+        let spread_start = result.code.find("spread(").expect("spread call");
+        let spread_end = result.code[spread_start..]
+            .find("]);")
+            .map(|offset| spread_start + offset + 2)
+            .expect("spread exclusion array");
+        let spread_call = &result.code[spread_start..spread_end];
+        for exclusion in [
+            "bool:data-on",
+            "bool:dataOn",
+            "data-on",
+            "prop:textContent",
+            "prop:textcontent",
+            "some-prop",
+            "someProp",
+            "textContent",
+        ] {
+            assert!(
+                spread_call.contains(&format!("\"{exclusion}\"")),
+                "{spread_call}"
+            );
+        }
+    }
+
+    #[test]
     fn passes_svg_and_mathml_modes_to_fine_grained_spreads() {
         let mut input = request(
             "export function Foreign(svgProps, mathProps) { return <><svg {...svgProps} /><math {...mathProps} /></>; }",

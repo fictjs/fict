@@ -653,6 +653,22 @@ export function bindAttribute(el: Element, key: string, getValue: () => unknown)
 }
 
 /**
+ * Bind a reactive value to an explicitly boolean attribute.
+ */
+export function bindBooleanAttribute(el: Element, key: string, getValue: () => unknown): Cleanup {
+  return createRenderEffect(() => setBooleanAttribute(el, key, getValue()))
+}
+
+/**
+ * Patch an explicitly boolean attribute, independent of normal attribute stringification rules.
+ */
+export function setBooleanAttribute(el: Element, key: string, value: unknown): void {
+  assertValidDOMAttributeName(key)
+  if (value) el.setAttribute(key, '')
+  else el.removeAttribute(key)
+}
+
+/**
  * Patch attribute value with per-node, per-attribute cache.
  */
 export function setAttr(el: Element, key: string, value: unknown): void {
@@ -732,6 +748,16 @@ function isHTMLSelect(el: Element): el is HTMLSelectElement {
  * Patch DOM property with per-node, per-property cache.
  */
 export function setProp(el: Element, key: string, value: unknown): void {
+  if (key === 'dangerouslySetInnerHTML') {
+    const htmlValue = readDangerouslySetInnerHTML(value)
+    if (htmlValue.found) {
+      const nextHtml = isReactive(htmlValue.html) ? htmlValue.html() : htmlValue.html
+      setProp(el, 'innerHTML', nextHtml)
+    } else if (value == null) {
+      setProp(el, 'innerHTML', '')
+    }
+    return
+  }
   const cacheTarget = el as unknown as Record<PropertyKey, unknown>
   const propCache =
     (cacheTarget[PROP_CACHE] as Record<string, unknown> | undefined) ??

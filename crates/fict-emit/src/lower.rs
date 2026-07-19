@@ -2028,12 +2028,12 @@ fn is_scoped_helper(helper: RuntimeHelper) -> bool {
 enum TemplateBinding {
     Attribute {
         path: Vec<u32>,
-        name: String,
+        kind: DomBindingKind,
         value: ValueId,
     },
     StaticAttribute {
         path: Vec<u32>,
-        name: String,
+        kind: DomBindingKind,
         value: fict_hir::LiteralValue,
         origin: Origin,
     },
@@ -2204,7 +2204,7 @@ fn lower_jsx_instruction(
     let mut resolved = BTreeMap::new();
     for binding in serialized.bindings {
         match binding {
-            TemplateBinding::Attribute { path, name, value } => {
+            TemplateBinding::Attribute { path, kind, value } => {
                 let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
                 let element = resolved_element(
                     root,
@@ -2219,7 +2219,6 @@ fn lower_jsx_instruction(
                     hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
                     ValueKind::Literal(_)
                 );
-                let kind = dom_binding_kind(&name);
                 let helper = dom_binding_helper(&kind, reactive);
                 operations.push(EmitOperation::BindDom {
                     element,
@@ -2232,7 +2231,7 @@ fn lower_jsx_instruction(
             }
             TemplateBinding::StaticAttribute {
                 path,
-                name,
+                kind,
                 value,
                 origin,
             } => {
@@ -2245,7 +2244,6 @@ fn lower_jsx_instruction(
                     operations,
                     origin,
                 );
-                let kind = dom_binding_kind(&name);
                 let helper = dom_binding_helper(&kind, false);
                 operations.push(EmitOperation::BindDom {
                     element,
@@ -3102,6 +3100,7 @@ fn serialize_node(
                 resolve_element_namespace(tag, parent_namespace, allow_standalone);
             let child_namespace =
                 resolve_child_namespace(tag, element_namespace, &element.attributes);
+            let custom_element = is_custom_element(tag, element_namespace, &element.attributes);
             let has_authored_children = element.children.iter().any(renderable_child);
             let children_attribute = element.attributes.iter().rev().find_map(|attribute| {
                 let JsxAttribute::Named {
@@ -3164,12 +3163,20 @@ fn serialize_node(
                             }
                             continue;
                         }
+                        if name == "dangerouslySetInnerHTML" && has_authored_children {
+                            return Err(DiagnosticBundle::new(vec![lower_error(
+                                "FICT-J004",
+                                "dangerouslySetInnerHTML cannot be used with JSX children",
+                                GuaranteeClass::Unsupported,
+                            )]));
+                        }
+                        let binding = dom_binding_plan(&name, custom_element);
                         match value {
                             JsxAttributeValue::ImplicitTrue => {
-                                if seen_spread {
+                                if seen_spread || binding.force {
                                     bindings.push(TemplateBinding::StaticAttribute {
                                         path: path.clone(),
-                                        name,
+                                        kind: binding.kind,
                                         value: fict_hir::LiteralValue::Boolean(true),
                                         origin: *origin,
                                     });
@@ -3179,10 +3186,10 @@ fn serialize_node(
                                 }
                             }
                             JsxAttributeValue::Text(value) => {
-                                if seen_spread {
+                                if seen_spread || binding.force {
                                     bindings.push(TemplateBinding::StaticAttribute {
                                         path: path.clone(),
-                                        name,
+                                        kind: binding.kind,
                                         value: fict_hir::LiteralValue::String(value.clone().into()),
                                         origin: *origin,
                                     });
@@ -3213,7 +3220,7 @@ fn serialize_node(
                                 } else {
                                     bindings.push(TemplateBinding::Attribute {
                                         path: path.clone(),
-                                        name,
+                                        kind: binding.kind,
                                         value: *value,
                                     });
                                 }
@@ -3716,6 +3723,7 @@ fn spread_exclusions(
     spread_index: usize,
 ) -> Vec<String> {
     let mut excluded = BTreeSet::new();
+    let custom_element = is_custom_element(tag, namespace, attributes);
     for attribute in attributes.iter().skip(spread_index + 1) {
         let JsxAttribute::Named { name, .. } = attribute else {
             continue;
@@ -3730,6 +3738,12 @@ fn spread_exclusions(
         add_spread_exclusion_name(&mut excluded, &normalized);
         if normalized != name.as_str() {
             add_spread_exclusion_name(&mut excluded, name);
+        }
+        if let Some(property) = custom_element_property_name(&normalized, custom_element) {
+            add_spread_exclusion_name(&mut excluded, &property);
+        }
+        if let Some((_, forced_name)) = parse_forced_binding_name(&normalized) {
+            add_spread_exclusion_name(&mut excluded, forced_name);
         }
     }
     excluded.into_iter().collect()
@@ -3924,15 +3938,114 @@ fn resolved_element(
     resolved.insert(path, target);
     target
 }
-fn dom_binding_kind(name: &str) -> DomBindingKind {
-    match name {
-        "class" | "className" => DomBindingKind::Class,
-        "style" => DomBindingKind::Style,
-        "value" | "checked" | "selected" | "textContent" | "innerHTML" => {
-            DomBindingKind::Property(name.to_owned())
-        }
-        _ => DomBindingKind::Attribute(name.to_owned()),
+#[derive(Debug)]
+struct DomBindingPlan {
+    kind: DomBindingKind,
+    force: bool,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForcedBindingPrefix {
+    Attribute,
+    Boolean,
+    Property,
+}
+fn parse_forced_binding_name(name: &str) -> Option<(ForcedBindingPrefix, &str)> {
+    if name.len() <= 5 {
+        return None;
     }
+    [
+        ("attr:", ForcedBindingPrefix::Attribute),
+        ("bool:", ForcedBindingPrefix::Boolean),
+        ("prop:", ForcedBindingPrefix::Property),
+    ]
+    .into_iter()
+    .find_map(|(prefix, kind)| name.strip_prefix(prefix).map(|name| (kind, name)))
+}
+fn dom_binding_plan(name: &str, custom_element: bool) -> DomBindingPlan {
+    if let Some((prefix, name)) = parse_forced_binding_name(name) {
+        let kind = match prefix {
+            ForcedBindingPrefix::Attribute => DomBindingKind::Attribute(name.to_owned()),
+            ForcedBindingPrefix::Boolean => DomBindingKind::BooleanAttribute(name.to_owned()),
+            ForcedBindingPrefix::Property => DomBindingKind::Property(name.to_owned()),
+        };
+        return DomBindingPlan { kind, force: true };
+    }
+    let kind = match name {
+        "class" | "className" | "classList" => DomBindingKind::Class,
+        "style" => DomBindingKind::Style,
+        _ if is_dom_property(name) => DomBindingKind::Property(name.to_owned()),
+        _ => custom_element_property_name(name, custom_element)
+            .map(DomBindingKind::Property)
+            .unwrap_or_else(|| DomBindingKind::Attribute(name.to_owned())),
+    };
+    let force = matches!(kind, DomBindingKind::Property(_)) || name == "classList";
+    DomBindingPlan { kind, force }
+}
+fn is_dom_property(name: &str) -> bool {
+    matches!(
+        name,
+        "value"
+            | "checked"
+            | "selected"
+            | "disabled"
+            | "readOnly"
+            | "multiple"
+            | "muted"
+            | "indeterminate"
+            | "innerHTML"
+            | "innerText"
+            | "textContent"
+            | "defaultValue"
+            | "defaultChecked"
+            | "defaultSelected"
+            | "defaultMuted"
+            | "dangerouslySetInnerHTML"
+    )
+}
+fn is_custom_element(tag: &str, namespace: DomNamespace, attributes: &[JsxAttribute]) -> bool {
+    namespace == DomNamespace::Html
+        && (tag.contains('-')
+            || attributes.iter().any(
+                |attribute| matches!(attribute, JsxAttribute::Named { name, .. } if name == "is"),
+            ))
+}
+fn custom_element_property_name(name: &str, custom_element: bool) -> Option<String> {
+    if !custom_element
+        || matches!(
+            name,
+            "is" | "class"
+                | "className"
+                | "classList"
+                | "style"
+                | "ref"
+                | "children"
+                | "dangerouslySetInnerHTML"
+        )
+    {
+        return None;
+    }
+    if is_dom_property(name) {
+        return Some(name.to_owned());
+    }
+    let mut property = String::new();
+    let lowercase_name = name.to_lowercase();
+    let mut characters = lowercase_name.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '-'
+            && let Some(next) = characters.peek()
+            && next.is_ascii_lowercase()
+        {
+            property.push(
+                characters
+                    .next()
+                    .expect("peeked custom property")
+                    .to_ascii_uppercase(),
+            );
+        } else {
+            property.push(character);
+        }
+    }
+    Some(property)
 }
 fn create_element_helper(namespace: DomNamespace) -> RuntimeHelper {
     match namespace {
@@ -3952,6 +4065,8 @@ fn dom_binding_helper(kind: &DomBindingKind, reactive: bool) -> RuntimeHelper {
         (DomBindingKind::TextContent, false) => RuntimeHelper::SetTextContent,
         (DomBindingKind::Attribute(_), true) => RuntimeHelper::BindAttribute,
         (DomBindingKind::Attribute(_), false) => RuntimeHelper::SetAttr,
+        (DomBindingKind::BooleanAttribute(_), true) => RuntimeHelper::BindBooleanAttribute,
+        (DomBindingKind::BooleanAttribute(_), false) => RuntimeHelper::SetBooleanAttribute,
         (DomBindingKind::Property(_), true) => RuntimeHelper::BindProperty,
         (DomBindingKind::Property(_), false) => RuntimeHelper::SetProp,
         (DomBindingKind::Class, true) => RuntimeHelper::BindClass,

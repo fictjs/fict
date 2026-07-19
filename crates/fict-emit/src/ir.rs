@@ -155,6 +155,7 @@ pub enum DomBindingKind {
     Text,
     TextContent,
     Attribute(String),
+    BooleanAttribute(String),
     Property(String),
     Class,
     Style,
