@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import test from 'node:test'
+import { after, before, test } from 'node:test'
 
 const require = createRequire(import.meta.url)
 const root = path.resolve(import.meta.dirname, '..')
+const { JSDOM } = require('../packages/runtime/node_modules/jsdom')
 const binding = require(path.join(root, 'target/release/fict_compiler_napi.node'))
 const runtime = require(path.join(root, 'packages/runtime/dist/internal.cjs'))
 const corpus = JSON.parse(
@@ -14,6 +15,48 @@ const corpus = JSON.parse(
     'utf8',
   ),
 )
+
+let dom
+
+before(() => {
+  dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    pretendToBeVisual: true,
+    url: 'http://localhost/',
+  })
+  for (const name of [
+    'window',
+    'document',
+    'navigator',
+    'Node',
+    'Element',
+    'HTMLElement',
+    'SVGElement',
+    'MathMLElement',
+    'Text',
+    'Comment',
+    'Document',
+    'DocumentFragment',
+    'ShadowRoot',
+    'MutationObserver',
+    'Event',
+    'CustomEvent',
+  ]) {
+    if (name in dom.window) {
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        value: dom.window[name],
+        writable: true,
+      })
+    }
+  }
+  globalThis.getComputedStyle = dom.window.getComputedStyle.bind(dom.window)
+  globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window)
+  globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window)
+})
+
+after(() => {
+  dom.window.close()
+})
 
 const probes = [
   {
@@ -180,15 +223,12 @@ const probes = [
     id: 'packages/compiler/test/warnings-as-errors.test.ts:156:transform',
     suffix: `
       export function probe() {
-        const node = App({ mode: 2 })
-        const children =
-          typeof node.props.children === 'function'
-            ? node.props.children()
-            : node.props.children
-        return [node.type, children]
+        return App({ mode: 2 })
       }
     `,
-    expected: ['span', 2],
+    diagnosticCodes: ['FICT-R006'],
+    renderToDom: true,
+    expected: ['span', '2'],
   },
 ]
 
@@ -241,7 +281,21 @@ for (const probe of probes) {
     assert.equal(typeof entry, 'function', probe.id)
     runtime.__fictResetContext()
     try {
-      const invoke = () => runtime.__fictRender({ slots: [], cursor: 0 }, () => entry())
+      const invoke = () => {
+        if (probe.renderToDom) {
+          const container = document.createElement('div')
+          const dispose = runtime.render(
+            () => runtime.__fictRender({ slots: [], cursor: 0 }, () => entry()),
+            container,
+          )
+          try {
+            return [container.firstElementChild?.tagName.toLowerCase(), container.textContent]
+          } finally {
+            dispose()
+          }
+        }
+        return runtime.__fictRender({ slots: [], cursor: 0 }, () => entry())
+      }
       if (probe.expectedError !== undefined) {
         assert.throws(invoke, error => error?.constructor?.name === probe.expectedError)
       } else {
