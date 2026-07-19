@@ -4356,6 +4356,71 @@ mod tests {
     }
 
     #[test]
+    fn lowers_nullish_reactive_component_returns() {
+        for (name, empty_return) in [
+            ("null", "return null;"),
+            ("undefined", "return undefined;"),
+            ("bare", "return;"),
+            ("void", "return void 0;"),
+        ] {
+            let source = format!(
+                "import {{ $state }} from 'fict'; export function App() {{ const ready = $state(false); if (!ready) {empty_return} return <Ready />; }}"
+            );
+            let result = compile(request(&source, &format!("{name}-return.tsx")));
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006"),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+            assert!(
+                result.code.contains("createConditional"),
+                "{name}: {}",
+                result.code
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_treat_implicit_fallthrough_as_nullable_return() {
+        for (name, source) in [
+            (
+                "partial-if",
+                "import { $state } from 'fict'; export function App() { const ready = $state(false); if (ready) return <Ready />; }",
+            ),
+            (
+                "partial-switch",
+                "import { $state } from 'fict'; export function App() { const mode = $state(0); switch (mode) { case 1: return <One />; case 2: return <Two />; } }",
+            ),
+        ] {
+            let strict = compile(request(source, &format!("{name}.tsx")));
+            assert!(strict.has_errors(), "{name}: {:?}", strict.diagnostics);
+            assert!(strict.code.is_empty(), "{name}: {}", strict.code);
+            assert!(strict.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R006"
+                    && diagnostic.severity == DiagnosticSeverity::Error
+            }));
+
+            let mut fallback_request = request(source, &format!("{name}.tsx"));
+            fallback_request.options.strict_guarantee = false;
+            let fallback = compile(fallback_request);
+            assert!(!fallback.has_errors(), "{name}: {:?}", fallback.diagnostics);
+            assert!(fallback.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R006"
+                    && diagnostic.severity == DiagnosticSeverity::Warning
+            }));
+            assert!(
+                !fallback.code.contains("createConditional"),
+                "{name}: {}",
+                fallback.code
+            );
+        }
+    }
+
+    #[test]
     fn lowers_compound_conditional_returns_with_tracked_dispatchers() {
         let else_if = compile(request(
             "import { $state } from 'fict'; export function App() { const mode = $state(0); if (mode === 0) return <Zero />; else if (mode === 1) return <One />; else return <Many />; }",

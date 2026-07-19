@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "c366a3f6b81a7e18b8dad5459f7c23c17e9b0aeb",
+    "rustAuditRevision": "57dc8b8a421708f1f58c8c6d7574f68a50208965",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "c366a3f6b81a7e18b8dad5459f7c23c17e9b0aeb",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-c33d692abab8aa81da1edd037f8ad147430bceadaca79ebe22436f4ae72fd0c6"
+    "reviewedRevision": "57dc8b8a421708f1f58c8c6d7574f68a50208965",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-69b2a13adf91f9ca35b20e763871b7910218eade9b505f613c044108383723f7"
   },
   "deviationPolicies": {
     "rust-capability-expansion": "Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.",
@@ -31463,7 +31463,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "c410bf7ed57dfedb59dcbb134a7a9a47fef18559c0e898ae19913fd7c5cceea5"
+        "codeSha256": "383ac1959fc825d5375b0bfcdd1c2ca238245ae8a18e54950aaefde82133ae20"
       },
       "deviationPolicy": null
     },
@@ -32549,22 +32549,12 @@
             "guaranteeClass": "fallback"
           },
           {
-            "code": "FICT-R006",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          },
-          {
             "code": "FICT-R002",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          },
-          {
-            "code": "FICT-R006",
             "severity": "warning",
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "0a3f09e32ddacf48b53d7aeb93dd445832901133cef7063957373fc018da4ba6"
+        "codeSha256": "9c0b3082292d6758f76d7f418f290dcbde430a2df1ed0ac7ce3e2c44053807ee"
       },
       "deviationPolicy": null
     },

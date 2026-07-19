@@ -553,7 +553,7 @@ fn hoisted_var_statement<'a>(
 
 fn statement_returns_on_all_paths(statement: &Statement<'_>) -> bool {
     match statement {
-        Statement::ReturnStatement(returned) => returned.argument.is_some(),
+        Statement::ReturnStatement(_) => true,
         Statement::BlockStatement(block) => statements_return_on_all_paths(&block.body),
         Statement::IfStatement(statement) => {
             statement_returns_on_all_paths(&statement.consequent)

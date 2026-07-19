@@ -1834,6 +1834,7 @@ fn lower_function(
     let control_flow = structurize_cfg(function, &analyze_cfg(function)?)?;
     if options.lazy_conditional {
         crate::conditional_return::lower_conditional_returns(
+            hir,
             function,
             &control_flow,
             &mut temporaries,

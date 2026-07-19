@@ -2259,6 +2259,105 @@ test('conditional-return capability covers nested and sequential branch spans', 
   container.remove()
 })
 
+test('nullish conditional returns mount and dispose reactive branches', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setNull = () => {}
+      let setUndefined = () => {}
+      let setBare = () => {}
+      let setVoid = () => {}
+      let setExpression = () => {}
+
+      function NullApp() {
+        let visible = $state(false)
+        setNull = value => (visible = value)
+        if (!visible) return null
+        return <p data-id="null-return">null branch</p>
+      }
+
+      function UndefinedApp() {
+        let visible = $state(false)
+        setUndefined = value => (visible = value)
+        if (!visible) return undefined
+        return <p data-id="undefined-return">undefined branch</p>
+      }
+
+      function BareApp() {
+        let visible = $state(false)
+        setBare = value => (visible = value)
+        if (!visible) return
+        return <p data-id="bare-return">bare branch</p>
+      }
+
+      function VoidApp() {
+        let visible = $state(false)
+        setVoid = value => (visible = value)
+        if (!visible) return void 0
+        return <p data-id="void-return">void branch</p>
+      }
+
+      function ExpressionApp() {
+        let visible = $state(false)
+        setExpression = value => (visible = value)
+        return visible ? <p data-id="expression-return">expression branch</p> : null
+      }
+
+      function App() {
+        return <main><NullApp /><UndefinedApp /><BareApp /><VoidApp /><ExpressionApp /></main>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(value) {
+        setNull(value)
+        setUndefined(value)
+        setBare(value)
+        setVoid(value)
+        setExpression(value)
+      }
+    `,
+    'nullish-conditional-returns',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const ids = ['null-return', 'undefined-return', 'bare-return', 'void-return', 'expression-return']
+  for (const id of ids) assert.equal(container.querySelector(`[data-id="${id}"]`), null)
+
+  compiled.update(true)
+  await flushRuntime()
+  const first = ids.map(id => container.querySelector(`[data-id="${id}"]`))
+  assert.deepEqual(
+    first.map(node => node?.textContent),
+    ['null branch', 'undefined branch', 'bare branch', 'void branch', 'expression branch'],
+  )
+
+  compiled.update(false)
+  await flushRuntime()
+  assert.deepEqual(
+    first.map(node => node?.isConnected),
+    [false, false, false, false, false],
+  )
+  for (const id of ids) assert.equal(container.querySelector(`[data-id="${id}"]`), null)
+
+  compiled.update(true)
+  await flushRuntime()
+  const second = ids.map(id => container.querySelector(`[data-id="${id}"]`))
+  assert.deepEqual(
+    second.map((node, index) => node !== first[index]),
+    [true, true, true, true, true],
+  )
+
+  dispose()
+  container.remove()
+})
+
 test('getterCache controls safe repeated synchronous accessor reads', async () => {
   const source = `
     import { $memo, $state } from 'fict'

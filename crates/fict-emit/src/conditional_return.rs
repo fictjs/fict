@@ -2,12 +2,13 @@ use crate::{
     EmitOperation, EmitTemporary, EmitTemporaryId, RuntimeHelper, name_allocator::NameAllocator,
 };
 use fict_hir::{
-    BlockId, FunctionKind, HirFunction, HirInstructionKind, PlaceBase, SourceSpan, TerminatorKind,
-    ValueId,
+    BlockId, FunctionKind, HirFile, HirFunction, HirInstructionKind, LiteralValue, Origin,
+    OriginKind, PlaceBase, SourceSpan, TerminatorKind, UnaryOperator, ValueId, ValueKind,
 };
 use fict_reactivity::{StructuredConstructKind, StructurizeAnalysis};
 use std::collections::BTreeSet;
 pub(crate) fn lower_conditional_returns(
+    hir: &HirFile,
     function: &HirFunction,
     control_flow: &StructurizeAnalysis,
     temporaries: &mut Vec<EmitTemporary>,
@@ -37,8 +38,10 @@ pub(crate) fn lower_conditional_returns(
             continue;
         };
         if reactive_test(function, operations, test_span)
-            && jsx_value(function, *consequent)
-            && jsx_value(function, *alternate)
+            && let Some(consequent) =
+                renderable_return_value(hir, function, Some(*consequent), instruction.origin)
+            && let Some(alternate) =
+                renderable_return_value(hir, function, Some(*alternate), instruction.origin)
             && consequent != alternate
         {
             plans.push((
@@ -74,8 +77,10 @@ pub(crate) fn lower_conditional_returns(
                 .origin
                 .primary_span
                 .is_some_and(|span| reactive_test(function, operations, span))
-            && let Some((consequent, consequent_blocks)) = returned_jsx(function, consequent)
-            && let Some((alternate, alternate_blocks)) = returned_jsx(function, alternate)
+            && let Some((consequent, consequent_blocks)) =
+                returned_renderable(hir, function, consequent)
+            && let Some((alternate, alternate_blocks)) =
+                returned_renderable(hir, function, alternate)
             && consequent != alternate
         {
             plans.push((hint.origin, false, exact_control_flow_coverage(hint.origin)));
@@ -83,7 +88,9 @@ pub(crate) fn lower_conditional_returns(
             dynamic_blocks.extend(alternate_blocks);
             continue;
         }
-        let Some((returned, story_blocks)) = returned_jsx_story(function, construct.header) else {
+        let Some((returned, story_blocks)) =
+            returned_renderable_story(hir, function, construct.header)
+        else {
             continue;
         };
         if returned.len() > 1 && story_has_reactive_control(function, operations, &story_blocks) {
@@ -115,7 +122,7 @@ pub(crate) fn lower_conditional_returns(
     use_dynamic_branch_helpers(function, &dynamic_blocks, operations);
 }
 
-fn exact_control_flow_coverage(origin: fict_hir::Origin) -> Vec<SourceSpan> {
+fn exact_control_flow_coverage(origin: Origin) -> Vec<SourceSpan> {
     origin.primary_span.into_iter().collect()
 }
 
@@ -211,10 +218,56 @@ fn jsx_value(function: &HirFunction, value: ValueId) -> bool {
         .instruction_for_result(value)
         .is_some_and(|instruction| matches!(instruction.kind, HirInstructionKind::Jsx { .. }))
 }
-fn returned_jsx(
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RenderableReturnValue {
+    Empty,
+    Jsx(ValueId),
+}
+
+fn renderable_return_value(
+    hir: &HirFile,
+    function: &HirFunction,
+    value: Option<ValueId>,
+    return_origin: Origin,
+) -> Option<RenderableReturnValue> {
+    let Some(value) = value else {
+        return matches!(return_origin.kind, OriginKind::Source)
+            .then_some(RenderableReturnValue::Empty);
+    };
+    if jsx_value(function, value) {
+        return Some(RenderableReturnValue::Jsx(value));
+    }
+    let value_data = function.values.get(value.as_usize())?;
+    let is_nullish = matches!(
+        &value_data.kind,
+        ValueKind::Literal(LiteralValue::Null | LiteralValue::Undefined)
+    ) || function
+        .instruction_for_result(value)
+        .is_some_and(|instruction| match &instruction.kind {
+            HirInstructionKind::Literal(LiteralValue::Null | LiteralValue::Undefined)
+            | HirInstructionKind::Unary {
+                operator: UnaryOperator::Void,
+                ..
+            } => true,
+            HirInstructionKind::Read { place } if place.projections.is_empty() => {
+                let PlaceBase::Global(global) = place.base else {
+                    return false;
+                };
+                hir.globals
+                    .get(global.as_usize())
+                    .is_some_and(|global| global.name == "undefined")
+            }
+            _ => false,
+        });
+    is_nullish.then_some(RenderableReturnValue::Empty)
+}
+
+fn returned_renderable(
+    hir: &HirFile,
     function: &HirFunction,
     start: fict_hir::BlockId,
-) -> Option<(ValueId, BTreeSet<fict_hir::BlockId>)> {
+) -> Option<(RenderableReturnValue, BTreeSet<fict_hir::BlockId>)> {
     let mut current = start;
     let mut visited = BTreeSet::new();
     loop {
@@ -223,8 +276,9 @@ fn returned_jsx(
         }
         let block = function.blocks.get(current.as_usize())?;
         match block.terminator.kind {
-            TerminatorKind::Return { value: Some(value) } if jsx_value(function, value) => {
-                return Some((value, visited));
+            TerminatorKind::Return { value } => {
+                return renderable_return_value(hir, function, value, block.terminator.origin)
+                    .map(|value| (value, visited));
             }
             TerminatorKind::Goto { target } if block.instructions.is_empty() => current = target,
             _ => return None,
@@ -232,17 +286,19 @@ fn returned_jsx(
     }
 }
 
-fn returned_jsx_story(
+fn returned_renderable_story(
+    hir: &HirFile,
     function: &HirFunction,
     start: BlockId,
-) -> Option<(BTreeSet<ValueId>, BTreeSet<BlockId>)> {
+) -> Option<(BTreeSet<RenderableReturnValue>, BTreeSet<BlockId>)> {
     fn visit(
+        hir: &HirFile,
         function: &HirFunction,
         block_id: BlockId,
         active: &mut BTreeSet<BlockId>,
         complete: &mut BTreeSet<BlockId>,
         blocks: &mut BTreeSet<BlockId>,
-        returned: &mut BTreeSet<ValueId>,
+        returned: &mut BTreeSet<RenderableReturnValue>,
     ) -> bool {
         if complete.contains(&block_id) {
             return true;
@@ -256,30 +312,52 @@ fn returned_jsx_story(
             return false;
         };
         let valid = match &block.terminator.kind {
-            TerminatorKind::Return { value: Some(value) } if jsx_value(function, *value) => {
-                returned.insert(*value);
+            TerminatorKind::Return { value } => {
+                let Some(value) =
+                    renderable_return_value(hir, function, *value, block.terminator.origin)
+                else {
+                    active.remove(&block_id);
+                    return false;
+                };
+                returned.insert(value);
                 true
             }
             TerminatorKind::Goto { target } => {
-                visit(function, *target, active, complete, blocks, returned)
+                visit(hir, function, *target, active, complete, blocks, returned)
             }
             TerminatorKind::Branch {
                 consequent,
                 alternate,
                 ..
             } => {
-                visit(function, *consequent, active, complete, blocks, returned)
-                    && visit(function, *alternate, active, complete, blocks, returned)
+                visit(
+                    hir,
+                    function,
+                    *consequent,
+                    active,
+                    complete,
+                    blocks,
+                    returned,
+                ) && visit(
+                    hir, function, *alternate, active, complete, blocks, returned,
+                )
             }
             TerminatorKind::Switch { cases, .. }
                 if cases.iter().any(|case| case.test.is_none()) =>
             {
-                cases
-                    .iter()
-                    .all(|case| visit(function, case.target, active, complete, blocks, returned))
+                cases.iter().all(|case| {
+                    visit(
+                        hir,
+                        function,
+                        case.target,
+                        active,
+                        complete,
+                        blocks,
+                        returned,
+                    )
+                })
             }
-            TerminatorKind::Return { .. }
-            | TerminatorKind::Throw { .. }
+            TerminatorKind::Throw { .. }
             | TerminatorKind::ForIn { .. }
             | TerminatorKind::ForOf { .. }
             | TerminatorKind::Switch { .. }
@@ -298,6 +376,7 @@ fn returned_jsx_story(
     let mut blocks = BTreeSet::new();
     let mut returned = BTreeSet::new();
     visit(
+        hir,
         function,
         start,
         &mut active,
