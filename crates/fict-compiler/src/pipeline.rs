@@ -2739,7 +2739,13 @@ mod tests {
             result.code
         );
         assert_eq!(result.code.matches("spread(").count(), 2, "{}", result.code);
-        assert!(result.code.contains(", false, true)"), "{}", result.code);
+        assert!(
+            result
+                .code
+                .contains(", false, true, [\"class\", \"className\"])"),
+            "{}",
+            result.code
+        );
     }
 
     #[test]

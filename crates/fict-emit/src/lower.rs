@@ -2045,6 +2045,7 @@ enum TemplateBinding {
         value: ValueId,
         namespace: DomNamespace,
         skip_children: bool,
+        excluded: Vec<String>,
     },
     Child {
         parent_path: Vec<u32>,
@@ -2315,6 +2316,7 @@ fn lower_jsx_instruction(
                 value,
                 namespace,
                 skip_children,
+                excluded,
             } => {
                 let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
                 let element = resolved_element(
@@ -2332,7 +2334,7 @@ fn lower_jsx_instruction(
                         source: lower_value(value, value_temporaries),
                         namespace,
                         skip_children,
-                        excluded: Vec::new(),
+                        excluded,
                     },
                     helper: RuntimeHelper::Spread,
                     origin,
@@ -3232,6 +3234,12 @@ fn serialize_node(
                             value: *value,
                             namespace: element_namespace,
                             skip_children: has_authored_children || children_attribute.is_some(),
+                            excluded: spread_exclusions(
+                                tag,
+                                element_namespace,
+                                &element.attributes,
+                                attribute_index,
+                            ),
                         });
                     }
                 }
@@ -3700,6 +3708,42 @@ fn normalize_attribute_name(tag: &str, name: &str, namespace: DomNamespace) -> S
         _ => name,
     }
     .to_owned()
+}
+fn spread_exclusions(
+    tag: &str,
+    namespace: DomNamespace,
+    attributes: &[JsxAttribute],
+    spread_index: usize,
+) -> Vec<String> {
+    let mut excluded = BTreeSet::new();
+    for attribute in attributes.iter().skip(spread_index + 1) {
+        let JsxAttribute::Named { name, .. } = attribute else {
+            continue;
+        };
+        let mut normalized = normalize_attribute_name(tag, name, namespace);
+        if normalized.ends_with('$') && parse_event_attribute(&normalized).is_some() {
+            normalized.pop();
+        }
+        if normalized == "key" {
+            continue;
+        }
+        add_spread_exclusion_name(&mut excluded, &normalized);
+        if normalized != name.as_str() {
+            add_spread_exclusion_name(&mut excluded, name);
+        }
+    }
+    excluded.into_iter().collect()
+}
+fn add_spread_exclusion_name(excluded: &mut BTreeSet<String>, name: &str) {
+    excluded.insert(name.to_owned());
+    if matches!(name, "class" | "className") {
+        excluded.insert("class".to_owned());
+        excluded.insert("className".to_owned());
+    }
+    if matches!(name, "for" | "htmlFor") {
+        excluded.insert("for".to_owned());
+        excluded.insert("htmlFor".to_owned());
+    }
 }
 fn is_implicit_table_child(
     parent_tag: Option<&str>,

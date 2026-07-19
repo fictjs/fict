@@ -219,6 +219,52 @@ test('Rust compiler output preserves Core reactive runtime behavior', async () =
   })
 })
 
+test('later explicit JSX props keep precedence when an earlier spread reruns', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let replaceFirst = () => {}
+
+      function App() {
+        let first = $state({ title: 'first' })
+        const second = { 'data-role': 'second' }
+        replaceFirst = value => (first = value)
+        return <div data-testid="target" {...first} title="explicit" {...second}>x</div>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update() {
+        replaceFirst({ title: 'first-updated' })
+      }
+    `,
+    'jsx-spread-explicit-precedence',
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-J003'],
+    },
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const target = container.querySelector('[data-testid="target"]')
+  assert.equal(target?.getAttribute('title'), 'explicit')
+  assert.equal(target?.getAttribute('data-role'), 'second')
+
+  compiled.update()
+  await flushRuntime()
+  assert.equal(target?.getAttribute('title'), 'explicit')
+  assert.equal(target?.getAttribute('data-role'), 'second')
+
+  dispose()
+  container.remove()
+})
+
 test('native template extraction preserves static HTML and live binding paths', async () => {
   const result = binding.transformSync({
     code: `

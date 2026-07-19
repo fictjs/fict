@@ -480,6 +480,16 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     origin: origin(),
                 },
                 JsxAttribute::Named {
+                    name: "className".into(),
+                    value: JsxAttributeValue::Text("after-class".into()),
+                    origin: origin(),
+                },
+                JsxAttribute::Named {
+                    name: "htmlFor".into(),
+                    value: JsxAttributeValue::Text("target".into()),
+                    origin: origin(),
+                },
+                JsxAttribute::Named {
                     name: "data-value".into(),
                     value: JsxAttributeValue::Expression {
                         value: ValueId::new(0),
@@ -489,7 +499,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     origin: origin(),
                 },
                 JsxAttribute::Named {
-                    name: "onClick".into(),
+                    name: "onClick$".into(),
                     value: JsxAttributeValue::Expression {
                         value: ValueId::new(0),
                         function_like: false,
@@ -569,6 +579,31 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             )
         })
         .expect("ordered spread binding");
+    let spread_excluded = program.functions[0]
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            EmitOperation::ApplyProps {
+                operation: fict_emit::PropsOperation::Spread { excluded, .. },
+                ..
+            } => Some(excluded),
+            _ => None,
+        })
+        .expect("spread exclusions");
+    assert_eq!(
+        spread_excluded,
+        &[
+            "class".to_owned(),
+            "className".to_owned(),
+            "data-after".to_owned(),
+            "data-value".to_owned(),
+            "for".to_owned(),
+            "htmlFor".to_owned(),
+            "onClick".to_owned(),
+            "onClick$".to_owned(),
+            "ref".to_owned(),
+        ]
+    );
     let trailing_static_index = program.functions[0]
         .operations
         .iter()
