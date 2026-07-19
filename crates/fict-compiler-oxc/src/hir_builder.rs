@@ -2948,6 +2948,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 });
             }
 
+            let accessor_parameter_bindings: BTreeSet<_> = parameters
+                .iter()
+                .flat_map(|parameter| parameter.object_properties.iter().flatten())
+                .filter(|property| property.mode == HirObjectParameterMode::Accessor)
+                .map(|property| property.binding)
+                .collect();
+
             for source_binding in self
                 .frontend
                 .bindings
@@ -2964,7 +2971,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     id: LocalId::new(count_u32(locals.len())),
                     binding: Some(hir_binding),
                     scope: source_binding.scope,
-                    kind: LocalKind::User,
+                    kind: if accessor_parameter_bindings.contains(&hir_binding) {
+                        LocalKind::Parameter
+                    } else {
+                        LocalKind::User
+                    },
                     declaration_kind: if parameter_bindings.contains(&hir_binding) {
                         DeclarationKind::Parameter
                     } else {

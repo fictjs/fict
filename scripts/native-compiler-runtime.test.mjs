@@ -996,6 +996,55 @@ test('semantic EmitIR identities preserve destructuring and authored export name
   }
 })
 
+test('derived values from destructured component props stay reactive', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let update = () => {}
+
+      function FunctionChild({ count }) {
+        const doubled = count * 2
+        return <b data-id="function-derived">{doubled}</b>
+      }
+
+      const ArrowChild = ({ count }) => {
+        const tripled = count * 3
+        return <i data-id="arrow-derived">{tripled}</i>
+      }
+
+      function App() {
+        let count = $state(1)
+        update = value => (count = value)
+        return <main><FunctionChild count={count} /><ArrowChild count={count} /></main>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function refresh(value) {
+        update(value)
+      }
+    `,
+    'destructured-prop-derived',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="function-derived"]')?.textContent, '2')
+  assert.equal(container.querySelector('[data-id="arrow-derived"]')?.textContent, '3')
+
+  compiled.refresh(4)
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="function-derived"]')?.textContent, '8')
+  assert.equal(container.querySelector('[data-id="arrow-derived"]')?.textContent, '12')
+
+  dispose()
+  container.remove()
+})
+
 test('intrinsic children props become child content without leaking attributes', async () => {
   const compiled = await compileAndImport(
     `

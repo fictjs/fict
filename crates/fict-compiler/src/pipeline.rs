@@ -3474,6 +3474,32 @@ mod tests {
     }
 
     #[test]
+    fn derives_reactively_from_destructured_component_props() {
+        let result = compile(request(
+            "function FunctionChild({ count }) { const functionDerived = count * 2; return <b>{functionDerived}</b>; } const ArrowChild = ({ count }) => { const arrowDerived = count * 3; return <i>{arrowDerived}</i>; }; export function App({ count }) { return <><FunctionChild count={count} /><ArrowChild count={count} /></>; }",
+            "destructured-prop-derived.tsx",
+        ));
+
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("const functionDerived = __fictUseMemo(__fictCtx, () => count() * 2);"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const arrowDerived = __fictUseMemo(__fictCtx, () => count() * 3);"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("const functionDerived = count() * 2;"));
+        assert!(!result.code.contains("const arrowDerived = count() * 3;"));
+    }
+
+    #[test]
     fn lowers_mutated_component_props_to_local_snapshots() {
         let result = compile(request(
             "import { $state } from 'fict'; function Child({ reactive, local, count = 1, user: { name }, alias }) { local = 'changed'; count++; name = name.toUpperCase(); ({ alias } = { alias: 'reassigned' }); return <p>{reactive}:{local}:{count}:{name}:{alias}</p>; } export function App() { let reactive = $state('A'); return <Child reactive={reactive} local='initial' user={{ name: 'ann' }} alias='initial' />; }",
