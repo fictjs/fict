@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { isCanonicalArrayPropIndex } from './metadata-indices'
-import { MODULE_REACTIVE_METADATA_VERSION } from './types'
+import { MAX_METADATA_NAMESPACE_DEPTH, MODULE_REACTIVE_METADATA_VERSION } from './types'
 import type { ModuleReactiveMetadata } from './types'
 
 const UNKNOWN_FILENAME_TOKENS = new Set(['<unknown>', 'unknown', 'stdin', '[stdin]'])
@@ -21,7 +21,6 @@ const VIRTUAL_FILENAME_PREFIXES = [
 ]
 const MODULE_METADATA_KEYS = new Set(['version', 'exports', 'hooks', 'namespaces'])
 const HOOK_RETURN_KEYS = new Set(['objectProps', 'arrayProps', 'directAccessor'])
-const MAX_METADATA_NAMESPACE_DEPTH = 32
 
 interface FictPackageConfig {
   metadata?: string

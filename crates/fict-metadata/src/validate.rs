@@ -1,9 +1,10 @@
 use std::{error::Error, fmt};
 
-use crate::{MODULE_REACTIVE_METADATA_VERSION, MetadataResolutionStatus, ModuleReactiveMetadata};
+use crate::{
+    MAX_METADATA_NAMESPACE_DEPTH, MODULE_REACTIVE_METADATA_VERSION, MetadataResolutionStatus,
+    ModuleReactiveMetadata,
+};
 
-/// Maximum recursive namespace depth accepted from a metadata snapshot.
-pub const MAX_METADATA_NAMESPACE_DEPTH: usize = 64;
 const MAX_SAFE_JAVASCRIPT_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// Fail-closed validation error for metadata and graph snapshots.
@@ -119,10 +120,11 @@ pub(crate) fn validate_module_metadata(
     let mut stack = vec![("$".to_owned(), root, 0_usize)];
 
     while let Some((path, metadata, depth)) = stack.pop() {
-        if let Some(version) = metadata.version
-            && version != MODULE_REACTIVE_METADATA_VERSION
-        {
-            return Err(MetadataValidationError::UnsupportedVersion { path, version });
+        if metadata.version != MODULE_REACTIVE_METADATA_VERSION {
+            return Err(MetadataValidationError::UnsupportedVersion {
+                path,
+                version: metadata.version,
+            });
         }
 
         for (hook_name, hook) in &metadata.hooks {
@@ -175,14 +177,25 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{MAX_METADATA_NAMESPACE_DEPTH, MetadataValidationError};
+    use super::MetadataValidationError;
     use crate::{
-        HookReturnInfo, MODULE_REACTIVE_METADATA_VERSION, ModuleReactiveMetadata,
-        ReactiveExportKind,
+        HookReturnInfo, MAX_METADATA_NAMESPACE_DEPTH, MODULE_REACTIVE_METADATA_VERSION,
+        ModuleReactiveMetadata, ReactiveExportKind,
     };
 
+    fn metadata_at_namespace_depth(depth: usize) -> ModuleReactiveMetadata {
+        let mut metadata = ModuleReactiveMetadata::new();
+        for level in 0..depth {
+            metadata = ModuleReactiveMetadata {
+                namespaces: BTreeMap::from([(format!("level{level}"), metadata)]),
+                ..ModuleReactiveMetadata::new()
+            };
+        }
+        metadata
+    }
+
     #[test]
-    fn emits_versioned_deterministic_metadata_and_accepts_legacy_v1() {
+    fn emits_deterministic_metadata_and_requires_the_versioned_schema() {
         let mut metadata = ModuleReactiveMetadata::new();
         metadata
             .exports
@@ -201,32 +214,37 @@ mod tests {
         );
         assert_eq!(metadata.validate(), Ok(()));
 
-        let legacy: ModuleReactiveMetadata = serde_json::from_value(json!({
-            "exports": { "value": "memo" }
-        }))
-        .expect("deserialize legacy metadata");
-        assert_eq!(legacy.version, None);
-        assert_eq!(legacy.validate(), Ok(()));
-
-        assert!(
-            serde_json::from_value::<ModuleReactiveMetadata>(json!({
+        for invalid in [
+            json!({ "exports": {} }),
+            json!({
                 "version": null,
                 "exports": {}
-            }))
-            .is_err()
-        );
+            }),
+            json!({
+                "version": 1,
+                "exports": {},
+                "legacy": true
+            }),
+            json!({
+                "version": 1,
+                "exports": {},
+                "hooks": { "useValue": { "unknown": true } }
+            }),
+        ] {
+            assert!(serde_json::from_value::<ModuleReactiveMetadata>(invalid).is_err());
+        }
     }
 
     #[test]
     fn rejects_unsupported_versions_and_noncanonical_array_indices() {
         let mut metadata = ModuleReactiveMetadata::new();
-        metadata.version = Some(MODULE_REACTIVE_METADATA_VERSION + 1);
+        metadata.version = MODULE_REACTIVE_METADATA_VERSION + 1;
         assert!(matches!(
             metadata.validate(),
             Err(MetadataValidationError::UnsupportedVersion { .. })
         ));
 
-        metadata.version = Some(MODULE_REACTIVE_METADATA_VERSION);
+        metadata.version = MODULE_REACTIVE_METADATA_VERSION;
         metadata.hooks.insert(
             "useTuple".to_owned(),
             HookReturnInfo {
@@ -241,18 +259,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_excessive_namespace_depth_iteratively() {
-        let mut metadata = ModuleReactiveMetadata::new();
-        for depth in 0..=MAX_METADATA_NAMESPACE_DEPTH {
-            metadata = ModuleReactiveMetadata {
-                namespaces: BTreeMap::from([(format!("level{depth}"), metadata)]),
-                ..ModuleReactiveMetadata::new()
-            };
+    fn enforces_namespace_depth_boundaries_iteratively() {
+        assert_eq!(MAX_METADATA_NAMESPACE_DEPTH, 32);
+
+        for depth in [31, 32] {
+            assert_eq!(metadata_at_namespace_depth(depth).validate(), Ok(()));
         }
 
-        assert!(matches!(
-            metadata.validate(),
-            Err(MetadataValidationError::NamespaceDepthExceeded { .. })
-        ));
+        for depth in [33, 63, 64, 65] {
+            assert!(matches!(
+                metadata_at_namespace_depth(depth).validate(),
+                Err(MetadataValidationError::NamespaceDepthExceeded { .. })
+            ));
+        }
     }
 }

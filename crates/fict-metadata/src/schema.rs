@@ -1,11 +1,8 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
-use crate::MetadataValidationError;
-
-/// Current module-reactivity metadata schema version.
-pub const MODULE_REACTIVE_METADATA_VERSION: u32 = 1;
+use crate::{MODULE_REACTIVE_METADATA_VERSION, MetadataValidationError};
 
 /// Runtime representation exposed by a module export or hook return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,7 +18,7 @@ pub enum ReactiveExportKind {
 
 /// Serializable accessor shape returned by a hook.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HookReturnInfo {
     /// Reactive properties returned in an object.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -36,15 +33,10 @@ pub struct HookReturnInfo {
 
 /// Deterministic module metadata exchanged with JavaScript graph hosts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ModuleReactiveMetadata {
-    /// Schema version. Missing version is accepted only for legacy v1 input.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_present_version",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub version: Option<u32>,
+    /// Required schema version.
+    pub version: u32,
     /// Reactive values exported by this module.
     pub exports: BTreeMap<String, ReactiveExportKind>,
     /// Reactive return shapes for exported hooks.
@@ -55,19 +47,12 @@ pub struct ModuleReactiveMetadata {
     pub namespaces: BTreeMap<String, ModuleReactiveMetadata>,
 }
 
-fn deserialize_present_version<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    u32::deserialize(deserializer).map(Some)
-}
-
 impl ModuleReactiveMetadata {
     /// Create canonical metadata for native output.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            version: Some(MODULE_REACTIVE_METADATA_VERSION),
+            version: MODULE_REACTIVE_METADATA_VERSION,
             exports: BTreeMap::new(),
             hooks: BTreeMap::new(),
             namespaces: BTreeMap::new(),

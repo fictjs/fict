@@ -24,6 +24,30 @@ const request = {
   options: { sourcemap: true, explain: true },
 }
 
+function metadataAtNamespaceDepth(depth) {
+  let metadata = { version: 1, exports: {} }
+  for (let level = 0; level < depth; level += 1) {
+    metadata = { version: 1, exports: {}, namespaces: { [`level${level}`]: metadata } }
+  }
+  return metadata
+}
+
+function transformWithMetadata(binding, metadata) {
+  return binding.transformSync({
+    code: 'export const value = 1',
+    filename: '/fixtures/metadata-protocol.js',
+    metadata: [
+      {
+        request: './metadata-dependency.js',
+        resolvedId: '/fixtures/metadata-dependency.js',
+        status: 'resolved',
+        metadata,
+        fingerprint: 'sha256:metadata-dependency',
+      },
+    ],
+  })
+}
+
 function withoutStageTimings(result) {
   return {
     ...result,
@@ -142,6 +166,28 @@ for (const [format, facade] of [
   const malformed = binding.transformSync({ code: 42, filename: 'malformed.ts' })
   assert.equal(malformed.code, '')
   assert.equal(malformed.diagnostics[0]?.code, 'FICT-REQUEST')
+
+  for (const depth of [31, 32]) {
+    const result = transformWithMetadata(binding, metadataAtNamespaceDepth(depth))
+    assert.deepEqual(result.diagnostics, [], `${format}: depth ${depth} must be accepted`)
+  }
+  for (const depth of [33, 63, 64, 65]) {
+    const result = transformWithMetadata(binding, metadataAtNamespaceDepth(depth))
+    assert.equal(
+      result.diagnostics[0]?.code,
+      'FICT-REQUEST',
+      `${format}: depth ${depth} must be rejected`,
+    )
+  }
+  for (const [name, metadata] of [
+    ['unversioned', { exports: {} }],
+    ['null version', { version: null, exports: {} }],
+    ['unknown version', { version: 2, exports: {} }],
+    ['unknown field', { version: 1, exports: {}, legacy: true }],
+  ]) {
+    const result = transformWithMetadata(binding, metadata)
+    assert.equal(result.diagnostics[0]?.code, 'FICT-REQUEST', `${format}: ${name} must be rejected`)
+  }
 
   const scanRequest = {
     code: `

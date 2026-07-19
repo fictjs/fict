@@ -2,12 +2,12 @@
 
 //! Serializable module-reactivity metadata schema, analysis, and validation.
 
+mod protocol;
 mod resolved;
 mod schema;
 mod validate;
 
+pub use protocol::{MAX_METADATA_NAMESPACE_DEPTH, MODULE_REACTIVE_METADATA_VERSION};
 pub use resolved::{MetadataResolutionStatus, ResolvedMetadataInput};
-pub use schema::{
-    HookReturnInfo, MODULE_REACTIVE_METADATA_VERSION, ModuleReactiveMetadata, ReactiveExportKind,
-};
-pub use validate::{MAX_METADATA_NAMESPACE_DEPTH, MetadataValidationError};
+pub use schema::{HookReturnInfo, ModuleReactiveMetadata, ReactiveExportKind};
+pub use validate::MetadataValidationError;

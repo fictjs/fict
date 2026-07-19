@@ -13,6 +13,14 @@ const metadata = (kind: 'signal' | 'memo' | 'store' = 'signal') => ({
   exports: { value: kind },
 })
 
+function metadataAtNamespaceDepth(depth: number): Record<string, unknown> {
+  let value: Record<string, unknown> = { version: 1, exports: {} }
+  for (let level = 0; level < depth; level += 1) {
+    value = { version: 1, exports: {}, namespaces: { [`level${level}`]: value } }
+  }
+  return value
+}
+
 interface PackageFixture {
   importer: string
   packageRoot: string
@@ -62,6 +70,7 @@ describe('native module metadata safety', () => {
       'null',
       '[]',
       JSON.stringify({ exports: {} }),
+      JSON.stringify({ version: null, exports: {} }),
       JSON.stringify({ version: 2, exports: {} }),
       JSON.stringify({ version: 1, exports: {}, legacy: true }),
       JSON.stringify({ version: 1, exports: null }),
@@ -85,13 +94,8 @@ describe('native module metadata safety', () => {
         exports: {},
         namespaces: { nested: { version: 2, exports: {} } },
       }),
+      JSON.stringify(metadataAtNamespaceDepth(33)),
     ]
-
-    let overDeep: Record<string, unknown> = { version: 1, exports: {} }
-    for (let depth = 0; depth < 34; depth += 1) {
-      overDeep = { version: 1, exports: {}, namespaces: { nested: overDeep } }
-    }
-    invalid.push(JSON.stringify(overDeep))
 
     for (const raw of invalid) expect(parseModuleReactiveMetadata(raw), raw).toBeNull()
     expect(
@@ -103,6 +107,18 @@ describe('native module metadata safety', () => {
         }),
       ),
     ).not.toBeNull()
+  })
+
+  it.each([
+    [31, true],
+    [32, true],
+    [33, false],
+    [63, false],
+    [64, false],
+    [65, false],
+  ] as const)('applies the namespace budget at depth %i', (depth, accepted) => {
+    const parsed = parseModuleReactiveMetadata(JSON.stringify(metadataAtNamespaceDepth(depth)))
+    expect(parsed !== null).toBe(accepted)
   })
 
   it('preserves reserved names as own data without prototype pollution', () => {

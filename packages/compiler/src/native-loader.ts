@@ -12,12 +12,13 @@ import {
   resolveNativeTarget,
 } from './native-target'
 import type { AnalyzeResult } from './tooling/types'
-import type {
-  AnalyzeRequest,
-  CompileRequest,
-  CompileResult,
-  ScanRequest,
-  ScanResult,
+import {
+  MODULE_REACTIVE_METADATA_VERSION,
+  type AnalyzeRequest,
+  type CompileRequest,
+  type CompileResult,
+  type ScanRequest,
+  type ScanResult,
 } from './types'
 
 export {
@@ -87,7 +88,7 @@ const requireFromCompiler = createRequire(import.meta.url)
 const OXC_RUNTIME_HELPER_PREFIX = '@oxc-project/runtime/helpers/'
 const EXPECTED_OXC_VERSION = '0.139.0'
 const EXPECTED_COMPILER_PROTOCOL_VERSION = 1
-const EXPECTED_METADATA_SCHEMA_VERSION = 1
+const EXPECTED_METADATA_SCHEMA_VERSION = MODULE_REACTIVE_METADATA_VERSION
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null

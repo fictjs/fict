@@ -2,6 +2,13 @@
 // Types and Constants
 // ============================================================================
 
+import type { MODULE_REACTIVE_METADATA_VERSION } from './metadata-protocol.generated'
+
+export {
+  MAX_METADATA_NAMESPACE_DEPTH,
+  MODULE_REACTIVE_METADATA_VERSION,
+} from './metadata-protocol.generated'
+
 export type FictDiagnosticSeverity = 'error' | 'warning' | 'info'
 
 export type FictDiagnosticGuaranteeClass =
@@ -44,8 +51,6 @@ export type CompilerExplainEventKind =
   | 'diagnostic'
 
 export type ReactiveExportKind = 'signal' | 'memo' | 'store'
-
-export const MODULE_REACTIVE_METADATA_VERSION = 1
 
 export type ModuleReactiveMetadataVersion = typeof MODULE_REACTIVE_METADATA_VERSION
 
