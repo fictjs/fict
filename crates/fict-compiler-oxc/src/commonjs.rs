@@ -23,13 +23,15 @@ const RUNNER_EXPORTS: &str = "__vite_ssr_exports__";
 const RUNNER_EXPORT_ALL: &str = "__vite_ssr_exportAll__";
 const RUNNER_DYNAMIC_IMPORT: &str = "__vite_ssr_dynamic_import__";
 const RUNNER_IMPORT_META: &str = "__vite_ssr_import_meta__";
-const COMMONJS_HOST_BINDINGS: [&str; 6] = [
+const COMMONJS_GENERATED_GLOBAL_BINDINGS: [&str; 8] = [
     "arguments",
     "exports",
     "module",
     "require",
     "__filename",
     "__dirname",
+    "Object",
+    "WeakMap",
 ];
 
 /// Lower standard ESM declarations in a CommonJS/CTS request after ordinary OXC transforms.
@@ -55,7 +57,7 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
     let mut reserved_names: BTreeSet<String> = scoping
         .symbol_names()
         .map(str::to_owned)
-        .chain(COMMONJS_HOST_BINDINGS.map(str::to_owned))
+        .chain(COMMONJS_GENERATED_GLOBAL_BINDINGS.map(str::to_owned))
         .collect();
     let generated_bindings = generated_binding_names(
         allocator,
@@ -65,6 +67,8 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
     );
     let require_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_require");
     let static_import_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_load");
+    let namespace_cache_local =
+        allocate_name(allocator, &mut reserved_names, "__fict_cjs_namespace_cache");
     let exports_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_exports");
     let export_all_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_export_all");
     let dynamic_import_local =
@@ -76,6 +80,7 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
         generated_bindings,
         require_local,
         static_import_local,
+        namespace_cache_local,
         exports_local,
         export_all_local,
         dynamic_import_local,
@@ -117,14 +122,14 @@ fn generated_binding_names<'a>(
     for symbol_id in scoping.symbol_ids() {
         let index = symbol_id.index();
         let current = scoping.symbol_name(symbol_id);
-        let host_binding = scoping.symbol_scope_id(symbol_id) == root_scope
-            && COMMONJS_HOST_BINDINGS.contains(&current);
+        let generated_global_binding = scoping.symbol_scope_id(symbol_id) == root_scope
+            && COMMONJS_GENERATED_GLOBAL_BINDINGS.contains(&current);
         let runner_created = index >= original_symbol_names.len();
         let runner_renamed = original_symbol_names
             .get(index)
             .is_some_and(|original| original != current && current.starts_with("__vite_ssr_"));
-        if runner_created || runner_renamed || host_binding {
-            let preferred = if host_binding {
+        if runner_created || runner_renamed || generated_global_binding {
+            let preferred = if generated_global_binding {
                 format!("__fict_cjs_user_{}", current.trim_start_matches('_'))
             } else if current.contains("import") {
                 "__fict_cjs_import".to_owned()
@@ -162,6 +167,7 @@ struct CommonJsRunnerAdapter<'a> {
     generated_bindings: BTreeMap<usize, &'a str>,
     require_local: &'a str,
     static_import_local: &'a str,
+    namespace_cache_local: &'a str,
     exports_local: &'a str,
     export_all_local: &'a str,
     dynamic_import_local: &'a str,
@@ -296,8 +302,14 @@ fn inject_commonjs_prelude<'a>(
     }
     if adapter.uses_static_import {
         sources.push(format!(
-            "const {} = (value, metadata) => {{ if (!metadata || !metadata.importedNames || !metadata.importedNames.includes(\"default\") || (value && value.__esModule)) return value; const wrapper = Object.create(value !== null && (typeof value === \"object\" || typeof value === \"function\") ? value : null); Object.defineProperty(wrapper, \"default\", {{ enumerable: true, value }}); return wrapper; }};",
-            adapter.static_import_local
+            "const {} = new WeakMap();",
+            adapter.namespace_cache_local
+        ));
+        sources.push(format!(
+            "const {} = (value, metadata) => {{ const needsNamespace = !metadata || !metadata.importedNames || metadata.importedNames.includes(\"default\"); if (!needsNamespace || (value && value.__esModule)) return value; const objectLike = value !== null && (typeof value === \"object\" || typeof value === \"function\"); if (objectLike) {{ const cached = {}.get(value); if (cached) return cached; }} const wrapper = Object.create(null); if (objectLike) {{ for (const key in value) {{ if (key === \"default\" || !Object.prototype.hasOwnProperty.call(value, key)) continue; const descriptor = Object.getOwnPropertyDescriptor(value, key); if (descriptor && (descriptor.get || descriptor.set)) Object.defineProperty(wrapper, key, descriptor); else wrapper[key] = value[key]; }} }} Object.defineProperty(wrapper, \"default\", {{ enumerable: true, value }}); if (objectLike) {}.set(value, wrapper); return wrapper; }};",
+            adapter.static_import_local,
+            adapter.namespace_cache_local,
+            adapter.namespace_cache_local
         ));
     }
     if adapter.uses_exports {

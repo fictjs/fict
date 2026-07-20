@@ -461,6 +461,15 @@ mod tests {
             output.code
         );
         assert!(
+            output.code.contains("new WeakMap()")
+                && output.code.contains("Object.create(null)")
+                && output
+                    .code
+                    .contains("Object.getOwnPropertyDescriptor(value, key)"),
+            "{}",
+            output.code
+        );
+        assert!(
             output
                 .code
                 .contains("for (const key of Object.keys(source))"),
@@ -502,8 +511,10 @@ mod tests {
                 "const __filename = 'user-filename';\n",
                 "const __dirname = 'user-dirname';\n",
                 "const arguments = 'user-arguments';\n",
+                "const Object = 'user-object';\n",
+                "const WeakMap = 'user-weak-map';\n",
                 "import dependency from './dependency.cjs';\n",
-                "export const values = [require, exports, module, __filename, __dirname, arguments, dependency.value];",
+                "export const values = [require, exports, module, __filename, __dirname, arguments, Object, WeakMap, dependency.value];",
             ),
             "entry.cts",
             commonjs,
@@ -517,6 +528,8 @@ mod tests {
             "filename",
             "dirname",
             "arguments",
+            "Object",
+            "WeakMap",
         ] {
             assert!(
                 output.code.contains(&format!("__fict_cjs_user_{name}")),
