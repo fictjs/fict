@@ -185,6 +185,22 @@ owner, rationale, final plan, removal condition, and release disposition. The
 compiler release verifier rejects any remaining `validation-regression` or
 `reactive-equivalence-required` row.
 
+The 214 compiler-helper callsites that were outside the original 1,950-request
+corpus are no longer represented by inventory markers alone. Generation runs
+all 29 affected Babel 0.28 test files unchanged (147 suites, 1,917 tests),
+associates 1,444 executions with 212 callsites, and records explicit reasons for
+the two sites that cannot enter the compiler. Their 1,222 deduplicated native
+requests are replayed in CI with status, diagnostic, output-hash, and
+determinism checks. All five remaining status transitions are policy reviewed:
+three are existing fail-closed Rust rejections and two are the reviewed
+`genuine-capability-expansion` and `intentional-runtime-error` acceptances.
+
+This closes the compiler-invocation regression gap without overstating the
+claim: the replay executes the old assertions during generation, but it does
+not compare complete Babel-generated output or prove assertion-by-assertion
+semantic equivalence. Cross-implementation runtime claims continue to come
+from the dedicated semantic, DOM, SSR, tooling, and source-map oracles.
+
 The four Rust-rejection policies have direct source migrations:
 
 ```tsx

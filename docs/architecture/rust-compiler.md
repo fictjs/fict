@@ -254,6 +254,33 @@ The inventory is pinned to the same legacy source-tree and extraction-input
 digests as the corpus, so changing the old suite or audit requires a reviewed
 regeneration rather than silently preserving the 73-file headline.
 
+The 214 previously unrepresented compiler callsites now have a separate
+[runtime callsite replay](../../crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json).
+Its generator runs the 29 affected legacy test files unchanged: 147 suites and
+1,917 tests pass while an in-memory probe records 2,327 compiler
+invocations. Exact stack frames associate 1,444 runtime executions with 212 of
+the static callsites. The remaining two sites are explicit reviews: one is an
+unused helper body, and one is rejected by the Babel parser before the compiler
+visitor can run.
+
+Those executions deduplicate to 1,222 native requests while retaining
+serializable compiler policy, CommonJS host context, warnings, and captured
+module metadata. Random temporary file URLs are normalized before fixture
+identity is computed. If the legacy invocation supplied an authoritative
+metadata Map or resolver, every unresolved static request receives an explicit
+`missing` snapshot; host callbacks and filesystem behavior do not cross into
+the native request.
+
+CI compiles every replay fixture twice and checks status, structured diagnostic
+summary, output hash, and a deterministic full-result hash with timing and build
+identity removed. A Node guard independently checks callsite/fixture linkage,
+the two zero-invocation reviews, metadata snapshots, and all policy rows. The
+only status differences are five already-reviewed migration policies: three
+Babel-success/Rust-error fail-closed cases and two Babel-error/Rust-success
+cases. This is complete compiler-invocation regression coverage for the 214
+sites; it does not compare generated Babel output or prove that every legacy
+assertion has a semantically equivalent native assertion.
+
 The 34 files with no audit row use a separate
 [legacy domain ledger](../../scripts/fixtures/legacy_0_28_test_domain_coverage.json).
 Its schema declares the strength of every replacement claim instead of treating

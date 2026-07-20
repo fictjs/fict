@@ -18,6 +18,8 @@ const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus
 const evidenceScopePath = 'scripts/fixtures/compiler_compatibility_evidence_scope.json'
 const requestPolicyPath = 'scripts/fixtures/compiler_corpus_request_policy.json'
 const assertionInventoryPath = 'scripts/fixtures/legacy_0_28_compiler_assertion_inventory.json'
+const unrepresentedReplayPath =
+  'crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json'
 const rustAcceptanceReviewPath = 'scripts/fixtures/compiler_rust_acceptance_reviews.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
@@ -36,6 +38,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'legacyAssertionInventory',
     'legacyDomainLedger',
     'legacyOptionBehaviorAudit',
+    'legacyUnrepresentedCallsiteReplay',
     'nativeSourceMapComposition',
     'nativeStatsNumberBoundary',
     'r006SuppressionAudit',
@@ -59,6 +62,42 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.ok(inventoryScope.doesNotProve.includes('assertion-level-semantic-parity'))
   assert.ok(read(inventoryScope.generator).length > 0)
   assert.ok(read(inventoryScope.ciTest).length > 0)
+
+  const replayScope = scope.assets.legacyUnrepresentedCallsiteReplay
+  const replay = readJson(replayScope.artifact)
+  assert.equal(replayScope.artifact, unrepresentedReplayPath)
+  assert.equal(replayScope.selectedLegacyTestFiles, replay.provenance.selectedTestFiles)
+  assert.equal(replayScope.selectedLegacyTests, replay.provenance.selectedTests)
+  assert.equal(
+    replayScope.capturedCompilerInvocations,
+    replay.provenance.capturedCompilerInvocations,
+  )
+  assert.equal(replayScope.staticCallsites, replay.provenance.staticCallsites)
+  assert.equal(replayScope.executedCallsites, replay.provenance.executedCallsites)
+  assert.equal(
+    replayScope.reviewedZeroInvocationCallsites,
+    replay.provenance.zeroInvocationCallsites,
+  )
+  assert.equal(replayScope.matchedCallsiteExecutions, replay.provenance.matchedCallsiteExecutions)
+  assert.equal(replayScope.replayFixtures, replay.provenance.replayFixtures)
+  assert.equal(
+    replayScope.reviewedStatusTransitions,
+    Object.values(replay.transitionCounts).reduce((sum, count) => sum + count, 0),
+  )
+  assert.equal(replayScope.exactLegacyCompilerExecutedDuringGeneration, true)
+  assert.equal(replayScope.legacyAssertionsExecutedDuringGeneration, true)
+  assert.equal(replayScope.currentRustOutputExecutedInCi, true)
+  assert.equal(replay.claimBoundary.legacyAssertionsExecuted, true)
+  assert.equal(replay.claimBoundary.legacyGeneratedOutputCompared, false)
+  assert.equal(replay.claimBoundary.semanticAssertionParityProven, false)
+  assert.equal(replay.claimBoundary.statusTransitionsPolicyReviewed, true)
+  assert.ok(
+    replayScope.proves.includes('reviewed-zero-invocation-and-status-transition-accounting'),
+  )
+  assert.ok(replayScope.doesNotProve.includes('assertion-level-semantic-parity'))
+  assert.ok(read(replayScope.generator).length > 0)
+  assert.ok(read(replayScope.captureConfig).length > 0)
+  assert.ok(replayScope.ciTests.every(ciTest => read(ciTest).length > 0))
 
   const domainScope = scope.assets.legacyDomainLedger
   const domainLedger = readJson(domainScope.artifact)

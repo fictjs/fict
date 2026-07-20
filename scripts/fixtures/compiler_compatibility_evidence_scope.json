@@ -20,6 +20,39 @@
         "parameterized-runtime-instance-count"
       ]
     },
+    "legacyUnrepresentedCallsiteReplay": {
+      "artifact": "crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json",
+      "generator": "scripts/generate-legacy-unrepresented-callsite-replay.mjs",
+      "captureConfig": "scripts/legacy-unrepresented-capture.vitest.config.mjs",
+      "ciTests": [
+        "crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.rs",
+        "scripts/legacy-unrepresented-callsite-replay.test.mjs"
+      ],
+      "selectedLegacyTestFiles": 29,
+      "selectedLegacyTests": 1917,
+      "capturedCompilerInvocations": 2327,
+      "staticCallsites": 214,
+      "executedCallsites": 212,
+      "reviewedZeroInvocationCallsites": 2,
+      "matchedCallsiteExecutions": 1444,
+      "replayFixtures": 1222,
+      "reviewedStatusTransitions": 5,
+      "exactLegacyCompilerExecutedDuringGeneration": true,
+      "legacyAssertionsExecutedDuringGeneration": true,
+      "currentRustOutputExecutedInCi": true,
+      "assertionLevel": "compiler-invocation-replay-regression",
+      "proves": [
+        "runtime-association-for-every-statically-unrepresented-compiler-callsite",
+        "unchanged-legacy-assertion-execution-during-generation",
+        "reviewed-zero-invocation-and-status-transition-accounting",
+        "current-rust-status-diagnostic-output-and-determinism-regression"
+      ],
+      "doesNotProve": [
+        "legacy-generated-output-equivalence",
+        "assertion-level-semantic-parity",
+        "host-callback-execution-inside-the-native-compiler"
+      ]
+    },
     "legacyDomainLedger": {
       "artifact": "scripts/fixtures/legacy_0_28_test_domain_coverage.json",
       "ciTest": "scripts/legacy-test-domain-coverage.test.mjs",
