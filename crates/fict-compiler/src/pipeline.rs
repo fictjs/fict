@@ -3101,6 +3101,38 @@ mod tests {
     }
 
     #[test]
+    fn rejects_jsx_spread_children_at_the_source_boundary() {
+        for (name, source) in [
+            (
+                "intrinsic",
+                "export function App(items) { return <div>{...items}</div>; }",
+            ),
+            (
+                "component",
+                "function Child() { return null; } export function App(items) { return <Child>{...items}</Child>; }",
+            ),
+            (
+                "fragment",
+                "export function App(items) { return <>{...items}</>; }",
+            ),
+        ] {
+            let result = compile(request(source, &format!("jsx-spread-child-{name}.tsx")));
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            let diagnostics: Vec<_> = result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J005")
+                .collect();
+            assert_eq!(diagnostics.len(), 1, "{name}: {:?}", result.diagnostics);
+            assert_eq!(
+                diagnostics[0].message, "JSX spread children are not supported",
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn excludes_forced_and_custom_property_targets_from_earlier_spreads() {
         let mut input = request(
             "export function Widget(first) { return <my-widget {...first} some-prop=\"custom\" prop:textContent=\"text\" bool:data-on />; }",

@@ -83,6 +83,7 @@ mod class_components;
 mod dangerous_html;
 mod function_abi;
 mod inline_jsx_functions;
+mod jsx_spread_children;
 mod macro_policy;
 mod memo_side_effects;
 mod native_jsx_spreads;
@@ -1833,6 +1834,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             program,
             self.semantic.scoping(),
         ));
+        self.diagnostics
+            .extend(jsx_spread_children::diagnostics(program));
         let mut collector = FunctionCollector::new(source_span(program.span));
         collector.visit_program(program);
         self.function_by_span = collector

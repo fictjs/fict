@@ -372,6 +372,19 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 **Fix:** Use either `dangerouslySetInnerHTML` or JSX children on a native element, never both. Formatting-only multiline whitespace and JSX comments do not count as children; component props are unaffected.
 
+### FICT-J005: JSX spread child
+
+**Severity:** Error
+
+**Why:** JSX spread-child syntax such as `<div>{...items}</div>` has no stable source-level
+rendering contract in Fict. This does not affect JSX spread attributes such as `<div {...props} />`.
+
+**Impact:** Lowering the expression as one child or as many children would produce ambiguous
+rendering, ownership, and update semantics.
+
+**Fix:** Render the collection explicitly, for example with
+`{items.map(item => <Item key={item.id} item={item} />)}`.
+
 ---
 
 ## Regions/Scopes (FICT-R\*)

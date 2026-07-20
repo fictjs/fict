@@ -6822,14 +6822,13 @@ fn propagates_module_policies_without_leaking_function_policies() {
     }
 }
 #[test]
-fn builds_structural_jsx_tags_attributes_children_and_spreads() {
+fn builds_structural_jsx_tags_attributes_children_and_prop_spreads() {
     let source = r#"
         import * as UI from './ui';
         import { Item } from './item';
         export function App({ items }) {
             return <UI.List dense title="items" {...items}>
                 <Item value={items[0]} />
-                {...items}
             </UI.List>;
         }
     "#;
@@ -6872,11 +6871,43 @@ fn builds_structural_jsx_tags_attributes_children_and_spreads() {
             if matches!(node.as_ref(), fict_hir::JsxNode::Element(element)
                 if matches!(element.name, fict_hir::JsxElementName::Component(_)))
     )));
-    assert!(
-        root.children
+}
+
+#[test]
+fn rejects_source_jsx_spread_children() {
+    let cases = [
+        (
+            "intrinsic",
+            "export function App(items) { return <div>{...items}</div>; }",
+        ),
+        (
+            "component",
+            "function Child() { return null; } export function App(items) { return <Child>{...items}</Child>; }",
+        ),
+        (
+            "fragment",
+            "export function App(items) { return <>{...items}</>; }",
+        ),
+    ];
+
+    for (name, source) in cases {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScriptJsx),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: {:?}", output.diagnostics);
+        let diagnostics: Vec<_> = output
+            .diagnostics
             .iter()
-            .any(|child| matches!(child, fict_hir::JsxChild::Spread { .. }))
-    );
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J005")
+            .collect();
+        assert_eq!(diagnostics.len(), 1, "{name}: {:?}", output.diagnostics);
+        assert_eq!(
+            diagnostics[0].message, "JSX spread children are not supported",
+            "{name}"
+        );
+    }
 }
 #[test]
 fn models_binding_aware_direct_keyed_map_callbacks() {
