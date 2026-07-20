@@ -543,6 +543,22 @@ mod tests {
     }
 
     #[test]
+    fn preserves_default_binding_in_mixed_namespace_imports() {
+        let mut commonjs = options(OxcSourceLanguage::TypeScript);
+        commonjs.module_kind = OxcModuleKind::CommonJs;
+        let output = compile_passthrough(
+            "import primary, * as namespace from './dependency.cjs'; export const values = [primary, primary(), namespace.default];",
+            "entry.cts",
+            commonjs,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(!output.code.contains("[primary,"), "{}", output.code);
+        assert!(output.code.contains(".default"), "{}", output.code);
+        assert!(output.code.contains("(0,"), "{}", output.code);
+    }
+
+    #[test]
     fn renames_top_level_commonjs_host_bindings() {
         let mut commonjs = options(OxcSourceLanguage::TypeScript);
         commonjs.module_kind = OxcModuleKind::CommonJs;

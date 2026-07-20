@@ -197,6 +197,43 @@ test('creates stable own-property namespaces for a raw CommonJS dependency', () 
   }
 })
 
+test('preserves default and namespace bindings from one CommonJS import', () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-mixed-import-'))
+  try {
+    writeFileSync(
+      path.join(fixtureRoot, 'dependency.cjs'),
+      `
+        module.exports = function primary() {
+          'use strict'
+          return this === undefined
+        }
+        module.exports.named = 7
+      `,
+      'utf8',
+    )
+    const entryPath = path.join(fixtureRoot, 'entry.cjs')
+    writeFileSync(
+      entryPath,
+      compileCommonJs(
+        `
+          import primary, * as namespace from './dependency.cjs'
+          export const values = [
+            primary === namespace.default,
+            primary(),
+            namespace.named,
+          ]
+        `,
+        entryPath,
+      ),
+      'utf8',
+    )
+
+    assert.deepEqual(require(entryPath).values, [true, true, 7])
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true })
+  }
+})
+
 test('lowers CommonJS import.meta.url to the executing file URL', () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-import-meta-'))
   try {

@@ -6,17 +6,18 @@ use oxc::{
     ast::{
         AstBuilder, NONE,
         ast::{
-            Argument, BindingIdentifier, Directive, Expression, IdentifierReference, Program,
-            Statement,
+            Argument, BindingIdentifier, Directive, Expression, IdentifierName,
+            IdentifierReference, ImportDeclarationSpecifier, Program, Statement,
         },
     },
     ast_visit::{VisitMut, walk_mut},
     parser::Parser,
     semantic::Scoping,
     span::{GetSpan, SourceType, Span},
+    syntax::number::NumberBase,
     transformer_plugins::ModuleRunnerTransform,
 };
-use oxc_traverse::{Traverse, TraverseCtx, traverse_mut};
+use oxc_traverse::{Ancestor, Traverse, TraverseCtx, traverse_mut};
 
 const RUNNER_IMPORT: &str = "__vite_ssr_import__";
 const RUNNER_EXPORTS: &str = "__vite_ssr_exports__";
@@ -50,6 +51,7 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
         return Ok(());
     }
 
+    let mixed_default_namespace_symbols = mixed_default_namespace_symbols(program);
     let original_symbol_names: Vec<_> = scoping.symbol_names().map(str::to_owned).collect();
     let mut runner = ModuleRunnerTransform::new();
     let scoping = traverse_mut(&mut runner, allocator, program, scoping, ());
@@ -65,6 +67,15 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
         &original_symbol_names,
         &mut reserved_names,
     );
+    let mixed_default_namespace_bindings = mixed_default_namespace_symbols
+        .into_iter()
+        .filter_map(|(default_symbol, namespace_symbol)| {
+            generated_bindings
+                .get(&namespace_symbol)
+                .copied()
+                .map(|namespace_name| (default_symbol, namespace_name))
+        })
+        .collect();
     let require_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_require");
     let static_import_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_load");
     let namespace_cache_local =
@@ -78,6 +89,7 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
     let mut adapter = CommonJsRunnerAdapter {
         allocator,
         generated_bindings,
+        mixed_default_namespace_bindings,
         require_local,
         static_import_local,
         namespace_cache_local,
@@ -97,6 +109,34 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
     inject_commonjs_prelude(allocator, program, &adapter)?;
     program.source_type = program.source_type.with_commonjs(true);
     Ok(())
+}
+
+fn mixed_default_namespace_symbols(program: &Program<'_>) -> BTreeMap<usize, usize> {
+    let mut bindings = BTreeMap::new();
+    for statement in &program.body {
+        let Statement::ImportDeclaration(declaration) = statement else {
+            continue;
+        };
+        let Some(specifiers) = &declaration.specifiers else {
+            continue;
+        };
+        let default_symbol = specifiers.iter().find_map(|specifier| {
+            let ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) = specifier else {
+                return None;
+            };
+            specifier.local.symbol_id.get().map(|symbol| symbol.index())
+        });
+        let namespace_symbol = specifiers.iter().find_map(|specifier| {
+            let ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) = specifier else {
+                return None;
+            };
+            specifier.local.symbol_id.get().map(|symbol| symbol.index())
+        });
+        if let (Some(default_symbol), Some(namespace_symbol)) = (default_symbol, namespace_symbol) {
+            bindings.insert(default_symbol, namespace_symbol);
+        }
+    }
+    bindings
 }
 
 fn contains_standard_esm(program: &Program<'_>) -> bool {
@@ -166,6 +206,7 @@ fn allocate_name<'a>(
 struct CommonJsRunnerAdapter<'a> {
     allocator: &'a Allocator,
     generated_bindings: BTreeMap<usize, &'a str>,
+    mixed_default_namespace_bindings: BTreeMap<usize, &'a str>,
     require_local: &'a str,
     static_import_local: &'a str,
     namespace_cache_local: &'a str,
@@ -182,11 +223,51 @@ struct CommonJsRunnerAdapter<'a> {
 }
 
 impl<'a> Traverse<'a, ()> for CommonJsRunnerAdapter<'a> {
-    fn enter_expression(
-        &mut self,
-        expression: &mut Expression<'a>,
-        _ctx: &mut TraverseCtx<'a, ()>,
-    ) {
+    fn enter_expression(&mut self, expression: &mut Expression<'a>, ctx: &mut TraverseCtx<'a, ()>) {
+        if let Expression::Identifier(identifier) = expression {
+            let namespace_name = identifier
+                .reference_id
+                .get()
+                .and_then(|reference_id| ctx.scoping().get_reference(reference_id).symbol_id())
+                .and_then(|symbol_id| {
+                    self.mixed_default_namespace_bindings
+                        .get(&symbol_id.index())
+                })
+                .copied();
+            if let Some(namespace_name) = namespace_name {
+                let span = identifier.span;
+                let builder = AstBuilder::new(self.allocator);
+                let namespace = Expression::new_identifier(
+                    span,
+                    self.allocator.alloc_str(namespace_name),
+                    &builder,
+                );
+                let default = Expression::new_static_member_expression(
+                    span,
+                    namespace,
+                    IdentifierName::new(span, self.allocator.alloc_str("default"), &builder),
+                    false,
+                    &builder,
+                );
+                *expression = if matches!(ctx.parent(), Ancestor::CallExpressionCallee(_)) {
+                    let zero = Expression::new_numeric_literal(
+                        span,
+                        0.0,
+                        None,
+                        NumberBase::Decimal,
+                        &builder,
+                    );
+                    Expression::new_sequence_expression(
+                        span,
+                        ArenaVec::from_array_in([zero, default], &self.allocator),
+                        &builder,
+                    )
+                } else {
+                    default
+                };
+                return;
+            }
+        }
         let Expression::AwaitExpression(awaited) = expression else {
             return;
         };
