@@ -7901,6 +7901,64 @@ fn enforces_binding_aware_runtime_reactive_control_flow_placement() {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
     }));
 }
+
+#[test]
+fn enforces_render_effect_control_flow_placement_by_import_identity() {
+    let cases = [
+        "import { createRenderEffect } from 'fict/advanced'; function Demo(ready) { if (ready) createRenderEffect(() => {}); }",
+        "import { createRenderEffect as renderEffect } from 'fict/advanced'; function Demo(ready) { if (ready) renderEffect(() => {}); }",
+        "import * as Advanced from 'fict/advanced'; function Demo(ready) { if (ready) Advanced.createRenderEffect(() => {}); }",
+        "import { createRenderEffect } from '@fictjs/runtime/advanced'; function Demo(ready) { if (ready) createRenderEffect(() => {}); }",
+        "import * as RuntimeAdvanced from '@fictjs/runtime/advanced'; function Demo(items) { for (const item of items) RuntimeAdvanced.createRenderEffect?.(() => item); }",
+    ];
+
+    for source in cases {
+        let strict = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(strict.hir.is_none(), "{source}: {:?}", strict.diagnostics);
+        let findings: Vec<_> = strict
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R004")
+            .collect();
+        assert_eq!(findings.len(), 1, "{source}: {:?}", strict.diagnostics);
+        assert_eq!(
+            findings[0].severity,
+            fict_diagnostics::DiagnosticSeverity::Error,
+            "{source}"
+        );
+    }
+
+    let shadow = build_hir(
+        "function Demo(ready) { const createRenderEffect = callback => callback(); if (ready) createRenderEffect(() => {}); }",
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(shadow.hir.is_some(), "{:?}", shadow.diagnostics);
+    assert!(
+        shadow
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R004")
+    );
+
+    let fallback = build_hir(
+        cases[0],
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            reactive_creation_control_flow_severity: fict_diagnostics::DiagnosticSeverity::Warning,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    assert!(fallback.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-R004"
+            && diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
+    }));
+}
 #[test]
 fn enforces_namespace_and_member_hook_placement() {
     let cases = [

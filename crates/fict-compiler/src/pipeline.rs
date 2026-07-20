@@ -4478,6 +4478,60 @@ mod tests {
     }
 
     #[test]
+    fn enforces_render_effect_control_flow_lifecycle_safety() {
+        let cases = [
+            "import { createRenderEffect } from 'fict/advanced'; export function App(ready) { if (ready) createRenderEffect(() => {}); return null; }",
+            "import { createRenderEffect as renderEffect } from 'fict/advanced'; export function App(ready) { if (ready) renderEffect(() => {}); return null; }",
+            "import * as Advanced from 'fict/advanced'; export function App(ready) { if (ready) Advanced.createRenderEffect(() => {}); return null; }",
+            "import { createRenderEffect } from '@fictjs/runtime/advanced'; export function App(ready) { if (ready) createRenderEffect(() => {}); return null; }",
+            "import * as RuntimeAdvanced from '@fictjs/runtime/advanced'; export function App(items) { for (const item of items) RuntimeAdvanced.createRenderEffect?.(() => item); return null; }",
+        ];
+
+        for (index, source) in cases.iter().enumerate() {
+            let strict = compile(request(
+                source,
+                &format!("render-effect-control-{index}.tsx"),
+            ));
+            assert!(strict.has_errors(), "{source}: {:?}", strict.diagnostics);
+            assert!(strict.code.is_empty(), "{source}: {}", strict.code);
+            assert!(
+                strict.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-R004"
+                        && diagnostic.severity == DiagnosticSeverity::Error
+                }),
+                "{source}: {:?}",
+                strict.diagnostics
+            );
+        }
+
+        let mut fallback_request = request(cases[0], "render-effect-control-warning.tsx");
+        fallback_request.options.strict_guarantee = false;
+        fallback_request
+            .options
+            .warning_levels
+            .insert("FICT-R004".into(), WarningLevel::Warn);
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R004"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(!fallback.code.is_empty());
+
+        let shadow = compile(request(
+            "export function App(ready) { const createRenderEffect = callback => callback(); if (ready) createRenderEffect(() => {}); return null; }",
+            "render-effect-shadow.tsx",
+        ));
+        assert!(!shadow.has_errors(), "{:?}", shadow.diagnostics);
+        assert!(
+            shadow
+                .diagnostics
+                .iter()
+                .all(|diagnostic| { diagnostic.code.as_str() != "FICT-R004" })
+        );
+    }
+
+    #[test]
     fn enforces_call_based_reactive_control_flow_reexecution_guarantees() {
         let source = "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10 && maybe?.()) return <Big />; return <Small />; }";
         let strict = compile(request(source, "call-control-flow.tsx"));

@@ -10481,6 +10481,17 @@ fn runtime_reactive_call_classification(
         {
             Some(classified(None, Some(RuntimeReactiveCreationKind::Effect)))
         }
+        "createRenderEffect"
+            if matches!(
+                source,
+                "fict/advanced"
+                    | "fict/internal"
+                    | "@fictjs/runtime/advanced"
+                    | "@fictjs/runtime/internal"
+            ) =>
+        {
+            Some(classified(None, Some(RuntimeReactiveCreationKind::Effect)))
+        }
         "createSelector"
             if matches!(
                 source,
