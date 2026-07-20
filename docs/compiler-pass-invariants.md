@@ -74,6 +74,9 @@ metadata, caches, and bundler objects remain in the JavaScript host.
   the runtime ABI.
 - Metadata, diagnostics, artifacts, and source maps refer to authored source
   origins.
+- Multi-source map composition traces only the intermediate source uniquely
+  identified by the input map `file`; other source identities are preserved,
+  and missing or ambiguous identity fails closed.
 - Preview handler modules are structured artifacts; integrations do not reparse
   main output to discover them.
 - Duplicate list data and unsupported mutations must not be silently dropped.

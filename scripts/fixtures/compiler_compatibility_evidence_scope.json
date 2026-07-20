@@ -308,6 +308,26 @@
         "input-source-map-composition-equivalence-beyond-request-contract"
       ]
     },
+    "nativeSourceMapComposition": {
+      "implementation": "crates/fict-compiler-oxc/src/source_map.rs",
+      "ciTest": "crates/fict-compiler-oxc/src/source_map.rs",
+      "testCommand": "cargo test -p fict-compiler-oxc --lib source_map",
+      "assertionLevel": "native-multi-source-composition",
+      "identitySurfaces": [
+        "multiple-authored-input-sources",
+        "virtual-helper-source",
+        "source-root",
+        "windows-separators",
+        "query-and-fragment",
+        "ignore-list-remapping"
+      ],
+      "proves": [
+        "only-the-identified-intermediate-source-is-traced",
+        "non-target-source-mappings-are-preserved",
+        "missing-unknown-and-ambiguous-identities-fail-closed"
+      ],
+      "doesNotProve": ["babel-multi-source-composition-equivalence"]
+    },
     "semanticCoverageMatrix": {
       "artifact": "scripts/fixtures/compiler_semantic_coverage_matrix.json",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",

@@ -96,6 +96,14 @@ platform binding. Custom Babel pipelines that still
 need sibling plugins should run native Fict compilation as a separate first
 stage and compose source maps explicitly.
 
+When a generated map contains more than one source, `inputSourceMap.file` must
+uniquely identify the intermediate authored source. Only that source is traced
+through the input map; virtual or helper sources retain their own mappings.
+Windows separators are normalized for matching, and query/fragment suffixes
+may be ignored only when the physical identity remains unique. Missing or
+ambiguous identity fails closed with `FICT-SOURCEMAP-COMPOSE` instead of
+attaching helper tokens to an unrelated authored file.
+
 `@fictjs/babel-preset@0.30.1` remains available only as the final whole-build
 rollback release. It is not part of the 0.31 workspace, publish plan, or support
 surface. Custom Babel plugins may still run as a separate downstream transform,

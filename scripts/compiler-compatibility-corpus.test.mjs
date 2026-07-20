@@ -36,6 +36,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'legacyAssertionInventory',
     'legacyDomainLedger',
     'legacyOptionBehaviorAudit',
+    'nativeSourceMapComposition',
     'r006SuppressionAudit',
     'rustAcceptanceReview',
     'rustCodegenCorpus',
@@ -439,6 +440,36 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(packageJson, /test:compiler:babel-source-map-oracle/)
   assert.match(packageJson, /babel-compiler-source-map-oracle\.test\.mjs/)
   assert.match(ci, /babel-compiler-source-map-oracle\.test\.mjs/)
+
+  const sourceMapComposition = scope.assets.nativeSourceMapComposition
+  assert.equal(sourceMapComposition.assertionLevel, 'native-multi-source-composition')
+  assert.deepEqual(sourceMapComposition.identitySurfaces, [
+    'multiple-authored-input-sources',
+    'virtual-helper-source',
+    'source-root',
+    'windows-separators',
+    'query-and-fragment',
+    'ignore-list-remapping',
+  ])
+  assert.ok(
+    sourceMapComposition.proves.includes('only-the-identified-intermediate-source-is-traced'),
+  )
+  assert.ok(sourceMapComposition.proves.includes('non-target-source-mappings-are-preserved'))
+  assert.ok(
+    sourceMapComposition.proves.includes('missing-unknown-and-ambiguous-identities-fail-closed'),
+  )
+  const sourceMapCompositionTest = read(sourceMapComposition.ciTest)
+  assert.match(
+    sourceMapCompositionTest,
+    /composes_only_the_identified_source_in_a_multi_source_map/,
+  )
+  assert.match(
+    sourceMapCompositionTest,
+    /rejects_unidentified_or_ambiguous_multi_source_composition/,
+  )
+  assert.match(sourceMapCompositionTest, /virtual:helper\.js/)
+  assert.match(sourceMapCompositionTest, /x_google_ignoreList/)
+  assert.match(sourceMapComposition.testCommand, /cargo test -p fict-compiler-oxc --lib source_map/)
 
   const coverageScope = scope.assets.semanticCoverageMatrix
   const coverage = readJson(coverageScope.artifact)
