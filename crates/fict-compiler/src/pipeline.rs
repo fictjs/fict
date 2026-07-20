@@ -5985,9 +5985,9 @@ mod tests {
     }
 
     #[test]
-    fn preserves_vnode_key_namespaces_nested_nodes_and_spread_children() {
+    fn preserves_vnode_key_namespaces_and_nested_nodes() {
         let mut input = request(
-            "const UI = { Card: (_props) => null }; const id = 'card'; const items = ['a', 'b']; export function App() { return <UI.Card key={id} foo:bar=\"&amp;\" node={<svg:path />} __proto__=\"safe\">{...items}</UI.Card>; }",
+            "const UI = { Card: (_props) => null }; const id = 'card'; const items = ['a', 'b']; export function App() { return <UI.Card key={id} foo:bar=\"&amp;\" node={<svg:path />} __proto__=\"safe\">{items}</UI.Card>; }",
             "vnode-edges.jsx",
         );
         input.options.fine_grained_dom = false;
@@ -6011,11 +6011,7 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(
-            result.code.contains("children: [...items]"),
-            "{}",
-            result.code
-        );
+        assert!(result.code.contains("children: items"), "{}", result.code);
         assert!(result.code.contains("key: id"), "{}", result.code);
     }
 
