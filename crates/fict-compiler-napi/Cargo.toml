@@ -18,3 +18,8 @@ serde_json.workspace = true
 
 [build-dependencies]
 napi-build.workspace = true
+
+[dev-dependencies]
+# Rust test binaries do not run inside Node, so resolve Node-API symbols lazily
+# while compiling the N-API crate's pure conversion and panic-boundary tests.
+napi = { workspace = true, features = ["dyn-symbols"] }
