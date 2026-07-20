@@ -90,7 +90,6 @@ const runtimePackage = JSON.parse(
 )
 assert.equal(legacyPackage.version, '0.28.0', 'legacy compiler package version')
 assert.equal(legacyRootPackage.packageManager, 'pnpm@9.1.1', 'legacy package manager')
-assert.equal(runtimePackage.version, '0.31.0', 'shared DOM runtime package version')
 assert.equal(
   sha256(readFileSync(path.join(options.legacyRoot, 'pnpm-lock.yaml'))),
   legacyLockfileSha256,

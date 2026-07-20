@@ -13,6 +13,8 @@ const read = relative => readFileSync(path.join(repositoryRoot, relative), 'utf8
 const inputsText = read('scripts/fixtures/babel_0_28_ssr_semantic_inputs.json')
 const inputs = JSON.parse(inputsText)
 const harnessText = read('scripts/lib/compiler-ssr-semantic-harness.mjs')
+const runtimePackage = JSON.parse(read('packages/runtime/package.json'))
+const ssrPackage = JSON.parse(read('packages/ssr/package.json'))
 const oracle = JSON.parse(read('crates/fict-compiler/tests/babel_0_28_ssr_semantic_oracle.json'))
 const binding = require(path.join(repositoryRoot, 'target/release/fict_compiler_napi.node'))
 const sha256 = value => createHash('sha256').update(value).digest('hex')
@@ -36,8 +38,8 @@ test('Babel 0.28 SSR semantic oracle has exact independent provenance', () => {
     },
     oracleInputsSha256: sha256(inputsText),
     semanticHarnessSha256: sha256(harnessText),
-    sharedRuntimePackage: '@fictjs/runtime@0.31.0',
-    sharedSsrPackage: '@fictjs/ssr@0.28.4',
+    sharedRuntimePackage: `${runtimePackage.name}@${runtimePackage.version}`,
+    sharedSsrPackage: `${ssrPackage.name}@${ssrPackage.version}`,
     runtimeExecutionModel:
       'frozen-babel-and-live-rust-output-share-current-ssr-runtime-and-client-runtime',
   })

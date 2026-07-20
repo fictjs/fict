@@ -15,6 +15,7 @@ const inputsText = read('scripts/fixtures/babel_0_28_dom_semantic_inputs.json')
 const inputs = JSON.parse(inputsText)
 const corpusText = read('crates/fict-compiler/tests/rust_frozen_codegen_corpus.json')
 const corpus = JSON.parse(corpusText)
+const runtimePackage = JSON.parse(read('packages/runtime/package.json'))
 const oracle = JSON.parse(read('crates/fict-compiler/tests/babel_0_28_dom_semantic_oracle.json'))
 const binding = require(path.join(repositoryRoot, 'target/release/fict_compiler_napi.node'))
 const sha256 = value => createHash('sha256').update(value).digest('hex')
@@ -117,7 +118,7 @@ test('Babel 0.28 DOM semantic oracle has exact independent provenance', () => {
     },
     oracleInputsSha256: sha256(inputsText),
     rustCodegenCorpusSha256: sha256(corpusText),
-    sharedRuntimePackage: '@fictjs/runtime@0.31.0',
+    sharedRuntimePackage: `${runtimePackage.name}@${runtimePackage.version}`,
     runtimeExecutionModel: 'frozen-babel-and-live-rust-output-share-current-runtime',
   })
   assert.equal(inputs.fixtures.length, 27)
