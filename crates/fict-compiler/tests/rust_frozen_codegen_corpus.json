@@ -36702,6 +36702,11 @@
             "guaranteeClass": "fallback"
           },
           {
+            "code": "FICT-R004",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
             "code": "FICT-S002",
             "severity": "warning",
             "guaranteeClass": "fallback"

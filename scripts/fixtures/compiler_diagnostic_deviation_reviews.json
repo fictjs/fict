@@ -13,10 +13,10 @@
     "rust-structured-rejection-diagnostics": 183,
     "diagnostic-severity-reclassification": 23,
     "rust-warning-addition": 32,
-    "rust-warning-removal": 45,
+    "rust-warning-removal": 44,
     "rust-warning-set-change": 5
   },
-  "deviationCount": 288,
+  "deviationCount": 287,
   "deviations": [
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:70:transform",
@@ -3546,38 +3546,6 @@
         }
       ],
       "policy": "rust-structured-rejection-diagnostics"
-    },
-    {
-      "id": "packages/compiler/test/spec-rules.test.ts:2219:transformWithWarnings",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [
-        {
-          "code": "FICT-R004",
-          "severity": "warning"
-        },
-        {
-          "code": "FICT-S002",
-          "severity": "warning"
-        },
-        {
-          "code": "FICT-R006",
-          "severity": "warning"
-        }
-      ],
-      "rustDiagnostics": [
-        {
-          "code": "FICT-R006",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-S002",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        }
-      ],
-      "policy": "rust-warning-removal"
     },
     {
       "id": "packages/compiler/test/spec-rules.test.ts:2420:transform",

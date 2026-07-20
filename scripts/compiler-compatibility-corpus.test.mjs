@@ -875,17 +875,17 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   })
   assert.deepEqual(reviewed, observed)
   assert.equal(reviewed.schemaVersion, 1)
-  assert.equal(reviewed.deviationCount, 288)
-  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 288)
+  assert.equal(reviewed.deviationCount, 287)
+  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 287)
   assert.equal(
     reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
-    251,
+    250,
   )
   assert.deepEqual(reviewed.policyCounts, {
     'rust-structured-rejection-diagnostics': 183,
     'diagnostic-severity-reclassification': 23,
     'rust-warning-addition': 32,
-    'rust-warning-removal': 45,
+    'rust-warning-removal': 44,
     'rust-warning-set-change': 5,
   })
   assert.ok(
