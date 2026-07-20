@@ -151,10 +151,12 @@ does not graduate it or make it a Core default.
 ### Audited Babel 0.28 behavior differences
 
 The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,950-case
-compile corpus currently has 59 intentional success/error status differences:
+compile corpus currently has 59 reviewed success/error status differences:
 37 inputs accepted by Babel are rejected by Rust, and 22 inputs rejected by
-Babel are accepted by Rust. These are upgrade policies, not an automatic claim
-that every newly accepted case has identical runtime behavior.
+Babel are accepted by Rust. The 22 Rust acceptances are individually reviewed:
+only 6 are capability claims, while 13 are release-blocking regressions that
+must be removed before release. A successful code emission is never by itself
+evidence of compatible runtime behavior.
 
 | Compatibility policy             | Count | 0.31 behavior and migration action                                                                                                                                                                         |
 | -------------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -162,7 +164,18 @@ that every newly accepted case has identical runtime behavior.
 | `structured-hook-return`         |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor.      |
 | `standard-decorator-fail-closed` |     3 | Standard decorators must be lowered by a target-compatible transform before native Fict compilation, or removed; raw decorator syntax is never emitted as successful JavaScript.                           |
 | `strict-reactivity-fail-closed`  |     4 | `strictGuarantee` rejects statement control flow that needs an R006 region fallback. Refactor the branch into guaranteed JSX expressions, or explicitly use non-strict compilation and review the warning. |
-| `rust-capability-expansion`      |    22 | Rust accepts reviewed TypeScript, control-flow, or analysis inputs that Babel rejected. Add a runtime regression before relying on a newly accepted construct.                                             |
+| `genuine-capability-expansion`   |     6 | Executable runtime oracles prove the newly supported enum or control-flow behavior.                                                                                                                        |
+| `intentional-runtime-error`      |     1 | Rust preserves ordinary JavaScript TDZ failure. This is runtime-semantics evidence, not a compiler capability claim.                                                                                       |
+| `validation-regression`          |    12 | Rust has lost a required cycle, derived-write, or reactive-alias validation. These rows block release until Rust rejects them again.                                                                       |
+| `fallback-only`                  |     1 | Rust emits a structured `FICT-R006` fallback diagnostic. Do not rely on this as guaranteed fine-grained lowering.                                                                                          |
+| `reactive-equivalence-required`  |     1 | The emitted loop result remains stale after state changes. This row blocks release until correct lowering or fail-closed rejection.                                                                        |
+| `intentional-breaking-policy`    |     1 | Rust intentionally removes the audited Babel warning behavior. Treat this as a diagnostic-policy migration, not a capability.                                                                              |
+
+The source of truth for all 22 reviews is
+`scripts/fixtures/compiler_rust_acceptance_reviews.json`. Every row records its
+owner, rationale, final plan, removal condition, and release disposition. The
+compiler release verifier rejects any remaining `validation-regression` or
+`reactive-equivalence-required` row.
 
 The four Rust-rejection policies have direct source migrations:
 

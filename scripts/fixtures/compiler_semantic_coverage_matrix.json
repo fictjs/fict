@@ -224,20 +224,30 @@
       "claimBoundary": "Traces 23 reviewed generated tokens across three frozen Babel maps and live Rust maps to authored line and UTF-16 columns: ten positions are exact parity and thirteen are explicit Rust precision improvements over coarser Babel positions. Native probes add deeper lowering coverage and the request matrix checks input-map composition. This does not assert identical generated-token layouts or exhaustive source-map token equivalence."
     },
     {
-      "id": "capability-expansion-runtime-results",
-      "requirement": "runtime results for all 22 reviewed capability expansions",
+      "id": "rust-acceptance-runtime-results",
+      "requirement": "classification and runtime results for all 22 Babel-rejected Rust acceptances",
       "evidence": [
+        {
+          "assertionLevel": "reviewed-policy",
+          "path": "scripts/fixtures/compiler_rust_acceptance_reviews.json",
+          "markers": [
+            "\"genuine-capability-expansion\"",
+            "\"validation-regression\"",
+            "\"reactive-equivalence-required\"",
+            "\"releaseDisposition\": \"block\""
+          ]
+        },
         {
           "assertionLevel": "native-runtime",
           "path": "scripts/native-compiler-capability-expansions.test.mjs",
           "markers": [
             "assert.equal(probes.length, 22)",
-            "runtime probes cover every reviewed Rust capability expansion exactly once",
-            "executes reviewed Rust capability expansion"
+            "runtime probes cover every explicitly classified Rust acceptance exactly once",
+            "executes reviewed Rust acceptance"
           ]
         }
       ],
-      "claimBoundary": "Executes each Rust capability expansion exactly once and binds it to its reviewed corpus row; Babel rejected these inputs, so this is deliberately not cross-implementation runtime parity."
+      "claimBoundary": "Classifies and executes each Babel-rejected Rust acceptance exactly once. Only rows marked genuine-capability-expansion are capability claims; validation-regression and reactive-equivalence-required rows block release until removed."
     }
   ]
 }

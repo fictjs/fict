@@ -18,6 +18,7 @@ const compileCorpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus
 const evidenceScopePath = 'scripts/fixtures/compiler_compatibility_evidence_scope.json'
 const requestPolicyPath = 'scripts/fixtures/compiler_corpus_request_policy.json'
 const assertionInventoryPath = 'scripts/fixtures/legacy_0_28_compiler_assertion_inventory.json'
+const rustAcceptanceReviewPath = 'scripts/fixtures/compiler_rust_acceptance_reviews.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
 test('keeps codegen, request, and semantic compatibility evidence roles distinct', () => {
@@ -36,6 +37,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'legacyDomainLedger',
     'legacyOptionBehaviorAudit',
     'r006SuppressionAudit',
+    'rustAcceptanceReview',
     'rustCodegenCorpus',
     'semanticCoverageMatrix',
   ])
@@ -121,6 +123,25 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.ok(codegen.doesNotProve.includes('full-cross-implementation-runtime-semantic-equivalence'))
   assert.equal(codegen.generator, 'scripts/generate-rust-codegen-corpus.mjs')
   for (const ciTest of codegen.ciTests) assert.ok(read(ciTest).length > 0, ciTest)
+
+  const acceptanceScope = scope.assets.rustAcceptanceReview
+  const acceptanceReview = readJson(acceptanceScope.artifact)
+  assert.equal(acceptanceScope.artifact, rustAcceptanceReviewPath)
+  assert.equal(acceptanceScope.reviewedAcceptances, acceptanceReview.reviews.length)
+  assert.equal(
+    acceptanceScope.capabilityClaims,
+    acceptanceReview.reviews.filter(
+      entry => acceptanceReview.policies[entry.policy].capabilityClaim,
+    ).length,
+  )
+  assert.equal(
+    acceptanceScope.releaseBlockingRegressions,
+    acceptanceReview.reviews.filter(
+      entry => acceptanceReview.policies[entry.policy].releaseDisposition === 'block',
+    ).length,
+  )
+  assert.ok(read(acceptanceScope.runtimeTest).length > 0)
+  assert.ok(read(acceptanceScope.releaseGate).length > 0)
 
   const semantic = scope.assets.babelSemanticOracle
   const semanticInputs = readJson(semantic.inputs)
@@ -502,6 +523,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
     'cross-implementation-source-map',
     'cross-implementation-ssr-runtime',
     'native-runtime',
+    'reviewed-policy',
     'request-contract',
     'diagnostic-contract',
     'source-map-contract',
@@ -517,7 +539,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
     'async-generator-class-decorator-and-typescript',
     'ssr-hydration-and-resume',
     'complex-source-map-lowering',
-    'capability-expansion-runtime-results',
+    'rust-acceptance-runtime-results',
   ]
 
   assert.equal(matrix.schemaVersion, 1)
@@ -979,7 +1001,12 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
   )
   assert.deepEqual(policyCounts, corpus.deviationPolicyCounts)
   assert.deepEqual(corpus.deviationPolicyCounts, {
-    'rust-capability-expansion': 22,
+    'genuine-capability-expansion': 6,
+    'intentional-runtime-error': 1,
+    'validation-regression': 12,
+    'fallback-only': 1,
+    'reactive-equivalence-required': 1,
+    'intentional-breaking-policy': 1,
     'narrow-component-role': 24,
     'structured-hook-return': 6,
     'standard-decorator-fail-closed': 3,
@@ -1286,15 +1313,50 @@ test('ports the unrepresented Babel optimizer differential domain through execut
   assert.match(ci, /native-compiler-optimizer-diff\.test\.mjs/)
 })
 
-test('executes every reviewed Rust capability expansion against the live runtime', () => {
+test('classifies every Babel-rejected Rust acceptance before runtime and release use', () => {
   const runtime = read('scripts/native-compiler-capability-expansions.test.mjs')
-  assert.match(runtime, /deviationPolicy === 'rust-capability-expansion'/)
+  const review = readJson(rustAcceptanceReviewPath)
+  assert.equal(review.schemaVersion, 1)
+  assert.equal(review.reviews.length, 22)
+  assert.equal(new Set(review.reviews.map(entry => entry.id)).size, 22)
+  assert.deepEqual(review.policyCounts, {
+    'genuine-capability-expansion': 6,
+    'intentional-runtime-error': 1,
+    'validation-regression': 12,
+    'fallback-only': 1,
+    'reactive-equivalence-required': 1,
+    'intentional-breaking-policy': 1,
+  })
+  assert.ok(
+    review.reviews.every(
+      entry =>
+        review.policies[entry.policy] &&
+        ['owner', 'reason', 'finalPlan', 'removalCondition'].every(
+          field => typeof entry[field] === 'string' && entry[field].length > 0,
+        ),
+    ),
+  )
+  assert.equal(
+    review.reviews.filter(entry => review.policies[entry.policy].capabilityClaim).length,
+    6,
+  )
+  assert.equal(
+    review.reviews.filter(entry => review.policies[entry.policy].releaseDisposition === 'block')
+      .length,
+    13,
+  )
+  assert.match(runtime, /acceptancePolicies\.has\(fixture\.deviationPolicy\)/)
   assert.match(runtime, /assert\.equal\(probes\.length, 22\)/)
   assert.match(runtime, /runtime\.__fictRender/)
-  assert.match(runtime, /capabilityFixtures\.map\(fixture => fixture\.id\)\.sort\(\)/)
+  assert.match(runtime, /acceptanceFixtures\.map\(fixture => fixture\.id\)\.sort\(\)/)
+  const releaseGate = read('scripts/native-compiler-capability-release-gate.mjs')
+  assert.match(releaseGate, /releaseDisposition === 'block'/)
+  assert.match(releaseGate, /release-blocking regression/)
   const packageJson = read('package.json')
   assert.match(packageJson, /test:compiler:capability-expansions/)
   assert.match(packageJson, /native-compiler-capability-expansions\.test\.mjs/)
+  assert.match(packageJson, /test:compiler:capability-release-gate/)
+  assert.match(packageJson, /native-compiler-capability-release-gate\.mjs/)
   const ci = read('.github/workflows/ci.yml')
   assert.match(ci, /native-compiler-capability-expansions\.test\.mjs/)
 })
@@ -1483,14 +1545,20 @@ test('documents every reviewed Babel status and request-identity deviation', () 
     (sum, count) => sum + count,
     0,
   )
-  const rustRejectionCount =
-    statusDifferenceCount - corpus.deviationPolicyCounts['rust-capability-expansion']
+  const rustAcceptanceReview = readJson(rustAcceptanceReviewPath)
+  const rustAcceptanceCount = Object.keys(rustAcceptanceReview.policies).reduce(
+    (sum, policy) => sum + corpus.deviationPolicyCounts[policy],
+    0,
+  )
+  const rustRejectionCount = statusDifferenceCount - rustAcceptanceCount
   assert.match(migrationGuide, /37 option-driven Babel-success\/Rust-fail/)
   assert.match(
     migrationGuide,
-    new RegExp(`${statusDifferenceCount} intentional success/error status differences`),
+    new RegExp(`${statusDifferenceCount} reviewed success/error status differences`),
   )
   assert.match(migrationGuide, new RegExp(`${rustRejectionCount} inputs accepted by Babel`))
+  assert.match(migrationGuide, /only 6 are capability claims/)
+  assert.match(migrationGuide, /13 are release-blocking regressions/)
   assert.match(migrationGuide, /language: "jsx"/)
 })
 

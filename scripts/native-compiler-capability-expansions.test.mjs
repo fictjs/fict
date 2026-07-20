@@ -15,6 +15,9 @@ const corpus = JSON.parse(
     'utf8',
   ),
 )
+const acceptanceReview = JSON.parse(
+  readFileSync(path.join(root, 'scripts/fixtures/compiler_rust_acceptance_reviews.json'), 'utf8'),
+)
 
 let dom
 
@@ -245,16 +248,28 @@ const probes = [
   },
 ]
 
-const capabilityFixtures = corpus.fixtures.filter(
-  fixture => fixture.deviationPolicy === 'rust-capability-expansion',
+const acceptancePolicies = new Set(Object.keys(acceptanceReview.policies))
+const acceptanceFixtures = corpus.fixtures.filter(fixture =>
+  acceptancePolicies.has(fixture.deviationPolicy),
 )
-const fixturesById = new Map(capabilityFixtures.map(fixture => [fixture.id, fixture]))
+const fixturesById = new Map(acceptanceFixtures.map(fixture => [fixture.id, fixture]))
+const reviewsById = new Map(acceptanceReview.reviews.map(review => [review.id, review]))
 
-test('runtime probes cover every reviewed Rust capability expansion exactly once', () => {
+test('runtime probes cover every explicitly classified Rust acceptance exactly once', () => {
   assert.equal(probes.length, 22)
   assert.deepEqual(
     probes.map(probe => probe.id).sort(),
-    capabilityFixtures.map(fixture => fixture.id).sort(),
+    acceptanceFixtures.map(fixture => fixture.id).sort(),
+  )
+  assert.deepEqual(
+    probes.map(probe => probe.id).sort(),
+    acceptanceReview.reviews.map(review => review.id).sort(),
+  )
+  assert.equal(
+    acceptanceReview.reviews.filter(
+      review => acceptanceReview.policies[review.policy].capabilityClaim,
+    ).length,
+    6,
   )
 })
 
@@ -288,7 +303,9 @@ function loadProbe(code) {
 }
 
 for (const probe of probes) {
-  test(`executes reviewed Rust capability expansion: ${probe.id}`, async () => {
+  const review = reviewsById.get(probe.id)
+  assert.ok(review, probe.id)
+  test(`executes reviewed Rust acceptance (${review.policy}): ${probe.id}`, async () => {
     const compiled = loadProbe(compileProbe(probe))
     const entry = compiled[probe.exportName ?? 'probe']
     assert.equal(typeof entry, 'function', probe.id)

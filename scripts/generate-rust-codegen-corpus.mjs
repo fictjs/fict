@@ -25,6 +25,10 @@ const requestPolicyPath = path.join(
   repositoryRoot,
   'scripts/fixtures/compiler_corpus_request_policy.json',
 )
+const rustAcceptanceReviewPath = path.join(
+  repositoryRoot,
+  'scripts/fixtures/compiler_rust_acceptance_reviews.json',
+)
 const expectedAuditSha256 = '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f'
 const expectedExtraction = {
   extracted: 1974,
@@ -41,9 +45,23 @@ const legacyDependencyVersions = {
   '@babel/core': '7.29.7',
   '@babel/plugin-transform-typescript': '7.28.5',
 }
+const rustAcceptanceReview = JSON.parse(readFileSync(rustAcceptanceReviewPath, 'utf8'))
+assert.equal(rustAcceptanceReview.schemaVersion, 1)
+const rustAcceptanceReviewsById = new Map(
+  rustAcceptanceReview.reviews.map(review => [review.id, review]),
+)
+assert.equal(
+  rustAcceptanceReviewsById.size,
+  rustAcceptanceReview.reviews.length,
+  'duplicate Rust acceptance review id',
+)
 const deviationPolicies = {
-  'rust-capability-expansion':
-    'Rust accepts a reviewed TypeScript, control-flow, or analysis case rejected by the exact Babel 0.28.0 compiler.',
+  ...Object.fromEntries(
+    Object.entries(rustAcceptanceReview.policies).map(([policy, metadata]) => [
+      policy,
+      metadata.description,
+    ]),
+  ),
   'narrow-component-role':
     'Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.',
   'structured-hook-return':
@@ -54,7 +72,7 @@ const deviationPolicies = {
     'Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution.',
 }
 const expectedPolicyCounts = {
-  'rust-capability-expansion': 22,
+  ...rustAcceptanceReview.policyCounts,
   'narrow-component-role': 24,
   'structured-hook-return': 6,
   'standard-decorator-fail-closed': 3,
@@ -201,7 +219,9 @@ function compileLegacyFixture(row, legacy) {
   }
 }
 
-function deviationPolicy(babelStatus, currentStatus, currentErrorCodes, requestVariant) {
+const observedRustAcceptanceReviewIds = new Set()
+
+function deviationPolicy(id, babelStatus, currentStatus, currentErrorCodes, requestVariant) {
   if (babelStatus === currentStatus) return null
   if (requestVariant === 'strict-guarantee') {
     if (
@@ -216,7 +236,17 @@ function deviationPolicy(babelStatus, currentStatus, currentErrorCodes, requestV
       `strictGuarantee status mismatch: Babel=${babelStatus}, Rust=${currentStatus}; restore the missing guarantee instead of policying the request`,
     )
   }
-  if (babelStatus === 'error' && currentStatus === 'ok') return 'rust-capability-expansion'
+  if (babelStatus === 'error' && currentStatus === 'ok') {
+    const review = rustAcceptanceReviewsById.get(id)
+    if (!review) throw new Error(`Unreviewed Rust acceptance: ${id}`)
+    assert.ok(rustAcceptanceReview.policies[review.policy], `${id}: unknown acceptance policy`)
+    for (const field of ['owner', 'reason', 'finalPlan', 'removalCondition']) {
+      assert.equal(typeof review[field], 'string', `${id}: missing ${field}`)
+      assert.notEqual(review[field].trim(), '', `${id}: empty ${field}`)
+    }
+    observedRustAcceptanceReviewIds.add(id)
+    return review.policy
+  }
   const codes = currentErrorCodes.join(',')
   if (codes === 'FICT-PLACEMENT-STATE-OWNER') return 'narrow-component-role'
   if (codes === 'FICT-M') return 'structured-hook-return'
@@ -340,7 +370,7 @@ function compileCorpusFixture(row, { compilerOptions, id, requestVariant, verify
   const errorCodes = first.diagnostics
     .filter(diagnostic => diagnostic.severity === 'error')
     .map(diagnostic => diagnostic.code)
-  const policy = deviationPolicy(babelAudit.status, status, errorCodes, requestVariant)
+  const policy = deviationPolicy(id, babelAudit.status, status, errorCodes, requestVariant)
   if (policy) policyCounts[policy]++
   const currentDiagnostics = expectedDiagnostics(first.diagnostics)
   diagnosticReviewFixtures.push({
@@ -397,6 +427,11 @@ const fixtures = audit.results.flatMap(row => {
 })
 
 assert.equal(filesWithAuditRows.size, 73)
+assert.deepEqual(
+  [...observedRustAcceptanceReviewIds].sort(),
+  [...rustAcceptanceReviewsById.keys()].sort(),
+  'Rust acceptance review contains stale or missing fixtures',
+)
 assert.deepEqual(policyCounts, expectedPolicyCounts)
 const diagnosticReview = buildDiagnosticDeviationReview({
   sourceAuditSha256: expectedAuditSha256,

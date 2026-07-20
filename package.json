@@ -45,6 +45,7 @@
     "test:compiler:babel-ssr-semantic-oracle": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --filter @fictjs/ssr build && pnpm build:compiler:native-host && node --test scripts/babel-compiler-ssr-semantic-oracle.test.mjs",
     "test:compiler:build-id": "pnpm build:compiler:native-host && node --test scripts/native-compiler-build-id.test.mjs",
     "test:compiler:capability-expansions": "pnpm --filter @fictjs/runtime build && pnpm build:compiler:native-host && node --test scripts/native-compiler-capability-expansions.test.mjs",
+    "test:compiler:capability-release-gate": "node scripts/native-compiler-capability-release-gate.mjs",
     "test:compiler:request-matrix": "pnpm build:compiler:native-host && node --test scripts/native-compiler-request-matrix.test.mjs",
     "test:compiler:r006-audit": "pnpm --filter @fictjs/runtime build && pnpm build:compiler:native-host && node --test scripts/native-compiler-r006-audit.test.mjs",
     "test:compiler:auto-extract": "pnpm build:compiler:native-host && node --test scripts/native-compiler-auto-extract.test.mjs",
@@ -107,7 +108,7 @@
     "perf:results": "cd js-framework-benchmark && npm run results",
     "stress:runtime": "pnpm --dir packages/runtime test:stress",
     "stress:runtime:long": "pnpm --dir packages/runtime test:stress:long",
-    "release:compiler:verify": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm test:compiler:native-host && pnpm test:compiler:native-runtime && pnpm test:vite:native && pnpm test:webpack:native && pnpm test:playground:native && pnpm test:vscode:native && pnpm guardrails:compiler-capabilities && pnpm guardrails:metadata-protocol && pnpm guardrails:runtime-abi && pnpm guardrails:compiler-complexity && pnpm verify:rust-workspace"
+    "release:compiler:verify": "pnpm test:compiler:capability-release-gate && pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm test:compiler:native-host && pnpm test:compiler:native-runtime && pnpm test:vite:native && pnpm test:webpack:native && pnpm test:playground:native && pnpm test:vscode:native && pnpm guardrails:compiler-capabilities && pnpm guardrails:metadata-protocol && pnpm guardrails:runtime-abi && pnpm guardrails:compiler-complexity && pnpm verify:rust-workspace"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

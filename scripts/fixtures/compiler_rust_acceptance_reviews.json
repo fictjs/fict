@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 1,
+  "policies": {
+    "genuine-capability-expansion": {
+      "description": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
+      "releaseDisposition": "allow",
+      "capabilityClaim": true
+    },
+    "intentional-runtime-error": {
+      "description": "Rust preserves ordinary JavaScript evaluation for an input whose execution intentionally throws; acceptance is not advertised as a compiler capability.",
+      "releaseDisposition": "allow",
+      "capabilityClaim": false
+    },
+    "validation-regression": {
+      "description": "Rust accepts an input that the current Fict specification requires the compiler to reject.",
+      "releaseDisposition": "block",
+      "capabilityClaim": false
+    },
+    "fallback-only": {
+      "description": "Rust accepts the input only behind a structured fallback diagnostic; it is not a guaranteed native lowering capability.",
+      "releaseDisposition": "allow",
+      "capabilityClaim": false
+    },
+    "reactive-equivalence-required": {
+      "description": "Rust emits runnable code but the observable value does not update after its reactive dependency changes.",
+      "releaseDisposition": "block",
+      "capabilityClaim": false
+    },
+    "intentional-breaking-policy": {
+      "description": "Rust intentionally changes a Babel diagnostic policy and requires an explicit migration contract instead of a capability claim.",
+      "releaseDisposition": "allow",
+      "capabilityClaim": false
+    }
+  },
+  "policyCounts": {
+    "genuine-capability-expansion": 6,
+    "intentional-runtime-error": 1,
+    "validation-regression": 12,
+    "fallback-only": 1,
+    "reactive-equivalence-required": 1,
+    "intentional-breaking-policy": 1
+  },
+  "reviews": [
+    {
+      "id": "packages/compiler/test/alias-reactivity.test.ts:70:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "Babel rejects reassignment of a local alias derived from state, while Rust currently accepts it as a mutable snapshot.",
+      "finalPlan": "Restore a hard reactive-alias write diagnostic with the assignment span.",
+      "removalCondition": "Remove this review when Rust rejects the fixture with the stable alias-write diagnostic."
+    },
+    {
+      "id": "packages/compiler/test/alias-reactivity.test.ts:84:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "Post-declaration state alias propagation is not carried into the later reassignment check.",
+      "finalPlan": "Propagate reactive alias shape through assignments and reject the later write.",
+      "removalCondition": "Remove this review when Rust rejects the fixture with the stable alias-write diagnostic."
+    },
+    {
+      "id": "packages/compiler/test/base-transform.test.ts:586:transformRawTypeScript",
+      "policy": "genuine-capability-expansion",
+      "owner": "compiler-typescript",
+      "reason": "Rust lowers a regular TypeScript enum and the runtime oracle proves forward and reverse enum lookup.",
+      "finalPlan": "Keep the executable enum oracle in the native runtime gate.",
+      "removalCondition": "Remove only if enum lowering is retired or the Babel baseline begins accepting the same request."
+    },
+    {
+      "id": "packages/compiler/test/base-transform.test.ts:594:transformRawTypeScript",
+      "policy": "genuine-capability-expansion",
+      "owner": "compiler-typescript",
+      "reason": "Rust lowers the audited const-enum request to runnable enum behavior that Babel's configured pipeline rejects.",
+      "finalPlan": "Keep the executable enum oracle in the native runtime gate.",
+      "removalCondition": "Remove only if const-enum lowering is retired or the Babel baseline begins accepting the same request."
+    },
+    {
+      "id": "packages/compiler/test/base-transform.test.ts:1224:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "A no-return advisory is emitted, but the required reactive-alias reassignment error is missing.",
+      "finalPlan": "Restore a hard alias-write diagnostic without suppressing independent advisories.",
+      "removalCondition": "Remove this review when Rust rejects the fixture for the alias write."
+    },
+    {
+      "id": "packages/compiler/test/control-flow-runtime.test.ts:2959:compileAndRunHook",
+      "policy": "intentional-runtime-error",
+      "owner": "compiler-javascript-semantics",
+      "reason": "The emitted eager self-reference follows JavaScript TDZ behavior and intentionally throws ReferenceError at execution.",
+      "finalPlan": "Keep this as a JavaScript runtime-semantics probe, not a capability expansion claim.",
+      "removalCondition": "Remove if eager self-references become a documented compile-time rejection."
+    },
+    {
+      "id": "packages/compiler/test/control-flow-runtime.test.ts:4531:transformCommonJS",
+      "policy": "genuine-capability-expansion",
+      "owner": "compiler-control-flow",
+      "reason": "Rust correctly preserves continue/finally completion behavior for the audited state-machine lowering.",
+      "finalPlan": "Keep the executable completion-value oracle.",
+      "removalCondition": "Remove only if this control-flow lowering is retired or Babel accepts the request."
+    },
+    {
+      "id": "packages/compiler/test/control-flow-runtime.test.ts:4590:compileAndRunHook",
+      "policy": "reactive-equivalence-required",
+      "owner": "compiler-control-flow",
+      "reason": "The do-while result remains stale after its state dependency changes from 2 to 4.",
+      "finalPlan": "Lower the loop into a reactive region or reject it with a stable unsuppressible guarantee diagnostic.",
+      "removalCondition": "Remove this review when the second observation is updated or compilation fails closed."
+    },
+    {
+      "id": "packages/compiler/test/control-flow.test.ts:953:runTransform",
+      "policy": "fallback-only",
+      "owner": "compiler-control-flow",
+      "reason": "Rust accepts the reactive loop return only with FICT-R006 fallback rather than a guaranteed fine-grained lowering.",
+      "finalPlan": "Retain the structured fallback diagnostic and avoid advertising the input as native capability.",
+      "removalCondition": "Remove if the loop return gains a proven reactive lowering or becomes a hard rejection."
+    },
+    {
+      "id": "packages/compiler/test/cycles.test.ts:62:run",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "A three-node derived cycle reaches runtime and throws instead of producing the documented FICT-R-CYCLE error.",
+      "finalPlan": "Complete forward-reference dependency edges before SCC validation and reject every derived cycle.",
+      "removalCondition": "Remove this review when Rust rejects the fixture with FICT-R-CYCLE."
+    },
+    {
+      "id": "packages/compiler/test/do-while-break.test.ts:33:transform",
+      "policy": "genuine-capability-expansion",
+      "owner": "compiler-control-flow",
+      "reason": "Rust executes reactive do-while continue semantics and returns the proven value 5.",
+      "finalPlan": "Keep the executable loop oracle.",
+      "removalCondition": "Remove only if the lowering is retired or Babel accepts the request."
+    },
+    {
+      "id": "packages/compiler/test/do-while-break.test.ts:50:transform",
+      "policy": "genuine-capability-expansion",
+      "owner": "compiler-control-flow",
+      "reason": "Rust executes reactive while-break semantics and returns the proven value 6.",
+      "finalPlan": "Keep the executable loop oracle.",
+      "removalCondition": "Remove only if the lowering is retired or Babel accepts the request."
+    },
+    {
+      "id": "packages/compiler/test/do-while-break.test.ts:82:transform",
+      "policy": "genuine-capability-expansion",
+      "owner": "compiler-control-flow",
+      "reason": "Rust executes reactive for-break semantics and returns the proven value 15.",
+      "finalPlan": "Keep the executable loop oracle.",
+      "removalCondition": "Remove only if the lowering is retired or Babel accepts the request."
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:500:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "Rust emits a write to a const derived binding that Babel rejects during semantic validation.",
+      "finalPlan": "Reject writes to derived bindings with a stable diagnostic at the write span.",
+      "removalCondition": "Remove this review when Rust rejects the derived write."
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:513:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "An update to a destructured state alias compiles and later throws TypeError.",
+      "finalPlan": "Track destructured aliases from reactive roots and reject update expressions.",
+      "removalCondition": "Remove this review when Rust rejects the update with the stable alias-write diagnostic."
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:526:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "A destructuring assignment writes through a readonly state-derived alias and reaches runtime.",
+      "finalPlan": "Reject destructuring assignment targets that resolve to reactive aliases.",
+      "removalCondition": "Remove this review when Rust rejects the destructuring write."
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1933:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "A postfix update to a reactive alias is accepted even though it cannot update the source state.",
+      "finalPlan": "Reject update expressions on reactive aliases.",
+      "removalCondition": "Remove this review when Rust rejects the update with the stable alias-write diagnostic."
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1948:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "A captured reactive alias can be assigned inside a nested function while the rendered state stays unchanged.",
+      "finalPlan": "Carry alias provenance through closure capture and reject the nested assignment.",
+      "removalCondition": "Remove this review when Rust rejects the captured alias write."
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1963:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "A captured reactive alias update is accepted while the rendered state stays unchanged.",
+      "finalPlan": "Carry alias provenance through closure capture and reject the nested update.",
+      "removalCondition": "Remove this review when Rust rejects the captured alias update."
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:2062:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "Multi-hop state aliasing loses provenance before a destructured update and compiles to a runtime TypeError.",
+      "finalPlan": "Propagate reactive provenance transitively before validating destructured writes.",
+      "removalCondition": "Remove this review when Rust rejects the transitive destructured alias write."
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:619:transform",
+      "policy": "validation-regression",
+      "owner": "compiler-reactivity",
+      "reason": "The specification fixture's alias reassignment is accepted with only an unrelated no-return advisory.",
+      "finalPlan": "Restore the specification's hard alias-write validation.",
+      "removalCondition": "Remove this review when Rust rejects the fixture for the alias write."
+    },
+    {
+      "id": "packages/compiler/test/warnings-as-errors.test.ts:156:transform",
+      "policy": "intentional-breaking-policy",
+      "owner": "compiler-diagnostics",
+      "reason": "Rust intentionally does not reproduce Babel's FICT-R003 warning, so strictReactivity no longer escalates this input.",
+      "finalPlan": "Document the removed warning family and retain a runtime oracle for the supported behavior.",
+      "removalCondition": "Remove if FICT-R003 is restored or the legacy compatibility baseline is retired."
+    }
+  ]
+}
