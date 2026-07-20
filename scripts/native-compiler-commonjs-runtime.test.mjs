@@ -255,3 +255,102 @@ test('lowers CommonJS import.meta.url to the executing file URL', () => {
     rmSync(fixtureRoot, { force: true, recursive: true })
   }
 })
+
+test('preserves local export precedence around CommonJS star re-exports', () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-precedence-'))
+  try {
+    writeFileSync(
+      path.join(fixtureRoot, 'dependency.cjs'),
+      `exports.collision = 'dependency'; exports.extra = 'extra'\n`,
+      'utf8',
+    )
+    for (const [name, source, expected] of [
+      [
+        'local-before-star',
+        `export const collision = 'before'; export * from './dependency.cjs'`,
+        'before',
+      ],
+      [
+        'local-after-star',
+        `export * from './dependency.cjs'; export const collision = 'after'`,
+        'after',
+      ],
+    ]) {
+      const entryPath = path.join(fixtureRoot, `${name}.cjs`)
+      writeFileSync(entryPath, compileCommonJs(source, entryPath), 'utf8')
+      const exported = require(entryPath)
+      assert.equal(exported.collision, expected)
+      assert.equal(exported.extra, 'extra')
+    }
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true })
+  }
+})
+
+test('preserves live exports through a circular compiled CommonJS graph', () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-cycle-'))
+  try {
+    const aPath = path.join(fixtureRoot, 'a.cjs')
+    const bPath = path.join(fixtureRoot, 'b.cjs')
+    writeFileSync(
+      aPath,
+      compileCommonJs(
+        `
+          import { readB } from './b.cjs'
+          export let valueA = 'a0'
+          export function setA(next) { valueA = next }
+          export function readCycle() { return readB() }
+        `,
+        aPath,
+      ),
+      'utf8',
+    )
+    writeFileSync(
+      bPath,
+      compileCommonJs(
+        `
+          import { valueA } from './a.cjs'
+          export let valueB = 'b0'
+          export function setB(next) { valueB = next }
+          export function readB() { return [valueA, valueB] }
+        `,
+        bPath,
+      ),
+      'utf8',
+    )
+
+    const a = require(aPath)
+    const b = require(bPath)
+    assert.deepEqual(a.readCycle(), ['a0', 'b0'])
+    a.setA('a1')
+    b.setB('b1')
+    assert.deepEqual(a.readCycle(), ['a1', 'b1'])
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true })
+  }
+})
+
+test('preserves dynamic import semantics from compiled CommonJS output', async () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-dynamic-import-'))
+  try {
+    writeFileSync(path.join(fixtureRoot, 'dynamic.cjs'), `exports.value = 9\n`, 'utf8')
+    const entryPath = path.join(fixtureRoot, 'entry.cjs')
+    writeFileSync(
+      entryPath,
+      compileCommonJs(
+        `
+          export async function load() {
+            const namespace = await import('./dynamic.cjs')
+            return [namespace.value, namespace.default.value]
+          }
+        `,
+        entryPath,
+      ),
+      'utf8',
+    )
+
+    assert.deepEqual(await require(entryPath).load(), [9, 9])
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true })
+  }
+})

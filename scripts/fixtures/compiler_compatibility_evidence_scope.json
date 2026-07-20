@@ -311,7 +311,7 @@
     "semanticCoverageMatrix": {
       "artifact": "scripts/fixtures/compiler_semantic_coverage_matrix.json",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
-      "categoryCount": 11,
+      "categoryCount": 12,
       "assertionLevel": "mixed-evidence-matrix",
       "proves": ["report-e07-category-accounting", "evidence-level-and-claim-boundary-validation"],
       "doesNotProve": [

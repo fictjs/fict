@@ -368,12 +368,12 @@ layouts.
 The machine-readable [E-07 semantic coverage
 matrix](../../scripts/fixtures/compiler_semantic_coverage_matrix.json) binds the
 remaining reviewed categories to their actual evidence strength. Browser
-DOM/delegation and the 22 Rust
-capability expansions use native runtime evidence; module identity uses the
-request contract; rejected component roles and decorators use diagnostic
-contracts; and complex lowerings combine sampled Babel/Rust source-position
-traces with deeper native probes. Those native-only or rejection contracts are
-not presented as cross-implementation runtime equivalence.
+DOM/delegation, reviewed CommonJS host semantics, and all 22 classified Rust
+acceptances use native runtime evidence; module identity uses the request
+contract; rejected component roles and decorators use diagnostic contracts;
+and complex lowerings combine sampled Babel/Rust source-position traces with
+deeper native probes. Those native-only or rejection contracts are not
+presented as cross-implementation runtime equivalence.
 
 A second full-request matrix prevents the semantic probes from collapsing every
 input to `.tsx`/CommonJS. Eighteen of its 30 reviewed requests freeze output from

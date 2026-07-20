@@ -153,6 +153,27 @@
       "claimBoundary": "Compares legacy-compatible request dimensions structurally and labels Rust-only public and graph identity fields as native host protocol rather than Babel equivalence."
     },
     {
+      "id": "commonjs-host-semantics",
+      "requirement": "executable CommonJS host binding, interop, re-export, cycle, and dynamic import semantics",
+      "evidence": [
+        {
+          "assertionLevel": "native-runtime",
+          "path": "scripts/native-compiler-commonjs-runtime.test.mjs",
+          "markers": [
+            "executes CommonJS output with every Node wrapper binding shadowed by the source",
+            "re-exports only enumerable own properties from a raw CommonJS dependency",
+            "creates stable own-property namespaces for a raw CommonJS dependency",
+            "preserves default and namespace bindings from one CommonJS import",
+            "lowers CommonJS import.meta.url to the executing file URL",
+            "preserves local export precedence around CommonJS star re-exports",
+            "preserves live exports through a circular compiled CommonJS graph",
+            "preserves dynamic import semantics from compiled CommonJS output"
+          ]
+        }
+      ],
+      "claimBoundary": "Executes compiled files in Node across wrapper-name collisions, raw CommonJS default and namespace identity/reflection, own-property star exports, live getters, local precedence in both declaration orders, circular live bindings, import.meta.url, and dynamic import. It does not claim Node ESM loader parity or bundler-specific resolution behavior."
+    },
+    {
       "id": "async-generator-class-decorator-and-typescript",
       "requirement": "async, generator, class, decorator, and TypeScript option matrix",
       "evidence": [

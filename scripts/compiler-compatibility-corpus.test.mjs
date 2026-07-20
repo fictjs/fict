@@ -536,6 +536,7 @@ test('accounts for every E-07 semantic coverage category at its actual evidence 
     'member-reactive-scopes',
     'cross-module-metadata',
     'module-and-source-identity-matrix',
+    'commonjs-host-semantics',
     'async-generator-class-decorator-and-typescript',
     'ssr-hydration-and-resume',
     'complex-source-map-lowering',
