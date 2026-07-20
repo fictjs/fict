@@ -29,8 +29,8 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "6f77356a0f949d3145a82d5cfbefa705c092a536",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-1452690d7f7ffc96900e92a5c0aa3da88932971b299e4096911c12176a9f3bb3"
+    "reviewedRevision": "732bda7d38cb342f11c2225595d71b32091a8be3",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-5944af5781ba11279e18ddec7dac5bd9db40b7d25effe2b95150ae63e53231ff"
   },
   "transitionCounts": {
     "ok-to-error": 3,
