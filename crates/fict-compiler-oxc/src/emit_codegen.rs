@@ -1,4 +1,4 @@
-use super::compile::{convert_diagnostics, failed_output, sorted, source_type};
+use super::compile::{convert_diagnostics, failed_output, parse_source, sorted};
 use super::preview_codegen::{HandlerArtifactContext, PreparedHandler, generate_handler_artifact};
 use super::typescript::{
     configure_transform, passthrough_blockers, plan_typescript_program,
@@ -87,19 +87,13 @@ pub fn emit_program(
         return failed_output(diagnostics);
     }
     let allocator = Allocator::default();
-    let requested_source_type = source_type(options);
-    let parsed = Parser::new(&allocator, source, requested_source_type)
-        .with_options(ParseOptions {
-            allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
-            ..ParseOptions::default()
-        })
-        .parse();
+    let parsed = parse_source(&allocator, source, options);
     if !parsed.diagnostics.is_empty() {
         return failed_output(convert_diagnostics(parsed.diagnostics, "FICT-PARSE"));
     }
     let mut program = parsed.program;
     let input_source_type = program.source_type;
-    let effective_module_kind = effective_module_kind(input_source_type);
+    let effective_module_kind = effective_module_kind(options.module_kind, input_source_type);
     if effective_module_kind == OxcModuleKind::Script && !emit.imports.is_empty() {
         diagnostics.push(emit_error(
             "FICT-OXC-EMIT-SCRIPT-IMPORT",
@@ -738,13 +732,18 @@ pub fn emit_program(
     if rebuilt_has_errors {
         return failed_output(diagnostics);
     }
+    let codegen_source_type = if effective_module_kind == OxcModuleKind::CommonJs {
+        input_source_type.with_commonjs(true)
+    } else {
+        input_source_type
+    };
     let generated = Codegen::new()
         .with_options(CodegenOptions {
             source_map_path: options.sourcemap.then(|| PathBuf::from(filename)),
             ..CodegenOptions::default()
         })
         .with_source_text(source)
-        .with_source_type(input_source_type)
+        .with_source_type(codegen_source_type)
         .with_scoping(Some(rebuilt.semantic.into_scoping()))
         .build(&program);
     let validation_type = output_source_type(effective_module_kind);
@@ -8388,11 +8387,15 @@ fn output_source_type(module_kind: OxcModuleKind) -> SourceType {
         OxcModuleKind::Unambiguous => SourceType::unambiguous(),
     }
 }
-fn effective_module_kind(source_type: SourceType) -> OxcModuleKind {
+fn effective_module_kind(
+    requested_module_kind: OxcModuleKind,
+    source_type: SourceType,
+) -> OxcModuleKind {
+    if requested_module_kind != OxcModuleKind::Unambiguous {
+        return requested_module_kind;
+    }
     if source_type.is_module() {
         OxcModuleKind::Module
-    } else if source_type.is_commonjs() {
-        OxcModuleKind::CommonJs
     } else {
         OxcModuleKind::Script
     }

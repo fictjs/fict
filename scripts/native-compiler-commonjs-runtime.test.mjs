@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import test from 'node:test'
+import { pathToFileURL } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const root = path.resolve(import.meta.dirname, '..')
@@ -191,6 +192,28 @@ test('creates stable own-property namespaces for a raw CommonJS dependency', () 
     assert.equal(before.accessor, 3)
     exported.update(7)
     assert.equal(exported.inspect().accessor, 7)
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true })
+  }
+})
+
+test('lowers CommonJS import.meta.url to the executing file URL', () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-import-meta-'))
+  try {
+    const entryPath = path.join(fixtureRoot, 'entry.cjs')
+    writeFileSync(
+      entryPath,
+      compileCommonJs(
+        `
+          export const moduleUrl = import.meta.url
+        `,
+        entryPath,
+      ),
+      'utf8',
+    )
+
+    const exported = require(entryPath)
+    assert.equal(exported.moduleUrl, pathToFileURL(require.resolve(entryPath)).href)
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true })
   }

@@ -22,17 +22,21 @@ fn options(language: OxcSourceLanguage, sourcemap: bool) -> OxcCompileOptions {
     }
 }
 #[test]
-fn derives_effective_module_kind_from_the_parsed_source_type() {
+fn preserves_explicit_module_kind_and_resolves_unambiguous_source_type() {
     assert_eq!(
-        effective_module_kind(SourceType::mjs()),
-        OxcModuleKind::Module
-    );
-    assert_eq!(
-        effective_module_kind(SourceType::cjs()),
+        effective_module_kind(OxcModuleKind::CommonJs, SourceType::mjs()),
         OxcModuleKind::CommonJs
     );
     assert_eq!(
-        effective_module_kind(SourceType::script()),
+        effective_module_kind(OxcModuleKind::Module, SourceType::cjs()),
+        OxcModuleKind::Module
+    );
+    assert_eq!(
+        effective_module_kind(OxcModuleKind::Unambiguous, SourceType::mjs()),
+        OxcModuleKind::Module
+    );
+    assert_eq!(
+        effective_module_kind(OxcModuleKind::Unambiguous, SourceType::script()),
         OxcModuleKind::Script
     );
 }

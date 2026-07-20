@@ -22,7 +22,6 @@ use oxc::{
             walk_ts_module_declaration,
         },
     },
-    parser::{ParseOptions, Parser},
     semantic::{Scoping, Semantic, SemanticBuilder},
     span::{GetSpan, Span},
     syntax::{
@@ -36,7 +35,7 @@ use oxc::{
 
 use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage};
 
-use super::compile::{convert_diagnostics, sorted, source_type};
+use super::compile::{convert_diagnostics, parse_source, sorted};
 use super::facts::{FictDirectiveKind, FrontendSourceFacts, collect_source_facts};
 
 const FICT_MACRO_MODULES: &[&str] = &["fict", "fict/slim"];
@@ -320,13 +319,7 @@ pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOut
     };
 
     let allocator = Allocator::default();
-    let requested_source_type = source_type(options);
-    let parsed = Parser::new(&allocator, source, requested_source_type)
-        .with_options(ParseOptions {
-            allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
-            ..ParseOptions::default()
-        })
-        .parse();
+    let parsed = parse_source(&allocator, source, options);
     if !parsed.diagnostics.is_empty() {
         return FrontendOutput {
             summary: None,

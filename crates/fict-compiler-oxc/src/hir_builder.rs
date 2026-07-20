@@ -57,7 +57,6 @@ use oxc::{
             walk_variable_declarator,
         },
     },
-    parser::{ParseOptions, Parser},
     semantic::{Scoping, Semantic, SemanticBuilder},
     span::{GetSpan, Span},
     syntax::{
@@ -77,7 +76,7 @@ use crate::{
     OxcSourceLanguage, analyze_frontend, analyze_typescript_compatibility,
 };
 
-use super::compile::{convert_diagnostics, sorted, source_type};
+use super::compile::{convert_diagnostics, parse_source, sorted};
 
 mod advisory_diagnostics;
 mod class_components;
@@ -205,13 +204,7 @@ pub fn build_hir(
     }
 
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, source_type(compile_options))
-        .with_options(ParseOptions {
-            allow_return_outside_function: compile_options.module_kind
-                == crate::OxcModuleKind::CommonJs,
-            ..ParseOptions::default()
-        })
-        .parse();
+    let parsed = parse_source(&allocator, source, compile_options);
     if !parsed.diagnostics.is_empty() {
         return HirBuildOutput {
             hir: None,

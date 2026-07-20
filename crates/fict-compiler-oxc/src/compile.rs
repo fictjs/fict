@@ -7,7 +7,7 @@ use oxc::{
     allocator::Allocator,
     codegen::{Codegen, CodegenOptions},
     diagnostics::{OxcDiagnostic, Severity},
-    parser::{ParseOptions, Parser},
+    parser::{ParseOptions, Parser, ParserReturn},
     semantic::SemanticBuilder,
     span::SourceType,
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
@@ -117,12 +117,7 @@ fn compile_syntax(
 ) -> OxcCompileOutput {
     let allocator = Allocator::default();
     let source_type = source_type(options);
-    let parsed = Parser::new(&allocator, source, source_type)
-        .with_options(ParseOptions {
-            allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
-            ..ParseOptions::default()
-        })
-        .parse();
+    let parsed = parse_source(&allocator, source, options);
 
     if !parsed.diagnostics.is_empty() {
         return failed_output(convert_diagnostics(parsed.diagnostics, "FICT-PARSE"));
@@ -273,6 +268,34 @@ pub(crate) fn source_type(options: OxcCompileOptions) -> SourceType {
         OxcModuleKind::Script => language.with_script(true),
         OxcModuleKind::CommonJs => language.with_commonjs(true),
         OxcModuleKind::Unambiguous => language.with_unambiguous(true),
+    }
+}
+
+pub(crate) fn parse_source<'a>(
+    allocator: &'a Allocator,
+    source: &'a str,
+    options: OxcCompileOptions,
+) -> ParserReturn<'a> {
+    let requested_source_type = source_type(options);
+    let parse_options = ParseOptions {
+        allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
+        ..ParseOptions::default()
+    };
+    let parsed = Parser::new(allocator, source, requested_source_type)
+        .with_options(parse_options)
+        .parse();
+    if options.module_kind == OxcModuleKind::CommonJs
+        && !parsed.diagnostics.is_empty()
+        && parsed
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.message == "Unexpected import.meta expression")
+    {
+        Parser::new(allocator, source, requested_source_type.with_module(true))
+            .with_options(parse_options)
+            .parse()
+    } else {
+        parsed
     }
 }
 
@@ -433,6 +456,26 @@ mod tests {
         );
         assert!(!output.code.contains("import {"), "{}", output.code);
         assert!(!output.code.contains("export const"), "{}", output.code);
+    }
+
+    #[test]
+    fn lowers_import_meta_in_commonjs_without_losing_top_level_return() {
+        let mut commonjs = options(OxcSourceLanguage::TypeScript);
+        commonjs.module_kind = OxcModuleKind::CommonJs;
+        let output = compile_passthrough(
+            "if (process.env.SKIP) return; const moduleUrl = import.meta.url; module.exports = moduleUrl;",
+            "entry.cts",
+            commonjs,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.code.contains("return"), "{}", output.code);
+        assert!(
+            output.code.contains("pathToFileURL(__filename).href"),
+            "{}",
+            output.code
+        );
+        assert!(!output.code.contains("import.meta"), "{}", output.code);
     }
 
     #[test]

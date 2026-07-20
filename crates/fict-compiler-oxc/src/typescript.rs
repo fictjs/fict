@@ -14,7 +14,6 @@ use oxc::{
         TSModuleDeclarationName, TSModuleReference, VariableDeclarationKind,
     },
     ast_visit::{Visit, walk::*},
-    parser::{ParseOptions, Parser},
     semantic::{Scoping, SemanticBuilder},
     span::Span,
     syntax::{scope::ScopeFlags, symbol::SymbolId},
@@ -23,7 +22,7 @@ use oxc::{
 
 use crate::{OxcCompileOptions, OxcModuleKind};
 
-use super::compile::{convert_diagnostics, sorted, source_type};
+use super::compile::{convert_diagnostics, parse_source, sorted};
 
 /// TypeScript lowering controls supported by the native adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,12 +228,7 @@ pub fn analyze_typescript_compatibility(
     options: OxcCompileOptions,
 ) -> TypeScriptCompatibilityOutput {
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, source_type(options))
-        .with_options(ParseOptions {
-            allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
-            ..ParseOptions::default()
-        })
-        .parse();
+    let parsed = parse_source(&allocator, source, options);
     if !parsed.diagnostics.is_empty() {
         return TypeScriptCompatibilityOutput {
             plan: None,

@@ -100,15 +100,16 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
 }
 
 fn contains_standard_esm(program: &Program<'_>) -> bool {
-    program.body.iter().any(|statement| {
-        matches!(
-            statement,
-            Statement::ImportDeclaration(_)
-                | Statement::ExportAllDeclaration(_)
-                | Statement::ExportNamedDeclaration(_)
-                | Statement::ExportDefaultDeclaration(_)
-        )
-    })
+    program.source_type.is_module()
+        || program.body.iter().any(|statement| {
+            matches!(
+                statement,
+                Statement::ImportDeclaration(_)
+                    | Statement::ExportAllDeclaration(_)
+                    | Statement::ExportNamedDeclaration(_)
+                    | Statement::ExportDefaultDeclaration(_)
+            )
+        })
 }
 
 fn generated_binding_names<'a>(

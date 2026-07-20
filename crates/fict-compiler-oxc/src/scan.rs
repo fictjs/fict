@@ -4,13 +4,12 @@ use fict_diagnostics::{
 use oxc::{
     allocator::Allocator,
     ast::ast::{ImportOrExportKind, Statement, TSModuleReference},
-    parser::{ParseOptions, Parser},
     span::Span,
 };
 
-use crate::{OxcCompileOptions, OxcModuleKind};
+use crate::OxcCompileOptions;
 
-use super::compile::{convert_diagnostics, sorted, source_type};
+use super::compile::{convert_diagnostics, parse_source, sorted};
 
 /// Static module-request syntax recognized by the graph-host scan API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -65,12 +64,7 @@ pub fn scan_static_module_requests(source: &str, options: OxcCompileOptions) -> 
     }
 
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, source_type(options))
-        .with_options(ParseOptions {
-            allow_return_outside_function: options.module_kind == OxcModuleKind::CommonJs,
-            ..ParseOptions::default()
-        })
-        .parse();
+    let parsed = parse_source(&allocator, source, options);
     if !parsed.diagnostics.is_empty() {
         return failed_scan(convert_diagnostics(parsed.diagnostics, "FICT-PARSE"));
     }
