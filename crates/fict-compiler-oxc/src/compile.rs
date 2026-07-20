@@ -482,4 +482,47 @@ mod tests {
         assert!(!output.code.contains("export "), "{}", output.code);
         assert!(!output.code.contains(" from './"), "{}", output.code);
     }
+
+    #[test]
+    fn renames_top_level_commonjs_host_bindings() {
+        let mut commonjs = options(OxcSourceLanguage::TypeScript);
+        commonjs.module_kind = OxcModuleKind::CommonJs;
+        let output = compile_passthrough(
+            concat!(
+                "const require = 'user-require';\n",
+                "const exports = 'user-exports';\n",
+                "const module = 'user-module';\n",
+                "const __filename = 'user-filename';\n",
+                "const __dirname = 'user-dirname';\n",
+                "const arguments = 'user-arguments';\n",
+                "import dependency from './dependency.cjs';\n",
+                "export const values = [require, exports, module, __filename, __dirname, arguments, dependency.value];",
+            ),
+            "entry.cts",
+            commonjs,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        for name in [
+            "require",
+            "exports",
+            "module",
+            "filename",
+            "dirname",
+            "arguments",
+        ] {
+            assert!(
+                output.code.contains(&format!("__fict_cjs_user_{name}")),
+                "missing renamed {name}: {}",
+                output.code
+            );
+        }
+        assert!(
+            output
+                .code
+                .contains("__fict_cjs_load(require(\"./dependency.cjs\")"),
+            "{}",
+            output.code
+        );
+    }
 }

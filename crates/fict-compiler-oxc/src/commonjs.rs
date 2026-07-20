@@ -23,6 +23,14 @@ const RUNNER_EXPORTS: &str = "__vite_ssr_exports__";
 const RUNNER_EXPORT_ALL: &str = "__vite_ssr_exportAll__";
 const RUNNER_DYNAMIC_IMPORT: &str = "__vite_ssr_dynamic_import__";
 const RUNNER_IMPORT_META: &str = "__vite_ssr_import_meta__";
+const COMMONJS_HOST_BINDINGS: [&str; 6] = [
+    "arguments",
+    "exports",
+    "module",
+    "require",
+    "__filename",
+    "__dirname",
+];
 
 /// Lower standard ESM declarations in a CommonJS/CTS request after ordinary OXC transforms.
 ///
@@ -47,12 +55,7 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
     let mut reserved_names: BTreeSet<String> = scoping
         .symbol_names()
         .map(str::to_owned)
-        .chain([
-            "arguments".to_owned(),
-            "exports".to_owned(),
-            "module".to_owned(),
-            "require".to_owned(),
-        ])
+        .chain(COMMONJS_HOST_BINDINGS.map(str::to_owned))
         .collect();
     let generated_bindings = generated_binding_names(
         allocator,
@@ -110,22 +113,27 @@ fn generated_binding_names<'a>(
     reserved_names: &mut BTreeSet<String>,
 ) -> BTreeMap<usize, &'a str> {
     let mut names = BTreeMap::new();
+    let root_scope = scoping.root_scope_id();
     for symbol_id in scoping.symbol_ids() {
         let index = symbol_id.index();
         let current = scoping.symbol_name(symbol_id);
+        let host_binding = scoping.symbol_scope_id(symbol_id) == root_scope
+            && COMMONJS_HOST_BINDINGS.contains(&current);
         let runner_created = index >= original_symbol_names.len();
         let runner_renamed = original_symbol_names
             .get(index)
             .is_some_and(|original| original != current && current.starts_with("__vite_ssr_"));
-        if runner_created || runner_renamed {
-            let preferred = if current.contains("import") {
-                "__fict_cjs_import"
+        if runner_created || runner_renamed || host_binding {
+            let preferred = if host_binding {
+                format!("__fict_cjs_user_{}", current.trim_start_matches('_'))
+            } else if current.contains("import") {
+                "__fict_cjs_import".to_owned()
             } else if current.contains("default") {
-                "__fict_cjs_default"
+                "__fict_cjs_default".to_owned()
             } else {
-                "__fict_cjs_binding"
+                "__fict_cjs_binding".to_owned()
             };
-            names.insert(index, allocate_name(allocator, reserved_names, preferred));
+            names.insert(index, allocate_name(allocator, reserved_names, &preferred));
         }
     }
     names
