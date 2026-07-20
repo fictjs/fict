@@ -57,11 +57,8 @@ pub(super) fn lower_statements<'a>(
 ) {
     let locations: Vec<_> = statements
         .iter()
-        .filter_map(|statement| {
-            let span = statement.span();
-            let location = (span.start, span.end);
-            rewrites.contains_key(&location).then_some(location)
-        })
+        .filter_map(control_location)
+        .filter(|location| rewrites.contains_key(location))
         .collect();
     for location in locations {
         let Some(rewrite) = rewrites.get(&location) else {
@@ -80,16 +77,10 @@ fn lower_one<'a>(
     rewrite: &ControlFlowRegionRewrite,
     identities: &SemanticIdentities,
 ) -> bool {
-    let Some(control_index) = statements.iter().position(|statement| {
-        statement.span().start == location.0
-            && statement.span().end == location.1
-            && matches!(
-                statement,
-                Statement::IfStatement(_)
-                    | Statement::SwitchStatement(_)
-                    | Statement::TryStatement(_)
-            )
-    }) else {
+    let Some(control_index) = statements
+        .iter()
+        .position(|statement| control_location(statement) == Some(location))
+    else {
         return false;
     };
     let expected: BTreeSet<_> = rewrite
@@ -107,13 +98,19 @@ fn lower_one<'a>(
         .filter(|output| output.declaration.0 < location.0)
         .map(|output| output.binding)
         .collect();
-    // Lift only a complete suffix of declarations immediately before the dispatcher. Splitting a
-    // declaration or moving one across a retained initializer would reverse authored effects.
-    let mut declaration_start = control_index;
+    // Literal initializers may cross retained statements when the HIR plan proved that nothing
+    // reads or writes the binding before the dispatcher. Keep every other initializer adjacent so
+    // authored evaluation order cannot change.
+    let mut declaration_indices = BTreeSet::new();
     let mut found = BTreeSet::new();
-    while declaration_start > 0 {
-        let Statement::VariableDeclaration(declaration) = &statements[declaration_start - 1] else {
+    let mut crossed_retained_statement = false;
+    for index in (0..control_index).rev() {
+        if found == expected_outer {
             break;
+        }
+        let Statement::VariableDeclaration(declaration) = &statements[index] else {
+            crossed_retained_statement = true;
+            continue;
         };
         let bindings: Option<Vec<_>> = declaration
             .declarations
@@ -128,10 +125,27 @@ fn lower_one<'a>(
                 .iter()
                 .all(|binding| expected_outer.contains(binding))
         {
-            break;
+            crossed_retained_statement = true;
+            continue;
+        }
+        if crossed_retained_statement
+            && !declaration.declarations.iter().all(|declarator| {
+                declarator.init.as_ref().is_none_or(|initializer| {
+                    matches!(
+                        initializer,
+                        Expression::BooleanLiteral(_)
+                            | Expression::NullLiteral(_)
+                            | Expression::NumericLiteral(_)
+                            | Expression::BigIntLiteral(_)
+                            | Expression::StringLiteral(_)
+                    )
+                })
+            })
+        {
+            return false;
         }
         found.extend(bindings);
-        declaration_start -= 1;
+        declaration_indices.insert(index);
     }
     if found != expected_outer {
         return false;
@@ -141,7 +155,7 @@ fn lower_one<'a>(
     let mut outer = ArenaVec::new_in(&allocator);
     let mut body = ArenaVec::new_in(&allocator);
     for (index, statement) in authored.into_iter().enumerate() {
-        if declaration_start <= index && index < control_index {
+        if declaration_indices.contains(&index) {
             body.push(statement);
             continue;
         }
@@ -164,6 +178,24 @@ fn lower_one<'a>(
     }
     *statements = outer;
     true
+}
+
+fn control_location(statement: &Statement<'_>) -> Option<(u32, u32)> {
+    match statement {
+        Statement::IfStatement(_)
+        | Statement::SwitchStatement(_)
+        | Statement::TryStatement(_)
+        | Statement::DoWhileStatement(_)
+        | Statement::WhileStatement(_)
+        | Statement::ForStatement(_)
+        | Statement::ForInStatement(_)
+        | Statement::ForOfStatement(_) => {
+            let span = statement.span();
+            Some((span.start, span.end))
+        }
+        Statement::LabeledStatement(labeled) => control_location(&labeled.body),
+        _ => None,
+    }
 }
 
 fn declarator_binding(

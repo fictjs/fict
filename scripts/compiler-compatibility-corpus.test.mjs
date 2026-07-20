@@ -1003,11 +1003,11 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
   )
   assert.deepEqual(policyCounts, corpus.deviationPolicyCounts)
   assert.deepEqual(corpus.deviationPolicyCounts, {
-    'genuine-capability-expansion': 6,
+    'genuine-capability-expansion': 7,
     'intentional-runtime-error': 1,
     'validation-regression': 0,
     'fallback-only': 1,
-    'reactive-equivalence-required': 1,
+    'reactive-equivalence-required': 0,
     'intentional-breaking-policy': 1,
     'narrow-component-role': 24,
     'structured-hook-return': 6,
@@ -1322,11 +1322,11 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   assert.equal(review.reviews.length, 10)
   assert.equal(new Set(review.reviews.map(entry => entry.id)).size, 10)
   assert.deepEqual(review.policyCounts, {
-    'genuine-capability-expansion': 6,
+    'genuine-capability-expansion': 7,
     'intentional-runtime-error': 1,
     'validation-regression': 0,
     'fallback-only': 1,
-    'reactive-equivalence-required': 1,
+    'reactive-equivalence-required': 0,
     'intentional-breaking-policy': 1,
   })
   assert.ok(
@@ -1340,12 +1340,12 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   )
   assert.equal(
     review.reviews.filter(entry => review.policies[entry.policy].capabilityClaim).length,
-    6,
+    7,
   )
   assert.equal(
     review.reviews.filter(entry => review.policies[entry.policy].releaseDisposition === 'block')
       .length,
-    1,
+    0,
   )
   assert.match(runtime, /acceptancePolicies\.has\(fixture\.deviationPolicy\)/)
   assert.match(runtime, /assert\.equal\(probes\.length, 10\)/)
@@ -1559,8 +1559,8 @@ test('documents every reviewed Babel status and request-identity deviation', () 
     new RegExp(`${statusDifferenceCount} reviewed success/error status differences`),
   )
   assert.match(migrationGuide, new RegExp(`${rustRejectionCount} inputs accepted by Babel`))
-  assert.match(migrationGuide, /only 6 are capability claims/)
-  assert.match(migrationGuide, /1 is a release-blocking regression/)
+  assert.match(migrationGuide, /7 are capability claims/)
+  assert.match(migrationGuide, /no release-blocking regression remains/)
   assert.match(migrationGuide, /language: "jsx"/)
 })
 

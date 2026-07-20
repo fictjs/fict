@@ -2,7 +2,7 @@ use std::{cmp::Reverse, collections::BTreeSet};
 
 use fict_hir::{
     DeclarationKind, FunctionKind, HirFile, HirFunction, HirInstruction, HirInstructionKind,
-    LocalId, LocalKind, Place, PlaceBase, SourceSpan, StructuredSourceKind,
+    LocalId, LocalKind, Place, PlaceBase, SourceSpan, StructuredSourceKind, TerminatorKind,
 };
 use fict_reactivity::{StructuredConstructKind, StructurizeAnalysis};
 
@@ -23,7 +23,7 @@ pub(crate) fn lower_control_flow_regions(
     names: &mut NameAllocator,
     operations: &mut Vec<EmitOperation>,
 ) {
-    if function.kind != FunctionKind::Component
+    if !matches!(function.kind, FunctionKind::Component | FunctionKind::Hook)
         || function.flags.no_memo
         || function.flags.is_async
         || function.flags.is_generator
@@ -65,6 +65,7 @@ pub(crate) fn lower_control_flow_regions(
             StructuredConstructKind::Conditional { .. }
                 | StructuredConstructKind::Switch { .. }
                 | StructuredConstructKind::Try { .. }
+                | StructuredConstructKind::Loop { .. }
         ) {
             continue;
         }
@@ -83,6 +84,14 @@ pub(crate) fn lower_control_flow_regions(
                     ) | (
                         StructuredConstructKind::Try { .. },
                         StructuredSourceKind::Try
+                    ) | (
+                        StructuredConstructKind::Loop { .. },
+                        StructuredSourceKind::WhileLoop
+                            | StructuredSourceKind::DoWhileLoop
+                            | StructuredSourceKind::ForLoop
+                            | StructuredSourceKind::ForOfLoop
+                            | StructuredSourceKind::ForAwaitOfLoop
+                            | StructuredSourceKind::ForInLoop
                     )
                 )
             })
@@ -93,6 +102,18 @@ pub(crate) fn lower_control_flow_regions(
         let Some(control_span) = origin.primary_span else {
             continue;
         };
+        let exits_function = construct.blocks.iter().any(|block| {
+            matches!(
+                &function.blocks[block.as_usize()].terminator.kind,
+                TerminatorKind::Return { .. } | TerminatorKind::Throw { .. }
+            )
+        });
+        if exits_function
+            && (function.kind == FunctionKind::Hook
+                || matches!(construct.kind, StructuredConstructKind::Loop { .. }))
+        {
+            continue;
+        }
         if operations.iter().any(|operation| {
             matches!(operation, EmitOperation::ConditionalReturn { origin, .. }
                 if origin.primary_span == Some(control_span))
@@ -231,6 +252,8 @@ fn output_for_local(
                     let span = instruction.origin.primary_span?;
                     if contains(control_span, span) {
                         read_inside = true;
+                    } else if span.start() < control_span.start() {
+                        return None;
                     } else {
                         references.push(instruction.origin);
                     }

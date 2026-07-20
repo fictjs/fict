@@ -842,6 +842,107 @@ test('reactive switch assignments re-execute as one fallback region', async () =
   container.remove()
 })
 
+test('reactive hook loop outputs re-execute through a live memo region', async () => {
+  const source = `
+    import { $state } from 'fict'
+    import { __fictRender } from 'fict/internal'
+
+    function useRun() {
+      let n = $state(2)
+      let out = ''
+      let i = 0
+
+      do {
+        out += i
+        i++
+        if (i === 1) continue
+      } while (i < n)
+
+      return {
+        set: next => { n = next },
+        view: () => out,
+      }
+    }
+
+    function Probe() {
+      const result = useRun()
+      const before = result.view()
+      result.set(4)
+      return [before, result.view()]
+    }
+
+    export function probe() {
+      return __fictRender({ slots: [], cursor: 0 }, Probe)
+    }
+  `
+  const compiled = await compileAndImport(source, 'reactive-hook-loop-region', {
+    options: { strictGuarantee: false },
+  })
+
+  assert.deepEqual(compiled.probe(), ['01', '0123'])
+})
+
+test('structured hook control-flow forms stay live as one region each', async () => {
+  const source = `
+    import { $state } from 'fict'
+    import { __fictRender } from 'fict/internal'
+
+    function useRegions() {
+      let enabled = $state(false)
+      let branch = 'off'
+      if (enabled) branch = 'on'
+
+      let mode = $state(0)
+      let choice = 'zero'
+      switch (mode) {
+        case 1: choice = 'one'; break
+      }
+
+      let shape = $state({ a: 1 })
+      let keys = ''
+      const source = shape
+      for (const key in source) keys += key
+
+      let count = $state(2)
+      let loop = ''
+      let index = 0
+      outer: while (index < count) {
+        loop += index++
+        if (index === 1) continue outer
+      }
+
+      return {
+        update: () => {
+          enabled = true
+          mode = 1
+          shape = { a: 1, b: 2 }
+          count = 3
+        },
+        view: () => [branch, choice, keys, loop],
+      }
+    }
+
+    function Probe() {
+      const result = useRegions()
+      const before = result.view()
+      result.update()
+      return [before, result.view()]
+    }
+
+    export function probe() {
+      return __fictRender({ slots: [], cursor: 0 }, Probe)
+    }
+  `
+  const compiled = await compileAndImport(source, 'reactive-hook-control-region-matrix', {
+    options: { strictGuarantee: false },
+  })
+
+  assert.deepEqual(compiled.probe(), [
+    ['off', 'zero', 'a', '01'],
+    ['on', 'one', 'ab', '012'],
+  ])
+})
+
 test('inert reactive control flow stays diagnostic-free without claiming an emit capability', async () => {
   const source = `
     import { $state, render } from 'fict'

@@ -95,13 +95,13 @@
       "runtimeTest": "scripts/native-compiler-capability-expansions.test.mjs",
       "releaseGate": "scripts/native-compiler-capability-release-gate.mjs",
       "reviewedAcceptances": 10,
-      "capabilityClaims": 6,
-      "releaseBlockingRegressions": 1,
+      "capabilityClaims": 7,
+      "releaseBlockingRegressions": 0,
       "assertionLevel": "reviewed-policy-and-native-runtime",
       "proves": [
         "per-fixture-rust-acceptance-classification",
-        "runtime-errors-and-stale-results-are-not-capability-claims",
-        "release-blocking-validation-and-reactivity-regressions"
+        "runtime-errors-are-not-capability-claims",
+        "release-blocking-validation-and-reactivity-regressions-are-zero"
       ],
       "doesNotProve": ["babel-runtime-equivalence-for-babel-rejected-inputs"]
     },

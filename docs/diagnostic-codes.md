@@ -426,6 +426,9 @@ inside a guaranteed branch-return lowering or memoized control-flow region. Comm
 call-based predicates (`if (state > 0 && maybe())`) and loop/branch shapes that cannot be lowered
 as a supported branch binding. Same-module hook-return accessors inferred after core region
 planning also fail closed here when the surrounding control flow is not a supported branch return.
+Structured synchronous hook `if`/`switch`/loop forms that assign observable locals are instead
+lowered into one live memo region when their declarations can move atomically and the construct
+contains no authored `return` or `throw`.
 The diagnostic is also required when `lazyConditional: false` disables the EmitIR
 `ConditionalReturn` capability for an otherwise supported reactive return.
 

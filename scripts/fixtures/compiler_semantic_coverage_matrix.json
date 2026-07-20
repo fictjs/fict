@@ -270,7 +270,7 @@
           ]
         }
       ],
-      "claimBoundary": "Classifies and executes each remaining Babel-rejected Rust acceptance exactly once. The repaired long-cycle and reactive alias or derived-write fixtures are no longer acceptances. Only rows marked genuine-capability-expansion are capability claims; the remaining reactive-equivalence-required row blocks release until removed."
+      "claimBoundary": "Classifies and executes each remaining Babel-rejected Rust acceptance exactly once. The repaired long-cycle and reactive alias or derived-write fixtures are no longer acceptances, and the live hook-loop oracle proves that the former stale result now updates. Only rows marked genuine-capability-expansion are capability claims; no reviewed acceptance blocks release."
     }
   ]
 }

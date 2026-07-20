@@ -33,11 +33,11 @@
     }
   },
   "policyCounts": {
-    "genuine-capability-expansion": 6,
+    "genuine-capability-expansion": 7,
     "intentional-runtime-error": 1,
     "validation-regression": 0,
     "fallback-only": 1,
-    "reactive-equivalence-required": 1,
+    "reactive-equivalence-required": 0,
     "intentional-breaking-policy": 1
   },
   "reviews": [
@@ -75,11 +75,11 @@
     },
     {
       "id": "packages/compiler/test/control-flow-runtime.test.ts:4590:compileAndRunHook",
-      "policy": "reactive-equivalence-required",
+      "policy": "genuine-capability-expansion",
       "owner": "compiler-control-flow",
-      "reason": "The do-while result remains stale after its state dependency changes from 2 to 4.",
-      "finalPlan": "Lower the loop into a reactive region or reject it with a stable unsuppressible guarantee diagnostic.",
-      "removalCondition": "Remove this review when the second observation is updated or compilation fails closed."
+      "reason": "Rust lowers the do-while accumulator and loop-local state into one live memo region; the runtime oracle proves that changing n from 2 to 4 updates the observed output from 01 to 0123.",
+      "finalPlan": "Keep the executable before-and-after oracle for reactive hook loop outputs.",
+      "removalCondition": "Remove only if live control-flow region lowering is retired or Babel accepts the request."
     },
     {
       "id": "packages/compiler/test/control-flow.test.ts:953:runTransform",

@@ -100,7 +100,7 @@ const probes = [
       }
     `,
     exportName: 'useProbe',
-    expected: ['01', '01'],
+    expected: ['01', '0123'],
   },
   {
     id: 'packages/compiler/test/control-flow.test.ts:953:runTransform',
@@ -175,7 +175,7 @@ test('runtime probes cover every explicitly classified Rust acceptance exactly o
     acceptanceReview.reviews.filter(
       review => acceptanceReview.policies[review.policy].capabilityClaim,
     ).length,
-    6,
+    7,
   )
 })
 

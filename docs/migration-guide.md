@@ -154,9 +154,9 @@ The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,950-case
 compile corpus currently has 47 reviewed success/error status differences:
 37 inputs accepted by Babel are rejected by Rust, and 10 inputs rejected by
 Babel are accepted by Rust. The 10 Rust acceptances are individually reviewed:
-only 6 are capability claims, while 1 is a release-blocking regression that
-must be removed before release. A successful code emission is never by itself
-evidence of compatible runtime behavior.
+7 are capability claims, and no release-blocking regression remains. A
+successful code emission is never by itself evidence of compatible runtime
+behavior.
 
 | Compatibility policy             | Count | 0.31 behavior and migration action                                                                                                                                                                         |
 | -------------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -164,11 +164,11 @@ evidence of compatible runtime behavior.
 | `structured-hook-return`         |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor.      |
 | `standard-decorator-fail-closed` |     3 | Standard decorators must be lowered by a target-compatible transform before native Fict compilation, or removed; raw decorator syntax is never emitted as successful JavaScript.                           |
 | `strict-reactivity-fail-closed`  |     4 | `strictGuarantee` rejects statement control flow that needs an R006 region fallback. Refactor the branch into guaranteed JSX expressions, or explicitly use non-strict compilation and review the warning. |
-| `genuine-capability-expansion`   |     6 | Executable runtime oracles prove the newly supported enum or control-flow behavior.                                                                                                                        |
+| `genuine-capability-expansion`   |     7 | Executable runtime oracles prove the newly supported enum or control-flow behavior, including live re-execution of hook loop outputs.                                                                      |
 | `intentional-runtime-error`      |     1 | Rust preserves ordinary JavaScript TDZ failure. This is runtime-semantics evidence, not a compiler capability claim.                                                                                       |
 | `validation-regression`          |     0 | Rust again rejects writes through reactive aliases and compiler-managed derived values; no reviewed validation regression remains.                                                                         |
 | `fallback-only`                  |     1 | Rust emits a structured `FICT-R006` fallback diagnostic. Do not rely on this as guaranteed fine-grained lowering.                                                                                          |
-| `reactive-equivalence-required`  |     1 | The emitted loop result remains stale after state changes. This row blocks release until correct lowering or fail-closed rejection.                                                                        |
+| `reactive-equivalence-required`  |     0 | Reactive hook loop outputs now execute inside one live memo region; the audited result updates from `01` to `0123` after its state bound changes from 2 to 4.                                              |
 | `intentional-breaking-policy`    |     1 | Rust intentionally removes the audited Babel warning behavior. Treat this as a diagnostic-policy migration, not a capability.                                                                              |
 
 The source of truth for all 10 remaining reviews is

@@ -1193,8 +1193,10 @@ fn verify_operations(
                 outputs, origin, ..
             } => {
                 let mut bindings = BTreeSet::new();
-                let valid = function.kind == fict_hir::FunctionKind::Component
-                    && origin.primary_span.is_some()
+                let valid = matches!(
+                    function.kind,
+                    fict_hir::FunctionKind::Component | fict_hir::FunctionKind::Hook
+                ) && origin.primary_span.is_some()
                     && !outputs.is_empty()
                     && outputs.iter().all(|output| {
                         let Some(local) = hir_function.locals.get(output.local.as_usize()) else {
@@ -1219,7 +1221,7 @@ fn verify_operations(
                 if !valid {
                     diagnostics.push(emit_error(
                         "FICT-EMIT-CONTROL-REGION",
-                        "control-flow region outputs must be unique mutable component locals with exact semantic identity",
+                        "control-flow region outputs must be unique mutable component or hook locals with exact semantic identity",
                     ));
                 }
             }

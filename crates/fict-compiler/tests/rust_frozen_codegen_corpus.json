@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "b585140f812e50ac116289ca6602447c910f2969",
+    "rustAuditRevision": "2ed7a7cdf84a9cb6d82ec3e17f07192532d6c2b0",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "b585140f812e50ac116289ca6602447c910f2969",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-b8844bfc94a065169124f35551ef10fa09839d2e64200926064ec89e49ba9102"
+    "reviewedRevision": "2ed7a7cdf84a9cb6d82ec3e17f07192532d6c2b0",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-694bb8da9f422addf8138630eea1eb3d90dc36b296b30d095000ec26295169e6"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
@@ -41,11 +41,11 @@
     "strict-reactivity-fail-closed": "Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution."
   },
   "deviationPolicyCounts": {
-    "genuine-capability-expansion": 6,
+    "genuine-capability-expansion": 7,
     "intentional-runtime-error": 1,
     "validation-regression": 0,
     "fallback-only": 1,
-    "reactive-equivalence-required": 1,
+    "reactive-equivalence-required": 0,
     "intentional-breaking-policy": 1,
     "narrow-component-role": 24,
     "structured-hook-return": 6,
@@ -3956,7 +3956,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "661456c04550d76680b2b625eedaf65c7da26368fa4bd7b52a8fcd951bac37d8"
+        "codeSha256": "cdba794abb3898f6971f48a09bf4f0483aba09b799147de6eb89555365c0c762"
       },
       "deviationPolicy": null
     },
@@ -7669,7 +7669,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "440d9a9472bee4c540ce4c52b046eaa92e56e3bf895de3d2569fb490fcc3812f"
+        "codeSha256": "a71cb656b19a298f4ad22daebb6cb17e932685a93ed972b210d9a4373dc3fbc5"
       },
       "deviationPolicy": null
     },
@@ -7693,7 +7693,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "b41087b9748ee0c8dff6d97517ae2c56b02d713b9a1c89b983ffd10b7704da8f"
+        "codeSha256": "76abe98829cc225a9978c5b86dcf16b38f226d7b4061c97c341bd517eef06ebd"
       },
       "deviationPolicy": null
     },
@@ -7717,7 +7717,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "db0be10301cc9cbabb6ccb0841cc9c879dabdd297578ef89d2530e552c6f63f7"
+        "codeSha256": "529ac6cee8103b61a3eb195287912314ca61127e16584f4a735cbfed20c79c98"
       },
       "deviationPolicy": null
     },
@@ -7747,7 +7747,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "d57ee5432a8b19b2f2bc1b396a3864a6a3585ec0c643b56e5872f441940557c0"
+        "codeSha256": "b91d4970ca160d6befd05c0566f834e7fb44279398f334f02a8ebd55bb6deda0"
       },
       "deviationPolicy": null
     },
@@ -7963,7 +7963,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "6edd67025540abec11344987308b7eb1e436af6c00a17390d6c35c98d54747c2"
+        "codeSha256": "20428131f31a66a3316da5adba685067e6f8ab1aa9cd0d684b52fdcae54952a3"
       },
       "deviationPolicy": null
     },
@@ -7987,7 +7987,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "156c022e40009650b5d2b09692b0fb5bcf6c0594c3ee8884f266db9d993c8a35"
+        "codeSha256": "dd8ef2048c8de39ba9c30e52c7a9caaa54bbe0c8f251ca13d59c2e4f2b45f695"
       },
       "deviationPolicy": null
     },
@@ -11515,7 +11515,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "8ed47741e734fea7b4b10376c0cd3385897a5f3b719fd96d1cc9db32d6dfc9d6"
+        "codeSha256": "02fe26e3b35590d7325c44835290e7eae05abbbfc1ff8e638a91bd99cb07ea7c"
       },
       "deviationPolicy": null
     },
@@ -11611,7 +11611,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "bd9fed67b67f2863cd19a70f29fbfd5271342b0fb224450b39e063aa613f099c"
+        "codeSha256": "3ec5a6d7f84dc8136afb8449b641451198c1d93da7c58d844ff690283eed8c04"
       },
       "deviationPolicy": null
     },
@@ -11755,7 +11755,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "e5d3e23d262b6a59a73732581473c06cb11cca28a8db592f9ad44edab44d81cb"
+        "codeSha256": "b170870bfc617fd07ba7bc2887ff881b7f510da67c7ce406d32dab821b03679d"
       },
       "deviationPolicy": null
     },
@@ -11779,7 +11779,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "4d50b9a6b57337f3c42ddccf238bef227c6afdc7333380851ee6d816b8eb6f8e"
+        "codeSha256": "4dcde9bb1427f02a4acffb202b2bdc2b0bc03eb29010f4319eee19eeca188045"
       },
       "deviationPolicy": null
     },
@@ -11875,7 +11875,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "5500fcbaedf42d2effc1ab865f42163d041f8c1c2ffd7e6f5af18b7802e5d0f2"
+        "codeSha256": "46bdc0f222ebec9e799b755ac2a282142f0f64a36c697ffe0bfd1d97f51a2ae1"
       },
       "deviationPolicy": null
     },
@@ -11971,7 +11971,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "16b149db438703aaf67c0f1db2764351ec4edc6afdcc640fc37c14c1c806b66d"
+        "codeSha256": "6d9581a3d33b706e8e028ba0c9fd0e52cfc8cc69a2b5d8aa94e0b3b07fd2c4a0"
       },
       "deviationPolicy": null
     },
@@ -12283,7 +12283,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "792c006bbcfa417938b7f046aab284d78deb8f065e226f7e97c1418da4c80375"
+        "codeSha256": "90eeb60ac636f34de2949be87356adbb2d004a826e3c19d9b0f742b89638088e"
       },
       "deviationPolicy": null
     },
@@ -12331,7 +12331,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "1b1335a60580ddf0b7a045410f72c658107180f50bf8d4354b4167c9e663cecf"
+        "codeSha256": "2a3ab5e402acc88e186058327728aea394e34f6a5e99576dbcb3319cf0deea36"
       },
       "deviationPolicy": null
     },
@@ -12427,9 +12427,9 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "7150f41209a99d11d1be2f193c080f584e3ae9c28b7e150d39b4a3e8a08bef66"
+        "codeSha256": "17bdde378e3f3ca5516242c61796ebba2902637d9dd9f5b85d96e68f944fd094"
       },
-      "deviationPolicy": "reactive-equivalence-required"
+      "deviationPolicy": "genuine-capability-expansion"
     },
     {
       "id": "packages/compiler/test/control-flow.test.ts:33:runTransform",
@@ -13423,7 +13423,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "f90391f2b96f0943f2b3a8483521ee5a32c493799ded10bbc3cb65f05151b7fd"
+        "codeSha256": "9e2cf47063cac88962fbd3774268178c4be930abb5dcee88abf2a0fbf5938196"
       },
       "deviationPolicy": null
     },
@@ -13447,7 +13447,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "07565d585451270728d46658195bbe92884be24468a893c2a43625d64fc5ab50"
+        "codeSha256": "15f3e15cf2c23e1834227b5ad23a73583488c112fd211c724a9219bcc64ebe55"
       },
       "deviationPolicy": null
     },
@@ -13530,7 +13530,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "5f121c38ce36fa944fffa1a8478c49541fd320978330f8460d9f0a9e632ab2be"
+        "codeSha256": "67cf241aae2990e9854ef92764d77fc1a9fc0095ec4b1abc7a7273db0b943b47"
       },
       "deviationPolicy": null
     },
@@ -26106,7 +26106,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "43122a7ff76da5961384efc4eef51f05de687477d9bb67c00de5396c73038422"
+        "codeSha256": "b2bab0317e5f16ceeee0f19c40719cf9ce3468c3a59b3a86fa1ee20dea8891db"
       },
       "deviationPolicy": null
     },
@@ -26130,7 +26130,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "43122a7ff76da5961384efc4eef51f05de687477d9bb67c00de5396c73038422"
+        "codeSha256": "b2bab0317e5f16ceeee0f19c40719cf9ce3468c3a59b3a86fa1ee20dea8891db"
       },
       "deviationPolicy": null
     },
@@ -26202,7 +26202,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "cdd3257ff04c2b6f3210f244936cc3b8b1e415cd078c937191794c7634fb7862"
+        "codeSha256": "60008786ccf22f951f05d87e15fd81a9d8b6350b7f2bb1ba0fff3ca1790efdf8"
       },
       "deviationPolicy": null
     },
@@ -26226,7 +26226,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "55b26b3c5196e650dbb048238c116c30542c3d4fabd7b4aca80effa170568ff7"
+        "codeSha256": "8ad267554ce4ef714c84af9a4b0b653d7dfb141789cf953136f6da392a68656c"
       },
       "deviationPolicy": null
     },
@@ -26328,7 +26328,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "e30b9d4b1e76bef51566740f5938a978cb3779382017ee4344196f865991a79a"
+        "codeSha256": "f267fca8693330a82e8da2b5dec249aa145447bdb467ec54dde906a92d9e2ad9"
       },
       "deviationPolicy": null
     },
@@ -27295,7 +27295,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "7f7bddf6e60337389446d81c551aed5143e92da8c40c98933aeb61edf2b54684"
+        "codeSha256": "2555439947668e17c7a2e5c69acf0554ebc51abcc53284c586311e13a971e41e"
       },
       "deviationPolicy": null
     },
@@ -32860,7 +32860,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "f2dcd442269f79a9aba18f78c0d645831ed6ffda8872df743c4e17b6893b2175"
+        "codeSha256": "ed5d1696e56348e402746d3e91b4fa393206896f79300df8c09a0f680ad58b6b"
       },
       "deviationPolicy": null
     },
@@ -32890,7 +32890,7 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "11cc507d98ccd5088ad2f526b3e35707c624c708c857cd2a81f26159975b5c42"
+        "codeSha256": "b7339cff864febbecb94200ac3b1ca43599473b6a22216c3a777b4d8690dc018"
       },
       "deviationPolicy": null
     },

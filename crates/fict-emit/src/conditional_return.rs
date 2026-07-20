@@ -401,11 +401,11 @@ pub(crate) fn story_has_reactive_control(
             } => std::iter::once(*discriminant)
                 .chain(cases.iter().filter_map(|case| case.test))
                 .collect(),
+            TerminatorKind::ForIn { object, .. } => vec![*object],
+            TerminatorKind::ForOf { iterable, .. } => vec![*iterable],
             TerminatorKind::Return { .. }
             | TerminatorKind::Throw { .. }
             | TerminatorKind::Goto { .. }
-            | TerminatorKind::ForIn { .. }
-            | TerminatorKind::ForOf { .. }
             | TerminatorKind::Try { .. }
             | TerminatorKind::Unreachable => Vec::new(),
         };
