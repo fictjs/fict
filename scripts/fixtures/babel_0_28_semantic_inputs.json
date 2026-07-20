@@ -187,7 +187,8 @@
       "invocation": {
         "exportName": "Scenario",
         "arguments": []
-      }
+      },
+      "diagnosticDeviation": "rust-adds-derived-projection-mutation-warning"
     },
     {
       "id": "argument-and-negative-zero",

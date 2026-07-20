@@ -70,14 +70,17 @@ for (const fixture of inputs.fixtures) {
     const rustDiagnostics = diagnosticSignature(result.diagnostics)
     if (fixture.diagnosticDeviation === undefined) {
       assert.deepEqual(rustDiagnostics, babelDiagnostics, `${fixture.id} diagnostics`)
+    } else if (fixture.diagnosticDeviation === 'rust-removes-spurious-hook-member-escape-warning') {
+      assert.deepEqual(babelDiagnostics, ['FICT-R005:warning', 'FICT-R005:warning'], fixture.id)
+      assert.deepEqual(rustDiagnostics, [], fixture.id)
     } else {
       assert.equal(
         fixture.diagnosticDeviation,
-        'rust-removes-spurious-hook-member-escape-warning',
+        'rust-adds-derived-projection-mutation-warning',
         fixture.id,
       )
-      assert.deepEqual(babelDiagnostics, ['FICT-R005:warning', 'FICT-R005:warning'], fixture.id)
-      assert.deepEqual(rustDiagnostics, [], fixture.id)
+      assert.deepEqual(babelDiagnostics, ['FICT-R002:warning'], fixture.id)
+      assert.deepEqual(rustDiagnostics, ['FICT-M:warning', 'FICT-R002:warning'], fixture.id)
     }
     assert.deepEqual(
       await executeCommonJsAsync(result.code, fixture.invocation),
@@ -94,6 +97,9 @@ test('Babel semantic oracle contains no unreferenced or duplicate fixtures', () 
     inputs.fixtures
       .filter(fixture => fixture.diagnosticDeviation !== undefined)
       .map(fixture => [fixture.id, fixture.diagnosticDeviation]),
-    [['structured-hook-return', 'rust-removes-spurious-hook-member-escape-warning']],
+    [
+      ['structured-hook-return', 'rust-removes-spurious-hook-member-escape-warning'],
+      ['optional-nullish-dependency', 'rust-adds-derived-projection-mutation-warning'],
+    ],
   )
 })
