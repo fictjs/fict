@@ -3950,7 +3950,15 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     }
     fn visit_arrow_function_expression(&mut self, function: &mut ArrowFunctionExpression<'a>) {
         let location = (function.span.start, function.span.end);
-        if self.has_props_plan(&function.params) && function.expression {
+        let has_expression_conditional_return = function.expression
+            && function.get_expression().is_some_and(|expression| {
+                let span = expression.span();
+                self.conditional_returns
+                    .contains_key(&(span.start, span.end))
+            });
+        if function.expression
+            && (self.has_props_plan(&function.params) || has_expression_conditional_return)
+        {
             let Some(returned) = function
                 .get_expression()
                 .map(|expression| expression.clone_in(self.allocator))

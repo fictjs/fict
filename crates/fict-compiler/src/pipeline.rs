@@ -4724,6 +4724,22 @@ mod tests {
     }
 
     #[test]
+    fn lowers_expression_bodied_component_conditional_returns() {
+        let result = compile(request(
+            "const App = flag => flag ? <span /> : null; export { App };",
+            "expression-arrow-return.tsx",
+        ));
+
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("createConditional"), "{}", result.code);
+        assert!(
+            result.code.contains("const App = (flag) => {") && result.code.contains("return "),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn lazy_conditional_option_controls_control_flow_return_lowering() {
         let source = "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10) return <Big />; return <Small />; }";
         let enabled = compile(request(source, "lazy-conditional.tsx"));
