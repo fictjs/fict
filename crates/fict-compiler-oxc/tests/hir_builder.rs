@@ -296,6 +296,65 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
     assert_eq!(static_path(calls[2]), ["deep", "usePair"]);
     assert_eq!(static_path(calls[3]), ["<dynamic>"]);
 }
+
+#[test]
+fn tracks_missing_import_metadata_through_static_hook_aliases() {
+    let build = |source: &str| {
+        build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions {
+                resolved_metadata: vec![ResolvedMetadataInput {
+                    request: "./barrel".into(),
+                    resolved_id: None,
+                    status: MetadataResolutionStatus::Missing,
+                    metadata: None,
+                    fingerprint: "missing:barrel".into(),
+                }],
+                ..HirBuildOptions::default()
+            },
+        )
+    };
+    let aliases = [
+        "import { foo } from './barrel'; const useCount = foo; export function App() { return useCount() * 2; }",
+        "import { foo } from './barrel'; const hooks = { useCount: foo }; export function App() { return hooks.useCount() * 2; }",
+        "import * as api from './barrel'; const useCount = api.foo; export function App() { return useCount() * 2; }",
+        "import { useCount } from './barrel'; const hooks = { useCount }; export function App() { return hooks.useCount() * 2; }",
+        "import { foo } from './barrel'; const first = foo; const useCount = first; export function App() { return useCount() * 2; }",
+    ];
+    for source in aliases {
+        let output = build(source);
+        let findings = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-H003")
+            .collect::<Vec<_>>();
+        assert_eq!(findings.len(), 1, "{source}: {:?}", output.diagnostics);
+        assert_eq!(
+            findings[0].severity,
+            fict_diagnostics::DiagnosticSeverity::Warning
+        );
+    }
+
+    let safe = [
+        "import { foo } from './barrel'; const ordinary = foo; export function App() { return ordinary() * 2; }",
+        "import { foo } from './barrel'; const local = () => 1; const hooks = { plain: foo, useCount: local }; export function App() { return hooks.useCount() * 2; }",
+        "import { foo } from './barrel'; const local = () => 1; const hooks = { useCount: foo }; hooks.useCount = local; export function App() { return hooks.useCount() * 2; }",
+        "import { foo } from './barrel'; let useCount = foo; useCount = () => 1; export function App() { return useCount() * 2; }",
+    ];
+    for source in safe {
+        let output = build(source);
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-H003"),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
 #[test]
 fn remaps_owned_module_exports_after_typescript_runtime_erasure() {
     let output = build_hir(

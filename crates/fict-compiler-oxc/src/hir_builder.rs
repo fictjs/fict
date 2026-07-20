@@ -1930,6 +1930,20 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             concise_arrow_functions: BTreeSet::new(),
         };
         calls.visit_program(program);
+        let mutable_alias_symbols = self
+            .frontend
+            .bindings
+            .iter()
+            .filter(|binding| binding.mutated)
+            .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
+            .collect();
+        let mut static_hook_aliases = StaticHookAliasCollector {
+            scoping: self.semantic.scoping(),
+            aliases: BTreeMap::new(),
+            invalidated: BTreeSet::new(),
+        };
+        static_hook_aliases.visit_program(program);
+        let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
         for (function, statements) in &calls.effect_statements {
             self.functions[function.as_usize()].effect_statements =
                 statements.iter().copied().map(Origin::source).collect();
@@ -2036,7 +2050,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
         self.validate_runtime_reactive_placement(&calls.calls);
-        self.validate_missing_hook_metadata(&calls.calls);
+        self.validate_missing_hook_metadata(&calls.calls, &static_hook_aliases);
         self.validate_hook_placement(&calls.calls);
         self.populate_function_bodies(
             &calls.calls,
@@ -3243,16 +3257,41 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
-    fn validate_missing_hook_metadata(&mut self, calls: &[CallFact]) {
+    fn validate_missing_hook_metadata(&mut self, calls: &[CallFact], aliases: &StaticHookAliases) {
         for call in calls {
-            let binding = call.binding.or_else(|| {
-                let PlannedPlaceBase::Binding(symbol) = &call.callee_reference.as_ref()?.base
-                else {
-                    return None;
-                };
-                self.symbol_to_binding.get(symbol).copied()
-            });
-            let Some(binding) = binding else {
+            let target = call
+                .callee_reference
+                .as_ref()
+                .and_then(|place| static_alias_path_from_place(place, true))
+                .or_else(|| {
+                    let binding = call.binding?;
+                    self.symbol_to_binding
+                        .iter()
+                        .find_map(|(symbol, candidate)| {
+                            (*candidate == binding).then(|| StaticAliasPath::root(*symbol))
+                        })
+                });
+            let Some(target) = target else {
+                continue;
+            };
+            let target_is_hook_like = call.hook.is_some()
+                || target
+                    .properties
+                    .last()
+                    .is_some_and(|name| is_hook_name(name))
+                || (target.properties.is_empty()
+                    && self
+                        .symbol_to_binding
+                        .get(&target.root)
+                        .and_then(|binding| {
+                            self.frontend.bindings.iter().find(|candidate| {
+                                self.old_to_new.get(&candidate.id.index()).copied()
+                                    == Some(*binding)
+                            })
+                        })
+                        .is_some_and(|binding| is_hook_name(&binding.display_name)));
+            let resolved = aliases.resolve(&target);
+            let Some(binding) = self.symbol_to_binding.get(&resolved.root).copied() else {
                 continue;
             };
             let Some(frontend_binding) = self.frontend.bindings.iter().find(|candidate| {
@@ -3264,8 +3303,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 continue;
             };
             if !self.unavailable_metadata_sources.contains(&import.source)
-                || !requires_imported_hook_metadata(frontend_binding, import, call.hook.as_ref())
-                || imported_hook_metadata_available(import, call.callee_reference.as_ref())
+                || (!target_is_hook_like
+                    && !requires_imported_hook_metadata(
+                        frontend_binding,
+                        import,
+                        call.hook.as_ref(),
+                    ))
+                || imported_hook_metadata_available(import, &resolved.properties)
             {
                 continue;
             }
@@ -7538,6 +7582,73 @@ enum PlannedProjection {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct StaticAliasPath {
+    root: SymbolId,
+    properties: Vec<String>,
+}
+
+impl StaticAliasPath {
+    fn root(root: SymbolId) -> Self {
+        Self {
+            root,
+            properties: Vec::new(),
+        }
+    }
+
+    fn with_property(&self, property: String) -> Self {
+        let mut path = self.clone();
+        path.properties.push(property);
+        path
+    }
+
+    fn starts_with(&self, prefix: &Self) -> bool {
+        self.root == prefix.root && self.properties.starts_with(&prefix.properties)
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        self.starts_with(other) || other.starts_with(self)
+    }
+}
+
+#[derive(Debug, Default)]
+struct StaticHookAliases {
+    aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+}
+
+impl StaticHookAliases {
+    fn resolve(&self, original: &StaticAliasPath) -> StaticAliasPath {
+        let mut current = original.clone();
+        let mut visited = BTreeSet::new();
+        visited.insert(current.clone());
+
+        while visited.len() <= self.aliases.len() {
+            let replacement = (0..=current.properties.len()).rev().find_map(|length| {
+                let prefix = StaticAliasPath {
+                    root: current.root,
+                    properties: current.properties[..length].to_vec(),
+                };
+                self.aliases.get(&prefix).map(|source| {
+                    let mut resolved = source.clone();
+                    resolved
+                        .properties
+                        .extend_from_slice(&current.properties[length..]);
+                    resolved
+                })
+            });
+            let Some(replacement) = replacement else {
+                break;
+            };
+            if !visited.insert(replacement.clone()) {
+                break;
+            }
+            current = replacement;
+        }
+
+        current
+    }
+}
+
 #[derive(Debug, Clone)]
 enum EvaluationFact {
     Typed(TypedExpressionFact),
@@ -8732,6 +8843,120 @@ fn span_is_within_owned_pattern(
     patterns
         .iter()
         .any(|(pattern_owner, pattern)| *pattern_owner == owner && span_contains(*pattern, span))
+}
+
+struct StaticHookAliasCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    invalidated: BTreeSet<StaticAliasPath>,
+}
+
+impl StaticHookAliasCollector<'_> {
+    fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
+        self.aliases.retain(|target, _| !target.overlaps(path));
+    }
+
+    fn insert_alias(&mut self, target: StaticAliasPath, source: StaticAliasPath) {
+        self.clear_overlapping_aliases(&target);
+        if target != source {
+            self.aliases.insert(target, source);
+        }
+    }
+
+    fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
+        self.clear_overlapping_aliases(&target);
+        if let Expression::ObjectExpression(object) = value.get_inner_expression() {
+            self.collect_object(&target, object);
+        } else if let Some(source) = static_alias_source_path(self.scoping, value) {
+            self.insert_alias(target, source);
+        }
+    }
+
+    fn collect_object(
+        &mut self,
+        target: &StaticAliasPath,
+        object: &oxc::ast::ast::ObjectExpression<'_>,
+    ) {
+        for property in &object.properties {
+            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                self.aliases
+                    .retain(|candidate, _| !candidate.starts_with(target));
+                continue;
+            };
+            let Some(name) = property.key.static_name() else {
+                self.aliases
+                    .retain(|candidate, _| !candidate.starts_with(target));
+                continue;
+            };
+            let property_target = target.with_property(name.into_owned());
+            self.clear_overlapping_aliases(&property_target);
+            if property.kind != PropertyKind::Init || property.method {
+                continue;
+            }
+            if let Expression::ObjectExpression(nested) = property.value.get_inner_expression() {
+                self.collect_object(&property_target, nested);
+            } else if let Some(source) = static_alias_source_path(self.scoping, &property.value) {
+                self.insert_alias(property_target, source);
+            }
+        }
+    }
+
+    fn invalidate_place(&mut self, place: Option<PlannedPlace>) {
+        if let Some(path) = place.as_ref().and_then(static_alias_invalidation_path) {
+            self.invalidated.insert(path);
+        }
+    }
+
+    fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
+        self.aliases.retain(|target, source| {
+            !mutable_symbols.contains(&target.root)
+                && !mutable_symbols.contains(&source.root)
+                && self.invalidated.iter().all(|invalidated| {
+                    !target.overlaps(invalidated) && !source.overlaps(invalidated)
+                })
+        });
+        StaticHookAliases {
+            aliases: self.aliases,
+        }
+    }
+}
+
+impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let BindingPattern::BindingIdentifier(binding) = &declarator.id
+            && let Some(root) = binding.symbol_id.get()
+            && let Some(initializer) = &declarator.init
+        {
+            self.collect_initializer(StaticAliasPath::root(root), initializer);
+        }
+        walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        self.invalidate_place(planned_assignment_target_place(
+            self.scoping,
+            &assignment.left,
+        ));
+        oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+    }
+
+    fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
+        self.invalidate_place(planned_simple_assignment_target_place(
+            self.scoping,
+            &update.argument,
+        ));
+        oxc::ast_visit::walk::walk_update_expression(self, update);
+    }
+
+    fn visit_unary_expression(&mut self, expression: &oxc::ast::ast::UnaryExpression<'a>) {
+        if expression.operator == OxcUnaryOperator::Delete {
+            self.invalidate_place(planned_expression_place(
+                self.scoping,
+                expression.argument.get_inner_expression(),
+            ));
+        }
+        oxc::ast_visit::walk::walk_unary_expression(self, expression);
+    }
 }
 
 struct FunctionCaptureCollector<'facts, 'semantic, 'reactive> {
@@ -10051,6 +10276,53 @@ fn planned_invocation_reference(
     (!place.projections.is_empty()).then_some(place)
 }
 
+fn static_alias_path_from_place(
+    place: &PlannedPlace,
+    allow_optional: bool,
+) -> Option<StaticAliasPath> {
+    let PlannedPlaceBase::Binding(root) = place.base else {
+        return None;
+    };
+    let properties = place
+        .projections
+        .iter()
+        .map(|projection| match projection {
+            PlannedProjection::Static { name, optional } => {
+                (allow_optional || !optional).then(|| name.clone())
+            }
+            PlannedProjection::Index { index, optional } => {
+                (allow_optional || !optional).then(|| index.to_string())
+            }
+            PlannedProjection::Computed { .. } => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(StaticAliasPath { root, properties })
+}
+
+fn static_alias_source_path(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+) -> Option<StaticAliasPath> {
+    let expression = unwrap_transparent_call_expression(expression);
+    let place = planned_expression_place(scoping, expression)?;
+    static_alias_path_from_place(&place, false)
+}
+
+fn static_alias_invalidation_path(place: &PlannedPlace) -> Option<StaticAliasPath> {
+    let PlannedPlaceBase::Binding(root) = place.base else {
+        return None;
+    };
+    let mut path = StaticAliasPath::root(root);
+    for projection in &place.projections {
+        match projection {
+            PlannedProjection::Static { name, .. } => path.properties.push(name.clone()),
+            PlannedProjection::Index { index, .. } => path.properties.push(index.to_string()),
+            PlannedProjection::Computed { .. } => break,
+        }
+    }
+    Some(path)
+}
+
 fn resolved_imported_hook_member_binding(
     place: &PlannedPlace,
     symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
@@ -10402,24 +10674,12 @@ fn requires_imported_hook_metadata(
 
 fn imported_hook_metadata_available(
     import: &fict_hir::ImportBinding,
-    callee_reference: Option<&PlannedPlace>,
+    properties: &[String],
 ) -> bool {
-    let Some(place) = callee_reference else {
-        return import.hook_return.is_some();
-    };
-    if place.projections.is_empty() {
+    if properties.is_empty() {
         return import.hook_return.is_some();
     }
-    let path: Option<Vec<_>> = place
-        .projections
-        .iter()
-        .map(|projection| match projection {
-            PlannedProjection::Static { name, .. } => Some(name.clone()),
-            PlannedProjection::Index { index, .. } => Some(index.to_string()),
-            PlannedProjection::Computed { .. } => None,
-        })
-        .collect();
-    path.is_some_and(|path| import.resolve_hook_member_path(&path).is_some())
+    import.resolve_hook_member_path(properties).is_some()
 }
 
 fn is_fict_runtime_source(source: &str) -> bool {

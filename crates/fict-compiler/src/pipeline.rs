@@ -1847,6 +1847,58 @@ mod tests {
     }
 
     #[test]
+    fn fails_closed_for_static_hook_aliases_with_authoritatively_missing_metadata() {
+        let sources = [
+            "import { foo } from './barrel'; const useCount = foo; export function App() { return useCount() * 2; }",
+            "import { foo } from './barrel'; const hooks = { useCount: foo }; export function App() { return hooks.useCount() * 2; }",
+        ];
+        for source in sources {
+            let mut input = request(source, "missing-hook-alias.ts");
+            input.metadata.push(ResolvedMetadataInput {
+                request: "./barrel".into(),
+                resolved_id: None,
+                status: MetadataResolutionStatus::Missing,
+                metadata: None,
+                fingerprint: "missing:barrel".into(),
+            });
+
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{source}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{source}: {}", result.code);
+            assert!(result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-H003"
+                    && diagnostic.severity == DiagnosticSeverity::Error
+            }));
+        }
+    }
+
+    #[test]
+    fn warns_for_a_static_hook_alias_when_strict_guarantees_are_disabled() {
+        let mut input = request(
+            "import { foo } from './barrel'; const useCount = foo; export function App() { return useCount() * 2; }",
+            "missing-hook-alias-fallback.ts",
+        );
+        input.options.strict_guarantee = false;
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./barrel".into(),
+            resolved_id: None,
+            status: MetadataResolutionStatus::Missing,
+            metadata: None,
+            fingerprint: "missing:barrel".into(),
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.is_empty());
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-H003"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+    }
+
+    #[test]
     fn consumes_known_hook_facts_from_incomplete_cycle_metadata() {
         let mut input = request(
             "import { useCounter } from './hooks'; export function App() { const count = useCounter(); return <span>{count}</span>; }",
