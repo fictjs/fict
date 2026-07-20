@@ -461,6 +461,13 @@ mod tests {
             output.code
         );
         assert!(
+            output
+                .code
+                .contains("for (const key of Object.keys(source))"),
+            "{}",
+            output.code
+        );
+        assert!(
             output.code.contains("const __fict_cjs_require = \"user\"")
                 && output.code.contains("const __fict_cjs_import = \"nested\""),
             "{}",

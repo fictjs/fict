@@ -74,3 +74,36 @@ test('executes CommonJS output with every Node wrapper binding shadowed by the s
     rmSync(fixtureRoot, { force: true, recursive: true })
   }
 })
+
+test('re-exports only enumerable own properties from a raw CommonJS dependency', () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-export-star-'))
+  try {
+    writeFileSync(
+      path.join(fixtureRoot, 'dependency.cjs'),
+      `
+        let current = 1
+        const value = Object.create({ inherited: 'wrong' })
+        Object.defineProperty(value, 'live', {
+          enumerable: true,
+          get() { return current },
+        })
+        value.own = 'right'
+        value.update = next => { current = next }
+        module.exports = value
+      `,
+      'utf8',
+    )
+    const entryPath = path.join(fixtureRoot, 'entry.cjs')
+    writeFileSync(entryPath, compileCommonJs(`export * from './dependency.cjs'`, entryPath), 'utf8')
+
+    const exported = require(entryPath)
+    assert.deepEqual(Object.keys(exported).sort(), ['live', 'own', 'update'])
+    assert.equal(Object.hasOwn(exported, 'inherited'), false)
+    assert.equal(exported.inherited, undefined)
+    assert.equal(exported.live, 1)
+    exported.update(2)
+    assert.equal(exported.live, 2)
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true })
+  }
+})

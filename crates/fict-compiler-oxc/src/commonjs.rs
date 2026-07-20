@@ -309,7 +309,7 @@ fn inject_commonjs_prelude<'a>(
     }
     if adapter.uses_export_all {
         sources.push(format!(
-            "const {} = source => {{ for (const key in source) {{ if (key !== \"default\" && key !== \"__esModule\" && !Object.prototype.hasOwnProperty.call({}, key)) {{ Object.defineProperty({}, key, {{ enumerable: true, configurable: true, get() {{ return source[key]; }} }}); }} }} }};",
+            "const {} = source => {{ for (const key of Object.keys(source)) {{ if (key !== \"default\" && key !== \"__esModule\" && !Object.prototype.hasOwnProperty.call({}, key)) {{ Object.defineProperty({}, key, {{ enumerable: true, configurable: true, get() {{ return source[key]; }} }}); }} }} }};",
             adapter.export_all_local, adapter.exports_local, adapter.exports_local
         ));
     }

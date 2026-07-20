@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "7a66264b921369647876c9ad5fae550c18f64fbd",
+    "rustAuditRevision": "aa08f725ec79895d83df8958e082e900b6357911",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "7a66264b921369647876c9ad5fae550c18f64fbd",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-00cb9cb7ee299c0e4dc91830818a6cf2544853a51ab8ca7e81d5be42e31834b6"
+    "reviewedRevision": "aa08f725ec79895d83df8958e082e900b6357911",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-1923a9446773cf91d983d0f4d9cd47aa62de403d369b2a85afe9be36367f32b1"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
