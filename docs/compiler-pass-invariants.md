@@ -91,6 +91,9 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 - Versioned package metadata is read only through declared
   `package.json#fict.metadata` / `fict.exports` boundaries.
 - The compiler does not read or write source-adjacent Babel sidecars.
+- Compiler durations and counters cross N-API only as non-negative JavaScript
+  safe-integer `number` values; overflow saturates at `Number.MAX_SAFE_INTEGER`
+  and never changes the protocol type to `bigint`.
 - False misses are preferable to false hits.
 
 ## Complexity policy

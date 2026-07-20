@@ -4,12 +4,15 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_metadata::ModuleReactiveMetadata;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap};
 
 use crate::{COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, CompileRequestError, RawSourceMap};
 
 const REQUEST_HELP: &str = "fix the request shape before invoking the native compiler";
 pub(crate) const INTERNAL_RECOVERY_HELP: &str = "report the minimized fixture with compilerBuildId, protocolVersion, nativeTarget, and source language; recover only by restoring the complete verified 0.30.1 application unit without mixing compiler/runtime versions";
+
+/// Largest integer that can cross the public JavaScript protocol without losing precision.
+pub const MAX_SAFE_JAVASCRIPT_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// Kind of additional module emitted by the compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,10 +110,26 @@ pub struct CompilerExplainArtifact {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompilerStats {
-    /// Per-stage duration in nanoseconds.
+    /// Per-stage duration in nanoseconds, saturated at the JavaScript safe-integer maximum.
+    #[serde(serialize_with = "serialize_javascript_safe_integer_map")]
     pub stage_durations_ns: BTreeMap<String, u64>,
-    /// Node/block/region/template/helper/allocation counters.
+    /// Node/block/region/template/helper/allocation counters, saturated at the safe maximum.
+    #[serde(serialize_with = "serialize_javascript_safe_integer_map")]
     pub counters: BTreeMap<String, u64>,
+}
+
+fn serialize_javascript_safe_integer_map<S>(
+    values: &BTreeMap<String, u64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut map = serializer.serialize_map(Some(values.len()))?;
+    for (key, value) in values {
+        map.serialize_entry(key, &(*value).min(MAX_SAFE_JAVASCRIPT_INTEGER))?;
+    }
+    map.end()
 }
 
 /// Complete native compile result; no graph or filesystem side effects are hidden.
@@ -215,10 +234,15 @@ impl CompileResult {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use fict_diagnostics::SourceSpan;
     use serde_json::json;
 
-    use super::{CompileResult, CompilerArtifact, CompilerArtifactKind, HandlerArtifactMetadata};
+    use super::{
+        CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerStats,
+        HandlerArtifactMetadata, MAX_SAFE_JAVASCRIPT_INTEGER,
+    };
     use crate::COMPILER_PROTOCOL_VERSION;
 
     #[test]
@@ -240,6 +264,30 @@ mod tests {
                 "artifacts": [],
                 "stats": null,
                 "compilerBuildId": crate::COMPILER_BUILD_ID
+            })
+        );
+    }
+
+    #[test]
+    fn serializes_stats_as_javascript_safe_integers() {
+        let stats = CompilerStats {
+            stage_durations_ns: BTreeMap::from([
+                ("normal".to_owned(), 42),
+                ("maximum".to_owned(), MAX_SAFE_JAVASCRIPT_INTEGER),
+                ("overflow".to_owned(), u64::MAX),
+            ]),
+            counters: BTreeMap::from([("overflow".to_owned(), u64::MAX)]),
+        };
+
+        assert_eq!(
+            serde_json::to_value(stats).expect("serialize compiler stats"),
+            json!({
+                "stageDurationsNs": {
+                    "maximum": MAX_SAFE_JAVASCRIPT_INTEGER,
+                    "normal": 42,
+                    "overflow": MAX_SAFE_JAVASCRIPT_INTEGER,
+                },
+                "counters": { "overflow": MAX_SAFE_JAVASCRIPT_INTEGER },
             })
         );
     }

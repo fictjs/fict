@@ -45,7 +45,7 @@ pub use request::{
 pub use result::{
     CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
     CompilerExplainEvent, CompilerExplainEventKind, CompilerStats, HandlerArtifactMetadata,
-    invalid_request_result,
+    MAX_SAFE_JAVASCRIPT_INTEGER, invalid_request_result,
 };
 pub use scan::{
     ScanModuleRequest, ScanModuleRequestKind, ScanResult, internal_scan_error_result,

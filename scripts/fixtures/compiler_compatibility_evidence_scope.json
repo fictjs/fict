@@ -328,6 +328,30 @@
       ],
       "doesNotProve": ["babel-multi-source-composition-equivalence"]
     },
+    "nativeStatsNumberBoundary": {
+      "implementation": [
+        "crates/fict-compiler/src/result.rs",
+        "crates/fict-compiler-napi/src/convert.rs"
+      ],
+      "unitTests": [
+        "crates/fict-compiler/src/result.rs",
+        "crates/fict-compiler-napi/src/convert.rs"
+      ],
+      "integrationTest": "scripts/native-compiler-host-smoke.mjs",
+      "testCommands": [
+        "cargo test -p fict-compiler --lib result::tests::serializes_stats_as_javascript_safe_integers",
+        "RUSTFLAGS='-C link-arg=-undefined -C link-arg=dynamic_lookup' cargo test -p fict-compiler-napi --lib converts_json_integers_to_javascript_safe_numbers",
+        "node scripts/native-compiler-host-smoke.mjs"
+      ],
+      "assertionLevel": "native-js-number-boundary",
+      "boundaryValues": ["u32-max-plus-one", "number-max-safe-integer", "u64-max"],
+      "proves": [
+        "safe-u64-values-cross-napi-as-javascript-number",
+        "unsafe-stats-saturate-at-number-max-safe-integer",
+        "sync-and-async-host-stats-are-non-negative-safe-integers"
+      ],
+      "doesNotProve": ["wall-clock-timing-accuracy"]
+    },
     "semanticCoverageMatrix": {
       "artifact": "scripts/fixtures/compiler_semantic_coverage_matrix.json",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",

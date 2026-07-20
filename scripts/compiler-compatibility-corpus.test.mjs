@@ -37,6 +37,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'legacyDomainLedger',
     'legacyOptionBehaviorAudit',
     'nativeSourceMapComposition',
+    'nativeStatsNumberBoundary',
     'r006SuppressionAudit',
     'rustAcceptanceReview',
     'rustCodegenCorpus',
@@ -470,6 +471,26 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(sourceMapCompositionTest, /virtual:helper\.js/)
   assert.match(sourceMapCompositionTest, /x_google_ignoreList/)
   assert.match(sourceMapComposition.testCommand, /cargo test -p fict-compiler-oxc --lib source_map/)
+
+  const statsBoundary = scope.assets.nativeStatsNumberBoundary
+  assert.equal(statsBoundary.assertionLevel, 'native-js-number-boundary')
+  assert.deepEqual(statsBoundary.boundaryValues, [
+    'u32-max-plus-one',
+    'number-max-safe-integer',
+    'u64-max',
+  ])
+  assert.ok(statsBoundary.proves.includes('safe-u64-values-cross-napi-as-javascript-number'))
+  assert.ok(statsBoundary.proves.includes('unsafe-stats-saturate-at-number-max-safe-integer'))
+  assert.ok(
+    statsBoundary.proves.includes('sync-and-async-host-stats-are-non-negative-safe-integers'),
+  )
+  const statsResultTest = read(statsBoundary.unitTests[0])
+  assert.match(statsResultTest, /serializes_stats_as_javascript_safe_integers/)
+  assert.match(statsResultTest, /MAX_SAFE_JAVASCRIPT_INTEGER/)
+  const statsNapiTest = read(statsBoundary.unitTests[1])
+  assert.match(statsNapiTest, /converts_json_integers_to_javascript_safe_numbers/)
+  assert.match(statsNapiTest, /u32::MAX/)
+  assert.match(read(statsBoundary.integrationTest), /Number\.isSafeInteger\(value\)/)
 
   const coverageScope = scope.assets.semanticCoverageMatrix
   const coverage = readJson(coverageScope.artifact)

@@ -272,7 +272,9 @@ export interface NativeCompilerExplainArtifact {
 }
 
 export interface CompilerStats {
+  /** Non-negative JavaScript safe integers; overflow saturates at Number.MAX_SAFE_INTEGER. */
   stageDurationsNs: Record<string, number>
+  /** Non-negative JavaScript safe integers; overflow saturates at Number.MAX_SAFE_INTEGER. */
   counters: Record<string, number>
 }
 

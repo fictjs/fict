@@ -245,6 +245,13 @@ do not appear in a source-only `.tsx` corpus:
 | `source-map-normalization` | Both compilers preserve the audited logical source and `sourcesContent`, but raw mapping segmentation and serialized map text are emitter-specific. Compare normalized source identities, not whole-map hashes.                       |
 | `explain-normalization`    | Source event roles and authored UTF-16 positions match the frozen Babel artifact. Private helper names and prose remain emitter-specific; compare documented helper capabilities and structured fields, not exact text or region IDs. |
 
+Native compiler stats retain the public `number` contract across both sync and
+async N-API calls. Every duration and counter is a non-negative safe integer;
+an internal `u64` value above `Number.MAX_SAFE_INTEGER` is saturated at that
+maximum before it crosses the host boundary. Consumers must not expect
+`bigint`, and should treat a maximum value as an overflow sentinel rather than
+an exact measurement.
+
 ### JSX authored-text whitespace
 
 The 0.31 native compiler applies standard JSX multiline text normalization.

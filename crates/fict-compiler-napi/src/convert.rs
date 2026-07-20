@@ -6,7 +6,7 @@ use napi::{
     Env, Error, Property, Result, Status,
     bindgen_prelude::{Array, JsObjectValue, Null, Object},
 };
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
 /// Work prepared on the JavaScript thread before async scheduling.
 pub(crate) enum CompileWork {
@@ -79,12 +79,55 @@ fn create_json_array(env: &Env, values: Vec<Value>) -> Result<Array<'static>> {
     Ok(array)
 }
 
+/// Convert JSON numbers explicitly so serde_json's `u64` N-API implementation
+/// cannot silently change a protocol `number` into a JavaScript `bigint`.
+fn javascript_number(value: &Number) -> Result<f64> {
+    let maximum = fict_compiler::MAX_SAFE_JAVASCRIPT_INTEGER as f64;
+    if let Some(value) = value.as_i64() {
+        if value.unsigned_abs() > fict_compiler::MAX_SAFE_JAVASCRIPT_INTEGER {
+            return Err(Error::new(
+                Status::InvalidArg,
+                format!(
+                    "native compiler result integer {value} exceeds the JavaScript safe-integer range"
+                ),
+            ));
+        }
+        return Ok(value as f64);
+    }
+    if let Some(value) = value.as_u64() {
+        if value > fict_compiler::MAX_SAFE_JAVASCRIPT_INTEGER {
+            return Err(Error::new(
+                Status::InvalidArg,
+                format!(
+                    "native compiler result integer {value} exceeds the JavaScript safe-integer range"
+                ),
+            ));
+        }
+        return Ok(value as f64);
+    }
+    let value = value.as_f64().ok_or_else(|| {
+        Error::new(
+            Status::InvalidArg,
+            "native compiler result contains an unsupported JSON number".to_owned(),
+        )
+    })?;
+    if value.fract() == 0.0 && value.abs() > maximum {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+                "native compiler result integer {value} exceeds the JavaScript safe-integer range"
+            ),
+        ));
+    }
+    Ok(value)
+}
+
 fn create_json_property(env: &Env, key: &str, value: Value) -> Result<Property> {
     let property = Property::new().with_utf8_name(key)?;
     match value {
         Value::Null => property.with_napi_value(env, Null),
         Value::Bool(value) => property.with_napi_value(env, value),
-        Value::Number(value) => property.with_napi_value(env, value),
+        Value::Number(value) => property.with_napi_value(env, javascript_number(&value)?),
         Value::String(value) => property.with_napi_value(env, value),
         Value::Array(values) => Ok(property.with_value(&create_json_array(env, values)?)),
         Value::Object(values) => Ok(property.with_value(&create_json_object(env, values)?)),
@@ -100,7 +143,7 @@ fn set_json_array_value(
     match value {
         Value::Null => array.set(index, Null),
         Value::Bool(value) => array.set(index, value),
-        Value::Number(value) => array.set(index, value),
+        Value::Number(value) => array.set(index, javascript_number(&value)?),
         Value::String(value) => array.set(index, value),
         Value::Array(values) => array.set(index, create_json_array(env, values)?),
         Value::Object(values) => array.set(index, create_json_object(env, values)?),
@@ -152,11 +195,31 @@ pub(crate) fn serialize_analyze_result(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Number, json};
 
     use super::{
-        AnalyzeWork, CompileWork, ScanWork, prepare_analyze, prepare_compile, prepare_scan,
+        AnalyzeWork, CompileWork, ScanWork, javascript_number, prepare_analyze, prepare_compile,
+        prepare_scan,
     };
+
+    #[test]
+    fn converts_json_integers_to_javascript_safe_numbers() {
+        let above_u32 = Number::from(u64::from(u32::MAX) + 1);
+        assert_eq!(
+            javascript_number(&above_u32).expect("safe u64"),
+            4_294_967_296.0
+        );
+
+        let maximum = Number::from(fict_compiler::MAX_SAFE_JAVASCRIPT_INTEGER);
+        assert_eq!(
+            javascript_number(&maximum).expect("maximum safe u64"),
+            fict_compiler::MAX_SAFE_JAVASCRIPT_INTEGER as f64
+        );
+
+        let overflow = Number::from(fict_compiler::MAX_SAFE_JAVASCRIPT_INTEGER + 1);
+        assert!(javascript_number(&overflow).is_err());
+        assert!(javascript_number(&Number::from(u64::MAX)).is_err());
+    }
 
     #[test]
     fn malformed_requests_become_structured_results() {

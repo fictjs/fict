@@ -68,6 +68,20 @@ function withoutStageTimings(result) {
   }
 }
 
+function assertSafeCompilerStats(result, context) {
+  assert.ok(result.stats, `${context}: missing compiler stats`)
+  for (const [groupName, group] of Object.entries({
+    stageDurationsNs: result.stats.stageDurationsNs,
+    counters: result.stats.counters,
+  })) {
+    for (const [name, value] of Object.entries(group)) {
+      assert.equal(typeof value, 'number', `${context}: ${groupName}.${name} type`)
+      assert.ok(Number.isSafeInteger(value), `${context}: ${groupName}.${name} safe integer`)
+      assert.ok(value >= 0, `${context}: ${groupName}.${name} non-negative`)
+    }
+  }
+}
+
 let expectedBuildId
 for (const [format, facade] of [
   ['cjs', cjsFacade],
@@ -94,6 +108,8 @@ for (const [format, facade] of [
 
   const syncResult = binding.transformSync(request)
   const asyncResult = await binding.transform(request)
+  assertSafeCompilerStats(syncResult, `${format}: sync result`)
+  assertSafeCompilerStats(asyncResult, `${format}: async result`)
   assert.deepEqual(withoutStageTimings(asyncResult), withoutStageTimings(syncResult))
   assert.equal(syncResult.protocolVersion, 1)
   assert.equal(syncResult.compilerBuildId, info.compilerBuildId)

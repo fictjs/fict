@@ -75,6 +75,10 @@ native boundary. Hosts scan imports, resolve their own graph, and pass a
 Diagnostics, source maps, compiler artifacts, stats, and module metadata are
 returned as structured data.
 
+Compiler timing and counter stats always cross N-API as non-negative JavaScript
+`number` safe integers. Values above `Number.MAX_SAFE_INTEGER` saturate at that
+maximum instead of becoming `bigint` or losing precision.
+
 The native options include:
 
 - `strictGuarantee` (default in official integrations): fail closed when
