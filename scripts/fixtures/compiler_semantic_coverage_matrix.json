@@ -246,7 +246,7 @@
     },
     {
       "id": "rust-acceptance-runtime-results",
-      "requirement": "classification and runtime results for all 22 Babel-rejected Rust acceptances",
+      "requirement": "classification and runtime results for all 21 remaining Babel-rejected Rust acceptances",
       "evidence": [
         {
           "assertionLevel": "reviewed-policy",
@@ -262,13 +262,13 @@
           "assertionLevel": "native-runtime",
           "path": "scripts/native-compiler-capability-expansions.test.mjs",
           "markers": [
-            "assert.equal(probes.length, 22)",
+            "assert.equal(probes.length, 21)",
             "runtime probes cover every explicitly classified Rust acceptance exactly once",
             "executes reviewed Rust acceptance"
           ]
         }
       ],
-      "claimBoundary": "Classifies and executes each Babel-rejected Rust acceptance exactly once. Only rows marked genuine-capability-expansion are capability claims; validation-regression and reactive-equivalence-required rows block release until removed."
+      "claimBoundary": "Classifies and executes each remaining Babel-rejected Rust acceptance exactly once. The repaired long-cycle fixture is no longer an acceptance. Only rows marked genuine-capability-expansion are capability claims; validation-regression and reactive-equivalence-required rows block release until removed."
     }
   ]
 }

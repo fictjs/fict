@@ -201,15 +201,44 @@ fn lower_program(
             GuaranteeClass::Internal,
         )]));
     }
-    if let Some(cycle) = cycles.iter().flat_map(|analysis| &analysis.cycles).next() {
-        return Err(DiagnosticBundle::new(vec![lower_error(
+    if let Some((function_index, cycle)) = cycles
+        .iter()
+        .enumerate()
+        .find_map(|(index, analysis)| analysis.cycles.first().map(|cycle| (index, cycle)))
+    {
+        let mut diagnostic = lower_error(
             "FICT-R-CYCLE",
             format!(
                 "detected cyclic derived dependency across {} binding(s)",
                 cycle.nodes.len()
             ),
             GuaranteeClass::Unsupported,
-        )]));
+        )
+        .with_note(format!("cycle SCC nodes: {:?}", cycle.nodes))
+        .with_note(format!("cycle dependency edges: {:?}", cycle.edges))
+        .with_help("break at least one derived dependency edge with explicit state or restructure the declarations");
+        if let Some(function) = hir.functions.get(function_index) {
+            for (index, node) in cycle.nodes.iter().enumerate() {
+                let Some(local) = function.locals.get(node.local.as_usize()) else {
+                    continue;
+                };
+                let Some(span) = local.origin.primary_span else {
+                    continue;
+                };
+                if index == 0 {
+                    diagnostic = diagnostic.with_primary_span(span);
+                } else {
+                    diagnostic = diagnostic.with_secondary_label(
+                        span,
+                        format!(
+                            "cycle member `{}`",
+                            local.debug_name.as_deref().unwrap_or("derived binding")
+                        ),
+                    );
+                }
+            }
+        }
+        return Err(DiagnosticBundle::new(vec![diagnostic]));
     }
     let captured_write_bindings = collect_captured_write_bindings(hir);
     let reactive_bindings =

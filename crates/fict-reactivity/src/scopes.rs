@@ -126,6 +126,21 @@ pub fn analyze_reactive_scopes(
         .map(|fact| (fact.name, &fact.shape))
         .collect();
     let candidates = binding_candidates(function, ssa, dependencies);
+    let entry_names: BTreeSet<_> = ssa
+        .definitions
+        .iter()
+        .filter(|definition| definition.location == SsaDefinitionLocation::Entry)
+        .map(|definition| definition.name)
+        .collect();
+    let mut definition_names_by_local: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for definition in &ssa.definitions {
+        if definition.location != SsaDefinitionLocation::Entry {
+            definition_names_by_local
+                .entry(definition.name.local)
+                .or_default()
+                .push(definition.name);
+        }
+    }
     let alias_sources: BTreeMap<_, _> = aliases
         .edges
         .iter()
@@ -203,19 +218,30 @@ pub fn analyze_reactive_scopes(
             )]));
         }
         let previous = kinds.clone();
+        let resolves_to_tracked_definition = |source: SsaName| {
+            previous.contains_key(&source)
+                || (entry_names.contains(&source)
+                    && definition_names_by_local
+                        .get(&source.local)
+                        .is_some_and(|definitions| {
+                            definitions
+                                .iter()
+                                .any(|definition| previous.contains_key(definition))
+                        }))
+        };
         for candidate in &candidates {
             if previous.contains_key(&candidate.name) || !candidate.eligible_for_derivation {
                 continue;
             }
             if alias_sources
                 .get(&candidate.name)
-                .is_some_and(|source| previous.contains_key(source))
+                .is_some_and(|source| resolves_to_tracked_definition(*source))
             {
                 kinds.insert(candidate.name, ReactiveBindingKind::Alias);
                 continue;
             }
             if candidate.dependencies.iter().any(|path| {
-                matches!(path.base, DependencyBase::Ssa(source) if previous.contains_key(&source))
+                matches!(path.base, DependencyBase::Ssa(source) if resolves_to_tracked_definition(source))
                     || imported_reactive_dependency(file, function, path)
             }) || candidate
                 .phi_sources

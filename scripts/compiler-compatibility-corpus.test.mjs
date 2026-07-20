@@ -783,14 +783,14 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   })
   assert.deepEqual(reviewed, observed)
   assert.equal(reviewed.schemaVersion, 1)
-  assert.equal(reviewed.deviationCount, 279)
-  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 279)
+  assert.equal(reviewed.deviationCount, 280)
+  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 280)
   assert.equal(
     reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
-    242,
+    243,
   )
   assert.deepEqual(reviewed.policyCounts, {
-    'rust-structured-rejection-diagnostics': 171,
+    'rust-structured-rejection-diagnostics': 172,
     'diagnostic-severity-reclassification': 23,
     'rust-warning-addition': 32,
     'rust-warning-removal': 48,
@@ -1004,7 +1004,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
   assert.deepEqual(corpus.deviationPolicyCounts, {
     'genuine-capability-expansion': 6,
     'intentional-runtime-error': 1,
-    'validation-regression': 12,
+    'validation-regression': 11,
     'fallback-only': 1,
     'reactive-equivalence-required': 1,
     'intentional-breaking-policy': 1,
@@ -1318,12 +1318,12 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   const runtime = read('scripts/native-compiler-capability-expansions.test.mjs')
   const review = readJson(rustAcceptanceReviewPath)
   assert.equal(review.schemaVersion, 1)
-  assert.equal(review.reviews.length, 22)
-  assert.equal(new Set(review.reviews.map(entry => entry.id)).size, 22)
+  assert.equal(review.reviews.length, 21)
+  assert.equal(new Set(review.reviews.map(entry => entry.id)).size, 21)
   assert.deepEqual(review.policyCounts, {
     'genuine-capability-expansion': 6,
     'intentional-runtime-error': 1,
-    'validation-regression': 12,
+    'validation-regression': 11,
     'fallback-only': 1,
     'reactive-equivalence-required': 1,
     'intentional-breaking-policy': 1,
@@ -1344,10 +1344,10 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   assert.equal(
     review.reviews.filter(entry => review.policies[entry.policy].releaseDisposition === 'block')
       .length,
-    13,
+    12,
   )
   assert.match(runtime, /acceptancePolicies\.has\(fixture\.deviationPolicy\)/)
-  assert.match(runtime, /assert\.equal\(probes\.length, 22\)/)
+  assert.match(runtime, /assert\.equal\(probes\.length, 21\)/)
   assert.match(runtime, /runtime\.__fictRender/)
   assert.match(runtime, /acceptanceFixtures\.map\(fixture => fixture\.id\)\.sort\(\)/)
   const releaseGate = read('scripts/native-compiler-capability-release-gate.mjs')
@@ -1559,7 +1559,7 @@ test('documents every reviewed Babel status and request-identity deviation', () 
   )
   assert.match(migrationGuide, new RegExp(`${rustRejectionCount} inputs accepted by Babel`))
   assert.match(migrationGuide, /only 6 are capability claims/)
-  assert.match(migrationGuide, /13 are release-blocking regressions/)
+  assert.match(migrationGuide, /12 are release-blocking regressions/)
   assert.match(migrationGuide, /language: "jsx"/)
 })
 

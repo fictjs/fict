@@ -10,13 +10,13 @@
     "rust-warning-set-change": "Rust intentionally replaces part of the Babel non-error diagnostic set instead of only adding or removing diagnostics."
   },
   "policyCounts": {
-    "rust-structured-rejection-diagnostics": 171,
+    "rust-structured-rejection-diagnostics": 172,
     "diagnostic-severity-reclassification": 23,
     "rust-warning-addition": 32,
     "rust-warning-removal": 48,
     "rust-warning-set-change": 5
   },
-  "deviationCount": 279,
+  "deviationCount": 280,
   "deviations": [
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:153:transform",
@@ -1462,6 +1462,20 @@
     },
     {
       "id": "packages/compiler/test/cycles.test.ts:48:run",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-CYCLE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/cycles.test.ts:62:run",
       "babelStatus": "error",
       "rustStatus": "error",
       "babelDiagnostics": [],

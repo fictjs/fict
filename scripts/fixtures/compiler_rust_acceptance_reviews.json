@@ -35,7 +35,7 @@
   "policyCounts": {
     "genuine-capability-expansion": 6,
     "intentional-runtime-error": 1,
-    "validation-regression": 12,
+    "validation-regression": 11,
     "fallback-only": 1,
     "reactive-equivalence-required": 1,
     "intentional-breaking-policy": 1
@@ -112,14 +112,6 @@
       "reason": "Rust accepts the reactive loop return only with FICT-R006 fallback rather than a guaranteed fine-grained lowering.",
       "finalPlan": "Retain the structured fallback diagnostic and avoid advertising the input as native capability.",
       "removalCondition": "Remove if the loop return gains a proven reactive lowering or becomes a hard rejection."
-    },
-    {
-      "id": "packages/compiler/test/cycles.test.ts:62:run",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "A three-node derived cycle reaches runtime and throws instead of producing the documented FICT-R-CYCLE error.",
-      "finalPlan": "Complete forward-reference dependency edges before SCC validation and reject every derived cycle.",
-      "removalCondition": "Remove this review when Rust rejects the fixture with FICT-R-CYCLE."
     },
     {
       "id": "packages/compiler/test/do-while-break.test.ts:33:transform",

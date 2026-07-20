@@ -135,11 +135,6 @@ const probes = [
     expected: ['div', 'none'],
   },
   {
-    id: 'packages/compiler/test/cycles.test.ts:62:run',
-    suffix: 'export { Component as probe }',
-    expectedError: 'ReferenceError',
-  },
-  {
     id: 'packages/compiler/test/do-while-break.test.ts:33:transform',
     suffix: 'export function probe() { return Component() }',
     expected: 5,
@@ -256,7 +251,7 @@ const fixturesById = new Map(acceptanceFixtures.map(fixture => [fixture.id, fixt
 const reviewsById = new Map(acceptanceReview.reviews.map(review => [review.id, review]))
 
 test('runtime probes cover every explicitly classified Rust acceptance exactly once', () => {
-  assert.equal(probes.length, 22)
+  assert.equal(probes.length, 21)
   assert.deepEqual(
     probes.map(probe => probe.id).sort(),
     acceptanceFixtures.map(fixture => fixture.id).sort(),

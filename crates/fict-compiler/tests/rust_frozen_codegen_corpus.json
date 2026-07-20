@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "d225193f32403d97cbe81af4611a997f5e73ff01",
+    "rustAuditRevision": "cb54c2c47e8f5ba7add7b7a8b220dcb954d00504",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "d225193f32403d97cbe81af4611a997f5e73ff01",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-bda8c7acc905f0028b577586a11c3543a34e30911f4d0559dc84502bc5093520"
+    "reviewedRevision": "cb54c2c47e8f5ba7add7b7a8b220dcb954d00504",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-1ff3739c5adb24718a6af0b49442182114b830934f356e36cbdc7274fb9a0a9e"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
@@ -43,7 +43,7 @@
   "deviationPolicyCounts": {
     "genuine-capability-expansion": 6,
     "intentional-runtime-error": 1,
-    "validation-regression": 12,
+    "validation-regression": 11,
     "fallback-only": 1,
     "reactive-equivalence-required": 1,
     "intentional-breaking-policy": 1,
@@ -20983,11 +20983,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "9f4d1e6ac55697d6f1f282e6936dc86cbae5837563e2a89e5cf68f66edae6172"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-CYCLE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/cycles.test.ts:132:run",
