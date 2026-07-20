@@ -52,8 +52,8 @@
     "@fictjs/testing-library": "workspace:*",
     "@fictjs/vite-plugin": "workspace:*",
     "fict": "workspace:*",
-    "jsdom": "^28.1.0",
-    "tsdown": "^0.22.3"
+    "jsdom": "^29.1.1",
+    "tsdown": "^0.22.12"
   },
   "peerDependencies": {
     "fict": ">=0.3.0"

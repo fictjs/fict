@@ -48,8 +48,8 @@
     "vite": "^7.3.6"
   },
   "devDependencies": {
-    "tsdown": "^0.22.3",
-    "vitest": "^4.0.18"
+    "tsdown": "^0.22.12",
+    "vitest": "^4.1.10"
   },
   "keywords": [
     "fict",
