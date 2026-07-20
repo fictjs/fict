@@ -151,10 +151,10 @@ does not graduate it or make it a Core default.
 ### Audited Babel 0.28 behavior differences
 
 The Rust compiler is not a byte-for-byte Babel emitter. The reviewed 1,950-case
-compile corpus currently has 58 reviewed success/error status differences:
-37 inputs accepted by Babel are rejected by Rust, and 21 inputs rejected by
-Babel are accepted by Rust. The 21 Rust acceptances are individually reviewed:
-only 6 are capability claims, while 12 are release-blocking regressions that
+compile corpus currently has 47 reviewed success/error status differences:
+37 inputs accepted by Babel are rejected by Rust, and 10 inputs rejected by
+Babel are accepted by Rust. The 10 Rust acceptances are individually reviewed:
+only 6 are capability claims, while 1 is a release-blocking regression that
 must be removed before release. A successful code emission is never by itself
 evidence of compatible runtime behavior.
 
@@ -166,12 +166,12 @@ evidence of compatible runtime behavior.
 | `strict-reactivity-fail-closed`  |     4 | `strictGuarantee` rejects statement control flow that needs an R006 region fallback. Refactor the branch into guaranteed JSX expressions, or explicitly use non-strict compilation and review the warning. |
 | `genuine-capability-expansion`   |     6 | Executable runtime oracles prove the newly supported enum or control-flow behavior.                                                                                                                        |
 | `intentional-runtime-error`      |     1 | Rust preserves ordinary JavaScript TDZ failure. This is runtime-semantics evidence, not a compiler capability claim.                                                                                       |
-| `validation-regression`          |    11 | Rust has lost a required derived-write or reactive-alias validation. These rows block release until Rust rejects them again.                                                                               |
+| `validation-regression`          |     0 | Rust again rejects writes through reactive aliases and compiler-managed derived values; no reviewed validation regression remains.                                                                         |
 | `fallback-only`                  |     1 | Rust emits a structured `FICT-R006` fallback diagnostic. Do not rely on this as guaranteed fine-grained lowering.                                                                                          |
 | `reactive-equivalence-required`  |     1 | The emitted loop result remains stale after state changes. This row blocks release until correct lowering or fail-closed rejection.                                                                        |
 | `intentional-breaking-policy`    |     1 | Rust intentionally removes the audited Babel warning behavior. Treat this as a diagnostic-policy migration, not a capability.                                                                              |
 
-The source of truth for all 21 remaining reviews is
+The source of truth for all 10 remaining reviews is
 `scripts/fixtures/compiler_rust_acceptance_reviews.json`. Every row records its
 owner, rationale, final plan, removal condition, and release disposition. The
 compiler release verifier rejects any remaining `validation-regression` or

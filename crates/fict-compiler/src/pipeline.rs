@@ -200,6 +200,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         &hir,
         CorePassOptions {
             optimize: request.options.optimize,
+            strict_guarantee: request.options.strict_guarantee,
             ..CorePassOptions::default()
         },
     ) {
@@ -211,6 +212,12 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             return result;
         }
     };
+    result.diagnostics.extend(core.diagnostics.iter().cloned());
+    finalize_source_diagnostics(&mut result, &request, &suppressions);
+    if result.has_errors() {
+        attach_explain_if_requested(&mut result, &request, &source_events, &[]);
+        return result;
+    }
     let metadata = generate_module_metadata(&core, &module_plan, &frontend, &request.metadata);
     let local_hook_returns = metadata.local_hook_returns;
     result.module_metadata = metadata.metadata;

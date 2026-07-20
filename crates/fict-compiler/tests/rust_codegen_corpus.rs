@@ -266,7 +266,11 @@ fn replays_the_frozen_rust_codegen_corpus() {
     let mut ids = BTreeSet::new();
     let mut files_with_audit_rows = BTreeSet::new();
     let mut request_variant_counts: BTreeMap<RequestVariant, usize> = BTreeMap::new();
-    let mut observed_policy_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut observed_policy_counts: BTreeMap<String, usize> = corpus
+        .deviation_policies
+        .keys()
+        .map(|policy| (policy.clone(), 0))
+        .collect();
     for fixture in corpus.fixtures {
         let base_id = format!(
             "{}:{}:{}",

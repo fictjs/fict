@@ -94,9 +94,9 @@
       "artifact": "scripts/fixtures/compiler_rust_acceptance_reviews.json",
       "runtimeTest": "scripts/native-compiler-capability-expansions.test.mjs",
       "releaseGate": "scripts/native-compiler-capability-release-gate.mjs",
-      "reviewedAcceptances": 21,
+      "reviewedAcceptances": 10,
       "capabilityClaims": 6,
-      "releaseBlockingRegressions": 12,
+      "releaseBlockingRegressions": 1,
       "assertionLevel": "reviewed-policy-and-native-runtime",
       "proves": [
         "per-fixture-rust-acceptance-classification",
@@ -109,8 +109,8 @@
       "artifact": "scripts/fixtures/compiler_diagnostic_deviation_reviews.json",
       "generator": "scripts/generate-compiler-diagnostic-deviation-review.mjs",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
-      "deviationCount": 280,
-      "sameStatusDeviationCount": 243,
+      "deviationCount": 288,
+      "sameStatusDeviationCount": 251,
       "assertionLevel": "diagnostic-contract",
       "proves": [
         "reviewed-diagnostic-code-and-severity-deltas",

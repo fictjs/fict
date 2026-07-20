@@ -228,6 +228,7 @@ For everyday props/destructuring/spread patterns, rely on the compiler’s autom
 - Declaring `$state` with destructuring is still illegal: `const { id } = $state(...)` → compile error.
 - Destructuring an existing `$state` object, e.g. `let state = $state({ count: 0 }); const { count } = state;`, is rewritten to a memo accessor (or plain getter under `"use no memo"`), so reads in JSX/logic stay reactive.
 - Writes to the alias (`count++`, `count = ...`) are disallowed. Mutate via the original signal (`state.count++`) or immutable updates (`state = { ...state(), count: state().count + 1 }`, or via immer/mutative).
+- The same read-only rule applies to direct aliases (`const alias = state`) and compiler-managed `const` declarations derived from state (`const doubled = count * 2`). Only the original state binding owns setter semantics; assignment, compound assignment, update, and assignment-pattern writes to its aliases fail compilation, including inside captured closures. Projected mutations such as `alias[key]++` and known mutating array calls such as `alias.push(...)` follow `FICT-M`: they warn in fallback mode and fail under `strictGuarantee`. An explicitly mutable `let` initialized from a computed state value remains an ordinary snapshot.
 - Dynamic keys / deep paths fallback to coarser subscriptions (more recompute). Static paths like `.count` get precise deps.
 
 ### 2.2 Comparison with React / Solid

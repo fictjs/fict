@@ -320,6 +320,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
             // Tooling traces source execution before optimizer compaction so source spans and
             // declarations remain inspectable and deterministic.
             optimize: false,
+            strict_guarantee: request.compiler_options.strict_guarantee,
             ..CorePassOptions::default()
         },
     ) {
@@ -336,6 +337,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
             return result;
         }
     };
+    diagnostics.extend(core.diagnostics.iter().cloned());
     let local_hook_returns = build
         .frontend
         .as_ref()

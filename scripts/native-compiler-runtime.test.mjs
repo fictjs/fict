@@ -493,11 +493,9 @@ test('native template extraction preserves static HTML and live binding paths', 
   container.remove()
 })
 
-test('captured reactive aliases remain mutable after an event', async () => {
+test('captured reactive alias writes fail closed before runtime', () => {
   const source = `
-    import { $state, render } from 'fict'
-
-    let readAlias = () => -1
+    import { $state } from 'fict'
 
     function App() {
       let count = $state(0)
@@ -507,31 +505,35 @@ test('captured reactive aliases remain mutable after an event', async () => {
         alias = 2
       }
 
-      readAlias = () => alias
       return <button data-id="captured-alias" onClick={update}>{count}</button>
     }
-
-    export function mount(container) {
-      return render(() => <App />, container)
-    }
-
-    export function read() {
-      return readAlias()
-    }
   `
-  const compiled = await compileAndImport(source, 'captured-alias-write')
-  const container = document.createElement('div')
-  document.body.append(container)
-  const dispose = compiled.mount(container)
-  await flushRuntime()
-
-  assert.equal(compiled.read(), 0)
-  container.querySelector('[data-id="captured-alias"]')?.click()
-  await flushRuntime()
-  assert.equal(compiled.read(), 2)
-
-  dispose()
-  container.remove()
+  const result = binding.transformSync({
+    code: source,
+    filename: '/fixtures/captured-alias-write.tsx',
+    moduleId: '/fixtures/captured-alias-write.tsx',
+    options: {
+      strictGuarantee: false,
+      warningLevels: { 'FICT-R-ALIAS-WRITE': 'off' },
+    },
+  })
+  assert.equal(result.code, '')
+  assert.deepEqual(
+    result.diagnostics.map(({ code, guaranteeClass, severity }) => ({
+      code,
+      guaranteeClass,
+      severity,
+    })),
+    [
+      {
+        code: 'FICT-R-ALIAS-WRITE',
+        guaranteeClass: 'unsupported',
+        severity: 'error',
+      },
+    ],
+  )
+  const diagnostic = result.diagnostics[0]
+  assert.equal(source.slice(diagnostic.primarySpan.start, diagnostic.primarySpan.end), 'alias = 2')
 })
 
 test('projected reactive mutations preserve JavaScript evaluation semantics', async () => {

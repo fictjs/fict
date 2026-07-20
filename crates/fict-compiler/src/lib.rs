@@ -14,6 +14,7 @@ mod diagnostic_policy;
 mod metadata_analysis;
 mod pass_manager;
 mod pipeline;
+mod reactive_write_validation;
 mod request;
 mod result;
 mod scan;

@@ -473,6 +473,63 @@ count++
 return <div>{count}</div>
 ```
 
+### FICT-R-ALIAS-WRITE: Write to a read-only reactive alias
+
+**Severity:** Error
+
+**Why:** A local assigned from state, including a destructured or transitive alias, is a
+compiler-managed read view. Replacing or updating that local would not update the original state
+and can otherwise leave rendered output stale or defer the failure to a runtime `TypeError`.
+
+**Impact:** Direct assignment, compound assignment, update, assignment-pattern, and captured
+closure writes to the alias fail compilation. Projected mutations such as `alias[key]++` and known
+mutating array calls such as `alias.push(...)` use `FICT-M` because they mutate the current nested
+value rather than replace the alias. Writes through the original state root remain supported.
+
+**Fix:** Update the original state binding or assign the replacement to a new ordinary local:
+
+```ts
+let state = $state({ count: 0 })
+const { count } = state
+
+// Triggers FICT-R-ALIAS-WRITE
+count++
+
+// Update the owner instead
+state.count++
+```
+
+This diagnostic is always a hard error. `strictGuarantee: false`, `warningLevels`, and
+`fict-ignore` cannot suppress it.
+
+### FICT-R-DERIVED-WRITE: Write to a derived declaration
+
+**Severity:** Error
+
+**Why:** A value declared from state dependencies is emitted as a compiler-managed derived
+accessor. Reassigning the declaration would replace the derived graph node instead of updating its
+source state.
+
+**Impact:** Direct, compound, update, and assignment-pattern writes to the derived binding fail
+compilation. An explicitly mutable `let` initialized from a computed state value remains an
+ordinary snapshot.
+
+**Fix:** Update the source state, or compute the replacement under a new local name:
+
+```ts
+let count = $state(0)
+const doubled = count * 2
+
+// Triggers FICT-R-DERIVED-WRITE
+doubled = 4
+
+// Update the owner instead
+count = 2
+```
+
+This diagnostic is always a hard error. `strictGuarantee: false`, `warningLevels`, and
+`fict-ignore` cannot suppress it.
+
 ### FICT-R-CYCLE: Cyclic derived dependency
 
 **Severity:** Error
@@ -589,9 +646,11 @@ These warnings are emitted by the compiler but are not part of the numbered FICT
 
 **Severity:** Error (default)
 
-**Why:** Mutating a nested property of a `$state` object is not tracked.
+**Why:** Mutating a nested property of a `$state` object, including through a reactive alias, is
+not tracked with setter semantics.
 
-**Impact:** UI may not update. Use immutable updates or `$store`.
+**Impact:** UI may not update. The diagnostic is an error under the default `strictGuarantee` and
+a warning only in explicit fallback mode. Use immutable updates or `$store`.
 
 **Fix:**
 

@@ -14,6 +14,8 @@ use fict_reactivity::{
     structurize_cfg,
 };
 
+use crate::reactive_write_validation::validate_reactive_writes;
+
 /// Uniform contract for deterministic compiler passes.
 pub trait CompilerPass {
     /// Explicit pass input.
@@ -67,6 +69,8 @@ impl Default for CorePassBudgets {
 pub struct CorePassOptions {
     /// Run safe constant/CSE/DCE mutations before final analysis.
     pub optimize: bool,
+    /// Escalate fallback diagnostics that cannot preserve fine-grained guarantees.
+    pub strict_guarantee: bool,
     /// Resource budgets.
     pub budgets: CorePassBudgets,
 }
@@ -75,6 +79,7 @@ impl Default for CorePassOptions {
     fn default() -> Self {
         Self {
             optimize: true,
+            strict_guarantee: true,
             budgets: CorePassBudgets::default(),
         }
     }
@@ -167,6 +172,8 @@ pub struct CorePassOutput {
     pub hir: HirFile,
     /// Function analyses in function arena order.
     pub functions: Vec<FunctionPassAnalysis>,
+    /// Non-fatal findings produced after final binding and SSA analysis.
+    pub diagnostics: Vec<fict_diagnostics::Diagnostic>,
     /// Per-pass timings and counters.
     pub stats: CorePassStats,
 }
@@ -303,6 +310,12 @@ pub fn run_core_passes(
             structurize,
         });
     }
+    let reactive_write_diagnostics = timed(&mut context, "reactive-write-validation", || {
+        validate_reactive_writes(&hir, &functions, options.strict_guarantee)
+    })?;
+    if reactive_write_diagnostics.has_errors() {
+        return Err(reactive_write_diagnostics);
+    }
     enforce_final_budgets(total_regions, fixed_point_iterations, options.budgets)?;
     for analysis in &functions {
         hir.functions[analysis.function.as_usize()].regions = analysis
@@ -337,6 +350,7 @@ pub fn run_core_passes(
     Ok(CorePassOutput {
         hir,
         functions,
+        diagnostics: reactive_write_diagnostics.into_sorted(),
         stats: context.stats,
     })
 }

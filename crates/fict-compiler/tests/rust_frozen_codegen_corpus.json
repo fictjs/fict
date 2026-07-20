@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "cb54c2c47e8f5ba7add7b7a8b220dcb954d00504",
+    "rustAuditRevision": "b585140f812e50ac116289ca6602447c910f2969",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "cb54c2c47e8f5ba7add7b7a8b220dcb954d00504",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-1ff3739c5adb24718a6af0b49442182114b830934f356e36cbdc7274fb9a0a9e"
+    "reviewedRevision": "b585140f812e50ac116289ca6602447c910f2969",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-b8844bfc94a065169124f35551ef10fa09839d2e64200926064ec89e49ba9102"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
@@ -43,7 +43,7 @@
   "deviationPolicyCounts": {
     "genuine-capability-expansion": 6,
     "intentional-runtime-error": 1,
-    "validation-regression": 11,
+    "validation-regression": 0,
     "fallback-only": 1,
     "reactive-equivalence-required": 1,
     "intentional-breaking-policy": 1,
@@ -119,11 +119,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "706228361211cbad765a116dc1754d933efd83b77c8cc1e8c05225490bedbdd7"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:84:transform",
@@ -143,11 +149,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "3b26ac72a65abac4d6af5cb257543a6aca0f8974531c82be4fb0fe8fc7393457"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:98:transform",
@@ -3354,17 +3366,22 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
+        "status": "error",
         "diagnostics": [
           {
             "code": "FICT-C004",
             "severity": "warning",
             "guaranteeClass": "advisory"
+          },
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
           }
         ],
-        "codeSha256": "7bd9cc4dcf5968328cad7d0b38a163f2fde80a70807adb12b1b0f3f567ff8709"
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/base-transform.test.ts:1238:transform",
@@ -28183,11 +28200,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "40eed8b28d499cb8e6fb94a7d0cfb2edd92e9e5e853339bb498d1ab70c1ae8d7"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-DERIVED-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:513:transform",
@@ -28207,11 +28230,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "f0ad411bf77572c115da010dd7dc7fc232d72de40e8baf131d485d06772305fc"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:526:transform",
@@ -28231,11 +28260,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "0f3033820d78dbcc6e4ef7bc5de68edd349dfb8ada6b24daa937a10863808a62"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:542:transform",
@@ -29595,7 +29630,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "223aa478b1a2c0ae81396901ee7e17add8e93690707f2d30d1c663efc72a2c04"
       },
       "deviationPolicy": null
@@ -29622,6 +29663,11 @@
         "diagnostics": [
           {
             "code": "FICT-H",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
             "severity": "warning",
             "guaranteeClass": "fallback"
           }
@@ -29983,11 +30029,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "a14b379a8ee0950c202fd703a54be4ab2cc2ba02700fd20f5ba53c592aa5713d"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:1948:transform",
@@ -30007,11 +30059,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "bb10b7f1d2f289e927b704f9313f0819aa539338e7de515a53979475fca1404c"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:1963:transform",
@@ -30031,11 +30089,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "ec889c2b77e9ffbc18e9122ad8bb9924dbd4987bdba75610eece344819d60676"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:1979:transform",
@@ -30279,11 +30343,17 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
-        "diagnostics": [],
-        "codeSha256": "078c22b0605e1c24796df8800cbf98f1a7fa7df147b0f6b65596abc5b645c46e"
+        "status": "error",
+        "diagnostics": [
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
+          }
+        ],
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:2076:transform",
@@ -30304,7 +30374,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "9e58dcb5da963f0993691bccf407e423200cfa2c731f76aeb458b21b9cff7a86"
       },
       "deviationPolicy": null
@@ -34149,17 +34225,22 @@
         "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "expected": {
-        "status": "ok",
+        "status": "error",
         "diagnostics": [
           {
             "code": "FICT-C004",
             "severity": "warning",
             "guaranteeClass": "advisory"
+          },
+          {
+            "code": "FICT-R-ALIAS-WRITE",
+            "severity": "error",
+            "guaranteeClass": "unsupported"
           }
         ],
-        "codeSha256": "7bd9cc4dcf5968328cad7d0b38a163f2fde80a70807adb12b1b0f3f567ff8709"
+        "codeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "deviationPolicy": "validation-regression"
+      "deviationPolicy": null
     },
     {
       "id": "packages/compiler/test/spec-complete.test.ts:631:transformWithWarnings",

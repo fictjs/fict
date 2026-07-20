@@ -10,14 +10,42 @@
     "rust-warning-set-change": "Rust intentionally replaces part of the Babel non-error diagnostic set instead of only adding or removing diagnostics."
   },
   "policyCounts": {
-    "rust-structured-rejection-diagnostics": 172,
+    "rust-structured-rejection-diagnostics": 183,
     "diagnostic-severity-reclassification": 23,
     "rust-warning-addition": 32,
-    "rust-warning-removal": 48,
+    "rust-warning-removal": 45,
     "rust-warning-set-change": 5
   },
-  "deviationCount": 280,
+  "deviationCount": 288,
   "deviations": [
+    {
+      "id": "packages/compiler/test/alias-reactivity.test.ts:70:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/alias-reactivity.test.ts:84:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
     {
       "id": "packages/compiler/test/alias-reactivity.test.ts:153:transform",
       "babelStatus": "error",
@@ -461,6 +489,30 @@
           "code": "FICT-E001",
           "severity": "warning",
           "guaranteeClass": "advisory"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/base-transform.test.ts:1224:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-C004",
+          "severity": "warning"
+        }
+      ],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-C004",
+          "severity": "warning",
+          "guaranteeClass": "advisory"
+        },
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
         }
       ],
       "policy": "rust-structured-rejection-diagnostics"
@@ -2138,6 +2190,48 @@
       "policy": "rust-structured-rejection-diagnostics"
     },
     {
+      "id": "packages/compiler/test/semantic-validation.test.ts:500:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-DERIVED-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:513:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:526:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
       "id": "packages/compiler/test/semantic-validation.test.ts:777:transform:strictGuarantee=true",
       "babelStatus": "error",
       "rustStatus": "error",
@@ -2301,40 +2395,46 @@
       "policy": "rust-structured-rejection-diagnostics"
     },
     {
-      "id": "packages/compiler/test/semantic-validation.test.ts:1664:transform",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [
-        {
-          "code": "FICT-M",
-          "severity": "warning"
-        }
-      ],
-      "rustDiagnostics": [],
-      "policy": "rust-warning-removal"
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:1680:transform",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [
-        {
-          "code": "FICT-M",
-          "severity": "warning"
-        },
-        {
-          "code": "FICT-H",
-          "severity": "warning"
-        }
-      ],
+      "id": "packages/compiler/test/semantic-validation.test.ts:1933:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
       "rustDiagnostics": [
         {
-          "code": "FICT-H",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
         }
       ],
-      "policy": "rust-warning-removal"
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1948:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
+    },
+    {
+      "id": "packages/compiler/test/semantic-validation.test.ts:1963:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:1995:transform",
@@ -2422,17 +2522,18 @@
       "policy": "rust-structured-rejection-diagnostics"
     },
     {
-      "id": "packages/compiler/test/semantic-validation.test.ts:2076:transform",
-      "babelStatus": "ok",
-      "rustStatus": "ok",
-      "babelDiagnostics": [
+      "id": "packages/compiler/test/semantic-validation.test.ts:2062:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [],
+      "rustDiagnostics": [
         {
-          "code": "FICT-M",
-          "severity": "warning"
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
         }
       ],
-      "rustDiagnostics": [],
-      "policy": "rust-warning-removal"
+      "policy": "rust-structured-rejection-diagnostics"
     },
     {
       "id": "packages/compiler/test/semantic-validation.test.ts:2125:transform:strictGuarantee=true",
@@ -2868,6 +2969,30 @@
       ],
       "rustDiagnostics": [],
       "policy": "rust-warning-removal"
+    },
+    {
+      "id": "packages/compiler/test/spec-complete.test.ts:619:transform",
+      "babelStatus": "error",
+      "rustStatus": "error",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-C004",
+          "severity": "warning"
+        }
+      ],
+      "rustDiagnostics": [
+        {
+          "code": "FICT-C004",
+          "severity": "warning",
+          "guaranteeClass": "advisory"
+        },
+        {
+          "code": "FICT-R-ALIAS-WRITE",
+          "severity": "error",
+          "guaranteeClass": "unsupported"
+        }
+      ],
+      "policy": "rust-structured-rejection-diagnostics"
     },
     {
       "id": "packages/compiler/test/spec-complete.test.ts:769:transform",

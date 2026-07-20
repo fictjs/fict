@@ -63,16 +63,6 @@ after(() => {
 
 const probes = [
   {
-    id: 'packages/compiler/test/alias-reactivity.test.ts:70:transform',
-    suffix: 'export function probe() { return Component() }',
-    expected: 1,
-  },
-  {
-    id: 'packages/compiler/test/alias-reactivity.test.ts:84:transform',
-    suffix: 'export function probe() { return Component() }',
-    expected: 1,
-  },
-  {
     id: 'packages/compiler/test/base-transform.test.ts:586:transformRawTypeScript',
     suffix: 'export function probe() { return [Color.Red, Color[1]] }',
     expected: [1, 'Red'],
@@ -81,17 +71,6 @@ const probes = [
     id: 'packages/compiler/test/base-transform.test.ts:594:transformRawTypeScript',
     suffix: 'export function probe() { return [Color.Red, Color[1]] }',
     expected: [1, 'Red'],
-  },
-  {
-    id: 'packages/compiler/test/base-transform.test.ts:1224:transform',
-    suffix: `
-      export function probe() {
-        Component()
-        return 'completed'
-      }
-    `,
-    diagnosticCodes: ['FICT-C004'],
-    expected: 'completed',
   },
   {
     id: 'packages/compiler/test/control-flow-runtime.test.ts:2959:compileAndRunHook',
@@ -150,74 +129,6 @@ const probes = [
     expected: 15,
   },
   {
-    id: 'packages/compiler/test/semantic-validation.test.ts:500:transform',
-    suffix: 'export function probe() { return App() }',
-    expected: 0,
-  },
-  {
-    id: 'packages/compiler/test/semantic-validation.test.ts:513:transform',
-    suffix: 'export { App as probe }',
-    expectedError: 'TypeError',
-  },
-  {
-    id: 'packages/compiler/test/semantic-validation.test.ts:526:transform',
-    suffix: 'export { App as probe }',
-    expectedError: 'TypeError',
-  },
-  {
-    id: 'packages/compiler/test/semantic-validation.test.ts:1933:transform',
-    suffix: 'export function probe() { return App().type }',
-    expected: 'div',
-  },
-  {
-    id: 'packages/compiler/test/semantic-validation.test.ts:1948:transform',
-    suffix: `
-      export function probe() {
-        const node = App()
-        const read = () =>
-          typeof node.props.children === 'function'
-            ? node.props.children()
-            : node.props.children
-        const before = read()
-        node.props.onClick()
-        return [before, read()]
-      }
-    `,
-    expected: [0, 0],
-  },
-  {
-    id: 'packages/compiler/test/semantic-validation.test.ts:1963:transform',
-    suffix: `
-      export function probe() {
-        const node = App()
-        const read = () =>
-          typeof node.props.children === 'function'
-            ? node.props.children()
-            : node.props.children
-        const before = read()
-        node.props.onClick()
-        return [before, read()]
-      }
-    `,
-    expected: [0, 0],
-  },
-  {
-    id: 'packages/compiler/test/semantic-validation.test.ts:2062:transform',
-    suffix: 'export { App as probe }',
-    expectedError: 'TypeError',
-  },
-  {
-    id: 'packages/compiler/test/spec-complete.test.ts:619:transform',
-    suffix: `
-      export function probe() {
-        Component()
-        return 'completed'
-      }
-    `,
-    diagnosticCodes: ['FICT-C004'],
-    expected: 'completed',
-  },
-  {
     id: 'packages/compiler/test/warnings-as-errors.test.ts:156:transform',
     suffix: `
       import { $state } from 'fict'
@@ -251,7 +162,7 @@ const fixturesById = new Map(acceptanceFixtures.map(fixture => [fixture.id, fixt
 const reviewsById = new Map(acceptanceReview.reviews.map(review => [review.id, review]))
 
 test('runtime probes cover every explicitly classified Rust acceptance exactly once', () => {
-  assert.equal(probes.length, 21)
+  assert.equal(probes.length, 10)
   assert.deepEqual(
     probes.map(probe => probe.id).sort(),
     acceptanceFixtures.map(fixture => fixture.id).sort(),

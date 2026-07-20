@@ -772,6 +772,7 @@ fn rejects_hir_that_exceeds_an_explicit_resource_budget() {
                 max_blocks: 0,
                 ..CorePassBudgets::default()
             },
+            ..CorePassOptions::default()
         },
     )
     .expect_err("zero block budget");

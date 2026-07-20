@@ -35,28 +35,12 @@
   "policyCounts": {
     "genuine-capability-expansion": 6,
     "intentional-runtime-error": 1,
-    "validation-regression": 11,
+    "validation-regression": 0,
     "fallback-only": 1,
     "reactive-equivalence-required": 1,
     "intentional-breaking-policy": 1
   },
   "reviews": [
-    {
-      "id": "packages/compiler/test/alias-reactivity.test.ts:70:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "Babel rejects reassignment of a local alias derived from state, while Rust currently accepts it as a mutable snapshot.",
-      "finalPlan": "Restore a hard reactive-alias write diagnostic with the assignment span.",
-      "removalCondition": "Remove this review when Rust rejects the fixture with the stable alias-write diagnostic."
-    },
-    {
-      "id": "packages/compiler/test/alias-reactivity.test.ts:84:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "Post-declaration state alias propagation is not carried into the later reassignment check.",
-      "finalPlan": "Propagate reactive alias shape through assignments and reject the later write.",
-      "removalCondition": "Remove this review when Rust rejects the fixture with the stable alias-write diagnostic."
-    },
     {
       "id": "packages/compiler/test/base-transform.test.ts:586:transformRawTypeScript",
       "policy": "genuine-capability-expansion",
@@ -72,14 +56,6 @@
       "reason": "Rust lowers the audited const-enum request to runnable enum behavior that Babel's configured pipeline rejects.",
       "finalPlan": "Keep the executable enum oracle in the native runtime gate.",
       "removalCondition": "Remove only if const-enum lowering is retired or the Babel baseline begins accepting the same request."
-    },
-    {
-      "id": "packages/compiler/test/base-transform.test.ts:1224:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "A no-return advisory is emitted, but the required reactive-alias reassignment error is missing.",
-      "finalPlan": "Restore a hard alias-write diagnostic without suppressing independent advisories.",
-      "removalCondition": "Remove this review when Rust rejects the fixture for the alias write."
     },
     {
       "id": "packages/compiler/test/control-flow-runtime.test.ts:2959:compileAndRunHook",
@@ -136,70 +112,6 @@
       "reason": "Rust executes reactive for-break semantics and returns the proven value 15.",
       "finalPlan": "Keep the executable loop oracle.",
       "removalCondition": "Remove only if the lowering is retired or Babel accepts the request."
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:500:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "Rust emits a write to a const derived binding that Babel rejects during semantic validation.",
-      "finalPlan": "Reject writes to derived bindings with a stable diagnostic at the write span.",
-      "removalCondition": "Remove this review when Rust rejects the derived write."
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:513:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "An update to a destructured state alias compiles and later throws TypeError.",
-      "finalPlan": "Track destructured aliases from reactive roots and reject update expressions.",
-      "removalCondition": "Remove this review when Rust rejects the update with the stable alias-write diagnostic."
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:526:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "A destructuring assignment writes through a readonly state-derived alias and reaches runtime.",
-      "finalPlan": "Reject destructuring assignment targets that resolve to reactive aliases.",
-      "removalCondition": "Remove this review when Rust rejects the destructuring write."
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:1933:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "A postfix update to a reactive alias is accepted even though it cannot update the source state.",
-      "finalPlan": "Reject update expressions on reactive aliases.",
-      "removalCondition": "Remove this review when Rust rejects the update with the stable alias-write diagnostic."
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:1948:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "A captured reactive alias can be assigned inside a nested function while the rendered state stays unchanged.",
-      "finalPlan": "Carry alias provenance through closure capture and reject the nested assignment.",
-      "removalCondition": "Remove this review when Rust rejects the captured alias write."
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:1963:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "A captured reactive alias update is accepted while the rendered state stays unchanged.",
-      "finalPlan": "Carry alias provenance through closure capture and reject the nested update.",
-      "removalCondition": "Remove this review when Rust rejects the captured alias update."
-    },
-    {
-      "id": "packages/compiler/test/semantic-validation.test.ts:2062:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "Multi-hop state aliasing loses provenance before a destructured update and compiles to a runtime TypeError.",
-      "finalPlan": "Propagate reactive provenance transitively before validating destructured writes.",
-      "removalCondition": "Remove this review when Rust rejects the transitive destructured alias write."
-    },
-    {
-      "id": "packages/compiler/test/spec-complete.test.ts:619:transform",
-      "policy": "validation-regression",
-      "owner": "compiler-reactivity",
-      "reason": "The specification fixture's alias reassignment is accepted with only an unrelated no-return advisory.",
-      "finalPlan": "Restore the specification's hard alias-write validation.",
-      "removalCondition": "Remove this review when Rust rejects the fixture for the alias write."
     },
     {
       "id": "packages/compiler/test/warnings-as-errors.test.ts:156:transform",

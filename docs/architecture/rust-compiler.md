@@ -368,7 +368,7 @@ layouts.
 The machine-readable [E-07 semantic coverage
 matrix](../../scripts/fixtures/compiler_semantic_coverage_matrix.json) binds the
 remaining reviewed categories to their actual evidence strength. Browser
-DOM/delegation, reviewed CommonJS host semantics, and all 21 remaining classified Rust
+DOM/delegation, reviewed CommonJS host semantics, and all 10 remaining classified Rust
 acceptances use native runtime evidence; module identity uses the request
 contract; rejected component roles and decorators use diagnostic contracts;
 and complex lowerings combine sampled Babel/Rust source-position traces with
