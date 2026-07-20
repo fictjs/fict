@@ -3172,6 +3172,22 @@ mod tests {
         assert!(!direct.has_errors(), "{:?}", direct.diagnostics);
         assert!(direct.code.contains("__fictUseSignal"), "{}", direct.code);
         assert!(direct.code.contains("__fictUseEffect"), "{}", direct.code);
+
+        for (name, import, callee) in [
+            ("named", "$memo", "$memo"),
+            ("aliased", "$memo as memo", "memo"),
+        ] {
+            let source = format!(
+                "import {{ $state, {import} }} from 'fict'; export function App() {{ const count = $state(1); const doubled = (0, {callee})(() => count * 2); return <span>{{doubled}}</span>; }}"
+            );
+            let result = compile(request(&source, &format!("sequence-memo-{name}.tsx")));
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result.code.contains("const doubled = (0, ") && result.code.contains("doubled()"),
+                "{name}: {}",
+                result.code
+            );
+        }
     }
 
     #[test]

@@ -986,21 +986,23 @@ struct MacroCollector<'semantic, 'facts> {
 
 impl<'a> Visit<'a> for MacroCollector<'_, '_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let callee = unwrap_transparent_callee(&call.callee);
+        let (callee, sequence_wrapped) = unwrap_macro_callee(&call.callee);
         match callee {
             Expression::Identifier(identifier) => {
                 if let Some((reference_id, symbol)) = resolved_identifier(self.scoping, identifier)
                     && let Some((kind, binding)) = self.direct_macros.get(&symbol)
                 {
-                    self.callee_references.insert(reference_id);
-                    self.calls.push(FrontendMacroCall {
-                        kind: *kind,
-                        binding: Some(*binding),
-                        call_span: source_span(call.span),
-                        callee_span: source_span(identifier.span),
-                        optional: call.optional,
-                        pure: call.pure,
-                    });
+                    if *kind == FictMacroKind::Memo || !sequence_wrapped {
+                        self.callee_references.insert(reference_id);
+                        self.calls.push(FrontendMacroCall {
+                            kind: *kind,
+                            binding: Some(*binding),
+                            call_span: source_span(call.span),
+                            callee_span: source_span(identifier.span),
+                            optional: call.optional,
+                            pure: call.pure,
+                        });
+                    }
                 } else if identifier.reference_id.get().is_some_and(|reference| {
                     self.scoping.get_reference(reference).symbol_id().is_none()
                 }) && let Some(kind) = macro_kind("fict", identifier.name.as_str())
@@ -1055,6 +1057,31 @@ impl<'a> Visit<'a> for MacroCollector<'_, '_> {
             _ => {}
         }
         walk_call_expression(self, call);
+    }
+}
+
+fn unwrap_macro_callee<'expression>(
+    expression: &'expression Expression<'_>,
+) -> (&'expression Expression<'expression>, bool) {
+    let mut current = expression;
+    let mut sequence_wrapped = false;
+    loop {
+        current = match current {
+            Expression::ParenthesizedExpression(expression) => &expression.expression,
+            Expression::TSAsExpression(expression) => &expression.expression,
+            Expression::TSSatisfiesExpression(expression) => &expression.expression,
+            Expression::TSTypeAssertion(expression) => &expression.expression,
+            Expression::TSNonNullExpression(expression) => &expression.expression,
+            Expression::TSInstantiationExpression(expression) => &expression.expression,
+            Expression::SequenceExpression(expression) => {
+                let Some(last) = expression.expressions.last() else {
+                    return (current, sequence_wrapped);
+                };
+                sequence_wrapped = true;
+                last
+            }
+            _ => return (current, sequence_wrapped),
+        };
     }
 }
 

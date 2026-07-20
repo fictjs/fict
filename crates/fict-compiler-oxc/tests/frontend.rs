@@ -184,18 +184,20 @@ fn records_optional_value_and_namespace_uses_for_later_policy() {
 fn distinguishes_direct_parenthesized_macros_from_sequence_value_calls() {
     let frontend = summary(
         r#"
-            import { $state as state, $effect as effect } from 'fict';
+            import { $state as state, $effect as effect, $memo as memo } from 'fict';
             (state)(1);
             (effect)(() => {});
             (0, state)(1);
             (0, effect)(() => {});
+            (0, memo)(() => 1);
         "#,
         OxcSourceLanguage::JavaScript,
     );
 
-    assert_eq!(frontend.macro_calls.len(), 2);
+    assert_eq!(frontend.macro_calls.len(), 3);
     assert_eq!(frontend.macro_calls[0].kind, FictMacroKind::State);
     assert_eq!(frontend.macro_calls[1].kind, FictMacroKind::Effect);
+    assert_eq!(frontend.macro_calls[2].kind, FictMacroKind::Memo);
     assert_eq!(frontend.macro_value_uses.len(), 2);
     assert_eq!(frontend.macro_value_uses[0].kind, FictMacroKind::State);
     assert_eq!(frontend.macro_value_uses[1].kind, FictMacroKind::Effect);
