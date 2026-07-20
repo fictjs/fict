@@ -6656,6 +6656,14 @@ fn unsupported_macro_shapes_fail_closed_with_structured_codes() {
             "import * as Fict from 'fict/slim'; Fict.$effect(() => {});",
             "FICT-HIR-MACRO-NAMESPACE",
         ),
+        (
+            "import { $state as state } from 'fict'; const value = (0, state)(1);",
+            "FICT-HIR-MACRO-VALUE",
+        ),
+        (
+            "import { $effect as effect } from 'fict'; (0, effect)(() => {});",
+            "FICT-HIR-MACRO-VALUE",
+        ),
     ];
     for (source, code) in cases {
         let output = build_hir(

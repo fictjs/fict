@@ -1079,12 +1079,6 @@ fn unwrap_transparent_callee<'expression>(
             Expression::TSTypeAssertion(expression) => &expression.expression,
             Expression::TSNonNullExpression(expression) => &expression.expression,
             Expression::TSInstantiationExpression(expression) => &expression.expression,
-            Expression::SequenceExpression(expression) => {
-                let Some(last) = expression.expressions.last() else {
-                    return current;
-                };
-                last
-            }
             _ => return current,
         };
     }

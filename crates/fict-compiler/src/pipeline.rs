@@ -3133,6 +3133,48 @@ mod tests {
     }
 
     #[test]
+    fn rejects_indirect_compiler_macro_calls_before_import_erasure() {
+        for (name, source) in [
+            (
+                "state-direct-import",
+                "import { $state } from 'fict'; export function App() { const value = (0, $state)(1); return value; }",
+            ),
+            (
+                "state-aliased-import",
+                "import { $state as state } from 'fict'; export function App() { const value = (0, state)(1); return value; }",
+            ),
+            (
+                "effect-direct-import",
+                "import { $effect } from 'fict'; export function App() { (0, $effect)(() => {}); return null; }",
+            ),
+            (
+                "effect-aliased-import",
+                "import { $effect as effect } from 'fict'; export function App() { (0, effect)(() => {}); return null; }",
+            ),
+        ] {
+            let result = compile(request(source, &format!("indirect-macro-{name}.tsx")));
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-HIR-MACRO-VALUE"
+                        && diagnostic.severity == DiagnosticSeverity::Error
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+
+        let direct = compile(request(
+            "import { $state, $effect } from 'fict'; export function App() { const value = ($state)(1); ($effect)(() => value); return value; }",
+            "parenthesized-direct-macros.tsx",
+        ));
+        assert!(!direct.has_errors(), "{:?}", direct.diagnostics);
+        assert!(direct.code.contains("__fictUseSignal"), "{}", direct.code);
+        assert!(direct.code.contains("__fictUseEffect"), "{}", direct.code);
+    }
+
+    #[test]
     fn excludes_forced_and_custom_property_targets_from_earlier_spreads() {
         let mut input = request(
             "export function Widget(first) { return <my-widget {...first} some-prop=\"custom\" prop:textContent=\"text\" bool:data-on />; }",

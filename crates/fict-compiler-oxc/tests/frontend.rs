@@ -181,6 +181,27 @@ fn records_optional_value_and_namespace_uses_for_later_policy() {
 }
 
 #[test]
+fn distinguishes_direct_parenthesized_macros_from_sequence_value_calls() {
+    let frontend = summary(
+        r#"
+            import { $state as state, $effect as effect } from 'fict';
+            (state)(1);
+            (effect)(() => {});
+            (0, state)(1);
+            (0, effect)(() => {});
+        "#,
+        OxcSourceLanguage::JavaScript,
+    );
+
+    assert_eq!(frontend.macro_calls.len(), 2);
+    assert_eq!(frontend.macro_calls[0].kind, FictMacroKind::State);
+    assert_eq!(frontend.macro_calls[1].kind, FictMacroKind::Effect);
+    assert_eq!(frontend.macro_value_uses.len(), 2);
+    assert_eq!(frontend.macro_value_uses[0].kind, FictMacroKind::State);
+    assert_eq!(frontend.macro_value_uses[1].kind, FictMacroKind::Effect);
+}
+
+#[test]
 fn preserves_type_only_bindings_but_marks_them_non_runtime() {
     let frontend = summary(
         r#"
