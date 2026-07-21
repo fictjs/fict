@@ -166,7 +166,7 @@ Babel are accepted by Rust. The 10 Rust acceptances are individually reviewed:
 successful code emission is never by itself evidence of compatible runtime
 behavior.
 
-| Compatibility policy             | Count | 0.31 behavior and migration action                                                                                                                                                                         |
+| Compatibility policy             | Count | Native behavior and migration action                                                                                                                                                                       |
 | -------------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `narrow-component-role`          |    24 | Component-context macros require an explicit component owner. Move macros out of anonymous, indirect, assigned, wrapped, registry, or object-member functions into a directly declared component.          |
 | `structured-hook-return`         |     6 | Structured same-module hook results enforce readonly and setter rules. Keep mutation inside the hook, or expose an explicit supported setter instead of writing through a returned readonly accessor.      |
@@ -178,6 +178,28 @@ behavior.
 | `fallback-only`                  |     1 | Rust emits a structured `FICT-R006` fallback diagnostic. Do not rely on this as guaranteed fine-grained lowering.                                                                                          |
 | `reactive-equivalence-required`  |     0 | Reactive hook loop outputs now execute inside one live memo region; the audited result updates from `01` to `0123` after its state bound changes from 2 to 4.                                              |
 | `intentional-breaking-policy`    |     1 | Rust intentionally removes the audited Babel warning behavior. Treat this as a diagnostic-policy migration, not a capability.                                                                              |
+
+All 37 Babel-success/Rust-error inputs have final decisions; they are not an
+unclassified parity backlog:
+
+- The 24 `narrow-component-role` and 6 `structured-hook-return` inputs are a
+  `permanent-breaking-contract` for the current native compiler line. Use the
+  documented owner and setter migrations rather than waiting for a Babel
+  compatibility mode.
+- The 3 `standard-decorator-fail-closed` inputs
+  `requires-upstream-transform`. Feed the native compiler decorator-free output;
+  raw standard-decorator support is not part of the stable input contract.
+- The 4 `strict-reactivity-fail-closed` inputs are a
+  `permanent-strict-fail-closed-contract`. Refactor the source for guaranteed
+  lowering, or deliberately opt into the non-strict R006 fallback outside
+  production.
+
+Each policy has release disposition `allow` because its migration and removal
+condition are explicit—not because Rust reproduces Babel acceptance. The
+machine-readable source of truth is
+`scripts/fixtures/compiler_rust_rejection_reviews.json`; generation and CI map
+every Babel-success/Rust-error corpus row to one of these four decisions and
+enforce the 24/6/3/4 counts.
 
 The source of truth for all 10 remaining reviews is
 `scripts/fixtures/compiler_rust_acceptance_reviews.json`. Every row records its

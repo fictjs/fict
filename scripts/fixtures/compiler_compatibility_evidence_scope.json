@@ -138,6 +138,19 @@
       ],
       "doesNotProve": ["babel-runtime-equivalence-for-babel-rejected-inputs"]
     },
+    "rustRejectionReview": {
+      "artifact": "scripts/fixtures/compiler_rust_rejection_reviews.json",
+      "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
+      "reviewedRejections": 37,
+      "releaseBlockingUndecided": 0,
+      "assertionLevel": "reviewed-policy-and-migration-contract",
+      "proves": [
+        "every-babel-success-rust-error-row-has-a-release-decision",
+        "per-policy-migration-and-removal-conditions",
+        "no-unclassified-rust-rejection-parity-backlog"
+      ],
+      "doesNotProve": ["babel-runtime-equivalence-for-rust-rejected-inputs"]
+    },
     "diagnosticDeviationReview": {
       "artifact": "scripts/fixtures/compiler_diagnostic_deviation_reviews.json",
       "generator": "scripts/generate-compiler-diagnostic-deviation-review.mjs",

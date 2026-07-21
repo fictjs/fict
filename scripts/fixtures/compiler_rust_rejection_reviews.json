@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "policies": {
+    "narrow-component-role": {
+      "description": "Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.",
+      "classification": "permanent-breaking-contract",
+      "releaseDisposition": "allow",
+      "owner": "compiler-frontend",
+      "migrationAction": "Move component-context macros into a directly declared component or hook owner.",
+      "removalCondition": "Revisit only through an explicit future component-ownership design; Babel-style implicit owner inference is not a 0.32 parity target."
+    },
+    "structured-hook-return": {
+      "description": "Rust enforces readonly and setter rules for structured same-module hook return accessors.",
+      "classification": "permanent-breaking-contract",
+      "releaseDisposition": "allow",
+      "owner": "compiler-reactivity",
+      "migrationAction": "Keep mutation inside the hook or expose and call an explicit supported setter.",
+      "removalCondition": "Revisit only if the public hook-return contract gains a new binding-safe writable accessor representation."
+    },
+    "standard-decorator-fail-closed": {
+      "description": "Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript.",
+      "classification": "requires-upstream-transform",
+      "releaseDisposition": "allow",
+      "owner": "compiler-typescript",
+      "migrationAction": "Run a target-compatible decorator transform before native Fict compilation, or remove the decorators.",
+      "removalCondition": "Remove only if native decorator lowering is implemented with an executable target-runtime oracle."
+    },
+    "strict-reactivity-fail-closed": {
+      "description": "Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution.",
+      "classification": "permanent-strict-fail-closed-contract",
+      "releaseDisposition": "allow",
+      "owner": "compiler-control-flow",
+      "migrationAction": "Refactor to a guaranteed expression branch, or explicitly opt into the reviewed non-strict R006 fallback outside production.",
+      "removalCondition": "Remove only when the affected statement control flow gains a proven fine-grained lowering; strict mode must not silently adopt fallback semantics."
+    }
+  },
+  "policyCounts": {
+    "narrow-component-role": 24,
+    "structured-hook-return": 6,
+    "standard-decorator-fail-closed": 3,
+    "strict-reactivity-fail-closed": 4
+  }
+}

@@ -29,6 +29,10 @@ const rustAcceptanceReviewPath = path.join(
   repositoryRoot,
   'scripts/fixtures/compiler_rust_acceptance_reviews.json',
 )
+const rustRejectionReviewPath = path.join(
+  repositoryRoot,
+  'scripts/fixtures/compiler_rust_rejection_reviews.json',
+)
 const expectedAuditSha256 = '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f'
 const expectedExtraction = {
   extracted: 1974,
@@ -55,6 +59,28 @@ assert.equal(
   rustAcceptanceReview.reviews.length,
   'duplicate Rust acceptance review id',
 )
+const rustRejectionReview = JSON.parse(readFileSync(rustRejectionReviewPath, 'utf8'))
+assert.equal(rustRejectionReview.schemaVersion, 1)
+const rustRejectionPolicyNames = new Set(Object.keys(rustRejectionReview.policies))
+assert.deepEqual(
+  [...rustRejectionPolicyNames].sort(),
+  Object.keys(rustRejectionReview.policyCounts).sort(),
+  'Rust rejection policy count keys',
+)
+for (const [policy, metadata] of Object.entries(rustRejectionReview.policies)) {
+  for (const field of [
+    'description',
+    'classification',
+    'releaseDisposition',
+    'owner',
+    'migrationAction',
+    'removalCondition',
+  ]) {
+    assert.equal(typeof metadata[field], 'string', `${policy}: missing ${field}`)
+    assert.notEqual(metadata[field].trim(), '', `${policy}: empty ${field}`)
+  }
+  assert.equal(metadata.releaseDisposition, 'allow', `${policy}: release disposition`)
+}
 const deviationPolicies = {
   ...Object.fromEntries(
     Object.entries(rustAcceptanceReview.policies).map(([policy, metadata]) => [
@@ -62,21 +88,16 @@ const deviationPolicies = {
       metadata.description,
     ]),
   ),
-  'narrow-component-role':
-    'Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.',
-  'structured-hook-return':
-    'Rust 0.31 enforces readonly and setter rules for structured same-module hook return accessors.',
-  'standard-decorator-fail-closed':
-    'Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript.',
-  'strict-reactivity-fail-closed':
-    'Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution.',
+  ...Object.fromEntries(
+    Object.entries(rustRejectionReview.policies).map(([policy, metadata]) => [
+      policy,
+      metadata.description,
+    ]),
+  ),
 }
 const expectedPolicyCounts = {
   ...rustAcceptanceReview.policyCounts,
-  'narrow-component-role': 24,
-  'structured-hook-return': 6,
-  'standard-decorator-fail-closed': 3,
-  'strict-reactivity-fail-closed': 4,
+  ...rustRejectionReview.policyCounts,
 }
 
 function parseArguments(argv) {
@@ -433,6 +454,22 @@ assert.deepEqual(
   'Rust acceptance review contains stale or missing fixtures',
 )
 assert.deepEqual(policyCounts, expectedPolicyCounts)
+const observedRustRejectionPolicyCounts = Object.fromEntries(
+  [...rustRejectionPolicyNames].map(policy => [policy, 0]),
+)
+for (const fixture of fixtures) {
+  if (fixture.babelAudit.status !== 'ok' || fixture.expected.status !== 'error') continue
+  assert.ok(
+    rustRejectionPolicyNames.has(fixture.deviationPolicy),
+    `${fixture.id}: Babel-success/Rust-error fixture lacks a reviewed rejection decision`,
+  )
+  observedRustRejectionPolicyCounts[fixture.deviationPolicy]++
+}
+assert.deepEqual(
+  observedRustRejectionPolicyCounts,
+  rustRejectionReview.policyCounts,
+  'reviewed Babel-success/Rust-error policy counts',
+)
 const diagnosticReview = buildDiagnosticDeviationReview({
   sourceAuditSha256: expectedAuditSha256,
   fixtures: diagnosticReviewFixtures,

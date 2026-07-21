@@ -21,6 +21,7 @@ const assertionInventoryPath = 'scripts/fixtures/legacy_0_28_compiler_assertion_
 const unrepresentedReplayPath =
   'crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json'
 const rustAcceptanceReviewPath = 'scripts/fixtures/compiler_rust_acceptance_reviews.json'
+const rustRejectionReviewPath = 'scripts/fixtures/compiler_rust_rejection_reviews.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
 test('keeps codegen, request, and semantic compatibility evidence roles distinct', () => {
@@ -44,6 +45,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'r006SuppressionAudit',
     'rustAcceptanceReview',
     'rustCodegenCorpus',
+    'rustRejectionReview',
     'semanticCoverageMatrix',
   ])
 
@@ -183,6 +185,16 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   )
   assert.ok(read(acceptanceScope.runtimeTest).length > 0)
   assert.ok(read(acceptanceScope.releaseGate).length > 0)
+
+  const rejectionScope = scope.assets.rustRejectionReview
+  const rejectionReview = readJson(rejectionScope.artifact)
+  assert.equal(rejectionScope.artifact, rustRejectionReviewPath)
+  assert.equal(
+    rejectionScope.reviewedRejections,
+    Object.values(rejectionReview.policyCounts).reduce((sum, count) => sum + count, 0),
+  )
+  assert.equal(rejectionScope.releaseBlockingUndecided, 0)
+  assert.ok(read(rejectionScope.ciTest).length > 0)
 
   const semantic = scope.assets.babelSemanticOracle
   const semanticInputs = readJson(semantic.inputs)
@@ -1454,6 +1466,59 @@ test('classifies every Babel-rejected Rust acceptance before runtime and release
   assert.match(ci, /native-compiler-capability-expansions\.test\.mjs/)
 })
 
+test('decides every Babel-accepted Rust rejection before stable release', () => {
+  const corpus = readJson(compileCorpusPath)
+  const review = readJson(rustRejectionReviewPath)
+  assert.equal(review.schemaVersion, 1)
+  assert.deepEqual(review.policyCounts, {
+    'narrow-component-role': 24,
+    'structured-hook-return': 6,
+    'standard-decorator-fail-closed': 3,
+    'strict-reactivity-fail-closed': 4,
+  })
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(review.policies).map(([policy, metadata]) => [
+        policy,
+        metadata.classification,
+      ]),
+    ),
+    {
+      'narrow-component-role': 'permanent-breaking-contract',
+      'structured-hook-return': 'permanent-breaking-contract',
+      'standard-decorator-fail-closed': 'requires-upstream-transform',
+      'strict-reactivity-fail-closed': 'permanent-strict-fail-closed-contract',
+    },
+  )
+  for (const [policy, metadata] of Object.entries(review.policies)) {
+    assert.equal(metadata.releaseDisposition, 'allow', policy)
+    for (const field of [
+      'description',
+      'classification',
+      'owner',
+      'migrationAction',
+      'removalCondition',
+    ]) {
+      assert.ok(metadata[field]?.trim(), `${policy}: ${field}`)
+    }
+  }
+
+  const observedCounts = Object.fromEntries(Object.keys(review.policies).map(policy => [policy, 0]))
+  const rejected = corpus.fixtures.filter(
+    fixture => fixture.babelAudit.status === 'ok' && fixture.expected.status === 'error',
+  )
+  assert.equal(rejected.length, 37)
+  for (const fixture of rejected) {
+    assert.ok(review.policies[fixture.deviationPolicy], fixture.id)
+    observedCounts[fixture.deviationPolicy]++
+  }
+  assert.deepEqual(observedCounts, review.policyCounts)
+
+  const generator = read('scripts/generate-rust-codegen-corpus.mjs')
+  assert.match(generator, /compiler_rust_rejection_reviews\.json/)
+  assert.match(generator, /Babel-success\/Rust-error fixture lacks a reviewed rejection decision/)
+})
+
 test('maps the Babel delegated-event parity domain to the generated runtime ABI guard', () => {
   const parity = read('packages/runtime/test/delegated-events-parity.test.ts')
   assert.match(parity, /runtime-abi\.json/)
@@ -1644,7 +1709,13 @@ test('documents every reviewed Babel status and request-identity deviation', () 
     0,
   )
   const rustRejectionCount = statusDifferenceCount - rustAcceptanceCount
+  const rustRejectionReview = readJson(rustRejectionReviewPath)
+  assert.equal(
+    rustRejectionCount,
+    Object.values(rustRejectionReview.policyCounts).reduce((sum, count) => sum + count, 0),
+  )
   assert.match(migrationGuide, /37 option-driven Babel-success\/Rust-fail/)
+  assert.match(migrationGuide, /All 37 Babel-success\/Rust-error inputs have final decisions/)
   assert.match(
     migrationGuide,
     new RegExp(`${statusDifferenceCount} reviewed success/error status differences`),
