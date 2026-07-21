@@ -35,15 +35,16 @@ use oxc::{
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
             AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
             CallExpression, ChainElement, Class, ClassElement, ClassType, ComputedMemberExpression,
-            Decorator, Expression, ExpressionStatement, FormalParameters, Function, FunctionBody,
-            FunctionType, IdentifierReference, ImportExpression, ImportPhase as OxcImportPhase,
-            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
-            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
-            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            LogicalExpression, MemberExpression, MetaProperty, NewExpression,
-            ObjectAssignmentTarget, ObjectPropertyKind as OxcObjectPropertyKind, Program,
-            PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement, SimpleAssignmentTarget,
-            Statement, Super, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
+            Decorator, Expression, ExpressionStatement, FormalParameter, FormalParameterRest,
+            FormalParameters, Function, FunctionBody, FunctionType, IdentifierReference,
+            ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
+            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
+            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
+            NewExpression, ObjectAssignmentTarget, ObjectPropertyKind as OxcObjectPropertyKind,
+            Program, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
+            SimpleAssignmentTarget, Statement, Super, TSLiteral, TSType, TSTypeName,
+            TSTypeOperatorOperator, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
             UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
@@ -2356,6 +2357,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter_map(|binding| binding_to_symbol.get(&binding).copied())
             .collect();
         let mut state_receivers = BTreeMap::new();
+        let mut declared_state_receivers = BTreeSet::new();
         for call in calls.iter().filter(|call| {
             call.binding.is_some_and(|binding| {
                 self.macro_bindings.get(&binding) == Some(&FictMacroKind::State)
@@ -2367,15 +2369,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             else {
                 continue;
             };
-            let receiver = if mutable_symbols.contains(&symbol) {
-                StateReceiverKind::Unknown
-            } else {
+            if call.declared_state_receiver_kind.is_some() {
+                declared_state_receivers.insert(symbol);
+            }
+            let receiver = call.declared_state_receiver_kind.unwrap_or_else(|| {
                 call.arguments
                     .first()
                     .map_or(StateReceiverKind::Unknown, |argument| {
                         argument.state_receiver_kind
                     })
-            };
+            });
             state_receivers
                 .entry(symbol)
                 .and_modify(|current| {
@@ -2384,6 +2387,39 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     }
                 })
                 .or_insert(receiver);
+        }
+        let mut declared_binding_receivers = DeclaredStateReceiverTypeCollector {
+            scoping: self.semantic.scoping(),
+            receivers: BTreeMap::new(),
+        };
+        declared_binding_receivers.visit_program(program);
+        let mut expression_receivers = declared_binding_receivers.receivers;
+        for (symbol, receiver) in &state_receivers {
+            expression_receivers.insert(*symbol, *receiver);
+        }
+        let mut receiver_mutations = StateReceiverMutationCollector {
+            scoping: self.semantic.scoping(),
+            state_symbols: &state,
+            receivers: &expression_receivers,
+            mutations: BTreeMap::new(),
+        };
+        receiver_mutations.visit_program(program);
+        let receiver_mutations = receiver_mutations.mutations;
+        for symbol in mutable_symbols {
+            if declared_state_receivers.contains(symbol) || !state.contains(symbol) {
+                continue;
+            }
+            let initial = state_receivers
+                .get(symbol)
+                .copied()
+                .unwrap_or(StateReceiverKind::Unknown);
+            let preserves_receiver = initial != StateReceiverKind::Unknown
+                && receiver_mutations.get(symbol).is_some_and(|mutations| {
+                    !mutations.is_empty() && mutations.iter().all(|receiver| *receiver == initial)
+                });
+            if !preserves_receiver {
+                state_receivers.insert(*symbol, StateReceiverKind::Unknown);
+            }
         }
         let source_reactive_symbols: BTreeSet<_> = calls
             .iter()
@@ -7264,6 +7300,7 @@ struct CallFact {
     reactive_kind: Option<ReactiveCallKind>,
     runtime_creation_kind: Option<RuntimeReactiveCreationKind>,
     arguments: Vec<ArgumentFact>,
+    declared_state_receiver_kind: Option<StateReceiverKind>,
     callback: Option<FunctionId>,
     direct_variable: Option<bool>,
     direct_variable_binding: Option<BindingId>,
@@ -8228,6 +8265,11 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
                 }
             })
             .collect();
+        let declared_state_receiver_kind = call
+            .type_arguments
+            .as_ref()
+            .and_then(|arguments| arguments.params.first())
+            .and_then(|annotation| classify_state_receiver_type(self.scoping, annotation));
         self.calls.push(CallFact {
             owner: *self.stack.last().expect("module call owner"),
             span: call_span,
@@ -8248,11 +8290,137 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             inside_jsx,
             hook,
             arguments,
+            declared_state_receiver_kind,
             arguments_conditional: call_arguments_are_conditional(call),
             optional: call.optional,
             pure: call.pure,
         });
         walk_call_expression(self, call);
+    }
+}
+
+struct DeclaredStateReceiverTypeCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    receivers: BTreeMap<SymbolId, StateReceiverKind>,
+}
+
+impl DeclaredStateReceiverTypeCollector<'_> {
+    fn record(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        annotation: Option<&oxc::ast::ast::TSTypeAnnotation<'_>>,
+    ) {
+        let (BindingPattern::BindingIdentifier(binding), Some(annotation)) = (pattern, annotation)
+        else {
+            return;
+        };
+        let Some(symbol) = binding.symbol_id.get() else {
+            return;
+        };
+        if let Some(receiver) =
+            classify_state_receiver_type(self.scoping, &annotation.type_annotation)
+        {
+            self.receivers.insert(symbol, receiver);
+        }
+    }
+}
+
+impl<'a> Visit<'a> for DeclaredStateReceiverTypeCollector<'_> {
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        self.record(&declarator.id, declarator.type_annotation.as_deref());
+        walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_formal_parameter(&mut self, parameter: &FormalParameter<'a>) {
+        self.record(&parameter.pattern, parameter.type_annotation.as_deref());
+        oxc::ast_visit::walk::walk_formal_parameter(self, parameter);
+    }
+
+    fn visit_formal_parameter_rest(&mut self, parameter: &FormalParameterRest<'a>) {
+        self.record(
+            &parameter.rest.argument,
+            parameter.type_annotation.as_deref(),
+        );
+        oxc::ast_visit::walk::walk_formal_parameter_rest(self, parameter);
+    }
+}
+
+struct StateReceiverMutationCollector<'facts, 'semantic> {
+    scoping: &'semantic Scoping,
+    state_symbols: &'facts BTreeSet<SymbolId>,
+    receivers: &'facts BTreeMap<SymbolId, StateReceiverKind>,
+    mutations: BTreeMap<SymbolId, Vec<StateReceiverKind>>,
+}
+
+impl StateReceiverMutationCollector<'_, '_> {
+    fn record(&mut self, symbol: SymbolId, receiver: StateReceiverKind) {
+        if self.state_symbols.contains(&symbol) {
+            self.mutations.entry(symbol).or_default().push(receiver);
+        }
+    }
+}
+
+impl<'a> Visit<'a> for StateReceiverMutationCollector<'_, '_> {
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if let Some(identifier) = direct_assignment_target_identifier(&assignment.left)
+            && let Some(symbol) = identifier_symbol(self.scoping, identifier)
+        {
+            let receiver = if assignment.operator == OxcAssignmentOperator::Assign {
+                classify_state_receiver_assignment(self.scoping, &assignment.right, self.receivers)
+            } else {
+                StateReceiverKind::Unknown
+            };
+            self.record(symbol, receiver);
+        } else if matches!(
+            assignment.left,
+            AssignmentTarget::ArrayAssignmentTarget(_)
+                | AssignmentTarget::ObjectAssignmentTarget(_)
+        ) {
+            let mut targets = Vec::new();
+            collect_pattern_assignment_targets(
+                self.scoping,
+                &assignment.left,
+                &mut targets,
+                &mut Vec::new(),
+            );
+            for target in targets {
+                self.record(target.symbol, StateReceiverKind::Unknown);
+            }
+        }
+        oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+    }
+
+    fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
+        if let Some((symbol, projected)) =
+            simple_assignment_target_symbol(self.scoping, &update.argument)
+            && !projected
+        {
+            let receiver = if self.receivers.get(&symbol) == Some(&StateReceiverKind::Number) {
+                StateReceiverKind::Number
+            } else {
+                StateReceiverKind::Unknown
+            };
+            self.record(symbol, receiver);
+        }
+        oxc::ast_visit::walk::walk_update_expression(self, update);
+    }
+
+    fn visit_for_in_statement(&mut self, statement: &oxc::ast::ast::ForInStatement<'a>) {
+        let target =
+            structured_control_flow::planned_iteration_target(&statement.left, self.scoping);
+        for symbol in target.declared.into_iter().chain(target.assigned) {
+            self.record(symbol, StateReceiverKind::Unknown);
+        }
+        oxc::ast_visit::walk::walk_for_in_statement(self, statement);
+    }
+
+    fn visit_for_of_statement(&mut self, statement: &oxc::ast::ast::ForOfStatement<'a>) {
+        let target =
+            structured_control_flow::planned_iteration_target(&statement.left, self.scoping);
+        for symbol in target.declared.into_iter().chain(target.assigned) {
+            self.record(symbol, StateReceiverKind::Unknown);
+        }
+        oxc::ast_visit::walk::walk_for_of_statement(self, statement);
     }
 }
 
@@ -10643,6 +10811,10 @@ fn classify_state_receiver_expression(
             classify_global_state_constructor(scoping, &expression.callee)
         }
         Expression::CallExpression(expression) => {
+            let factory_receiver = classify_global_state_factory_call(scoping, expression);
+            if factory_receiver != StateReceiverKind::Unknown {
+                return factory_receiver;
+            }
             let receiver = classify_global_state_constructor(scoping, &expression.callee);
             if matches!(
                 receiver,
@@ -10660,6 +10832,254 @@ fn classify_state_receiver_expression(
     }
 }
 
+fn classify_state_receiver_assignment(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+    receivers: &BTreeMap<SymbolId, StateReceiverKind>,
+) -> StateReceiverKind {
+    let direct = classify_state_receiver_expression(scoping, expression);
+    if direct != StateReceiverKind::Unknown {
+        return direct;
+    }
+    match expression.get_inner_expression() {
+        Expression::Identifier(identifier) => identifier_symbol(scoping, identifier)
+            .and_then(|symbol| receivers.get(&symbol).copied())
+            .unwrap_or(StateReceiverKind::Unknown),
+        Expression::ConditionalExpression(expression) => merge_state_receiver_kinds(
+            classify_state_receiver_assignment(scoping, &expression.consequent, receivers),
+            classify_state_receiver_assignment(scoping, &expression.alternate, receivers),
+        ),
+        Expression::LogicalExpression(expression) => merge_state_receiver_kinds(
+            classify_state_receiver_assignment(scoping, &expression.left, receivers),
+            classify_state_receiver_assignment(scoping, &expression.right, receivers),
+        ),
+        Expression::SequenceExpression(expression) => expression
+            .expressions
+            .last()
+            .map_or(StateReceiverKind::Unknown, |value| {
+                classify_state_receiver_assignment(scoping, value, receivers)
+            }),
+        Expression::AssignmentExpression(expression) => {
+            classify_state_receiver_assignment(scoping, &expression.right, receivers)
+        }
+        Expression::CallExpression(call) => classify_state_receiver_call(scoping, call, receivers),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::CallExpression(call) => {
+                classify_state_receiver_call(scoping, call, receivers)
+            }
+            ChainElement::TSNonNullExpression(expression) => {
+                classify_state_receiver_assignment(scoping, &expression.expression, receivers)
+            }
+            ChainElement::ComputedMemberExpression(_)
+            | ChainElement::PrivateFieldExpression(_)
+            | ChainElement::StaticMemberExpression(_) => StateReceiverKind::Unknown,
+        },
+        _ => StateReceiverKind::Unknown,
+    }
+}
+
+fn classify_state_receiver_call(
+    scoping: &Scoping,
+    call: &CallExpression<'_>,
+    receivers: &BTreeMap<SymbolId, StateReceiverKind>,
+) -> StateReceiverKind {
+    let factory_receiver = classify_global_state_factory_call(scoping, call);
+    if factory_receiver != StateReceiverKind::Unknown {
+        return factory_receiver;
+    }
+    let (object, method) = match call.callee.get_inner_expression() {
+        Expression::StaticMemberExpression(member) => {
+            (&member.object, Some(member.property.name.as_str()))
+        }
+        Expression::ComputedMemberExpression(member) => {
+            let method = match member.expression.get_inner_expression() {
+                Expression::StringLiteral(property) => Some(property.value.as_str()),
+                _ => None,
+            };
+            (&member.object, method)
+        }
+        _ => return StateReceiverKind::Unknown,
+    };
+    let Some(method) = method else {
+        return StateReceiverKind::Unknown;
+    };
+    let receiver = classify_state_receiver_assignment(scoping, object, receivers);
+    state_method_result_receiver(receiver, method)
+}
+
+fn classify_global_state_factory_call(
+    scoping: &Scoping,
+    call: &CallExpression<'_>,
+) -> StateReceiverKind {
+    let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression() else {
+        return StateReceiverKind::Unknown;
+    };
+    let receiver = classify_global_state_constructor(scoping, &member.object);
+    match (receiver, member.property.name.as_str()) {
+        (StateReceiverKind::Array | StateReceiverKind::TypedArray, "from" | "of") => receiver,
+        (
+            StateReceiverKind::Promise,
+            "all" | "allSettled" | "any" | "race" | "reject" | "resolve",
+        ) => StateReceiverKind::Promise,
+        (StateReceiverKind::String, "raw") => StateReceiverKind::String,
+        _ => StateReceiverKind::Unknown,
+    }
+}
+
+fn state_method_result_receiver(receiver: StateReceiverKind, method: &str) -> StateReceiverKind {
+    match receiver {
+        StateReceiverKind::Array
+            if matches!(
+                method,
+                "concat"
+                    | "filter"
+                    | "flat"
+                    | "flatMap"
+                    | "map"
+                    | "slice"
+                    | "toReversed"
+                    | "toSorted"
+                    | "toSpliced"
+                    | "with"
+            ) =>
+        {
+            StateReceiverKind::Array
+        }
+        StateReceiverKind::TypedArray
+            if matches!(
+                method,
+                "filter" | "map" | "slice" | "subarray" | "toReversed" | "toSorted" | "with"
+            ) =>
+        {
+            StateReceiverKind::TypedArray
+        }
+        StateReceiverKind::Set
+            if matches!(
+                method,
+                "add" | "difference" | "intersection" | "symmetricDifference" | "union"
+            ) =>
+        {
+            StateReceiverKind::Set
+        }
+        StateReceiverKind::Map if method == "set" => StateReceiverKind::Map,
+        StateReceiverKind::Function if method == "bind" => StateReceiverKind::Function,
+        StateReceiverKind::Promise if matches!(method, "catch" | "finally" | "then") => {
+            StateReceiverKind::Promise
+        }
+        StateReceiverKind::String
+            if matches!(
+                method,
+                "concat"
+                    | "normalize"
+                    | "padEnd"
+                    | "padStart"
+                    | "repeat"
+                    | "replace"
+                    | "replaceAll"
+                    | "slice"
+                    | "substring"
+                    | "toLocaleLowerCase"
+                    | "toLocaleUpperCase"
+                    | "toLowerCase"
+                    | "toUpperCase"
+                    | "toWellFormed"
+                    | "trim"
+                    | "trimEnd"
+                    | "trimStart"
+                    | "valueOf"
+            ) =>
+        {
+            StateReceiverKind::String
+        }
+        StateReceiverKind::Number if method == "valueOf" => StateReceiverKind::Number,
+        _ => StateReceiverKind::Unknown,
+    }
+}
+
+fn merge_state_receiver_kinds(
+    left: StateReceiverKind,
+    right: StateReceiverKind,
+) -> StateReceiverKind {
+    if left == right {
+        left
+    } else {
+        StateReceiverKind::Unknown
+    }
+}
+
+fn classify_state_receiver_type(
+    scoping: &Scoping,
+    annotation: &TSType<'_>,
+) -> Option<StateReceiverKind> {
+    match annotation {
+        TSType::TSArrayType(_) | TSType::TSTupleType(_) => Some(StateReceiverKind::Array),
+        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => {
+            Some(StateReceiverKind::Function)
+        }
+        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => {
+            Some(StateReceiverKind::String)
+        }
+        TSType::TSNumberKeyword(_) | TSType::TSBigIntKeyword(_) => Some(StateReceiverKind::Number),
+        TSType::TSLiteralType(literal) => match &literal.literal {
+            TSLiteral::StringLiteral(_) | TSLiteral::TemplateLiteral(_) => {
+                Some(StateReceiverKind::String)
+            }
+            TSLiteral::NumericLiteral(_)
+            | TSLiteral::BigIntLiteral(_)
+            | TSLiteral::UnaryExpression(_) => Some(StateReceiverKind::Number),
+            TSLiteral::BooleanLiteral(_) => None,
+        },
+        TSType::TSParenthesizedType(parenthesized) => {
+            classify_state_receiver_type(scoping, &parenthesized.type_annotation)
+        }
+        TSType::TSTypeOperatorType(operator)
+            if operator.operator == TSTypeOperatorOperator::Readonly =>
+        {
+            classify_state_receiver_type(scoping, &operator.type_annotation)
+        }
+        TSType::TSTypeReference(reference) => {
+            let TSTypeName::IdentifierReference(identifier) = &reference.type_name else {
+                return None;
+            };
+            let reference = scoping.get_reference(identifier.reference_id.get()?);
+            if reference.symbol_id().is_some()
+                || reference_is_inside_with(scoping, reference.scope_id())
+            {
+                return None;
+            }
+            classify_builtin_state_receiver_name(identifier.name.as_str())
+        }
+        TSType::TSUnionType(union) => {
+            let mut receiver = None;
+            for member in &union.types {
+                if state_receiver_type_is_nullish(member) {
+                    continue;
+                }
+                let candidate = classify_state_receiver_type(scoping, member)?;
+                if receiver.is_some_and(|current| current != candidate) {
+                    return None;
+                }
+                receiver = Some(candidate);
+            }
+            receiver
+        }
+        _ => None,
+    }
+}
+
+fn state_receiver_type_is_nullish(annotation: &TSType<'_>) -> bool {
+    match annotation {
+        TSType::TSNeverKeyword(_)
+        | TSType::TSNullKeyword(_)
+        | TSType::TSUndefinedKeyword(_)
+        | TSType::TSVoidKeyword(_) => true,
+        TSType::TSParenthesizedType(parenthesized) => {
+            state_receiver_type_is_nullish(&parenthesized.type_annotation)
+        }
+        _ => false,
+    }
+}
+
 fn classify_global_state_constructor(
     scoping: &Scoping,
     expression: &Expression<'_>,
@@ -10674,23 +11094,29 @@ fn classify_global_state_constructor(
     if reference.symbol_id().is_some() || reference_is_inside_with(scoping, reference.scope_id()) {
         return StateReceiverKind::Unknown;
     }
-    match identifier.name.as_str() {
+    classify_builtin_state_receiver_name(identifier.name.as_str())
+        .unwrap_or(StateReceiverKind::Unknown)
+}
+
+fn classify_builtin_state_receiver_name(name: &str) -> Option<StateReceiverKind> {
+    Some(match name {
         "Array" => StateReceiverKind::Array,
         "DataView" => StateReceiverKind::DataView,
         "Date" => StateReceiverKind::Date,
-        "Function" => StateReceiverKind::Function,
-        "Map" => StateReceiverKind::Map,
+        "CallableFunction" | "Function" | "NewableFunction" => StateReceiverKind::Function,
+        "Map" | "ReadonlyMap" => StateReceiverKind::Map,
         "BigInt" | "Number" => StateReceiverKind::Number,
         "Promise" => StateReceiverKind::Promise,
-        "Set" => StateReceiverKind::Set,
+        "ReadonlySet" | "Set" => StateReceiverKind::Set,
+        "ReadonlyArray" => StateReceiverKind::Array,
         "String" => StateReceiverKind::String,
         "BigInt64Array" | "BigUint64Array" | "Float32Array" | "Float64Array" | "Int8Array"
         | "Int16Array" | "Int32Array" | "Uint8Array" | "Uint8ClampedArray" | "Uint16Array"
         | "Uint32Array" => StateReceiverKind::TypedArray,
         "WeakMap" => StateReceiverKind::WeakMap,
         "WeakSet" => StateReceiverKind::WeakSet,
-        _ => StateReceiverKind::Unknown,
-    }
+        _ => return None,
+    })
 }
 
 fn configured_reactive_scope_call(

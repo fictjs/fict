@@ -6480,6 +6480,28 @@ fn certifies_function_methods_but_not_shadowed_or_reassigned_builtin_receivers()
             map = { get() {} };
             map.get();
         }
+        function DeclaredFamilies() {
+            let items = $state<string[] | null>(null);
+            items = ['next'];
+            items.map(item => item.toUpperCase());
+            let date = $state<Date | null>(null);
+            date = new Date();
+            date.toISOString();
+        }
+        function PreservedArrayAssignments() {
+            let values = $state([1, 2, 3]);
+            values = values.filter(value => value > 1);
+            values.map(value => value * 2);
+            let rows = $state(Array.from({ length: 2 }, (_, index) => index));
+            rows = rows.map(value => value + 1);
+            rows.map(value => value * 2);
+        }
+        function TypedParameterReplacement() {
+            let items = $state(['first']);
+            const replace = (value: string[]) => { items = value; };
+            replace(['next']);
+            items.map(item => item.toUpperCase());
+        }
     "#;
     let fallback = build_hir(
         source,
