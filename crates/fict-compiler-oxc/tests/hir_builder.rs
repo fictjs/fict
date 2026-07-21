@@ -6417,8 +6417,9 @@ fn fails_closed_for_unproven_state_method_calls_across_builtin_receivers() {
             const typed = $state(new Uint8Array(4));
             typed.set([1]); typed.copyWithin(0, 1); typed.fill(0); typed.reverse(); typed.sort();
             typed.includes(1); typed.slice(0);
-            const custom = $state({ mutate() {}, read() {} });
-            custom.mutate(); custom.read(); custom[method]();
+            const custom = $state({ mutate() {}, read() {}, get() {}, map() {}, toString() {} });
+            custom.mutate(); custom.read(); custom.get(); custom.map(); custom.toString();
+            custom[method]();
             return map.get('x') ?? set.has('x') ?? date.getTime() ?? typed.includes(1);
         }
     "#;
@@ -6433,7 +6434,7 @@ fn fails_closed_for_unproven_state_method_calls_across_builtin_receivers() {
         .iter()
         .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .collect::<Vec<_>>();
-    assert_eq!(findings.len(), 16, "{:?}", strict.diagnostics);
+    assert_eq!(findings.len(), 19, "{:?}", strict.diagnostics);
     assert!(findings.iter().all(|diagnostic| {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
             && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
@@ -6453,10 +6454,48 @@ fn fails_closed_for_unproven_state_method_calls_across_builtin_receivers() {
         .iter()
         .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .collect::<Vec<_>>();
-    assert_eq!(findings.len(), 16, "{:?}", fallback.diagnostics);
+    assert_eq!(findings.len(), 19, "{:?}", fallback.diagnostics);
     assert!(findings.iter().all(|diagnostic| {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
     }));
+}
+
+#[test]
+fn certifies_function_methods_but_not_shadowed_or_reassigned_builtin_receivers() {
+    let source = r#"
+        import { $state } from 'fict';
+        function FunctionState() {
+            const fn = $state((value) => value);
+            fn.call(null, 1); fn.apply(null, [2]); fn.bind(null, 3); fn?.call(null, 4);
+            const value = $state(123 as any);
+            value.call(null);
+        }
+        function Shadowed() {
+            class Map { get() {} }
+            const map = $state(new Map());
+            map.get();
+        }
+        function Reassigned() {
+            let map = $state(new Map());
+            map = { get() {} };
+            map.get();
+        }
+    "#;
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::TypeScript),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    let findings = fallback
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 3, "{:?}", fallback.diagnostics);
 }
 
 #[test]

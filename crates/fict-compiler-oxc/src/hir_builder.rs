@@ -17,7 +17,7 @@ use fict_hir::{
     JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport,
     ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind,
     Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost,
-    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StateMethodCallSemantics,
+    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StateMethodCallSemantics, StateReceiverKind,
     StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
     TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
     ValueKind, classify_state_method_call, verify_hir, verify_module_plan,
@@ -1930,7 +1930,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             concise_arrow_functions: BTreeSet::new(),
         };
         calls.visit_program(program);
-        let mutable_alias_symbols = self
+        let mutable_alias_symbols: BTreeSet<SymbolId> = self
             .frontend
             .bindings
             .iter()
@@ -2031,8 +2031,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         member_accesses.visit_program(program);
         self.classify_component_roles(&calls.calls, &jsx.roots);
         self.validate_class_components(&class_bindings, &jsx.tags);
-        let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
-        self.validate_state_method_calls(&calls.calls, &reactive_symbols.state);
+        let reactive_symbols =
+            self.analyze_reactive_symbols(program, &calls.calls, &mutable_alias_symbols);
+        self.validate_state_method_calls(
+            &calls.calls,
+            &reactive_symbols.state,
+            &reactive_symbols.state_receivers,
+        );
         self.validate_advisory_diagnostics(program, &calls.calls, &reactive_symbols.reactive);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
@@ -2333,6 +2338,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         &self,
         program: &Program<'_>,
         calls: &[CallFact],
+        mutable_symbols: &BTreeSet<SymbolId>,
     ) -> ReactiveSymbolAnalysis {
         let binding_to_symbol: BTreeMap<_, _> = self
             .symbol_to_binding
@@ -2349,6 +2355,36 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter_map(|call| call.direct_variable_binding)
             .filter_map(|binding| binding_to_symbol.get(&binding).copied())
             .collect();
+        let mut state_receivers = BTreeMap::new();
+        for call in calls.iter().filter(|call| {
+            call.binding.is_some_and(|binding| {
+                self.macro_bindings.get(&binding) == Some(&FictMacroKind::State)
+            })
+        }) {
+            let Some(symbol) = call
+                .direct_variable_binding
+                .and_then(|binding| binding_to_symbol.get(&binding).copied())
+            else {
+                continue;
+            };
+            let receiver = if mutable_symbols.contains(&symbol) {
+                StateReceiverKind::Unknown
+            } else {
+                call.arguments
+                    .first()
+                    .map_or(StateReceiverKind::Unknown, |argument| {
+                        argument.state_receiver_kind
+                    })
+            };
+            state_receivers
+                .entry(symbol)
+                .and_modify(|current| {
+                    if *current != receiver {
+                        *current = StateReceiverKind::Unknown;
+                    }
+                })
+                .or_insert(receiver);
+        }
         let source_reactive_symbols: BTreeSet<_> = calls
             .iter()
             .filter(|call| {
@@ -2424,6 +2460,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
         ReactiveSymbolAnalysis {
             state,
+            state_receivers,
             reactive: reactive_symbols,
             escape_reactive: escape_reactive_symbols,
             hook_return_shapes,
@@ -2435,6 +2472,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         &mut self,
         calls: &[CallFact],
         state_symbols: &BTreeSet<SymbolId>,
+        state_receivers: &BTreeMap<SymbolId, StateReceiverKind>,
     ) {
         for call in calls {
             let Some(place) = call.callee_reference.as_ref() else {
@@ -2452,7 +2490,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             let read_only = matches!(
                 method,
                 PlannedProjection::Static { name, .. }
-                    if classify_state_method_call(name)
+                    if classify_state_method_call(
+                        state_receivers
+                            .get(&symbol)
+                            .copied()
+                            .unwrap_or(StateReceiverKind::Unknown),
+                        name,
+                    )
                         == StateMethodCallSemantics::ReadOnlyReceiver
             );
             if !read_only {
@@ -7205,6 +7249,7 @@ struct ArgumentFact {
     spread: bool,
     function: Option<FunctionId>,
     array_literal: bool,
+    state_receiver_kind: StateReceiverKind,
 }
 
 #[derive(Debug, Clone)]
@@ -8149,7 +8194,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             .arguments
             .iter()
             .map(|argument| {
-                let (span, has_effects, spread, function, array_literal) =
+                let (span, has_effects, spread, function, array_literal, state_receiver_kind) =
                     if let Some(expression) = argument.as_expression() {
                         let expression = expression.get_inner_expression();
                         (
@@ -8158,6 +8203,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
                             false,
                             self.function_for_expression(expression),
                             matches!(expression, Expression::ArrayExpression(_)),
+                            classify_state_receiver_expression(self.scoping, expression),
                         )
                     } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
                         let expression = spread.argument.get_inner_expression();
@@ -8167,6 +8213,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
                             true,
                             None,
                             false,
+                            StateReceiverKind::Unknown,
                         )
                     } else {
                         unreachable!("every call argument is an expression or spread")
@@ -8177,6 +8224,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
                     spread,
                     function,
                     array_literal,
+                    state_receiver_kind,
                 }
             })
             .collect();
@@ -8326,6 +8374,7 @@ fn deleted_member_span(expression: &Expression<'_>) -> Option<SourceSpan> {
 #[derive(Debug)]
 struct ReactiveSymbolAnalysis {
     state: BTreeSet<SymbolId>,
+    state_receivers: BTreeMap<SymbolId, StateReceiverKind>,
     reactive: BTreeSet<SymbolId>,
     escape_reactive: BTreeSet<SymbolId>,
     hook_return_shapes: BTreeMap<SymbolId, LocalHookReturnShape>,
@@ -10577,6 +10626,71 @@ fn resolved_callee_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Opt
     };
     let reference = scoping.get_reference(identifier.reference_id.get()?);
     reference.symbol_id()
+}
+
+fn classify_state_receiver_expression(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+) -> StateReceiverKind {
+    match expression.get_inner_expression() {
+        Expression::ArrayExpression(_) => StateReceiverKind::Array,
+        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => {
+            StateReceiverKind::Function
+        }
+        Expression::StringLiteral(_) | Expression::TemplateLiteral(_) => StateReceiverKind::String,
+        Expression::NumericLiteral(_) | Expression::BigIntLiteral(_) => StateReceiverKind::Number,
+        Expression::NewExpression(expression) => {
+            classify_global_state_constructor(scoping, &expression.callee)
+        }
+        Expression::CallExpression(expression) => {
+            let receiver = classify_global_state_constructor(scoping, &expression.callee);
+            if matches!(
+                receiver,
+                StateReceiverKind::Array
+                    | StateReceiverKind::Function
+                    | StateReceiverKind::Number
+                    | StateReceiverKind::String
+            ) {
+                receiver
+            } else {
+                StateReceiverKind::Unknown
+            }
+        }
+        _ => StateReceiverKind::Unknown,
+    }
+}
+
+fn classify_global_state_constructor(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+) -> StateReceiverKind {
+    let Expression::Identifier(identifier) = unwrap_transparent_call_expression(expression) else {
+        return StateReceiverKind::Unknown;
+    };
+    let Some(reference) = identifier.reference_id.get() else {
+        return StateReceiverKind::Unknown;
+    };
+    let reference = scoping.get_reference(reference);
+    if reference.symbol_id().is_some() || reference_is_inside_with(scoping, reference.scope_id()) {
+        return StateReceiverKind::Unknown;
+    }
+    match identifier.name.as_str() {
+        "Array" => StateReceiverKind::Array,
+        "DataView" => StateReceiverKind::DataView,
+        "Date" => StateReceiverKind::Date,
+        "Function" => StateReceiverKind::Function,
+        "Map" => StateReceiverKind::Map,
+        "BigInt" | "Number" => StateReceiverKind::Number,
+        "Promise" => StateReceiverKind::Promise,
+        "Set" => StateReceiverKind::Set,
+        "String" => StateReceiverKind::String,
+        "BigInt64Array" | "BigUint64Array" | "Float32Array" | "Float64Array" | "Int8Array"
+        | "Int16Array" | "Int32Array" | "Uint8Array" | "Uint8ClampedArray" | "Uint16Array"
+        | "Uint32Array" => StateReceiverKind::TypedArray,
+        "WeakMap" => StateReceiverKind::WeakMap,
+        "WeakSet" => StateReceiverKind::WeakSet,
+        _ => StateReceiverKind::Unknown,
+    }
 }
 
 fn configured_reactive_scope_call(

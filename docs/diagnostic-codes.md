@@ -500,8 +500,10 @@ and can otherwise leave rendered output stale or defer the failure to a runtime 
 **Impact:** Direct assignment, compound assignment, update, assignment-pattern, and captured
 closure writes to the alias fail compilation. Projected mutations such as `alias[key]++` and method
 calls that are not certified receiver-read-only use `FICT-M` because they mutate, or may mutate, the
-current nested value rather than replace the signal. Whole-value assignment to the original state
-binding remains supported; projected writes through that root use the same `FICT-M` policy.
+current nested value rather than replace the signal. Certification is receiver-aware, not based on
+the property name alone; an opaque alias with a method named `get` is still unproven. Whole-value
+assignment to the original state binding remains supported; projected writes through that root use
+the same `FICT-M` policy.
 
 **Fix:** Update the original state binding or assign the replacement to a new ordinary local:
 
@@ -665,10 +667,10 @@ These warnings are emitted by the compiler but are not part of the numbered FICT
 
 **Why:** Mutating a nested property of a `$state` object, including through a reactive alias, is
 not tracked with setter semantics. Method calls on a `$state`-derived object follow the same rule:
-known receiver-read-only methods such as `Map#get`, `Set#has`, `Array#map`, and `Date#getTime` are
-allowed, while known mutators and unknown custom methods fail closed because they may modify the
-object without invoking the signal setter. `$store` methods are not subject to this shallow-signal
-policy.
+methods such as `Map#get`, `Set#has`, `Array#map`, and `Date#getTime` are allowed only when the
+compiler also proves that built-in receiver family. A method name alone is never proof: custom,
+shadowed, reassigned, and otherwise unknown receivers fail closed even when their method is named
+`get`, `map`, or `toString`. `$store` methods are not subject to this shallow-signal policy.
 
 **Impact:** UI may not update. The diagnostic is an error under the default `strictGuarantee` and
 a warning only in explicit fallback mode. Use immutable updates or `$store`.

@@ -6,7 +6,7 @@ use fict_diagnostics::{
 use fict_hir::{
     BindingId, BlockId, DeclarationKind, DeleteTarget, FunctionId, HirFile, HirFunction,
     HirInstructionKind, LocalId, LocalKind, Origin, Place, PlaceBase, Projection, SsaName,
-    StateMethodCallSemantics, ValueId, ValueKind, classify_state_method_call,
+    StateMethodCallSemantics, StateReceiverKind, ValueId, ValueKind, classify_state_method_call,
 };
 use fict_reactivity::{DependencyBase, ReactiveBindingKind, SsaDefinitionLocation};
 
@@ -668,7 +668,8 @@ fn state_method_call_may_mutate(place: &Place) -> bool {
     !matches!(
         method,
         Projection::StaticProperty { name, .. }
-            if classify_state_method_call(name) == StateMethodCallSemantics::ReadOnlyReceiver
+            if classify_state_method_call(StateReceiverKind::Unknown, name)
+                == StateMethodCallSemantics::ReadOnlyReceiver
     )
 }
 

@@ -344,7 +344,7 @@ fn state_derived_method_calls_fail_closed_unless_the_receiver_operation_is_reado
         .iter()
         .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .collect::<Vec<_>>();
-    assert_eq!(findings.len(), 2, "{:#?}", fallback.diagnostics);
+    assert_eq!(findings.len(), 3, "{:#?}", fallback.diagnostics);
     assert!(findings.iter().all(|diagnostic| {
         diagnostic.severity == DiagnosticSeverity::Warning
             && diagnostic.guarantee_class == GuaranteeClass::Fallback
@@ -357,7 +357,7 @@ fn state_derived_method_calls_fail_closed_unless_the_receiver_operation_is_reado
         .iter()
         .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .collect::<Vec<_>>();
-    assert_eq!(findings.len(), 2, "{:#?}", strict.diagnostics);
+    assert_eq!(findings.len(), 3, "{:#?}", strict.diagnostics);
     assert!(
         findings
             .iter()
