@@ -18,7 +18,7 @@
     "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
     "assertionInventorySha256": "96ad04d4812624987fec46895ca7a54c5cc6b8de3f5552252cba4362051eb186",
-    "rustCodegenCorpusSha256": "29e31deb757e88759211372718e60dc51ae59dd6894cbb1a32c29853e4032424",
+    "rustCodegenCorpusSha256": "8897085d6134d3df1480f7672384681dc0a525b4105bb950f5abdf33e9d5bff6",
     "generatorSha256": "ec50a19976c812c42f62e87fcd3cd57545b1bdbf24039859c9790f864fadaf72",
     "captureConfigSha256": "5b383415eefeff180428cf22bad269597133a0d190ce35a57b4567434113bc65",
     "selectedTestFiles": 29,
@@ -29,8 +29,8 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "6dd54106a7318c039d00750ace9588646a8fcdb6",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-0a504cef0079c779f1604bbc147b47e8f01a58035cf394a0e8095a28c069e8a3"
+    "reviewedRevision": "9d5936cc2b445c83f24e74b84309520403eb2373",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-36a33cbec7ffe8c4511eecce883fdbe2a1f543f378ba51908c4d3e69893c466b"
   },
   "transitionCounts": {
     "ok-to-error": 3,
