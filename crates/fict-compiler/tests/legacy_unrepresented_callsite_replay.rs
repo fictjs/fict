@@ -3,7 +3,9 @@ use std::{
     fmt::Write as _,
 };
 
-use fict_compiler::{COMPILER_BUILD_ID, CompileRequest, CompileResult, compile};
+use fict_compiler::{
+    COMPILER_BUILD_ID, COMPILER_BUILD_REVISION, CompileRequest, CompileResult, compile,
+};
 use fict_diagnostics::{DiagnosticSeverity, GuaranteeClass};
 use serde::Deserialize;
 use serde_json::Value;
@@ -290,7 +292,11 @@ fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
             .reviewed_compiler_build_id
             .starts_with("fict-rust-p1-oxc0.139.0-m1-")
     );
-    if cfg!(feature = "preview") {
+    // The recorded build ID certifies the exact reviewed revision. Later revisions still replay
+    // every expected result below, but their revision-bound build ID must differ by design.
+    if cfg!(feature = "preview")
+        && COMPILER_BUILD_REVISION == Some(corpus.provenance.reviewed_revision.as_str())
+    {
         assert_eq!(
             corpus.provenance.reviewed_compiler_build_id,
             COMPILER_BUILD_ID
