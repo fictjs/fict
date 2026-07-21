@@ -126,6 +126,15 @@ export function relativeFileDependency(fromDirectory, filePath) {
     .join('/')}`
 }
 
+export function removeNativeSmokeTemporaryDirectory(directory, remove = rmSync) {
+  remove(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  })
+}
+
 function packResolutionOnlyNativePackages(tempRoot, packsDirectory, host, hostTarball) {
   const tarballs = new Map([[host.packageName, hostTarball]])
   const stubsRoot = path.join(tempRoot, 'resolution-only-native-packages')
@@ -404,7 +413,7 @@ function main() {
     }
     process.stdout.write(`${JSON.stringify(evidence)}\n`)
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true })
+    removeNativeSmokeTemporaryDirectory(tempRoot)
   }
 }
 

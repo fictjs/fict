@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import {
   packageCommandInvocation,
   relativeFileDependency,
+  removeNativeSmokeTemporaryDirectory,
 } from './native-compiler-package-smoke.mjs'
 import {
   COMPILER_CAPABILITY_MANIFEST_VERSION,
@@ -145,6 +146,24 @@ test('defines eight blocking native targets and two Node runtime lanes', () => {
   assert.equal(nativeNodeVersionMatchesLane('v22.18.1', '22.18.0'), false)
   assert.equal(nativeNodeVersionMatchesLane('v24.7.0', '24'), true)
   assert.equal(nativeNodeVersionMatchesLane('v25.0.0', '24'), false)
+})
+
+test('retries transient native smoke cleanup failures', () => {
+  const calls = []
+  removeNativeSmokeTemporaryDirectory('native-smoke-temp', (directory, options) => {
+    calls.push({ directory, options })
+  })
+  assert.deepEqual(calls, [
+    {
+      directory: 'native-smoke-temp',
+      options: {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      },
+    },
+  ])
 })
 
 test('certifies one complete revision-bound native runtime evidence matrix', () => {
