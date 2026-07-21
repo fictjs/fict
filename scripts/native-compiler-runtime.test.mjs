@@ -1187,6 +1187,51 @@ test('runtime reactive creators preserve calls and enforce configurable R004', a
   )
 })
 
+test('state method calls fail closed unless receiver mutation is ruled out', () => {
+  const source = `
+    import { $state, $store } from 'fict'
+    export function App() {
+      const map = $state(new Map())
+      map.set('x', 1)
+      map.get('x')
+      const set = $state(new Set())
+      set.add('x')
+      set.has('x')
+      const date = $state(new Date())
+      date.setTime(0)
+      date.getTime()
+      const typed = $state(new Uint8Array(2))
+      typed.set([1])
+      typed.includes(1)
+      const custom = $state({ touch() {} })
+      custom.touch()
+      const store = $store({ values: new Map(), touch() {} })
+      store.values.set('x', 1)
+      store.touch()
+      return map.get('x')
+    }
+  `
+  const strict = binding.transformSync({
+    code: source,
+    filename: '/fixtures/state-method-policy.ts',
+    options: {},
+  })
+  assert.equal(strict.code, '')
+  const strictFindings = strict.diagnostics.filter(({ code }) => code === 'FICT-M')
+  assert.equal(strictFindings.length, 5, JSON.stringify(strict.diagnostics, null, 2))
+  assert.ok(strictFindings.every(({ severity }) => severity === 'error'))
+
+  const fallback = binding.transformSync({
+    code: source,
+    filename: '/fixtures/state-method-policy.ts',
+    options: { strictGuarantee: false },
+  })
+  assert.notEqual(fallback.code, '')
+  const fallbackFindings = fallback.diagnostics.filter(({ code }) => code === 'FICT-M')
+  assert.equal(fallbackFindings.length, 5, JSON.stringify(fallback.diagnostics, null, 2))
+  assert.ok(fallbackFindings.every(({ severity }) => severity === 'warning'))
+})
+
 test('derived cycles fail closed even when strict guarantees are disabled', () => {
   const result = binding.transformSync({
     code: `

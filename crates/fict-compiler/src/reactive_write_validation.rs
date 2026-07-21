@@ -5,8 +5,8 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     BindingId, BlockId, DeclarationKind, DeleteTarget, FunctionId, HirFile, HirFunction,
-    HirInstructionKind, LocalId, LocalKind, Origin, Place, PlaceBase, Projection, SsaName, ValueId,
-    ValueKind,
+    HirInstructionKind, LocalId, LocalKind, Origin, Place, PlaceBase, Projection, SsaName,
+    StateMethodCallSemantics, ValueId, ValueKind, classify_state_method_call,
 };
 use fict_reactivity::{DependencyBase, ReactiveBindingKind, SsaDefinitionLocation};
 
@@ -345,7 +345,7 @@ pub(crate) fn validate_reactive_writes(
                         if call
                             .callee_reference
                             .as_ref()
-                            .is_some_and(is_mutating_array_method_call) =>
+                            .is_some_and(state_method_call_may_mutate) =>
                     {
                         let place = call
                             .callee_reference
@@ -661,21 +661,14 @@ fn place_root_local(place: &Place) -> Option<LocalId> {
     }
 }
 
-fn is_mutating_array_method_call(place: &Place) -> bool {
-    let Some(Projection::StaticProperty { name, .. }) = place.projections.last() else {
+fn state_method_call_may_mutate(place: &Place) -> bool {
+    let Some(method) = place.projections.last() else {
         return false;
     };
-    matches!(
-        name.as_str(),
-        "copyWithin"
-            | "fill"
-            | "pop"
-            | "push"
-            | "reverse"
-            | "shift"
-            | "sort"
-            | "splice"
-            | "unshift"
+    !matches!(
+        method,
+        Projection::StaticProperty { name, .. }
+            if classify_state_method_call(name) == StateMethodCallSemantics::ReadOnlyReceiver
     )
 }
 

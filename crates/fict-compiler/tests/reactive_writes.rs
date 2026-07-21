@@ -325,6 +325,48 @@ fn projected_alias_mutations_follow_the_fict_m_policy() {
 }
 
 #[test]
+fn state_derived_method_calls_fail_closed_unless_the_receiver_operation_is_readonly() {
+    let source = r#"
+        import { $state } from 'fict'
+        function App() {
+            const state = $state({ values: new Map(), custom: { touch() {} } })
+            const values = state.values
+            const custom = state.custom
+            values.set('x', 1)
+            const current = values.get('x')
+            custom.touch()
+            return current
+        }
+    "#;
+    let fallback = compile_source(source, CompilerOptions::default());
+    let findings = fallback
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 2, "{:#?}", fallback.diagnostics);
+    assert!(findings.iter().all(|diagnostic| {
+        diagnostic.severity == DiagnosticSeverity::Warning
+            && diagnostic.guarantee_class == GuaranteeClass::Fallback
+    }));
+    assert!(!fallback.code.is_empty(), "{:#?}", fallback.diagnostics);
+
+    let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+    let findings = strict
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 2, "{:#?}", strict.diagnostics);
+    assert!(
+        findings
+            .iter()
+            .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    );
+    assert!(strict.code.is_empty());
+}
+
+#[test]
 fn permits_state_roots_plain_aliases_shadowing_and_initial_alias_assignment() {
     for source in [
         r#"

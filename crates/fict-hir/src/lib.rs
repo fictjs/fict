@@ -8,6 +8,7 @@ mod jsx;
 mod module;
 mod origin;
 mod printer;
+mod reactive_method;
 mod syntax;
 mod verify;
 
@@ -40,6 +41,7 @@ pub use module::{
 };
 pub use origin::{DesugaringKind, GeneratedOrigin, Origin, OriginKind};
 pub use printer::print_hir;
+pub use reactive_method::{StateMethodCallSemantics, classify_state_method_call};
 pub use syntax::{
     JavaScriptString, LiteralValue, NumberLiteral, PatternSummary, SyntaxFragment,
     SyntaxFragmentKind, SyntaxSummary,

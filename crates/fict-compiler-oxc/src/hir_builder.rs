@@ -17,10 +17,10 @@ use fict_hir::{
     JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport,
     ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind,
     Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost,
-    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment,
-    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
-    verify_module_plan,
+    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StateMethodCallSemantics,
+    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
+    ValueKind, classify_state_method_call, verify_hir, verify_module_plan,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -2032,7 +2032,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.classify_component_roles(&calls.calls, &jsx.roots);
         self.validate_class_components(&class_bindings, &jsx.tags);
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
-        self.validate_reactive_mutating_calls(&calls.calls, &reactive_symbols.state);
+        self.validate_state_method_calls(&calls.calls, &reactive_symbols.state);
         self.validate_advisory_diagnostics(program, &calls.calls, &reactive_symbols.reactive);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
@@ -2431,7 +2431,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
-    fn validate_reactive_mutating_calls(
+    fn validate_state_method_calls(
         &mut self,
         calls: &[CallFact],
         state_symbols: &BTreeSet<SymbolId>,
@@ -2446,10 +2446,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             if !state_symbols.contains(&symbol) {
                 continue;
             }
-            let Some(PlannedProjection::Static { name, .. }) = place.projections.last() else {
+            let Some(method) = place.projections.last() else {
                 continue;
             };
-            if is_mutating_array_method(name) {
+            let read_only = matches!(
+                method,
+                PlannedProjection::Static { name, .. }
+                    if classify_state_method_call(name)
+                        == StateMethodCallSemantics::ReadOnlyReceiver
+            );
+            if !read_only {
                 self.report_nested_reactive_mutation(call.span);
             }
         }

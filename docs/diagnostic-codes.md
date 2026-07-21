@@ -663,7 +663,11 @@ These warnings are emitted by the compiler but are not part of the numbered FICT
 **Severity:** Error (default)
 
 **Why:** Mutating a nested property of a `$state` object, including through a reactive alias, is
-not tracked with setter semantics.
+not tracked with setter semantics. Method calls on a `$state`-derived object follow the same rule:
+known receiver-read-only methods such as `Map#get`, `Set#has`, `Array#map`, and `Date#getTime` are
+allowed, while known mutators and unknown custom methods fail closed because they may modify the
+object without invoking the signal setter. `$store` methods are not subject to this shallow-signal
+policy.
 
 **Impact:** UI may not update. The diagnostic is an error under the default `strictGuarantee` and
 a warning only in explicit fallback mode. Use immutable updates or `$store`.
@@ -673,6 +677,8 @@ a warning only in explicit fallback mode. Use immutable updates or `$store`.
 ```js
 // Wrong
 state.user.name = 'Alice' // FICT-M
+state.values.set('key', 1) // FICT-M
+state.customMutator() // FICT-M unless the receiver operation is compiler-certified read-only
 
 // Correct
 state = { ...state, user: { ...state.user, name: 'Alice' } }

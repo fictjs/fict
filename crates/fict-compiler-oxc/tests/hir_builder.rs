@@ -6404,6 +6404,89 @@ fn classifies_state_array_mutating_methods_by_strict_guarantee_policy() {
     );
 }
 #[test]
+fn fails_closed_for_unproven_state_method_calls_across_builtin_receivers() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(method) {
+            const map = $state(new Map());
+            map.set('x', 1); map.delete('x'); map.clear(); map.get('x'); map.has('x');
+            const set = $state(new Set());
+            set.add('x'); set.delete('x'); set.clear(); set.has('x');
+            const date = $state(new Date());
+            date.setTime(0); date.setFullYear(2025); date.getTime();
+            const typed = $state(new Uint8Array(4));
+            typed.set([1]); typed.copyWithin(0, 1); typed.fill(0); typed.reverse(); typed.sort();
+            typed.includes(1); typed.slice(0);
+            const custom = $state({ mutate() {}, read() {} });
+            custom.mutate(); custom.read(); custom[method]();
+            return map.get('x') ?? set.has('x') ?? date.getTime() ?? typed.includes(1);
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    let findings = strict
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 16, "{:?}", strict.diagnostics);
+    assert!(findings.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
+            && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
+    }));
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    let findings = fallback
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 16, "{:?}", fallback.diagnostics);
+    assert!(findings.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
+    }));
+}
+
+#[test]
+fn store_method_calls_do_not_use_the_shallow_state_mutation_policy() {
+    let source = r#"
+        import { $store } from 'fict';
+        function App() {
+            const model = $store({ customMutator() {}, values: new Map() });
+            model.customMutator();
+            model.values.set('x', 1);
+            return model.values.get('x');
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-M"),
+        "{:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn classifies_nested_state_deletion_by_strict_guarantee_policy() {
     let source = r#"
         import { $state } from 'fict';
