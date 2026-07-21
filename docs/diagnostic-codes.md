@@ -498,9 +498,10 @@ compiler-managed read view. Replacing or updating that local would not update th
 and can otherwise leave rendered output stale or defer the failure to a runtime `TypeError`.
 
 **Impact:** Direct assignment, compound assignment, update, assignment-pattern, and captured
-closure writes to the alias fail compilation. Projected mutations such as `alias[key]++` and known
-mutating array calls such as `alias.push(...)` use `FICT-M` because they mutate the current nested
-value rather than replace the alias. Writes through the original state root remain supported.
+closure writes to the alias fail compilation. Projected mutations such as `alias[key]++` and method
+calls that are not certified receiver-read-only use `FICT-M` because they mutate, or may mutate, the
+current nested value rather than replace the signal. Whole-value assignment to the original state
+binding remains supported; projected writes through that root use the same `FICT-M` policy.
 
 **Fix:** Update the original state binding or assign the replacement to a new ordinary local:
 
@@ -511,8 +512,8 @@ const { count } = state
 // Triggers FICT-R-ALIAS-WRITE
 count++
 
-// Update the owner instead
-state.count++
+// Replace the original shallow signal value instead
+state = { ...state, count: state.count + 1 }
 ```
 
 This diagnostic is always a hard error. `strictGuarantee: false`, `warningLevels`, and
