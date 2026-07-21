@@ -190,6 +190,31 @@ for (const [format, facade] of [
   assert.equal(parserError.diagnostics[0]?.code, 'FICT-PARSE')
   assert.ok(parserError.diagnostics[0]?.primarySpan)
 
+  const querySpoofedTypeScript = {
+    code: 'export const value = <number>1',
+    filename: '/fixtures/view.ts?lang.tsx',
+  }
+  const querySpoofedTransform = binding.transformSync(querySpoofedTypeScript)
+  for (const [operation, result] of [
+    ['transform', querySpoofedTransform],
+    ['scan', binding.scanSync(querySpoofedTypeScript)],
+    ['analyze', binding.analyzeSync(querySpoofedTypeScript)],
+  ]) {
+    assert.deepEqual(
+      result.diagnostics,
+      [],
+      `${format}: ${operation} must parse the physical .ts extension`,
+    )
+  }
+  assert.match(querySpoofedTransform.code, /export const value = 1/)
+
+  const querySpoofedCommonJs = binding.transformSync({
+    code: 'export const value = <number>1',
+    filename: '/fixtures/value.cts?lang.tsx',
+  })
+  assert.deepEqual(querySpoofedCommonJs.diagnostics, [])
+  assert.match(querySpoofedCommonJs.code, /Object\.defineProperty\(__fict_cjs_exports, "value"/)
+
   const malformed = binding.transformSync({ code: 42, filename: 'malformed.ts' })
   assert.equal(malformed.code, '')
   assert.equal(malformed.diagnostics[0]?.code, 'FICT-REQUEST')

@@ -15,6 +15,8 @@
   Babel 0.28 compatibility corpus, including replay through clean-installed release tarballs.
 - Preserve effective unambiguous module kinds, partial metadata states, awaited JSX bindings, and
   function-valued state call semantics across the Rust compiler pipeline.
+- Infer source language and CommonJS mode from a recognized physical filename extension before a
+  query or fragment suffix, while preserving literal `?` and `#` path segments without extensions.
 - Reject malformed or over-depth module metadata consistently in JavaScript graph hosts and the
   Rust compiler.
 - Require standard decorators to be lowered by a target-compatible transform before native Fict

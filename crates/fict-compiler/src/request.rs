@@ -661,12 +661,16 @@ fn validate_identity(
 }
 
 fn source_mode_filename(filename: &str) -> &str {
-    if infer_language(filename).is_some() {
-        return filename;
-    }
     let query = filename.find('?').unwrap_or(filename.len());
     let fragment = filename.find('#').unwrap_or(filename.len());
-    &filename[..query.min(fragment)]
+    let physical_filename = &filename[..query.min(fragment)];
+    // Prefer an unambiguous physical extension, but retain delimiter characters that are part of
+    // a literal POSIX filename when the prefix has no recognized source extension.
+    if infer_language(physical_filename).is_some() {
+        physical_filename
+    } else {
+        filename
+    }
 }
 
 fn infer_language(filename: &str) -> Option<SourceLanguage> {
@@ -767,6 +771,58 @@ mod tests {
     }
 
     #[test]
+    fn recognized_physical_extension_wins_over_query_and_fragment_suffixes() {
+        for filename in ["/src/view.ts?lang.tsx", "/src/view.ts#lang.tsx"] {
+            let compile = request(filename).normalize().expect("normalize compile");
+            assert_eq!(compile.language, SourceLanguage::TypeScript, "{filename}");
+            assert_eq!(compile.module_kind, ModuleKind::Module, "{filename}");
+
+            let scan: ScanRequest = serde_json::from_value(json!({
+                "code": "export const value: number = 1",
+                "filename": filename,
+            }))
+            .expect("deserialize scan request");
+            let scan = scan.normalize().expect("normalize scan");
+            assert_eq!(scan.language, SourceLanguage::TypeScript, "{filename}");
+            assert_eq!(scan.module_kind, ModuleKind::Module, "{filename}");
+
+            let analyze: AnalyzeRequest = serde_json::from_value(json!({
+                "code": "export const value: number = 1",
+                "filename": filename,
+            }))
+            .expect("deserialize analysis request");
+            let analyze = analyze.normalize().expect("normalize analysis");
+            assert_eq!(analyze.language, SourceLanguage::TypeScript, "{filename}");
+            assert_eq!(analyze.module_kind, ModuleKind::Module, "{filename}");
+        }
+
+        for normalized in [
+            request("/src/legacy.cts?lang.tsx")
+                .normalize()
+                .map(|request| (request.language, request.module_kind)),
+            serde_json::from_value::<ScanRequest>(json!({
+                "code": "export = 1",
+                "filename": "/src/legacy.cts?lang.tsx",
+            }))
+            .expect("deserialize scan request")
+            .normalize()
+            .map(|request| (request.language, request.module_kind)),
+            serde_json::from_value::<AnalyzeRequest>(json!({
+                "code": "export = 1",
+                "filename": "/src/legacy.cts?lang.tsx",
+            }))
+            .expect("deserialize analysis request")
+            .normalize()
+            .map(|request| (request.language, request.module_kind)),
+        ] {
+            assert_eq!(
+                normalized.expect("normalize CommonJS request"),
+                (SourceLanguage::TypeScript, ModuleKind::CommonJs)
+            );
+        }
+    }
+
+    #[test]
     fn preserves_posix_filename_delimiters_across_public_requests() {
         for filename in ["/tmp/a#b.tsx", "/tmp/a?b.tsx"] {
             let normalized = request(filename).normalize().expect("normalize compile");
@@ -784,6 +840,7 @@ mod tests {
         let normalized = scan.normalize().expect("normalize scan");
         assert_eq!(normalized.filename, "/tmp/a?b.tsx");
         assert_eq!(normalized.module_id, "/@id/a%3Fb.tsx?worker#client");
+        assert_eq!(normalized.language, SourceLanguage::TypeScriptJsx);
 
         let analyze: AnalyzeRequest = serde_json::from_value(json!({
             "code": "export const view = <div />",
