@@ -6141,7 +6141,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         let scopes = build_hir_scopes(self.semantic.scoping(), self.frontend.source.source_len);
         let bindings = build_hir_bindings(&self.frontend, &self.old_to_new, &parameter_symbols);
-        let authored_free_names = authored_free_names(&self.semantic);
+        let authored_free_names = authored_free_names(self.semantic);
         let module_plan = build_module_plan(&self.frontend, &self.old_to_new);
         let hir = HirFile {
             id: FileId::new(0),
