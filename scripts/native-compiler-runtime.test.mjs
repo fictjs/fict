@@ -16,6 +16,9 @@ const binding = require(path.join(root, 'target', 'release', 'fict_compiler_napi
 const capabilityManifest = JSON.parse(
   readFileSync(path.join(root, 'packages/compiler/compiler-capabilities.json'), 'utf8'),
 )
+const runtimeAbi = JSON.parse(
+  readFileSync(path.join(root, 'packages/runtime/runtime-abi.json'), 'utf8'),
+)
 const capabilityManifestDigest = `sha256:${createHash('sha256')
   .update(JSON.stringify(capabilityManifest))
   .digest('hex')}`
@@ -2811,6 +2814,113 @@ test('compiler-generated names do not capture authored free identifiers', async 
   assert.equal(runtime.templateType, 'undefined')
   assert.equal(runtime.cacheType, 'undefined')
   assert.throws(runtime.readMissingHelper, ReferenceError)
+})
+
+test('every runtime helper and compiler temporary family preserves authored free identifiers', async () => {
+  const runtimeHelpers = [...new Set(runtimeAbi.helpers.map(helper => helper.preferredLocal))]
+  assert.equal(runtimeHelpers.length, runtimeAbi.helpers.length)
+  const temporaryProbes = [
+    '__cached_count_0',
+    '__fictCtx',
+    '__fictPropDefault',
+    '__fictPropObject',
+    '__fictProps',
+    '__fictPropsParam',
+    '__fict_await_0',
+    '__fict_component0',
+    '__fict_cond0',
+    '__fict_cond_return',
+    '__fict_dep_0',
+    '__fict_destructure_0',
+    '__fict_e0',
+    '__fict_jsx0',
+    '__fict_key',
+    '__fict_list0',
+    '__fict_meta_App',
+    '__fict_node0',
+    '__fict_r0',
+    '__fict_region',
+    '__fict_tmpl0',
+    '__fict_v0',
+    '__handler',
+    '__result',
+    '__scopeProps',
+    'el',
+    'event',
+    'scopeId',
+  ]
+  const authoredNames = [...new Set([...runtimeHelpers, ...temporaryProbes])]
+  const source = `
+    import { $state } from 'fict'
+
+    export const freeTypes = () => [${authoredNames.map(name => `typeof ${name}`).join(',')}]
+    export const freeReads = [${authoredNames.map(name => `() => ${name}`).join(',')}]
+
+    export function App({ label = 'count' }) {
+      let count = $state(0)
+      return <button title={label} onClick={() => count++}>{count + count}</button>
+    }
+  `
+  const runtime = await compileAndImport(source, 'generated-name-hygiene-matrix')
+
+  assert.deepEqual(
+    runtime.freeTypes(),
+    authoredNames.map(() => 'undefined'),
+  )
+  for (const [index, read] of runtime.freeReads.entries()) {
+    assert.throws(read, ReferenceError, authoredNames[index])
+  }
+
+  const previewNames = [
+    '__fict_dep_0',
+    '__fict_e0',
+    '__fict_meta_App',
+    '__fict_r0',
+    '__handler',
+    '__result',
+    '__scopeProps',
+    'el',
+    'event',
+    'scopeId',
+  ]
+  const preview = binding.transformSync({
+    code: `
+      import { $state } from 'fict'
+      import { invoke } from './dependency'
+      export const previewTypes = [${previewNames.map(name => `typeof ${name}`).join(',')}]
+      export function App({ label }) {
+        let count = $state(0)
+        return <button onClick$={() => {
+          invoke(count)
+          return [label, ${previewNames.map(name => `typeof ${name}`).join(',')}]
+        }}>{count}</button>
+      }
+    `,
+    filename: '/fixtures/generated-name-hygiene-preview.tsx',
+    moduleId: '/fixtures/generated-name-hygiene-preview.tsx',
+    publicModuleId: 'fict:test:generated-name-hygiene-preview',
+    options: {
+      preview: { resumable: true, autoExtractHandlers: false },
+      strictGuarantee: false,
+    },
+  })
+  assert.equal(
+    preview.diagnostics.some(diagnostic => diagnostic.severity === 'error'),
+    false,
+    JSON.stringify(preview.diagnostics, null, 2),
+  )
+  for (const name of previewNames) assert.match(preview.code, new RegExp(`typeof ${name}\\b`))
+  assert.match(preview.code, /export \{ invoke as __fict_dep_1 \}/)
+  assert.match(preview.code, /export const __fict_r1\b/)
+  assert.match(preview.code, /const __fict_meta_App_1\b/)
+  assert.equal(preview.artifacts.length, 1)
+  assert.equal(preview.artifacts[0].handler.sourceExportName, '__fict_e1')
+  const artifact = preview.artifacts[0].code
+  assert.match(artifact, /export default \(scopeId_1, event_1, el_1\)/)
+  assert.match(artifact, /const __scopeProps_1\b/)
+  assert.match(artifact, /const __handler_1\b/)
+  assert.match(artifact, /const __result_1\b/)
+  for (const name of previewNames) assert.match(artifact, new RegExp(`typeof ${name}\\b`))
 })
 
 test('optimizeLevel full applies opt-in authored algebraic folding safely', async () => {
