@@ -416,7 +416,7 @@ describe('native compiler loader', () => {
   })
 
   it.each([
-    ['compilerCapabilityManifestVersion', 2],
+    ['compilerCapabilityManifestVersion', COMPILER_CAPABILITY_MANIFEST.schemaVersion + 1],
     ['compilerCapabilityManifestDigest', `sha256:${'f'.repeat(64)}`],
     ['compilerCapabilityPackageVersion', '0.31.0'],
   ] as const)('rejects a binding with mismatched %s', (field, value) => {

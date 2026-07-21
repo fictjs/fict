@@ -22,7 +22,35 @@ const unrepresentedReplayPath =
   'crates/fict-compiler/tests/legacy_unrepresented_callsite_replay.json'
 const rustAcceptanceReviewPath = 'scripts/fixtures/compiler_rust_acceptance_reviews.json'
 const rustRejectionReviewPath = 'scripts/fixtures/compiler_rust_rejection_reviews.json'
+const capabilityManifestPath = 'packages/compiler/compiler-capabilities.json'
 const sha256 = value => createHash('sha256').update(value).digest('hex')
+
+test('scopes the capability manifest to certified behavior-variant options', () => {
+  const manifest = readJson(capabilityManifestPath)
+  assert.equal(manifest.schemaVersion, 2)
+  assert.equal(manifest.backend, 'rust')
+  assert.equal(manifest.scope, 'certified-behavior-variant-options')
+  assert.deepEqual(Object.keys(manifest.options), [
+    'dev',
+    'lazyConditional',
+    'getterCache',
+    'optimizeLevel',
+    'inlineDerivedMemos',
+  ])
+
+  const nativeTypes = read('packages/compiler/src/types.ts')
+  for (const supportedButUncertifiedOption of [
+    'sourcemap',
+    'strictGuarantee',
+    'warningLevels',
+    'reactiveScopes',
+    'typescript',
+    'preview',
+  ]) {
+    assert.match(nativeTypes, new RegExp(`\\b${supportedButUncertifiedOption}\\?`))
+    assert.equal(supportedButUncertifiedOption in manifest.options, false)
+  }
+})
 
 test('keeps codegen, request, and semantic compatibility evidence roles distinct', () => {
   const scope = readJson(evidenceScopePath)

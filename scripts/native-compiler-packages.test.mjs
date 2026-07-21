@@ -20,6 +20,7 @@ import {
   relativeFileDependency,
 } from './native-compiler-package-smoke.mjs'
 import {
+  COMPILER_CAPABILITY_MANIFEST_VERSION,
   NATIVE_COMPILER_NODE_LANES,
   NATIVE_COMPILER_TARGETS,
   assembleNativePackage,
@@ -95,7 +96,7 @@ function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
       sizeGate: structuredClone(sizeGate),
       compilerBuildId: RUNTIME_BUILD_ID,
       compilerBuildRevision: RUNTIME_REVISION,
-      compilerCapabilityManifestVersion: 1,
+      compilerCapabilityManifestVersion: COMPILER_CAPABILITY_MANIFEST_VERSION,
       compilerCapabilityManifestDigest: CAPABILITY_MANIFEST_DIGEST,
       compilerCapabilityPackageVersion: releaseBundle?.packageVersion ?? '1.2.3',
       compatibilityCorpus: structuredClone(COMPATIBILITY_CORPUS),
@@ -192,7 +193,7 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       packageVersion: '1.2.3',
       compilerBuildId: RUNTIME_BUILD_ID,
       compilerBuildRevision: RUNTIME_REVISION,
-      compilerCapabilityManifestVersion: 1,
+      compilerCapabilityManifestVersion: COMPILER_CAPABILITY_MANIFEST_VERSION,
       compilerCapabilityManifestDigest: CAPABILITY_MANIFEST_DIGEST,
       compilerCapabilityPackageVersion: '1.2.3',
       compatibilityCorpus: COMPATIBILITY_CORPUS,

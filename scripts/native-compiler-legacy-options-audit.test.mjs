@@ -12,6 +12,9 @@ const runtime = require(path.join(root, 'packages/runtime/dist/internal.cjs'))
 const manifest = JSON.parse(
   readFileSync(path.join(root, 'scripts/fixtures/compiler_legacy_option_behavior.json'), 'utf8'),
 )
+const capabilityManifest = JSON.parse(
+  readFileSync(path.join(root, 'packages/compiler/compiler-capabilities.json'), 'utf8'),
+)
 const corpus = JSON.parse(
   readFileSync(
     path.join(root, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
@@ -131,6 +134,14 @@ function normalizeOptions(options) {
 
 test('accounts for all 38 option-bearing callsites as 37 normalized executable inputs', () => {
   assert.equal(manifest.schemaVersion, 1)
+  assert.equal(capabilityManifest.schemaVersion, 2)
+  assert.equal(capabilityManifest.scope, 'certified-behavior-variant-options')
+  assert.deepEqual(
+    Object.keys(capabilityManifest.options).sort(),
+    Object.keys(manifest.summary.optionFamilies)
+      .map(optionFamily => optionFamily.split('=')[0])
+      .sort(),
+  )
   assert.equal(manifest.sourceAudit.sha256, corpus.provenance.auditInputSha256)
   assert.equal(manifest.sourceAudit.release, corpus.provenance.babelAuditRelease)
   assert.equal(manifest.sourceAudit.revision, corpus.provenance.babelAuditRevision)

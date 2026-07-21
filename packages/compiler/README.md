@@ -108,6 +108,15 @@ The native options include:
 user-named single-use derived memos. Compiler-generated `__*` temporaries may
 still be inlined, and user-named values in hooks remain memoized in both modes.
 
+`COMPILER_CAPABILITY_MANIFEST` is deliberately scoped to
+`certified-behavior-variant-options`. It records only the five option families
+whose non-default behavior is covered by the reviewed compatibility audits:
+`dev`, `lazyConditional`, `getterCache`, `optimizeLevel`, and
+`inlineDerivedMemos`. It is not an exhaustive schema for
+`NativeCompilerOptions`; options such as `sourcemap`, diagnostic policy,
+`reactiveScopes`, `typescript`, and `preview` remain supported through the
+request API even though they are absent from this certification manifest.
+
 Production integrations force fail-closed guarantees. Use relaxed options only
 in non-production migration experiments.
 

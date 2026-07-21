@@ -9,8 +9,8 @@
 
 ### Patch Changes
 
-- Publish a machine-readable compiler capability manifest and reject native binaries whose
-  capability digest or package version does not match the JavaScript facade.
+- Publish a machine-readable manifest scoped to certified behavior-variant options, and reject
+  native binaries whose capability digest or package version does not match the JavaScript facade.
 - Bind release certification to the exact package version, tag revision, native build, and frozen
   Babel 0.28 compatibility corpus, including replay through clean-installed release tarballs.
 - Preserve effective unambiguous module kinds, partial metadata states, awaited JSX bindings, and

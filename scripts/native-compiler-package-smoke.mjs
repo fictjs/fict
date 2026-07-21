@@ -18,6 +18,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  COMPILER_CAPABILITY_MANIFEST_VERSION,
   NATIVE_COMPILER_NODE_LANES,
   NATIVE_COMPILER_TARGETS,
   bundleNativePackage,
@@ -337,7 +338,10 @@ function main() {
       assert.equal(result.info.nativeTarget, host.rustTarget)
       assert.equal(result.info.nodeApiVersion, 10)
       assert.equal(result.info.compilerBuildId, result.compilerBuildId)
-      assert.equal(result.info.compilerCapabilityManifestVersion, 1)
+      assert.equal(
+        result.info.compilerCapabilityManifestVersion,
+        COMPILER_CAPABILITY_MANIFEST_VERSION,
+      )
       assert.match(result.info.compilerCapabilityManifestDigest, /^sha256:[0-9a-f]{64}$/)
       assert.equal(
         result.info.compilerCapabilityPackageVersion,

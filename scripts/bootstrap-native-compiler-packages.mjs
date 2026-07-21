@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  COMPILER_CAPABILITY_MANIFEST_VERSION,
   NATIVE_COMPILER_NODE_LANES,
   NATIVE_COMPILER_TARGETS,
   nativeArtifactName,
@@ -78,7 +79,7 @@ export function validateNativeBootstrapCertification(certification, bundles, exp
   }
   if (
     payload.schemaVersion === 3 &&
-    (payload.compilerCapabilityManifestVersion !== 1 ||
+    (payload.compilerCapabilityManifestVersion !== COMPILER_CAPABILITY_MANIFEST_VERSION ||
       !/^sha256:[0-9a-f]{64}$/.test(payload.compilerCapabilityManifestDigest ?? '') ||
       payload.compilerCapabilityPackageVersion !== payload.packageVersion)
   ) {

@@ -25,6 +25,9 @@ export const NATIVE_COMPILER_BUDGET_PATH = path.join(
   '.github',
   'compiler-backend-budget.json',
 )
+export const COMPILER_CAPABILITY_MANIFEST_VERSION = readJson(
+  path.join(repositoryRoot, 'packages/compiler/compiler-capabilities.json'),
+).schemaVersion
 
 const targetDefinitions = [
   {
@@ -844,7 +847,7 @@ export function validateNativeRuntimeEvidenceMatrix(
       )
     }
     if (
-      evidence.compilerCapabilityManifestVersion !== 1 ||
+      evidence.compilerCapabilityManifestVersion !== COMPILER_CAPABILITY_MANIFEST_VERSION ||
       !/^sha256:[0-9a-f]{64}$/.test(evidence.compilerCapabilityManifestDigest ?? '') ||
       evidence.compilerCapabilityPackageVersion !== evidence.packageVersion
     ) {
@@ -1016,7 +1019,7 @@ export function validateNativeRuntimeEvidenceMatrix(
     packageVersion: [...packageVersions][0],
     compilerBuildId: [...compilerBuildIds][0],
     compilerBuildRevision: expectedRevision,
-    compilerCapabilityManifestVersion: 1,
+    compilerCapabilityManifestVersion: COMPILER_CAPABILITY_MANIFEST_VERSION,
     compilerCapabilityManifestDigest: [...capabilityManifestDigests][0],
     compilerCapabilityPackageVersion: [...packageVersions][0],
     compatibilityCorpus: JSON.parse([...compatibilityCorpusIdentities][0]),

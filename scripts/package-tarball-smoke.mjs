@@ -22,6 +22,10 @@ function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'))
 }
 
+const compilerCapabilityManifestVersion = readJson(
+  path.join(repoRoot, 'packages/compiler/compiler-capabilities.json'),
+).schemaVersion
+
 function run(command, args, options = {}) {
   console.log(`[package-tarball-smoke] $ ${command} ${args.join(' ')}`)
   const result = spawnSync(command, args, {
@@ -336,7 +340,7 @@ const nativeFacade = {
       compilerBuildRevision: null,
       compilerProtocolVersion: 1,
       metadataSchemaVersion: 1,
-      compilerCapabilityManifestVersion: 1,
+      compilerCapabilityManifestVersion,
       compilerCapabilityManifestDigest: 'sha256:' + '0'.repeat(64),
       compilerCapabilityPackageVersion: 'test-capability-package',
     }),

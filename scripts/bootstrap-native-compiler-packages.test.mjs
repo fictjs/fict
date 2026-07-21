@@ -10,7 +10,11 @@ import {
   parseNativeBootstrapArguments,
   validateNativeBootstrapCertification,
 } from './bootstrap-native-compiler-packages.mjs'
-import { NATIVE_COMPILER_NODE_LANES, NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
+import {
+  COMPILER_CAPABILITY_MANIFEST_VERSION,
+  NATIVE_COMPILER_NODE_LANES,
+  NATIVE_COMPILER_TARGETS,
+} from './native-compiler-packages.mjs'
 
 const revision = 'a'.repeat(40)
 const packageVersion = '1.2.3'
@@ -153,7 +157,7 @@ test('accepts current certification only when capability and corpus identities a
   const payload = structuredClone(certification)
   delete payload.certificationDigest
   payload.schemaVersion = 3
-  payload.compilerCapabilityManifestVersion = 1
+  payload.compilerCapabilityManifestVersion = COMPILER_CAPABILITY_MANIFEST_VERSION
   payload.compilerCapabilityManifestDigest = `sha256:${'c'.repeat(64)}`
   payload.compilerCapabilityPackageVersion = packageVersion
   payload.compatibilityCorpus = {
