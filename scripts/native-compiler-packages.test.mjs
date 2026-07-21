@@ -16,6 +16,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
+  nativeCompilerCorpusReplayInvocation,
   packageCommandInvocation,
   relativeFileDependency,
   removeNativeSmokeTemporaryDirectory,
@@ -164,6 +165,19 @@ test('retries transient native smoke cleanup failures', () => {
       },
     },
   ])
+})
+
+test('replays the installed native corpus in a child process before cleanup', () => {
+  assert.deepEqual(
+    nativeCompilerCorpusReplayInvocation('native-smoke-consumer', {
+      executable: 'node-under-test',
+      scriptPath: 'native-smoke-script.mjs',
+    }),
+    {
+      command: 'node-under-test',
+      args: ['native-smoke-script.mjs', '--replay-consumer', 'native-smoke-consumer'],
+    },
+  )
 })
 
 test('certifies one complete revision-bound native runtime evidence matrix', () => {

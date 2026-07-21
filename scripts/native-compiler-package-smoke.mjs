@@ -135,6 +135,16 @@ export function removeNativeSmokeTemporaryDirectory(directory, remove = rmSync) 
   })
 }
 
+export function nativeCompilerCorpusReplayInvocation(
+  consumerDirectory,
+  { executable = process.execPath, scriptPath = fileURLToPath(import.meta.url) } = {},
+) {
+  return {
+    command: executable,
+    args: [scriptPath, '--replay-consumer', consumerDirectory],
+  }
+}
+
 function packResolutionOnlyNativePackages(tempRoot, packsDirectory, host, hostTarball) {
   const tarballs = new Map([[host.packageName, hostTarball]])
   const stubsRoot = path.join(tempRoot, 'resolution-only-native-packages')
@@ -224,8 +234,26 @@ function parseLastJsonLine(output) {
   return JSON.parse(line)
 }
 
+function replayInstalledCompilerCorpus(consumerDirectory) {
+  const consumerRequire = createRequire(path.join(consumerDirectory, 'package.json'))
+  const installedFacade = consumerRequire('@fictjs/compiler/native')
+  const installedBinding = installedFacade.loadNativeCompilerBinding()
+  const corpusSource = readFileSync(
+    path.join(repositoryRoot, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
+    'utf8',
+  )
+  return replayCompilerCorpus(installedBinding, JSON.parse(corpusSource), corpusSource)
+}
+
 function main() {
   const options = parseArguments(process.argv.slice(2))
+  if (options['replay-consumer']) {
+    const compatibilityCorpus = replayInstalledCompilerCorpus(
+      path.resolve(options['replay-consumer']),
+    )
+    process.stdout.write(`${JSON.stringify(compatibilityCorpus)}\n`)
+    return
+  }
   const host = detectHostTarget()
   const target = options.target ?? host.target
   assert.equal(target, host.target, `Runtime host ${host.target} cannot certify ${target}`)
@@ -367,17 +395,9 @@ function main() {
       cjs.info.compilerCapabilityManifestDigest,
     )
 
-    const consumerRequire = createRequire(path.join(consumerDirectory, 'package.json'))
-    const installedFacade = consumerRequire('@fictjs/compiler/native')
-    const installedBinding = installedFacade.loadNativeCompilerBinding()
-    const corpusSource = readFileSync(
-      path.join(repositoryRoot, 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'),
-      'utf8',
-    )
-    const compatibilityCorpus = replayCompilerCorpus(
-      installedBinding,
-      JSON.parse(corpusSource),
-      corpusSource,
+    const replayInvocation = nativeCompilerCorpusReplayInvocation(consumerDirectory)
+    const compatibilityCorpus = parseLastJsonLine(
+      run(replayInvocation.command, replayInvocation.args, { capture: true }),
     )
 
     const evidence = {
