@@ -164,7 +164,7 @@ test('Rust compiler output preserves Core reactive runtime behavior', async () =
 
     function App() {
       let active = $state(false)
-      let rows = $state([
+      let rows = $state<Array<{ id: number; label: string }>>([
         { id: 1, label: 'A' },
         { id: 2, label: 'B' },
         { id: 3, label: 'C' },
