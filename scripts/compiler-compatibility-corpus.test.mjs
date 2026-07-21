@@ -984,6 +984,7 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   assert.match(corpusGenerator, /buildDiagnosticDeviationReview/)
   assert.match(corpusGenerator, /unreviewed diagnostic deviation/)
   assert.match(corpusGenerator, /diagnostic-review-output/)
+  assert.match(corpusGenerator, /rustAuditRelease: compilerPackage\.version/)
 })
 
 test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations', () => {

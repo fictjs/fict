@@ -17,6 +17,7 @@ const corpusFormatPath = path.join(
   repositoryRoot,
   'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json',
 )
+const compilerPackagePath = path.join(repositoryRoot, 'packages/compiler/package.json')
 const diagnosticReviewPath = path.join(
   repositoryRoot,
   'scripts/fixtures/compiler_diagnostic_deviation_reviews.json',
@@ -49,6 +50,9 @@ const legacyDependencyVersions = {
   '@babel/core': '7.29.7',
   '@babel/plugin-transform-typescript': '7.28.5',
 }
+const compilerPackage = JSON.parse(readFileSync(compilerPackagePath, 'utf8'))
+assert.equal(compilerPackage.name, '@fictjs/compiler', 'current compiler package name')
+assert.match(compilerPackage.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 const rustAcceptanceReview = JSON.parse(readFileSync(rustAcceptanceReviewPath, 'utf8'))
 assert.equal(rustAcceptanceReview.schemaVersion, 1)
 const rustAcceptanceReviewsById = new Map(
@@ -506,7 +510,7 @@ const corpus = {
     babelAuditFilename: legacyAuditFilename,
     babelPackageManager: legacyRootPackage.packageManager,
     babelDependencies: legacyDependencyVersions,
-    rustAuditRelease: '0.31.0',
+    rustAuditRelease: compilerPackage.version,
     rustAuditRevision: reviewedRevision,
     auditInputSha256: expectedAuditSha256,
     requestPolicySha256: sha256(requestPolicyText),
