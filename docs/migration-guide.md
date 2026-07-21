@@ -96,6 +96,11 @@ platform binding. Custom Babel pipelines that still
 need sibling plugins should run native Fict compilation as a separate first
 stage and compose source maps explicitly.
 
+`inputSourceMap` accepts only a standard non-indexed Source Map v3. If an
+upstream tool returns an indexed map with `sections`, the integration host must
+flatten those sections before invoking the native compiler. The request rejects
+`sections` instead of silently ignoring part of the map.
+
 When a generated map contains more than one source, `inputSourceMap.file` must
 uniquely identify the intermediate authored source. Only that source is traced
 through the input map; virtual or helper sources retain their own mappings.

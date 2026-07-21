@@ -260,3 +260,29 @@ fn preserves_utf16_columns_for_unicode_jsx_reads() {
     output.assert_maps("café", 1, "café", 1);
     output.assert_maps("café", 2, "café", 2);
 }
+
+#[test]
+fn maps_erased_typescript_class_fields_and_multiline_jsx_origins() {
+    let source = concat!(
+        "export class Model {\n",
+        "  declare erased: string;\n",
+        "  value: number = 1;\n",
+        "}\n",
+        "export function View() {\n",
+        "  const model = new Model();\n",
+        "  return (\n",
+        "    <section title={model.value}>\n",
+        "      hello\n",
+        "      <strong>{model.value}</strong>\n",
+        "    </section>\n",
+        "  );\n",
+        "}",
+    );
+    let output = MappedOutput::compile(source, "class-fields-and-multiline-jsx.tsx");
+
+    assert!(!output.result.code.contains("declare erased"));
+    assert!(!output.result.code.contains(": number"));
+    output.assert_maps("value = 1", 0, "value: number = 1", 0);
+    output.assert_maps("model.value", 0, "model.value", 0);
+    output.assert_maps("model.value", 1, "model.value", 1);
+}

@@ -173,6 +173,24 @@ Every syntax mutation that invalidates symbol/reference information MUST be
 followed by semantic rebuilding. Parse, semantic, HIR, or verifier errors MUST
 fail closed and MUST NOT emit partial runtime code.
 
+## Source map contract and evidence
+
+The request boundary accepts a standard non-indexed Source Map v3. Indexed maps
+with `sections` MUST be flattened by the integration host before they are sent
+as `inputSourceMap`; the compiler rejects that field rather than ignoring an
+uncomposed section. Multi-source maps also require a unique intermediate
+identity in `inputSourceMap.file`.
+
+The cross-implementation oracle is intentionally a reviewed sample: three
+frozen Babel 0.28 maps and live Rust maps are compared at 23 authored token
+positions. Ten positions are exact parity and thirteen are reviewed Rust
+precision improvements. Eight native source-map probe suites cover additional
+lowering surfaces, including nested keyed lists, try/catch/finally writes,
+erased TypeScript class fields, multiline JSX, CommonJS preludes, and UTF-16
+columns. Those native-only probes broaden the contract but are not additional
+Babel equivalence claims, and neither suite proves exhaustive token-level
+source-map equivalence.
+
 ## TypeScript compatibility
 
 OXC's supported TypeScript lowering is used only where differential fixtures

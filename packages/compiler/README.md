@@ -79,6 +79,12 @@ Compiler timing and counter stats always cross N-API as non-negative JavaScript
 `number` safe integers. Values above `Number.MAX_SAFE_INTEGER` saturate at that
 maximum instead of becoming `bigint` or losing precision.
 
+`RawSourceMap` accepts only a standard non-indexed Source Map v3. An indexed map
+with `sections` is rejected instead of being partially interpreted; a bundler
+host must flatten it to one ordinary `sources`/`mappings` map before assigning
+it to `inputSourceMap`. For multi-source composition, set `inputSourceMap.file`
+to the unique intermediate source that the compiler output should trace.
+
 The native options include:
 
 - `strictGuarantee` (default in official integrations): fail closed when

@@ -235,7 +235,8 @@
             "maps_memos_runtime_primitives_and_async_handler_origins",
             "maps_commonjs_rewrites_and_keeps_generated_preludes_unmapped",
             "maps_reactive_writes_across_try_catch_and_finally",
-            "preserves_utf16_columns_for_unicode_jsx_reads"
+            "preserves_utf16_columns_for_unicode_jsx_reads",
+            "maps_erased_typescript_class_fields_and_multiline_jsx_origins"
           ]
         },
         {
@@ -244,7 +245,7 @@
           "markers": ["\"composed-input-source-map\""]
         }
       ],
-      "claimBoundary": "Traces 23 reviewed generated tokens across three frozen Babel maps and live Rust maps to authored line and UTF-16 columns: ten positions are exact parity and thirteen are explicit Rust precision improvements over coarser Babel positions. Native probes add deeper lowering coverage and the request matrix checks input-map composition. This does not assert identical generated-token layouts or exhaustive source-map token equivalence."
+      "claimBoundary": "Traces 23 reviewed generated tokens across three frozen Babel maps and live Rust maps to authored line and UTF-16 columns: ten positions are exact parity and thirteen are explicit Rust precision improvements over coarser Babel positions. Eight native probe suites add deeper lowering coverage, including erased TypeScript class fields and multiline JSX, and the request matrix checks non-indexed input-map composition. Native-only probes are not Babel equivalence evidence; this does not assert identical generated-token layouts or exhaustive source-map token equivalence."
     },
     {
       "id": "rust-acceptance-runtime-results",

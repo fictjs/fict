@@ -150,6 +150,7 @@ export interface NativeCompilerOptions {
   preview?: CompilerPreviewOptions | null
 }
 
+/** Standard non-indexed Source Map v3. Hosts must flatten indexed `sections` before a request. */
 export interface RawSourceMap {
   version: 3
   file?: string
@@ -171,6 +172,7 @@ export interface CompileRequest {
   publicModuleId?: string | null
   language?: SourceLanguage | null
   moduleKind?: ModuleKind | null
+  /** Optional non-indexed Source Map v3 produced by an upstream transform. */
   inputSourceMap?: RawSourceMap | null
   options?: NativeCompilerOptions
   metadata?: ResolvedMetadataInput[]

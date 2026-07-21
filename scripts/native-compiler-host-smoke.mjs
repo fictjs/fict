@@ -140,6 +140,22 @@ for (const [format, facade] of [
   assert.deepEqual(composedMapResult.map?.sourcesContent, ['export const value = 1'])
   assert.deepEqual(composedMapResult.map?.x_google_ignoreList, [0])
 
+  const indexedMapResult = binding.transformSync({
+    code: 'export const value = 1',
+    filename: '/fixtures/indexed-map.js',
+    inputSourceMap: {
+      version: 3,
+      file: '/fixtures/indexed-map.js',
+      sources: ['original.js'],
+      sourcesContent: ['export const value = 1'],
+      names: [],
+      mappings: 'AAAA',
+      sections: [],
+    },
+  })
+  assert.equal(indexedMapResult.diagnostics[0]?.code, 'FICT-REQUEST')
+  assert.match(indexedMapResult.diagnostics[0]?.message ?? '', /unknown field `sections`/)
+
   const sourceExplain = binding.transformSync({
     code: `
       import { $effect, $memo, $state } from 'fict'

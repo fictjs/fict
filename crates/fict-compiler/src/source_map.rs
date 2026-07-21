@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Standard non-indexed Source Map v3 payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RawSourceMap {
     /// Source Map specification version; only v3 is accepted.
     pub version: u8,
@@ -168,6 +168,21 @@ mod tests {
             map.validate(),
             Err(SourceMapValidationError::InvalidMappings(_))
         ));
+    }
+
+    #[test]
+    fn rejects_indexed_source_map_sections_instead_of_ignoring_them() {
+        let mut hybrid = serde_json::to_value(source_map()).expect("source map value");
+        hybrid
+            .as_object_mut()
+            .expect("source map object")
+            .insert("sections".to_owned(), serde_json::json!([]));
+        let error = serde_json::from_value::<RawSourceMap>(hybrid)
+            .expect_err("indexed source map sections must be flattened by the host");
+        assert!(
+            error.to_string().contains("unknown field `sections`"),
+            "{error}"
+        );
     }
 
     #[test]

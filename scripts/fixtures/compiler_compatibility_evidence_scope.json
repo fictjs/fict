@@ -327,6 +327,7 @@
       "ciTest": "scripts/babel-compiler-source-map-oracle.test.mjs",
       "fixtureCount": 3,
       "probeCount": 23,
+      "coverageScope": "reviewed-cross-implementation-sample",
       "exactParityPositions": 10,
       "reviewedRustPrecisionImprovements": 13,
       "positionSurfaces": [
@@ -351,7 +352,33 @@
       "doesNotProve": [
         "identical-generated-token-layout",
         "exhaustive-source-map-token-equivalence",
+        "cross-implementation-coverage-for-every-native-source-map-probe",
         "input-source-map-composition-equivalence-beyond-request-contract"
+      ]
+    },
+    "nativeSourceMapPrecision": {
+      "ciTest": "crates/fict-compiler/tests/source_map_probes.rs",
+      "testCommand": "cargo test -p fict-compiler --test source_map_probes",
+      "probeSuiteCount": 8,
+      "assertionLevel": "source-map-contract",
+      "positionSurfaces": [
+        "reactivity-props-events-and-control-flow",
+        "keyed-and-nested-list-lowering",
+        "runtime-primitives-and-async-handlers",
+        "commonjs-rewrites-and-unmapped-preludes",
+        "try-catch-finally-reactive-writes",
+        "unicode-utf16-columns",
+        "erased-typescript-class-fields",
+        "multiline-jsx"
+      ],
+      "proves": [
+        "reviewed-native-origin-precision-across-deeper-lowering-surfaces",
+        "generated-bookkeeping-remains-unmapped",
+        "utf16-column-contract"
+      ],
+      "doesNotProve": [
+        "babel-equivalence-for-native-only-probes",
+        "exhaustive-source-map-token-equivalence"
       ]
     },
     "nativeSourceMapComposition": {

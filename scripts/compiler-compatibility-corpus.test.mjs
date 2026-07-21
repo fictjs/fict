@@ -69,6 +69,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'legacyOptionBehaviorAudit',
     'legacyUnrepresentedCallsiteReplay',
     'nativeSourceMapComposition',
+    'nativeSourceMapPrecision',
     'nativeStatsNumberBoundary',
     'r006SuppressionAudit',
     'rustAcceptanceReview',
@@ -457,6 +458,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.equal(sourceMapScope.fixtureCount, 3)
   assert.equal(sourceMapScope.probeCount, sourceMapProbes.length)
   assert.equal(sourceMapScope.probeCount, 23)
+  assert.equal(sourceMapScope.coverageScope, 'reviewed-cross-implementation-sample')
   assert.equal(
     sourceMapScope.exactParityPositions,
     sourceMapDispositionCounts['exact-parity'].length,
@@ -498,6 +500,11 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   )
   assert.ok(sourceMapScope.doesNotProve.includes('identical-generated-token-layout'))
   assert.ok(sourceMapScope.doesNotProve.includes('exhaustive-source-map-token-equivalence'))
+  assert.ok(
+    sourceMapScope.doesNotProve.includes(
+      'cross-implementation-coverage-for-every-native-source-map-probe',
+    ),
+  )
   assert.deepEqual(
     sourceMapOracle.fixtures.map(fixture => fixture.id),
     sourceMapInputs.fixtures.map(fixture => fixture.id),
@@ -520,6 +527,31 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.match(packageJson, /test:compiler:babel-source-map-oracle/)
   assert.match(packageJson, /babel-compiler-source-map-oracle\.test\.mjs/)
   assert.match(ci, /babel-compiler-source-map-oracle\.test\.mjs/)
+
+  const sourceMapPrecision = scope.assets.nativeSourceMapPrecision
+  assert.equal(sourceMapPrecision.assertionLevel, 'source-map-contract')
+  assert.equal(sourceMapPrecision.probeSuiteCount, 8)
+  assert.deepEqual(sourceMapPrecision.positionSurfaces, [
+    'reactivity-props-events-and-control-flow',
+    'keyed-and-nested-list-lowering',
+    'runtime-primitives-and-async-handlers',
+    'commonjs-rewrites-and-unmapped-preludes',
+    'try-catch-finally-reactive-writes',
+    'unicode-utf16-columns',
+    'erased-typescript-class-fields',
+    'multiline-jsx',
+  ])
+  assert.ok(sourceMapPrecision.doesNotProve.includes('babel-equivalence-for-native-only-probes'))
+  const sourceMapPrecisionTest = read(sourceMapPrecision.ciTest)
+  for (const marker of [
+    'maps_reactivity_props_events_and_control_flow_origins',
+    'maps_commonjs_rewrites_and_keeps_generated_preludes_unmapped',
+    'preserves_utf16_columns_for_unicode_jsx_reads',
+    'maps_erased_typescript_class_fields_and_multiline_jsx_origins',
+  ]) {
+    assert.match(sourceMapPrecisionTest, new RegExp(marker))
+  }
+  assert.match(sourceMapPrecision.testCommand, /--test source_map_probes/)
 
   const sourceMapComposition = scope.assets.nativeSourceMapComposition
   assert.equal(sourceMapComposition.assertionLevel, 'native-multi-source-composition')

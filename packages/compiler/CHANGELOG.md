@@ -17,6 +17,8 @@
   function-valued state call semantics across the Rust compiler pipeline.
 - Infer source language and CommonJS mode from a recognized physical filename extension before a
   query or fragment suffix, while preserving literal `?` and `#` path segments without extensions.
+- Reject indexed source-map `sections` until the host flattens them to a standard non-indexed v3
+  map, and state the reviewed-sample boundary of Babel/Rust source-map evidence.
 - Reject malformed or over-depth module metadata consistently in JavaScript graph hosts and the
   Rust compiler.
 - Require standard decorators to be lowered by a target-compatible transform before native Fict
