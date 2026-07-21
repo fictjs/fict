@@ -2,9 +2,10 @@ use std::collections::BTreeSet;
 
 /// Deterministic allocator shared by module imports and generated function temporaries.
 ///
-/// Every source binding is reserved across the module, including nested bindings. This is more
-/// conservative than lexical reuse but guarantees that generated references cannot be captured by
-/// a user declaration in another function when an EmitIR operation is later moved or outlined.
+/// Every source binding and authored free identifier is reserved across the module, including
+/// nested bindings. This is more conservative than lexical reuse but guarantees that generated
+/// references cannot capture host/global lookups or be captured by a user declaration in another
+/// function when an EmitIR operation is later moved or outlined.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NameAllocator {
     reserved: BTreeSet<String>,

@@ -6055,6 +6055,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         let scopes = build_hir_scopes(self.semantic.scoping(), self.frontend.source.source_len);
         let bindings = build_hir_bindings(&self.frontend, &self.old_to_new, &parameter_symbols);
+        let authored_free_names = authored_free_names(&self.semantic);
         let module_plan = build_module_plan(&self.frontend, &self.old_to_new);
         let hir = HirFile {
             id: FileId::new(0),
@@ -6063,6 +6064,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             scopes,
             bindings,
             globals: self.globals,
+            authored_free_names,
             functions: self.functions,
             templates: self.templates,
             syntax_fragments: self.syntax_fragments,
@@ -6090,6 +6092,33 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             diagnostics: sorted(self.diagnostics),
         }
     }
+}
+
+fn authored_free_names(semantic: &Semantic<'_>) -> Vec<String> {
+    let mut names = semantic
+        .scoping()
+        .root_unresolved_references()
+        .iter()
+        .filter_map(|(name, reference_ids)| {
+            reference_ids
+                .iter()
+                .map(|reference_id| {
+                    source_span(
+                        semantic.reference_span(semantic.scoping().get_reference(*reference_id)),
+                    )
+                })
+                .min_by_key(|span| (span.start(), span.end()))
+                .map(|span| (span, name.to_string()))
+        })
+        .collect::<Vec<_>>();
+    names.sort_unstable_by(|(left_span, left_name), (right_span, right_name)| {
+        (left_span.start(), left_span.end(), left_name).cmp(&(
+            right_span.start(),
+            right_span.end(),
+            right_name,
+        ))
+    });
+    names.into_iter().map(|(_, name)| name).collect()
 }
 
 #[derive(Debug, Clone)]

@@ -5904,6 +5904,21 @@ fn materializes_bare_host_reads_without_breaking_special_or_dynamic_references()
             .collect::<Vec<_>>(),
         ["ambientValue", "ambientCall", "ambientTag", "ambientObject"]
     );
+    assert_eq!(
+        hir.authored_free_names,
+        [
+            "ambientValue",
+            "ambientCall",
+            "ambientTag",
+            "ambientObject",
+            "missingTypeof",
+            "missingDelete",
+            "withOnlyRead",
+            "withOnlyWrite",
+            "withOnlyTypeof",
+            "withOnlyDelete",
+        ]
+    );
     let global = |name: &str| {
         hir.globals
             .iter()

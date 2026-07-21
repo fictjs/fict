@@ -320,10 +320,7 @@ fn lower_program(
             GuaranteeClass::Fallback,
         )]));
     }
-    let source_names = hir
-        .bindings
-        .iter()
-        .map(|binding| binding.display_name.clone())
+    let source_names = authored_names(hir)
         .chain(hir.functions.iter().flat_map(|function| {
             function
                 .locals
@@ -1390,15 +1387,12 @@ fn lower_function(
     ));
     slots.sort_unstable_by_key(|slot| slot.id);
     let mut temporary_names = NameAllocator::new(
-        hir.bindings
-            .iter()
-            .map(|binding| binding.display_name.clone())
-            .chain(
-                function
-                    .locals
-                    .iter()
-                    .filter_map(|local| local.debug_name.clone()),
-            ),
+        authored_names(hir).chain(
+            function
+                .locals
+                .iter()
+                .filter_map(|local| local.debug_name.clone()),
+        ),
     );
     let props = lower_component_props_plan(hir, function, &mut temporary_names)?;
     let mut temporaries = Vec::new();
@@ -1923,6 +1917,14 @@ fn lower_function(
         control_flow,
         operations,
     })
+}
+
+fn authored_names(hir: &HirFile) -> impl Iterator<Item = String> + '_ {
+    hir.bindings
+        .iter()
+        .map(|binding| binding.display_name.clone())
+        .chain(hir.globals.iter().map(|global| global.name.clone()))
+        .chain(hir.authored_free_names.iter().cloned())
 }
 fn jsx_contains_direct_yield(function: &HirFunction, jsx: &HirInstruction) -> bool {
     if !function.flags.is_generator {

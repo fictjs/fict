@@ -1442,6 +1442,12 @@ pub struct HirFile {
     pub bindings: Vec<Binding>,
     /// Frontend-unresolved host/global names in first structured-reference order.
     pub globals: Vec<HirGlobal>,
+    /// Every frontend-unresolved authored identifier in first-reference order.
+    ///
+    /// Unlike `globals`, this hygiene-only inventory also retains special `typeof`/`delete`
+    /// references and names inside dynamic `with` scopes. Compiler-generated lexical names must
+    /// reserve this complete set without treating every entry as a structured runtime place.
+    pub authored_free_names: Vec<String>,
     /// Functions in deterministic ID order.
     pub functions: Vec<HirFunction>,
     /// JSX templates in deterministic ID order.

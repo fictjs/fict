@@ -272,6 +272,22 @@ impl Verifier<'_> {
                 );
             }
         }
+        let mut authored_free_names = BTreeSet::new();
+        for name in &self.file.authored_free_names {
+            if name.is_empty() {
+                self.error(
+                    "FICT-HIR-FREE-NAME",
+                    "authored free identifier inventory contains an empty name",
+                    None,
+                );
+            } else if !authored_free_names.insert(name.as_str()) {
+                self.error(
+                    "FICT-HIR-FREE-NAME",
+                    format!("authored free identifier {name:?} is recorded more than once"),
+                    None,
+                );
+            }
+        }
 
         for (index, fragment) in self.file.syntax_fragments.iter().enumerate() {
             if fragment.id.as_usize() != index {

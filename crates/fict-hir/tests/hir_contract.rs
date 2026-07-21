@@ -25,6 +25,7 @@ fn empty_file() -> HirFile {
         }],
         bindings: Vec::new(),
         globals: Vec::new(),
+        authored_free_names: Vec::new(),
         functions: vec![HirFunction {
             id: FunctionId::new(0),
             parent: FunctionId::new(0),

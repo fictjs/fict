@@ -2737,6 +2737,32 @@ test('getterCache controls safe repeated synchronous accessor reads', async () =
   container.remove()
 })
 
+test('compiler-generated names do not capture authored free identifiers', async () => {
+  const runtime = await compileAndImport(
+    `
+      import { $state } from 'fict'
+
+      export const helperType = typeof __fictUseSignal
+      export const contextType = typeof __fictCtx
+      export const templateType = typeof __fict_tmpl0
+      export const cacheType = typeof __cached_count_0
+      export const readMissingHelper = () => __fictUseSignal
+
+      export function App() {
+        let count = $state(0)
+        return <button>{count + count}</button>
+      }
+    `,
+    'generated-name-hygiene',
+  )
+
+  assert.equal(runtime.helperType, 'undefined')
+  assert.equal(runtime.contextType, 'undefined')
+  assert.equal(runtime.templateType, 'undefined')
+  assert.equal(runtime.cacheType, 'undefined')
+  assert.throws(runtime.readMissingHelper, ReferenceError)
+})
+
 test('optimizeLevel full applies opt-in authored algebraic folding safely', async () => {
   const source = `
     export function probe(x, check) {

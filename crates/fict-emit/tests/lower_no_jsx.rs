@@ -182,6 +182,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
         }],
         bindings: Vec::new(),
         globals: Vec::new(),
+        authored_free_names: Vec::new(),
         functions: vec![function],
         templates: Vec::new(),
         syntax_fragments: Vec::new(),
