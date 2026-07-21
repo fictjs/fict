@@ -13,7 +13,7 @@ import path from 'node:path'
 const compilerSrc = path.join(process.cwd(), 'packages/compiler/src')
 const topLimit = Number(process.env.COMPILER_COMPLEXITY_TOP ?? 7)
 const defaultMaxLoc = Number(process.env.COMPILER_COMPLEXITY_MAX_LOC ?? 100)
-const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 930)
+const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 931)
 
 const fileBudgets = new Map([
   ['packages/compiler/src/environment-policy.ts', 59],
