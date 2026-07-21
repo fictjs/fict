@@ -69,8 +69,17 @@ fn binding(
     kind: ReactiveBindingKind,
     dependencies: Vec<DependencyPath>,
 ) -> ReactiveBindingFact {
+    binding_version(local, 1, kind, dependencies)
+}
+
+fn binding_version(
+    local: u32,
+    version: u32,
+    kind: ReactiveBindingKind,
+    dependencies: Vec<DependencyPath>,
+) -> ReactiveBindingFact {
     ReactiveBindingFact {
-        name: name(local, 1),
+        name: name(local, version),
         kind,
         dependencies,
         location: fict_reactivity::SsaDefinitionLocation::Instruction {
@@ -132,4 +141,53 @@ fn reports_a_single_derived_self_reference() {
     assert_eq!(analysis.cycles.len(), 1);
     assert_eq!(analysis.cycles[0].kind, ReactiveCycleKind::SelfReference);
     assert_eq!(analysis.cycles[0].nodes, [name(0, 1)]);
+}
+
+#[test]
+fn does_not_substitute_a_different_ssa_version_by_local_id() {
+    let function = function(2);
+    let scopes = ReactiveScopeAnalysis {
+        bindings: vec![
+            binding(0, ReactiveBindingKind::Derived, vec![path(1, 2)]),
+            binding(1, ReactiveBindingKind::Derived, vec![path(0, 1)]),
+        ],
+        blocks: Vec::new(),
+        stats: ReactiveScopeStats::default(),
+    };
+    let analysis = analyze_reactive_cycles(&function, &scopes).expect("versioned dependency graph");
+
+    assert_eq!(
+        analysis
+            .edges
+            .iter()
+            .map(|edge| (edge.from, edge.to))
+            .collect::<Vec<_>>(),
+        [(name(0, 1), name(1, 1))]
+    );
+    assert!(analysis.cycles.is_empty(), "{analysis:#?}");
+}
+
+#[test]
+fn does_not_guess_between_multiple_forward_reference_versions() {
+    let function = function(2);
+    let scopes = ReactiveScopeAnalysis {
+        bindings: vec![
+            binding(0, ReactiveBindingKind::Derived, vec![path(1, 0)]),
+            binding_version(1, 1, ReactiveBindingKind::Derived, vec![path(0, 1)]),
+            binding_version(1, 2, ReactiveBindingKind::Derived, Vec::new()),
+        ],
+        blocks: Vec::new(),
+        stats: ReactiveScopeStats::default(),
+    };
+    let analysis = analyze_reactive_cycles(&function, &scopes).expect("ambiguous dependency graph");
+
+    assert_eq!(
+        analysis
+            .edges
+            .iter()
+            .map(|edge| (edge.from, edge.to))
+            .collect::<Vec<_>>(),
+        [(name(0, 1), name(1, 1))]
+    );
+    assert!(analysis.cycles.is_empty(), "{analysis:#?}");
 }

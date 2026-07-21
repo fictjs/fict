@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
-use fict_hir::{BlockId, HirFunction, LocalId, SsaName};
+use fict_hir::{BlockId, HirFunction, LocalId, SsaName, SsaVersion};
 
 use crate::{DependencyBase, DependencyPath, ReactiveScopeAnalysis, SsaDefinitionLocation};
 
@@ -98,7 +98,7 @@ pub fn analyze_reactive_cycles(
             let source = if bindings.contains_key(&raw_source) {
                 Some(raw_source)
             } else {
-                resolve_local_dependency(raw_source.local, &by_local, &bindings)
+                resolve_local_dependency(raw_source, &by_local, &bindings)
             };
             if let Some(source) = source {
                 edges.insert(ReactiveGraphEdge {
@@ -296,20 +296,29 @@ pub fn verify_reactive_cycles(
 }
 
 fn resolve_local_dependency(
-    local: LocalId,
+    unresolved: SsaName,
     by_local: &BTreeMap<LocalId, Vec<SsaName>>,
     bindings: &BTreeMap<SsaName, &crate::ReactiveBindingFact>,
 ) -> Option<SsaName> {
-    let candidates = by_local.get(&local)?;
-    candidates
+    // Version zero is the frontend's entry-name placeholder for a source-level forward reference.
+    // A missing non-entry version denotes a specific reaching definition and must never be guessed
+    // from another version that happens to share its LocalId.
+    if unresolved.version != SsaVersion::INITIAL {
+        return None;
+    }
+    let mut candidates = by_local
+        .get(&unresolved.local)?
         .iter()
         .copied()
-        .find(|name| {
+        .filter(|name| {
             bindings
                 .get(name)
                 .is_some_and(|binding| !binding.kind.breaks_derived_cycle())
-        })
-        .or_else(|| candidates.first().copied())
+        });
+    let candidate = candidates.next()?;
+    // Branches and loops may produce multiple tracked definitions for one local. Without explicit
+    // def-use provenance, choosing either candidate can manufacture a dependency cycle.
+    candidates.next().is_none().then_some(candidate)
 }
 
 fn adjacency(

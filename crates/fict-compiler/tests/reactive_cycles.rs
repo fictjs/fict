@@ -189,6 +189,66 @@ fn forward_reference_resolution_does_not_merge_ordinary_ssa_versions() {
 }
 
 #[test]
+fn ordinary_versions_do_not_form_forward_cycles_across_control_flow() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function Component(flag) {
+                const count = $state(1)
+                let value = 0
+                if (flag) {
+                    const derived = count + value
+                    value = derived + 1
+                }
+                return value
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function Component(items) {
+                const count = $state(1)
+                let value = 0
+                for (const item of items) {
+                    const derived = count + value
+                    value = derived + item
+                }
+                return value
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function Component() {
+                const count = $state(1)
+                let value = 0
+                try {
+                    const derived = count + value
+                    value = derived + 1
+                } catch {
+                    value = count + 2
+                }
+                return value
+            }
+        "#,
+    ] {
+        let result = compile_source(
+            source,
+            CompilerOptions {
+                strict_guarantee: false,
+                ..CompilerOptions::default()
+            },
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R-CYCLE"),
+            "unexpected cycle for source:\n{source}\n{:#?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn rejects_long_branch_region_and_alias_derived_cycles() {
     for source in [
         r#"
