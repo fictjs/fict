@@ -82,7 +82,9 @@ test('resumable SSR application serves state and resumes interactions from a pro
   await expect(page.getByTestId('change-result')).toContainText('critical approval lane')
 
   await page.locator('[data-filter="Paused"]').click()
-  await expect(page.getByTestId('deployment-rows').locator('tr')).toHaveCount(1)
+  const visibleDeploymentRows = page.getByTestId('deployment-rows').locator('tr:visible')
+  await expect(visibleDeploymentRows).toHaveCount(1)
+  await expect(visibleDeploymentRows).toContainText('DEP-835')
   expect(errors).toEqual([])
 })
 

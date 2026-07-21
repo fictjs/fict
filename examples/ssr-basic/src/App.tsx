@@ -2,14 +2,15 @@ import { $effect, $state } from 'fict'
 
 type Risk = 'standard' | 'elevated' | 'critical'
 type DeploymentState = 'Ready' | 'Progressing' | 'Paused'
-
-const deployments: Array<{
+type Deployment = {
   id: string
   service: string
   region: string
   owner: string
   state: DeploymentState
-}> = [
+}
+
+const deployments = [
   { id: 'DEP-842', service: 'Identity', region: 'US East', owner: 'Platform', state: 'Ready' },
   {
     id: 'DEP-839',
@@ -20,7 +21,7 @@ const deployments: Array<{
   },
   { id: 'DEP-835', service: 'Billing', region: 'US West', owner: 'Commerce', state: 'Paused' },
   { id: 'DEP-831', service: 'Analytics', region: 'AP South', owner: 'Data', state: 'Ready' },
-]
+] as const satisfies readonly Deployment[]
 
 function CapacityControl(props: { id: string; label: string; initial: number }) {
   let capacity = $state(props.initial)
@@ -159,19 +160,50 @@ function DeploymentQueue() {
           </tr>
         </thead>
         <tbody data-testid="deployment-rows">
-          {deployments.map(item =>
-            filter === 'All' || item.state === filter ? (
-              <tr key={item.id}>
-                <td>{item.id}</td>
-                <td>{item.service}</td>
-                <td>{item.region}</td>
-                <td>{item.owner}</td>
-                <td>
-                  <span class={`state ${item.state.toLowerCase()}`}>{item.state}</span>
-                </td>
-              </tr>
-            ) : null,
-          )}
+          <tr key={deployments[0].id} hidden={filter !== 'All' && filter !== 'Ready'}>
+            <td>{deployments[0].id}</td>
+            <td>{deployments[0].service}</td>
+            <td>{deployments[0].region}</td>
+            <td>{deployments[0].owner}</td>
+            <td>
+              <span class={`state ${deployments[0].state.toLowerCase()}`}>
+                {deployments[0].state}
+              </span>
+            </td>
+          </tr>
+          <tr key={deployments[1].id} hidden={filter !== 'All' && filter !== 'Progressing'}>
+            <td>{deployments[1].id}</td>
+            <td>{deployments[1].service}</td>
+            <td>{deployments[1].region}</td>
+            <td>{deployments[1].owner}</td>
+            <td>
+              <span class={`state ${deployments[1].state.toLowerCase()}`}>
+                {deployments[1].state}
+              </span>
+            </td>
+          </tr>
+          <tr key={deployments[2].id} hidden={filter !== 'All' && filter !== 'Paused'}>
+            <td>{deployments[2].id}</td>
+            <td>{deployments[2].service}</td>
+            <td>{deployments[2].region}</td>
+            <td>{deployments[2].owner}</td>
+            <td>
+              <span class={`state ${deployments[2].state.toLowerCase()}`}>
+                {deployments[2].state}
+              </span>
+            </td>
+          </tr>
+          <tr key={deployments[3].id} hidden={filter !== 'All' && filter !== 'Ready'}>
+            <td>{deployments[3].id}</td>
+            <td>{deployments[3].service}</td>
+            <td>{deployments[3].region}</td>
+            <td>{deployments[3].owner}</td>
+            <td>
+              <span class={`state ${deployments[3].state.toLowerCase()}`}>
+                {deployments[3].state}
+              </span>
+            </td>
+          </tr>
         </tbody>
       </table>
     </section>
