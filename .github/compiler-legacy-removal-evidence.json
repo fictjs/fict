@@ -166,7 +166,7 @@
   },
   "migrationGuidance": {
     "path": "docs/migration-guide.md",
-    "digest": "sha256:030eb115becc84887ea49afe5f8ee73cc6440c2f6affee4b503b86ba5145239a"
+    "digest": "sha256:ebcc62c0e76ae3ea38b304025a315a8a76fe5e84ebd887a4290c1222489aaecf"
   },
   "finalPreset": {
     "packageName": "@fictjs/babel-preset",
@@ -174,5 +174,5 @@
     "integrity": "sha512-0rZ8fAY3oJ4IwZBTel+a+Dym8+qeXssKuxfFWpp11Ed0/rswWKUkc5cVHB8qPw7Rp+WCwCSbUc+mbD9C9kbkZQ==",
     "provenance": true
   },
-  "evidenceDigest": "sha256:6da5e6c8b36d96bc4e1743374612a70527cb81e0fdc6c68c06d4cea6dc95b47e"
+  "evidenceDigest": "sha256:d9f799db47d015da900f8802161cd47ad7662ec6c73280ed92702e28ccbdc071"
 }
