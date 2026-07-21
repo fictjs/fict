@@ -76,6 +76,39 @@ test('executes CommonJS output with every Node wrapper binding shadowed by the s
   }
 })
 
+test('preserves authored free identifiers that resemble CommonJS adapter helpers', () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-free-identifiers-'))
+  try {
+    const entryPath = path.join(fixtureRoot, 'entry.cjs')
+    writeFileSync(
+      entryPath,
+      compileCommonJs(
+        `
+          export const values = [
+            typeof __fict_cjs_exports,
+            typeof __vite_ssr_exports__,
+            typeof __vite_ssr_import__,
+            typeof __vite_ssr_exportAll__,
+            typeof __vite_ssr_dynamic_import__,
+            typeof __vite_ssr_import_meta__,
+          ]
+          export function readMissing() {
+            return __vite_ssr_exports__
+          }
+        `,
+        entryPath,
+      ),
+      'utf8',
+    )
+
+    const exported = require(entryPath)
+    assert.deepEqual(exported.values, Array(6).fill('undefined'))
+    assert.throws(() => exported.readMissing(), ReferenceError)
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true })
+  }
+})
+
 test('re-exports only enumerable own properties from a raw CommonJS dependency', () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'fict-commonjs-export-star-'))
   try {

@@ -543,6 +543,59 @@ mod tests {
     }
 
     #[test]
+    fn preserves_authored_free_commonjs_and_runner_identifiers() {
+        let mut commonjs = options(OxcSourceLanguage::TypeScript);
+        commonjs.module_kind = OxcModuleKind::CommonJs;
+        let output = compile_passthrough(
+            concat!(
+                "export const values = [\n",
+                "  typeof __fict_cjs_exports,\n",
+                "  typeof __vite_ssr_exports__,\n",
+                "  typeof __vite_ssr_import__,\n",
+                "  typeof __vite_ssr_exportAll__,\n",
+                "  typeof __vite_ssr_dynamic_import__,\n",
+                "  typeof __vite_ssr_import_meta__,\n",
+                "];\n",
+                "export function readMissing() { return __vite_ssr_exports__; }\n",
+                "export async function callMissing() { return await __vite_ssr_import__('./authored'); }\n",
+            ),
+            "entry.cts",
+            commonjs,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output.code.contains("const __fict_cjs_exports_1 = exports"),
+            "{}",
+            output.code
+        );
+        for name in [
+            "__fict_cjs_exports",
+            "__vite_ssr_exports__",
+            "__vite_ssr_import__",
+            "__vite_ssr_exportAll__",
+            "__vite_ssr_dynamic_import__",
+            "__vite_ssr_import_meta__",
+        ] {
+            assert!(
+                output.code.contains(&format!("typeof {name}")),
+                "missing authored free identifier {name}: {}",
+                output.code
+            );
+        }
+        assert!(
+            output.code.contains("__vite_ssr_import__(\"./authored\")"),
+            "{}",
+            output.code
+        );
+        assert!(
+            !output.code.contains("require(\"./authored\")"),
+            "{}",
+            output.code
+        );
+    }
+
+    #[test]
     fn preserves_default_binding_in_mixed_namespace_imports() {
         let mut commonjs = options(OxcSourceLanguage::TypeScript);
         commonjs.module_kind = OxcModuleKind::CommonJs;

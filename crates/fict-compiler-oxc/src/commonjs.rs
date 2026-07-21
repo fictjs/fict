@@ -53,12 +53,23 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
 
     let mixed_default_namespace_symbols = mixed_default_namespace_symbols(program);
     let original_symbol_names: Vec<_> = scoping.symbol_names().map(str::to_owned).collect();
+    let authored_unresolved_references: BTreeSet<_> = scoping
+        .root_unresolved_references_ids()
+        .flatten()
+        .map(|reference_id| reference_id.index())
+        .collect();
     let mut runner = ModuleRunnerTransform::new();
     let scoping = traverse_mut(&mut runner, allocator, program, scoping, ());
 
     let mut reserved_names: BTreeSet<String> = scoping
         .symbol_names()
         .map(str::to_owned)
+        .chain(
+            scoping
+                .root_unresolved_references()
+                .keys()
+                .map(ToString::to_string),
+        )
         .chain(COMMONJS_GENERATED_GLOBAL_BINDINGS.map(str::to_owned))
         .collect();
     let generated_bindings = generated_binding_names(
@@ -88,6 +99,7 @@ pub(crate) fn lower_standard_esm_to_commonjs<'a>(
 
     let mut adapter = CommonJsRunnerAdapter {
         allocator,
+        authored_unresolved_references,
         generated_bindings,
         mixed_default_namespace_bindings,
         require_local,
@@ -205,6 +217,7 @@ fn allocate_name<'a>(
 
 struct CommonJsRunnerAdapter<'a> {
     allocator: &'a Allocator,
+    authored_unresolved_references: BTreeSet<usize>,
     generated_bindings: BTreeMap<usize, &'a str>,
     mixed_default_namespace_bindings: BTreeMap<usize, &'a str>,
     require_local: &'a str,
@@ -274,7 +287,7 @@ impl<'a> Traverse<'a, ()> for CommonJsRunnerAdapter<'a> {
         let Expression::CallExpression(call) = &mut awaited.argument else {
             return;
         };
-        if !callee_is_runner_import(&call.callee) {
+        if !callee_is_runner_import(&call.callee, &self.authored_unresolved_references) {
             return;
         }
         if let Some(source) = call
@@ -328,6 +341,9 @@ impl<'a> Traverse<'a, ()> for CommonJsRunnerAdapter<'a> {
             }
             return;
         }
+        if authored_unresolved_reference(identifier, &self.authored_unresolved_references) {
+            return;
+        }
 
         let replacement = match identifier.name.as_str() {
             RUNNER_IMPORT => {
@@ -359,10 +375,25 @@ impl<'a> Traverse<'a, ()> for CommonJsRunnerAdapter<'a> {
     }
 }
 
-fn callee_is_runner_import(expression: &Expression<'_>) -> bool {
+fn authored_unresolved_reference(
+    identifier: &IdentifierReference<'_>,
+    authored_unresolved_references: &BTreeSet<usize>,
+) -> bool {
+    identifier
+        .reference_id
+        .get()
+        .is_some_and(|reference_id| authored_unresolved_references.contains(&reference_id.index()))
+}
+
+fn callee_is_runner_import(
+    expression: &Expression<'_>,
+    authored_unresolved_references: &BTreeSet<usize>,
+) -> bool {
     matches!(
         expression,
-        Expression::Identifier(identifier) if identifier.name == RUNNER_IMPORT
+        Expression::Identifier(identifier)
+            if identifier.name == RUNNER_IMPORT
+                && !authored_unresolved_reference(identifier, authored_unresolved_references)
     )
 }
 
