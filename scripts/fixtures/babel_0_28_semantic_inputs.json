@@ -343,7 +343,8 @@
       "invocation": {
         "exportName": "Scenario",
         "arguments": []
-      }
+      },
+      "diagnosticDeviation": "rust-adds-unproven-reactive-receiver-warning"
     },
     {
       "id": "async-await-order",
