@@ -57,7 +57,7 @@ function CapacityControl(props: { id: string; label: string; initial: number }) 
 }
 
 function ChangeRequest() {
-  let title = $state('Promote messaging canary')
+  let title = $state<string>('Promote messaging canary')
   let risk = $state<Risk>('elevated')
   let approved = $state(false)
 
@@ -109,7 +109,6 @@ function ChangeRequest() {
 
 function DeploymentQueue() {
   let filter = $state<'All' | DeploymentState>('All')
-  const visible = filter === 'All' ? deployments : deployments.filter(item => item.state === filter)
 
   return (
     <section class="panel deployment-panel">
@@ -160,17 +159,19 @@ function DeploymentQueue() {
           </tr>
         </thead>
         <tbody data-testid="deployment-rows">
-          {visible.map(item => (
-            <tr key={item.id}>
-              <td>{item.id}</td>
-              <td>{item.service}</td>
-              <td>{item.region}</td>
-              <td>{item.owner}</td>
-              <td>
-                <span class={`state ${item.state.toLowerCase()}`}>{item.state}</span>
-              </td>
-            </tr>
-          ))}
+          {deployments.map(item =>
+            filter === 'All' || item.state === filter ? (
+              <tr key={item.id}>
+                <td>{item.id}</td>
+                <td>{item.service}</td>
+                <td>{item.region}</td>
+                <td>{item.owner}</td>
+                <td>
+                  <span class={`state ${item.state.toLowerCase()}`}>{item.state}</span>
+                </td>
+              </tr>
+            ) : null,
+          )}
         </tbody>
       </table>
     </section>
