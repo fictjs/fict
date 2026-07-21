@@ -21,6 +21,12 @@ const tickets = [
   { id: 'OPS-1236', owner: 'S. Patel', priority: 'High', status: 'Mitigated', age: '4h' },
 ]
 
+const pipelineStages = [
+  { label: 'Qualified', today: 42, week: 67, month: 76 },
+  { label: 'Contract', today: 28, week: 46, month: 58 },
+  { label: 'Closed', today: 18, week: 31, month: 44 },
+]
+
 const accounts = [
   { id: 'northwind', name: 'Northwind Supply', tier: 'Enterprise', renewal: 'Jun 12' },
   { id: 'atlas', name: 'Atlas Health', tier: 'Growth', renewal: 'Jul 03' },
@@ -295,25 +301,6 @@ function OperationsDashboard() {
       : range === 'week'
         ? { revenue: '$612k', conversion: '5.2%', incidents: '29', health: '99.97%' }
         : { revenue: '$2.8m', conversion: '5.6%', incidents: '118', health: '99.95%' }
-  const pipeline =
-    range === 'today'
-      ? [
-          { label: 'Qualified', value: 42 },
-          { label: 'Contract', value: 28 },
-          { label: 'Closed', value: 18 },
-        ]
-      : range === 'week'
-        ? [
-            { label: 'Qualified', value: 67 },
-            { label: 'Contract', value: 46 },
-            { label: 'Closed', value: 31 },
-          ]
-        : [
-            { label: 'Qualified', value: 76 },
-            { label: 'Contract', value: 58 },
-            { label: 'Closed', value: 44 },
-          ]
-
   return (
     <article class="surface">
       <header class="surface-header">
@@ -346,13 +333,19 @@ function OperationsDashboard() {
         <div class="panel">
           <h2>Pipeline</h2>
           <div class="bar-list">
-            {pipeline.map(stage => (
+            {pipelineStages.map(stage => (
               <div class="bar-row" key={stage.label}>
                 <span>{stage.label}</span>
                 <div class="bar-track">
-                  <i style={{ width: `${stage.value}%` }} />
+                  <i
+                    style={{
+                      width: `${range === 'today' ? stage.today : range === 'week' ? stage.week : stage.month}%`,
+                    }}
+                  />
                 </div>
-                <strong>{stage.value}%</strong>
+                <strong>
+                  {range === 'today' ? stage.today : range === 'week' ? stage.week : stage.month}%
+                </strong>
               </div>
             ))}
           </div>
