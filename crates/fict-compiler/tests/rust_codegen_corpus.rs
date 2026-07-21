@@ -179,6 +179,9 @@ fn replays_the_frozen_rust_codegen_corpus() {
     let corpus: CompatibilityCorpus =
         serde_json::from_str(include_str!("rust_frozen_codegen_corpus.json"))
             .expect("valid frozen Rust codegen corpus");
+    let compiler_package: serde_json::Value =
+        serde_json::from_str(include_str!("../../../packages/compiler/package.json"))
+            .expect("valid compiler package metadata");
 
     assert_eq!(corpus.schema_version, 5);
     assert_eq!(corpus.provenance.source_suite_release, "0.28.0");
@@ -215,7 +218,12 @@ fn replays_the_frozen_rust_codegen_corpus() {
             ("@babel/plugin-transform-typescript".into(), "7.28.5".into()),
         ])
     );
-    assert_eq!(corpus.provenance.rust_audit_release, "0.31.0");
+    assert_eq!(
+        corpus.provenance.rust_audit_release,
+        compiler_package["version"]
+            .as_str()
+            .expect("compiler package version")
+    );
     assert_eq!(
         corpus.provenance.rust_audit_revision,
         corpus.provenance.reviewed_revision

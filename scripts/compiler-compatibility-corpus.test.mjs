@@ -23,6 +23,7 @@ const unrepresentedReplayPath =
 const rustAcceptanceReviewPath = 'scripts/fixtures/compiler_rust_acceptance_reviews.json'
 const rustRejectionReviewPath = 'scripts/fixtures/compiler_rust_rejection_reviews.json'
 const capabilityManifestPath = 'packages/compiler/compiler-capabilities.json'
+const compilerPackageVersion = readJson('packages/compiler/package.json').version
 const sha256 = value => createHash('sha256').update(value).digest('hex')
 
 test('scopes the capability manifest to certified behavior-variant options', () => {
@@ -947,18 +948,18 @@ test('requires an exact review for every Babel-to-Rust diagnostic deviation', ()
   })
   assert.deepEqual(reviewed, observed)
   assert.equal(reviewed.schemaVersion, 1)
-  assert.equal(reviewed.deviationCount, 287)
-  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 287)
+  assert.equal(reviewed.deviationCount, 292)
+  assert.equal(new Set(reviewed.deviations.map(deviation => deviation.id)).size, 292)
   assert.equal(
     reviewed.deviations.filter(deviation => deviation.babelStatus === deviation.rustStatus).length,
-    250,
+    255,
   )
   assert.deepEqual(reviewed.policyCounts, {
     'rust-structured-rejection-diagnostics': 183,
-    'diagnostic-severity-reclassification': 23,
-    'rust-warning-addition': 32,
+    'diagnostic-severity-reclassification': 22,
+    'rust-warning-addition': 37,
     'rust-warning-removal': 44,
-    'rust-warning-set-change': 5,
+    'rust-warning-set-change': 6,
   })
   assert.ok(
     reviewed.deviations.every(
@@ -1030,7 +1031,7 @@ test('retains the exact Babel 0.28 frozen codegen corpus and reviewed deviations
         '@babel/core': '7.29.7',
         '@babel/plugin-transform-typescript': '7.28.5',
       },
-      rustAuditRelease: '0.31.0',
+      rustAuditRelease: compilerPackageVersion,
       auditInputSha256: '676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f',
       requestPolicySha256: sha256(requestPolicyText),
       legacyTestSourceSha256: '65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb',

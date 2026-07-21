@@ -14,8 +14,8 @@
       "@babel/core": "7.29.7",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "rustAuditRelease": "0.31.0",
-    "rustAuditRevision": "2ed7a7cdf84a9cb6d82ec3e17f07192532d6c2b0",
+    "rustAuditRelease": "0.32.0-next.0",
+    "rustAuditRevision": "6dd54106a7318c039d00750ace9588646a8fcdb6",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "2ed7a7cdf84a9cb6d82ec3e17f07192532d6c2b0",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-694bb8da9f422addf8138630eea1eb3d90dc36b296b30d095000ec26295169e6"
+    "reviewedRevision": "6dd54106a7318c039d00750ace9588646a8fcdb6",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-0a504cef0079c779f1604bbc147b47e8f01a58035cf394a0e8095a28c069e8a3"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
@@ -36,7 +36,7 @@
     "reactive-equivalence-required": "Rust emits runnable code but the observable value does not update after its reactive dependency changes.",
     "intentional-breaking-policy": "Rust intentionally changes a Babel diagnostic policy and requires an explicit migration contract instead of a capability claim.",
     "narrow-component-role": "Rust requires an explicit component role before component-context macros are legal; indirect or anonymous owners fail closed.",
-    "structured-hook-return": "Rust 0.31 enforces readonly and setter rules for structured same-module hook return accessors.",
+    "structured-hook-return": "Rust enforces readonly and setter rules for structured same-module hook return accessors.",
     "standard-decorator-fail-closed": "Rust rejects standard decorators until a target-compatible transform can produce runnable JavaScript.",
     "strict-reactivity-fail-closed": "Rust strictGuarantee rejects reactive control-flow region fallback instead of silently accepting output that requires R006 re-execution."
   },
@@ -31605,6 +31605,11 @@
             "code": "FICT-E001",
             "severity": "warning",
             "guaranteeClass": "advisory"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
           }
         ],
         "codeSha256": "cac2e7b6ecd5a110e31c0aa0febf9c81a418dd31c30ee0399a64662986e8e194"
@@ -32133,7 +32138,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "47a8a0d90ded6647eb261088107355f03cf2aec71be1165b4eef7809ee7079bb"
       },
       "deviationPolicy": null
@@ -32219,6 +32230,11 @@
           },
           {
             "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
             "severity": "warning",
             "guaranteeClass": "fallback"
           }
@@ -43757,7 +43773,28 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "49cd3046bb8dea55930621503933ac6231c11d3250e20d7edbb95cecb5fed97b"
       },
       "deviationPolicy": null
@@ -43818,6 +43855,11 @@
             "code": "FICT-M001",
             "severity": "info",
             "guaranteeClass": "advisory"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
           }
         ],
         "codeSha256": "032d8f4192bfe2d241fd59b847abf02d9cd576a1b3c8fe53aec8d5a54ce06868"
@@ -44604,7 +44646,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "f0f7684f1dd8bdc6be5023cbee01c0f86fd2c1666edd79ff33750da85b5ff88c"
       },
       "deviationPolicy": null
@@ -51179,6 +51227,11 @@
         "status": "ok",
         "diagnostics": [
           {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
             "code": "FICT-R002",
             "severity": "warning",
             "guaranteeClass": "fallback"
@@ -51214,6 +51267,11 @@
       "expected": {
         "status": "error",
         "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "error",
+            "guaranteeClass": "fallback"
+          },
           {
             "code": "FICT-R002",
             "severity": "error",

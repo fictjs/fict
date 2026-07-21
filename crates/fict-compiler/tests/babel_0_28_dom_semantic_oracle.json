@@ -13,7 +13,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "oracleInputsSha256": "38ff0afdb3268096ddfa44e514c30356c23f416d31b7900e1b246c621bc4dc63",
-    "rustCodegenCorpusSha256": "83760623bc982630f873dd08b355eddda9c5c9d96d4838bf133038abb565efea",
+    "rustCodegenCorpusSha256": "29e31deb757e88759211372718e60dc51ae59dd6894cbb1a32c29853e4032424",
     "sharedRuntimePackage": "@fictjs/runtime@0.32.0-next.0",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-runtime"
   },

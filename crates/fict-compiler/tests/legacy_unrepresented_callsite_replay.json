@@ -18,7 +18,7 @@
     "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
     "assertionInventorySha256": "96ad04d4812624987fec46895ca7a54c5cc6b8de3f5552252cba4362051eb186",
-    "rustCodegenCorpusSha256": "83760623bc982630f873dd08b355eddda9c5c9d96d4838bf133038abb565efea",
+    "rustCodegenCorpusSha256": "29e31deb757e88759211372718e60dc51ae59dd6894cbb1a32c29853e4032424",
     "generatorSha256": "ec50a19976c812c42f62e87fcd3cd57545b1bdbf24039859c9790f864fadaf72",
     "captureConfigSha256": "5b383415eefeff180428cf22bad269597133a0d190ce35a57b4567434113bc65",
     "selectedTestFiles": 29,
@@ -29,8 +29,8 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "732bda7d38cb342f11c2225595d71b32091a8be3",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-5944af5781ba11279e18ddec7dac5bd9db40b7d25effe2b95150ae63e53231ff"
+    "reviewedRevision": "6dd54106a7318c039d00750ace9588646a8fcdb6",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-0a504cef0079c779f1604bbc147b47e8f01a58035cf394a0e8095a28c069e8a3"
   },
   "transitionCounts": {
     "ok-to-error": 3,
@@ -39252,9 +39252,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "4aa142d8504cd88a9950f4c81be8e12cd06ba180d0ec420cf67c02fbe2019f62",
-        "deterministicResultSha256": "d1b52e1253719bc5b0dfebd8a48501cdd6acbd77d1b2ab476ba78c51e365f3ad"
+        "deterministicResultSha256": "8697bcd7491a7bce4286f9f542094f966d76d4dda788195238081e122ec4e9ab"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -45792,9 +45798,30 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "72ecb2c36e59001b6a5a78ff05adb61af90140421e8fa002f971cf41fba07c56",
-        "deterministicResultSha256": "ef477c3149e057cebb553dbcc34a8c1b22a2472b2e0668ebaa9bf3b206107a35"
+        "deterministicResultSha256": "7ad90eaede7b234f422772bd0fe14ea1d69824112509bbaecdd11a55f413d8ab"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -49190,10 +49217,15 @@
             "code": "FICT-M001",
             "severity": "info",
             "guaranteeClass": "advisory"
+          },
+          {
+            "code": "FICT-M",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
           }
         ],
         "codeSha256": "85dcc8a38390844e27e0121d9eb169541adb55f431d30f510eb2a8825f010b0b",
-        "deterministicResultSha256": "165b78c43a12104b46ac2c588f981e551f26b5d995050dec75e4bae1059ce3e6"
+        "deterministicResultSha256": "d9a0f0067c3c7a85c821c27e52494c57e034b57e84c80528fe25c744d2e5ccc5"
       },
       "statusTransition": null,
       "transitionPolicy": null
