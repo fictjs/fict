@@ -84,6 +84,17 @@ test('CI validates the live compiler rollout state', () => {
   )
 })
 
+test('normal CI typechecks the compiler fuzz target before the scheduled fuzz run', () => {
+  assert.equal(
+    rootPackage.scripts['test:compiler:fuzz-check'],
+    'cargo check --manifest-path fuzz/Cargo.toml --locked --bin compiler_pipeline',
+  )
+  assert.match(
+    ciWorkflow,
+    /name: Typecheck compiler fuzz target on stable[\s\S]*?if: matrix\.node == '24'[\s\S]*?run: pnpm test:compiler:fuzz-check/,
+  )
+})
+
 test('release publishing uses one dependency-ordered publisher after native certification', () => {
   assert.match(releaseWorkflow, /name: Build native compiler packages/)
   assert.match(releaseWorkflow, /name: Certify native compiler packages/)

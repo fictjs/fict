@@ -69,6 +69,7 @@
     "test:playground:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/playground build && pnpm build:compiler:native-host && node scripts/native-playground-diagnostics-smoke.mjs",
     "test:vscode:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/vscode-extension build && pnpm build:compiler:native-host && node scripts/native-vscode-tooling-smoke.mjs",
     "test:webpack:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/webpack-plugin build && pnpm build:compiler:native-host && node scripts/native-webpack-plugin-test.mjs",
+    "test:compiler:fuzz-check": "cargo check --manifest-path fuzz/Cargo.toml --locked --bin compiler_pipeline",
     "test:compiler:fuzz-lock": "node --test scripts/run-locked-fuzz.test.mjs && node scripts/run-locked-fuzz.mjs --verify-lock",
     "test:compiler:fuzz-build": "pnpm test:compiler:fuzz-lock && node scripts/run-locked-fuzz.mjs build compiler_pipeline",
     "test:compiler:fuzz-smoke": "pnpm test:compiler:fuzz-lock && node scripts/run-locked-fuzz.mjs run compiler_pipeline -- -runs=5000 -timeout=10 -rss_limit_mb=4096",

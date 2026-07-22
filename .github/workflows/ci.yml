@@ -119,6 +119,10 @@ jobs:
           cargo --version
           pnpm verify:rust-workspace
 
+      - name: Typecheck compiler fuzz target on stable
+        if: matrix.node == '24'
+        run: pnpm test:compiler:fuzz-check
+
       - name: Build and smoke host native compiler
         run: pnpm test:compiler:native-host
 

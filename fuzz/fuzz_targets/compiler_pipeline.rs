@@ -27,6 +27,7 @@ fuzz_target!(|data: &[u8]| {
     } else {
         OxcModuleKind::CommonJs
     };
+    let strict_guarantee = data[1] & 0b10 == 0;
     let frontend = build_hir(
         source,
         OxcCompileOptions {
@@ -36,7 +37,7 @@ fuzz_target!(|data: &[u8]| {
             sourcemap: data[0] & 0b1000 != 0,
         },
         &HirBuildOptions {
-            strict_guarantee: data[1] & 0b10 == 0,
+            strict_guarantee,
             ..HirBuildOptions::default()
         },
     );
@@ -47,6 +48,7 @@ fuzz_target!(|data: &[u8]| {
 
     let options = CorePassOptions {
         optimize: data[0] & 0b100 == 0,
+        strict_guarantee,
         budgets: CorePassBudgets {
             max_functions: 512,
             max_values: 20_000,
