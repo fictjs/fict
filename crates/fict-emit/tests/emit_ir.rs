@@ -4,8 +4,9 @@ use fict_emit::{
     RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
 };
 use fict_hir::{
-    BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
-    HirScope, HirTerminator, LiteralValue, Origin, ScopeId, ScopeKind, SourceSpan, TerminatorKind,
+    BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, GlobalId, HirBlock, HirFile,
+    HirFunction, HirGlobal, HirScope, HirTerminator, LiteralValue, Origin, ScopeId, ScopeKind,
+    SourceSpan, TerminatorKind,
 };
 use fict_reactivity::RegionAnalysis;
 
@@ -149,6 +150,27 @@ fn program() -> EmitProgram {
 #[test]
 fn accepts_exact_helper_intents_and_defined_temporaries() {
     verify_emit_program(&hir(), &regions(), &program()).expect("valid EmitIR");
+}
+
+#[test]
+fn rejects_generated_names_that_capture_authored_free_identifiers() {
+    let mut hir = hir();
+    hir.globals.push(HirGlobal {
+        id: GlobalId::new(0),
+        name: "createSignal".into(),
+        origin: origin(),
+    });
+    hir.authored_free_names = vec!["createSignal".into(), "value".into()];
+
+    let diagnostics = verify_emit_program(&hir, &regions(), &program())
+        .expect_err("generated imports and temporaries must preserve authored globals");
+    let codes = diagnostics
+        .as_slice()
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect::<Vec<_>>();
+    assert!(codes.contains(&"FICT-EMIT-IMPORT-COLLISION"), "{codes:?}");
+    assert!(codes.contains(&"FICT-EMIT-TEMP"), "{codes:?}");
 }
 
 #[test]

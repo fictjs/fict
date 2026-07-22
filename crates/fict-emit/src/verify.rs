@@ -60,6 +60,8 @@ pub fn verify_emit_program(
         .bindings
         .iter()
         .map(|binding| binding.display_name.as_str())
+        .chain(hir.globals.iter().map(|global| global.name.as_str()))
+        .chain(hir.authored_free_names.iter().map(String::as_str))
         .chain(hir.functions.iter().flat_map(|function| {
             function
                 .locals
@@ -70,7 +72,7 @@ pub fn verify_emit_program(
     if import_names.iter().any(|name| source_names.contains(name)) {
         diagnostics.push(emit_error(
             "FICT-EMIT-IMPORT-COLLISION",
-            "generated runtime import locals must not collide with any source binding",
+            "generated runtime import locals must not collide with any authored identifier",
         ));
     }
     for function in &program.functions {
@@ -258,7 +260,7 @@ pub fn verify_emit_program(
             {
                 diagnostics.push(emit_error(
                     "FICT-EMIT-TEMP",
-                    "temporaries must be dense, unique identifiers without import collisions",
+                    "temporaries must be dense, unique identifiers without authored or import collisions",
                 ));
             }
         }
