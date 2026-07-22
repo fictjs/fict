@@ -36,7 +36,7 @@ test('Babel 0.28 semantic oracle has exact independent provenance', () => {
     },
     oracleInputsSha256: sha256(inputsText),
   })
-  assert.equal(inputs.fixtures.length, 24)
+  assert.equal(inputs.fixtures.length, 25)
   assert.equal(oracle.fixtures.length, inputs.fixtures.length)
 })
 

@@ -603,6 +603,27 @@ struct TypedExpressionCollector<'semantic> {
     facts: Vec<TypedExpressionFact>,
     classes: Vec<ClassFact>,
     decorators: Vec<DecoratorFact>,
+    class_self_references: BTreeSet<(u32, u32)>,
+}
+
+struct ClassSelfReferenceCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    symbol: SymbolId,
+    spans: BTreeSet<(u32, u32)>,
+}
+
+impl<'a> Visit<'a> for ClassSelfReferenceCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let resolved = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id());
+        let resolves_to_class = resolved == Some(self.symbol);
+        if resolves_to_class {
+            self.spans
+                .insert((identifier.span.start, identifier.span.end));
+        }
+    }
 }
 
 impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
@@ -881,6 +902,23 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
     }
 
     fn visit_class(&mut self, class: &Class<'a>) {
+        let declaration_binding = (class.r#type == ClassType::ClassDeclaration)
+            .then(|| {
+                class
+                    .id
+                    .as_ref()
+                    .and_then(|identifier| identifier.symbol_id.get())
+            })
+            .flatten();
+        if let Some(symbol) = declaration_binding {
+            let mut self_references = ClassSelfReferenceCollector {
+                scoping: self.scoping,
+                symbol,
+                spans: BTreeSet::new(),
+            };
+            self_references.visit_class(class);
+            self.class_self_references.extend(self_references.spans);
+        }
         let mut deferred_initializers = Vec::new();
         let mut decorator_spans: Vec<_> = class
             .decorators
@@ -951,14 +989,7 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
         }
         self.classes.push(ClassFact {
             span: source_span(class.span),
-            declaration_binding: (class.r#type == ClassType::ClassDeclaration)
-                .then(|| {
-                    class
-                        .id
-                        .as_ref()
-                        .and_then(|identifier| identifier.symbol_id.get())
-                })
-                .flatten(),
+            declaration_binding,
             deferred_initializers,
             eager_spans,
             decorator_spans,
@@ -1571,6 +1602,7 @@ struct Builder<'source, 'semantic> {
     configured_scope_names: BTreeSet<String>,
     configured_bindings: BTreeSet<BindingId>,
     reactive_value_bindings: BTreeSet<BindingId>,
+    class_self_reference_spans: BTreeSet<(u32, u32)>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
     control_flow_plans: BTreeMap<FunctionId, structured_control_flow::FunctionControlFlowPlan>,
     strict_guarantee: bool,
@@ -1820,6 +1852,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             configured_scope_names: option_names,
             configured_bindings,
             reactive_value_bindings: BTreeSet::new(),
+            class_self_reference_spans: BTreeSet::new(),
             reactive_functions: BTreeMap::new(),
             control_flow_plans: BTreeMap::new(),
             strict_guarantee: options.strict_guarantee,
@@ -1958,8 +1991,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             facts: Vec::new(),
             classes: Vec::new(),
             decorators: Vec::new(),
+            class_self_references: BTreeSet::new(),
         };
         typed_expressions.visit_program(program);
+        self.class_self_reference_spans = typed_expressions.class_self_references.clone();
         let binding_to_symbol: BTreeMap<_, _> = self
             .symbol_to_binding
             .iter()
@@ -3581,7 +3616,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 &mut accessor_read_suppressions,
             );
         }
-        let projected_root_suppressions: BTreeSet<_> = member_reads
+        let mut projected_root_suppressions: BTreeSet<_> = member_reads
             .iter()
             .filter_map(|fact| fact.place.root_reference_span)
             .chain(
@@ -3602,6 +3637,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             )
             .map(|span| (span.start(), span.end()))
             .collect();
+        projected_root_suppressions.extend(
+            typed_expression_collector
+                .class_self_references
+                .iter()
+                .copied(),
+        );
         let reads = self.collect_reads(
             &reactive_targets,
             &accessor_read_suppressions,
@@ -4086,12 +4127,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             self.mark_span_deferred(owner, block, *initializer);
         }
         let inputs = self.instruction_inputs_for_spans(owner, block, &class.eager_spans, true);
+        let declaration_binding = class
+            .declaration_binding
+            .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
+        let mut referenced_bindings =
+            self.read_referenced_bindings_in_spans(owner, &class.eager_spans);
+        if let Some(binding) = declaration_binding {
+            // The declaration name is rebound as the inner name of the generated named class
+            // expression. It must not become a dependency on the outer derived accessor.
+            referenced_bindings.retain(|candidate| *candidate != binding);
+        }
         let fragment = self.add_fragment(
             SyntaxFragmentKind::Class,
             class.span,
             SyntaxSummary {
-                referenced_bindings: self
-                    .read_referenced_bindings_in_spans(owner, &class.eager_spans),
+                referenced_bindings,
                 has_side_effects: true,
                 may_throw: true,
                 contains_decorators: !class.decorator_spans.is_empty(),
@@ -4106,9 +4156,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             HirInstructionKind::SyntaxFragment { fragment, inputs },
             InstructionSemantics::CONSERVATIVE_EAGER,
         );
-        if let Some(binding) = class
-            .declaration_binding
-            .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied())
+        if let Some(binding) = declaration_binding
             && let Some(local) = self.functions[owner.as_usize()]
                 .locals
                 .iter()
@@ -5925,6 +5973,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .filter_map(|reference| {
                         let reference = self.semantic.scoping().get_reference(*reference);
                         let reference_span = source_span(self.semantic.reference_span(reference));
+                        if self
+                            .class_self_reference_spans
+                            .contains(&(reference_span.start(), reference_span.end()))
+                        {
+                            return None;
+                        }
                         (reference_span.start() >= span.start()
                             && reference_span.end() <= span.end())
                         .then_some(reference_span.start())
@@ -5955,6 +6009,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             return None;
                         }
                         let reference_span = source_span(self.semantic.reference_span(reference));
+                        if self
+                            .class_self_reference_spans
+                            .contains(&(reference_span.start(), reference_span.end()))
+                        {
+                            return None;
+                        }
                         (reference_span.start() >= span.start()
                             && reference_span.end() <= span.end())
                         .then_some(reference_span.start())
@@ -5989,6 +6049,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             return None;
                         }
                         let reference_span = source_span(self.semantic.reference_span(reference));
+                        if self
+                            .class_self_reference_spans
+                            .contains(&(reference_span.start(), reference_span.end()))
+                        {
+                            return None;
+                        }
                         (self.function_owner_for_span(reference_span) == owner
                             && spans
                                 .iter()

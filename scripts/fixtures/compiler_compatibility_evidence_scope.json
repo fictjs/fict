@@ -187,7 +187,7 @@
       "artifact": "crates/fict-compiler/tests/babel_0_28_semantic_oracle.json",
       "generator": "scripts/generate-babel-semantic-oracle.mjs",
       "ciTest": "scripts/babel-compiler-semantic-oracle.test.mjs",
-      "fixtureCount": 24,
+      "fixtureCount": 25,
       "exactBabelCompilerExecutedDuringGeneration": true,
       "frozenBabelOutputExecutedInCi": true,
       "currentRustOutputExecutedInCi": true,

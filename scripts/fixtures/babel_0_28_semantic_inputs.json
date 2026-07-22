@@ -381,6 +381,23 @@
       }
     },
     {
+      "id": "reactive-class-declaration-order",
+      "request": {
+        "code": "import { $state } from 'fict'\nexport class NamedExport { static value = 'named' }\nexport default class DefaultExport { static value = 'default' }\nexport function Scenario() {\n  const log = []\n  let tdz\n  try { Child } catch (error) { tdz = error.name }\n  class Base { static tag = 'base' }\n  let Parent = $state(Base)\n  let key = $state('first')\n  class Child extends (log.push('extends'), Parent) {\n    [(log.push('computed'), key)]() { return 'method' }\n    static parent = (log.push('field'), Parent)\n    static { log.push('block'); this.self = Child }\n  }\n  const snapshots = []\n  const firstResult = []\n  snapshots.push(Child)\n  const firstInstance = new Child()\n  firstResult.push(Object.getPrototypeOf(snapshots[0]).tag, typeof firstInstance.first, snapshots[0].self === snapshots[0])\n  Parent = class Next { static tag = 'next' }\n  key = 'second'\n  snapshots.push(Child)\n  const secondInstance = new Child()\n  return {\n    tdz,\n    log,\n    exports: [NamedExport.value, DefaultExport.value],\n    firstResult,\n    secondResult: [Object.getPrototypeOf(snapshots[1]).tag, typeof secondInstance.second, snapshots[1].self === snapshots[1]],\n    changed: snapshots[0] !== snapshots[1],\n  }\n}\n",
+        "filename": "/oracle/reactive-class-declaration-order.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false,
+          "dev": false
+        }
+      },
+      "invocation": {
+        "exportName": "Scenario",
+        "arguments": []
+      }
+    },
+    {
       "id": "class-field-order",
       "request": {
         "code": "export function Scenario(seed: number = 2) {\n  class Counter {\n    static label = 'counter'\n    value = seed\n    increment() {\n      this.value += 1\n      return this.value\n    }\n  }\n  const counter = new Counter()\n  return [Counter.label, counter.value, counter.increment(), counter.value]\n}\n",

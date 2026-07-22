@@ -286,3 +286,28 @@ fn maps_erased_typescript_class_fields_and_multiline_jsx_origins() {
     output.assert_maps("model.value", 0, "model.value", 0);
     output.assert_maps("model.value", 1, "model.value", 1);
 }
+
+#[test]
+fn maps_reactive_class_declaration_definition_origins() {
+    let source = concat!(
+        "import { $state } from 'fict';\n",
+        "export function Scenario() {\n",
+        "  class Base {}\n",
+        "  let Parent = $state(Base);\n",
+        "  let key = $state('run');\n",
+        "  class Child extends Parent {\n",
+        "    [key]() { return 1; }\n",
+        "    static value = Parent;\n",
+        "    static { this.self = Child; }\n",
+        "  }\n",
+        "  return Child;\n",
+        "}\n",
+    );
+    let output = MappedOutput::compile(source, "reactive-class-declaration.tsx");
+
+    output.assert_maps("class Child", 0, "class Child", 0);
+    output.assert_maps("Parent()", 0, "Parent", 1);
+    output.assert_maps("key()", 0, "key", 1);
+    output.assert_maps("static value = Parent()", 0, "static value = Parent", 0);
+    output.assert_maps("this.self = Child", 0, "this.self = Child", 0);
+}

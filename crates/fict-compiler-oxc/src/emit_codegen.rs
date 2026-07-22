@@ -26,14 +26,15 @@ use oxc::{
         ast::{
             Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AwaitExpression,
-            BindingPattern, BindingRestElement, CallExpression, ChainElement, ExportSpecifier,
-            Expression, FormalParameter, FormalParameterKind, FormalParameterRest,
-            FormalParameters, Function, FunctionBody, FunctionType, IdentifierName,
-            IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind, JSXAttributeItem,
-            JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName, JSXFragment,
-            JSXMemberExpression, JSXMemberExpressionObject, ModuleExportName, ObjectProperty,
-            ObjectPropertyKind, Program, PropertyKey, PropertyKind, SimpleAssignmentTarget,
-            Statement, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            BindingPattern, BindingRestElement, CallExpression, ChainElement, Class, ClassType,
+            Declaration, ExportSpecifier, Expression, FormalParameter, FormalParameterKind,
+            FormalParameterRest, FormalParameters, Function, FunctionBody, FunctionType,
+            IdentifierName, IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
+            JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            ModuleExportName, ObjectProperty, ObjectPropertyKind, Program, PropertyKey,
+            PropertyKind, SimpleAssignmentTarget, Statement, VariableDeclaration,
+            VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
@@ -3919,6 +3920,18 @@ fn collect_object_pattern_defaults<'a>(
     }
 }
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
+    fn visit_statements(&mut self, statements: &mut ArenaVec<'a, Statement<'a>>) {
+        if !self.derived_creations.is_empty() {
+            let authored = statements.take_in(&self.allocator);
+            let mut rewritten = ArenaVec::with_capacity_in(authored.len(), &self.allocator);
+            for statement in authored {
+                rewritten.push(self.rewrite_derived_class_declaration(statement));
+            }
+            *statements = rewritten;
+        }
+        walk_mut::walk_statements(self, statements);
+    }
+
     fn visit_function(&mut self, function: &mut Function<'a>, flags: ScopeFlags) {
         let location = (function.span.start, function.span.end);
         if let Some(body) = &mut function.body {
@@ -4266,6 +4279,76 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     }
 }
 impl<'a> AstRewriter<'a, '_> {
+    fn rewrite_derived_class_declaration(&self, statement: Statement<'a>) -> Statement<'a> {
+        match statement {
+            Statement::ClassDeclaration(class) if self.class_has_derived_creation(&class) => {
+                self.derived_class_variable_statement(class)
+            }
+            Statement::ExportNamedDeclaration(mut export) => {
+                let derived = matches!(
+                    export.declaration.as_ref(),
+                    Some(Declaration::ClassDeclaration(class))
+                        if self.class_has_derived_creation(class)
+                );
+                if derived {
+                    let Some(Declaration::ClassDeclaration(class)) = export.declaration.take()
+                    else {
+                        unreachable!("selected named export class declaration")
+                    };
+                    let Statement::VariableDeclaration(variable) =
+                        self.derived_class_variable_statement(class)
+                    else {
+                        unreachable!("derived class lowering produces a variable declaration")
+                    };
+                    export.declaration = Some(Declaration::VariableDeclaration(variable));
+                }
+                Statement::ExportNamedDeclaration(export)
+            }
+            statement => statement,
+        }
+    }
+
+    fn class_has_derived_creation(&self, class: &Class<'_>) -> bool {
+        class
+            .id
+            .as_ref()
+            .and_then(|identifier| identifier.symbol_id.get())
+            .and_then(|symbol| self.semantic_identities.binding_for_symbol(symbol))
+            .is_some_and(|binding| self.derived_creations.contains_key(&binding))
+    }
+
+    fn derived_class_variable_statement(
+        &self,
+        mut class: ArenaBox<'a, Class<'a>>,
+    ) -> Statement<'a> {
+        let span = class.span;
+        let identifier = class
+            .id
+            .take()
+            .expect("derived class declaration has a lexical binding");
+        // A declaration and a named expression use different semantic bindings. CloneIn clears
+        // the declaration SymbolId so the generated inner name is rebuilt in the class scope.
+        class.id = Some(identifier.clone_in(self.allocator));
+        class.r#type = ClassType::ClassExpression;
+        let initializer = Expression::ClassExpression(class);
+        let declarator = VariableDeclarator::new(
+            span,
+            VariableDeclarationKind::Const,
+            BindingPattern::BindingIdentifier(ArenaBox::new_in(identifier, &self.allocator)),
+            NONE,
+            Some(initializer),
+            false,
+            &AstBuilder::new(self.allocator),
+        );
+        Statement::new_variable_declaration(
+            span,
+            VariableDeclarationKind::Const,
+            ArenaVec::from_value_in(declarator, &self.allocator),
+            false,
+            &AstBuilder::new(self.allocator),
+        )
+    }
+
     fn materialize_awaited_getter_value(
         &mut self,
         value: Expression<'a>,

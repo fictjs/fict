@@ -12,7 +12,7 @@
       "@babel/plugin-transform-modules-commonjs": "7.28.6",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "oracleInputsSha256": "f2f083a05dfb494b3d11aaf7e6ef822818a7d03c4784a7113eaaa8fba6fa4bcb"
+    "oracleInputsSha256": "9f1fb096d88f7ef473b8a26aa4d582005ef7dd2e854ce9fac2bdeb70cbcff372"
   },
   "fixtures": [
     {
@@ -365,6 +365,20 @@
         { "done": false, "value": 2 },
         { "done": true, "value": 3 }
       ]
+    },
+    {
+      "id": "reactive-class-declaration-order",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "a1324a9e6dbf638e4c073743d0e28d568e0c49e78265cdeab98c0b2adc671325",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.NamedExport = void 0;\nexports.Scenario = Scenario;\nexports.default = void 0;\nvar _internal = require(\"fict/internal\");\nclass NamedExport {\n  static value = 'named';\n}\nexports.NamedExport = NamedExport;\nclass DefaultExport {\n  static value = 'default';\n}\nexports.default = DefaultExport;\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const log = [];\n  const __region_1 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    let tdz = void 0;\n    try {\n      Child();\n    } catch (error) {\n      tdz = error.name;\n    }\n    return {\n      tdz\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const {\n    tdz\n  } = __region_1();\n  let Base = class Base {\n    static tag = 'base';\n  };\n  const Parent = (0, _internal.__fictUseSignal)(__fictCtx, Base, {\n    name: \"Parent\"\n  });\n  const key = (0, _internal.__fictUseSignal)(__fictCtx, \"first\", {\n    name: \"key\"\n  });\n  const Child = (0, _internal.__fictUseMemo)(__fictCtx, () => class Child extends (log.push(\"extends\"), Parent()) {\n    [(log.push('computed'), key())]() {\n      return 'method';\n    }\n    static parent = (log.push('field'), Parent());\n    static {\n      log.push('block');\n      this.self = Child;\n    }\n  }, {\n    name: \"Child\"\n  });\n  const snapshots = [];\n  const firstResult = [];\n  snapshots.push(Child());\n  const firstInstance = (__eager_firstInstance => (__eager_firstInstance(), __eager_firstInstance))((0, _internal.__fictUseMemo)(__fictCtx, () => new (Child())(), {\n    name: \"firstInstance\"\n  }));\n  firstResult.push(Object.getPrototypeOf(snapshots[0]).tag, typeof firstInstance().first, snapshots[0].self === snapshots[0]);\n  Parent(class Next {\n    static tag = 'next';\n  });\n  key(\"second\");\n  snapshots.push(Child());\n  const secondInstance = (__eager_secondInstance => (__eager_secondInstance(), __eager_secondInstance))((0, _internal.__fictUseMemo)(__fictCtx, () => new (Child())(), {\n    name: \"secondInstance\"\n  }));\n  return {\n    tdz,\n    log,\n    exports: [NamedExport.value, DefaultExport.value],\n    firstResult,\n    secondResult: [Object.getPrototypeOf(snapshots[1]).tag, typeof secondInstance().second, snapshots[1].self === snapshots[1]],\n    changed: snapshots[0] !== snapshots[1]\n  };\n}",
+      "expected": {
+        "changed": true,
+        "exports": ["named", "default"],
+        "firstResult": ["base", "function", true],
+        "log": ["extends", "computed", "field", "block", "extends", "computed", "field", "block"],
+        "secondResult": ["next", "function", true],
+        "tdz": "ReferenceError"
+      }
     },
     {
       "id": "class-field-order",
