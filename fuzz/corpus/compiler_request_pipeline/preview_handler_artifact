@@ -1,0 +1,4 @@
+export function App() {
+  return <button onClick$={() => undefined}>click</button>
+}
+// fuzz-seed 8040

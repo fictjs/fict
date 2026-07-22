@@ -26,7 +26,7 @@ jobs:
     name: Rust Compiler Scheduled Fuzz
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
@@ -41,11 +41,18 @@ jobs:
           node scripts/run-locked-fuzz.mjs --verify-lock
 
       - name: Build compiler fuzz targets
-        run: node scripts/run-locked-fuzz.mjs build compiler_pipeline
+        run: |
+          node scripts/run-locked-fuzz.mjs build compiler_pipeline
+          node scripts/run-locked-fuzz.mjs build compiler_request_pipeline
 
       - name: Fuzz parser, HIR, and core passes
         run: >-
           node scripts/run-locked-fuzz.mjs run compiler_pipeline --
+          -max_total_time=600 -timeout=10 -rss_limit_mb=4096
+
+      - name: Fuzz the public compiler request pipeline
+        run: >-
+          node scripts/run-locked-fuzz.mjs run compiler_request_pipeline --
           -max_total_time=600 -timeout=10 -rss_limit_mb=4096
 
       - name: Upload fuzz crash artifacts

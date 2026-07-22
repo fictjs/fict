@@ -8,14 +8,24 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-fict-compiler = { path = "../crates/fict-compiler" }
+fict-compiler = { path = "../crates/fict-compiler", features = ["preview"] }
 fict-compiler-oxc = { path = "../crates/fict-compiler-oxc" }
+fict-diagnostics = { path = "../crates/fict-diagnostics" }
 fict-hir = { path = "../crates/fict-hir" }
+fict-metadata = { path = "../crates/fict-metadata" }
 libfuzzer-sys = "=0.4.13"
+serde_json = "1"
 
 [[bin]]
 name = "compiler_pipeline"
 path = "fuzz_targets/compiler_pipeline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compiler_request_pipeline"
+path = "fuzz_targets/compiler_request_pipeline.rs"
 test = false
 doc = false
 bench = false

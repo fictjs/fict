@@ -87,11 +87,24 @@ test('CI validates the live compiler rollout state', () => {
 test('normal CI typechecks the compiler fuzz target before the scheduled fuzz run', () => {
   assert.equal(
     rootPackage.scripts['test:compiler:fuzz-check'],
-    'cargo check --manifest-path fuzz/Cargo.toml --locked --bin compiler_pipeline',
+    'cargo check --manifest-path fuzz/Cargo.toml --locked --bins',
   )
   assert.match(
     ciWorkflow,
     /name: Typecheck compiler fuzz target on stable[\s\S]*?if: matrix\.node == '24'[\s\S]*?run: pnpm test:compiler:fuzz-check/,
+  )
+})
+
+test('scheduled fuzz retains both the HIR and complete public request pipelines', () => {
+  assert.match(ciWorkflow, /build compiler_pipeline/)
+  assert.match(ciWorkflow, /build compiler_request_pipeline/)
+  assert.match(
+    ciWorkflow,
+    /run compiler_pipeline --[\s\S]*?-max_total_time=600 -timeout=10 -rss_limit_mb=4096/,
+  )
+  assert.match(
+    ciWorkflow,
+    /run compiler_request_pipeline --[\s\S]*?-max_total_time=600 -timeout=10 -rss_limit_mb=4096/,
   )
 })
 

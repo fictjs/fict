@@ -182,6 +182,7 @@ name = "fict-compiler"
 version = "0.0.0"
 dependencies = [
  "fict-compiler-oxc",
+ "fict-compiler-preview",
  "fict-diagnostics",
  "fict-emit",
  "fict-hir",
@@ -208,6 +209,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fict-compiler-preview"
+version = "0.0.0"
+dependencies = [
+ "fict-diagnostics",
+ "fict-emit",
+ "fict-hir",
+ "fict-metadata",
+]
+
+[[package]]
 name = "fict-diagnostics"
 version = "0.0.0"
 dependencies = [
@@ -230,8 +241,11 @@ version = "0.0.0"
 dependencies = [
  "fict-compiler",
  "fict-compiler-oxc",
+ "fict-diagnostics",
  "fict-hir",
+ "fict-metadata",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]

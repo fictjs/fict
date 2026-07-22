@@ -1,0 +1,11 @@
+import { $state } from 'fict'
+
+export function Scenario() {
+  class Base {}
+  let Parent = $state(Base)
+  class Child extends Parent {
+    static self = Child
+  }
+  return new Child()
+}
+// fuzz-seed 141

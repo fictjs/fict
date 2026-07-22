@@ -210,8 +210,14 @@ segments, exported/internal binding ownership, mutable export synchronization,
 metadata paths, source order, and origins. A verifier MUST reject an unresolved
 namespace reference or write rather than silently emit a best-effort result.
 
-Verification: TypeScript/CTS/namespace fixtures are Rust conformance tests and
-the native fuzz target exercises the same request pipeline.
+Verification: TypeScript/CTS/namespace fixtures are Rust conformance tests. The
+high-throughput `compiler_pipeline` fuzz target verifies OXC, HIR, and core-pass
+invariants, while the independent `compiler_request_pipeline` target enters via
+the public `CompileRequest` and production `compile()` boundary. The latter
+checks request/result N-API JSON round trips, metadata policy, EmitIR and OXC
+emission, Preview artifacts, source-map validation/composition, generated-output
+reparsing, deterministic results, and strict/fallback diagnostic policy. A
+reactive class declaration is retained as a fixed request-pipeline seed.
 
 ## Compatibility and release
 
