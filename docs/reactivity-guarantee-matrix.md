@@ -44,6 +44,7 @@ dev/test migration experiments may opt out only outside production.
 | Unsupported  | `$state` / `$effect` inside nested functions                                               | Compile-time error                                                                                          | Placement validation error   |
 | Unsupported  | Invalid `$state` assignment patterns (`const {x} = $state(...)`)                           | Compile-time error                                                                                          | Macro usage validation error |
 | Out of model | `eval` / `new Function` / highly dynamic reflection                                        | Not statically provable                                                                                     | No full guarantee            |
+| Out of model | Runtime value violates a direct built-in `$state<T>` receiver contract                     | The type argument is a caller-owned proof obligation; the compiler adds no runtime family check             | Native JavaScript failure    |
 | Out of model | External direct DOM mutation / unstable external node ownership                            | Runtime invariant may be broken                                                                             | No compiler guarantee        |
 | Out of model | Third-party package hooks without `package.json#fict` metadata                             | Import stays opaque; compiler cannot recover hook return reactivity                                         | No auto-recovery guarantee   |
 

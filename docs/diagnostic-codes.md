@@ -501,11 +501,14 @@ and can otherwise leave rendered output stale or defer the failure to a runtime 
 closure writes to the alias fail compilation. Projected mutations such as `alias[key]++` and method
 calls that are not certified receiver-read-only use `FICT-M` because they mutate, or may mutate, the
 current nested value rather than replace the signal. Certification is receiver-aware, not based on
-the property name alone; an opaque alias with a method named `get` is still unproven. An explicit
-built-in `$state<T>` receiver contract or same-family initializer and replacement chain can retain
-the proof, while an unproven or different-family replacement invalidates it. Whole-value assignment
-to the original state binding remains supported; projected writes through that root use the same
-`FICT-M` policy.
+the property name alone; an opaque alias with a method named `get` is still unproven. A direct,
+syntactically recognized built-in `$state<T>` receiver contract or same-family initializer and
+replacement chain can retain the proof, while an unproven or different-family replacement
+invalidates it. Assertions, binding annotations, local type aliases, and shadowed built-in names do
+not create this proof. A direct built-in `$state<T>` contract is caller-owned and is not checked at
+runtime; a value that violates it is outside `strictGuarantee`. Whole-value assignment to the
+original state binding remains supported; projected writes through that root use the same `FICT-M`
+policy.
 
 **Fix:** Update the original state binding or assign the replacement to a new ordinary local:
 

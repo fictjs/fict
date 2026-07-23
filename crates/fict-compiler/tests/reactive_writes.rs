@@ -367,6 +367,80 @@ fn state_derived_method_calls_fail_closed_unless_the_receiver_operation_is_reado
 }
 
 #[test]
+fn treats_only_direct_builtin_state_type_arguments_as_caller_owned_receiver_proofs() {
+    for optimize in [false, true] {
+        let accepted = compile_source_with_strict(
+            r#"
+                import { $state } from 'fict'
+                function App(value: unknown) {
+                    const rows = $state<number[]>(value as number[])
+                    return rows.map(row => row + 1).join(',')
+                }
+            "#,
+            CompilerOptions {
+                optimize,
+                ..CompilerOptions::default()
+            },
+            true,
+        );
+        assert!(!accepted.has_errors(), "{:#?}", accepted.diagnostics);
+        assert!(!accepted.code.is_empty());
+        assert!(
+            accepted
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-M")
+        );
+
+        for source in [
+            r#"
+                import { $state } from 'fict'
+                function App(value: unknown) {
+                    const rows = $state(value as number[])
+                    return rows.map(row => row + 1).join(',')
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App(value: unknown) {
+                    let rows: number[] = $state(value as number[])
+                    return rows.map(row => row + 1).join(',')
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                type Rows = number[]
+                function App(value: unknown) {
+                    const rows = $state<Rows>(value as Rows)
+                    return rows.map(row => row + 1).join(',')
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                type Array<T> = { map(callback: (value: T) => T): T[] }
+                function App(value: unknown) {
+                    const rows = $state<Array<number>>(value as Array<number>)
+                    return rows.map(row => row + 1).join(',')
+                }
+            "#,
+        ] {
+            let rejected = compile_source_with_strict(
+                source,
+                CompilerOptions {
+                    optimize,
+                    ..CompilerOptions::default()
+                },
+                true,
+            );
+            let diagnostic = find_error(&rejected, "FICT-M");
+            assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+            assert_eq!(diagnostic.guarantee_class, GuaranteeClass::Fallback);
+            assert!(rejected.code.is_empty());
+        }
+    }
+}
+
+#[test]
 fn permits_state_roots_plain_aliases_shadowing_and_initial_alias_assignment() {
     for source in [
         r#"
