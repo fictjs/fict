@@ -20,7 +20,8 @@ use fict_hir::{
     ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StateMethodCallSemantics, StateReceiverKind,
     StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
     TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
-    ValueKind, classify_state_method_call, verify_hir, verify_module_plan,
+    ValueKind, classify_state_method_call, classify_state_method_result, verify_hir,
+    verify_module_plan,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -1604,6 +1605,8 @@ struct Builder<'source, 'semantic> {
     reactive_value_bindings: BTreeSet<BindingId>,
     class_self_reference_spans: BTreeSet<(u32, u32)>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
+    state_receivers: BTreeMap<SymbolId, StateReceiverKind>,
+    transformed_list_calls: BTreeSet<(u32, u32)>,
     control_flow_plans: BTreeMap<FunctionId, structured_control_flow::FunctionControlFlowPlan>,
     strict_guarantee: bool,
     reactive_creation_control_flow_severity: DiagnosticSeverity,
@@ -1854,6 +1857,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             reactive_value_bindings: BTreeSet::new(),
             class_self_reference_spans: BTreeSet::new(),
             reactive_functions: BTreeMap::new(),
+            state_receivers: BTreeMap::new(),
+            transformed_list_calls: BTreeSet::new(),
             control_flow_plans: BTreeMap::new(),
             strict_guarantee: options.strict_guarantee,
             reactive_creation_control_flow_severity: options
@@ -2036,6 +2041,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             tags: Vec::new(),
         };
         jsx.visit_program(program);
+        for fact in &jsx.roots {
+            collect_transformed_list_call_spans(&fact.root, &mut self.transformed_list_calls);
+        }
         let mut class_bindings = ClassBindingCollector::new(self.semantic.scoping());
         class_bindings.visit_program(program);
         let mut mutations = MutationCollector {
@@ -2074,6 +2082,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &reactive_symbols.state,
             &reactive_symbols.state_receivers,
         );
+        self.state_receivers
+            .clone_from(&reactive_symbols.state_receivers);
         self.validate_advisory_diagnostics(program, &calls.calls, &reactive_symbols.reactive);
         self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
@@ -4895,6 +4905,22 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
     fn materialize_call(&mut self, owner: FunctionId, call: &CallFact) -> Option<ValueId> {
         let block = self.planned_block_for_span(owner, call.span);
+        let state_receiver_kind = if self
+            .transformed_list_calls
+            .contains(&(call.span.start(), call.span.end()))
+        {
+            StateReceiverKind::Array
+        } else {
+            call.callee_reference
+                .as_ref()
+                .and_then(|place| match &place.base {
+                    PlannedPlaceBase::Binding(symbol) => self.state_receivers.get(symbol).copied(),
+                    PlannedPlaceBase::UnresolvedGlobal { .. }
+                    | PlannedPlaceBase::Context { .. }
+                    | PlannedPlaceBase::Expression { .. } => None,
+                })
+                .unwrap_or(StateReceiverKind::Unknown)
+        };
         let callee = self.control_expression_value(
             owner,
             block,
@@ -4956,6 +4982,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             HirInstructionKind::Call(CallInstruction {
                 callee,
                 callee_reference,
+                state_receiver_kind,
                 arguments,
                 host,
                 macro_kind: call
@@ -6385,6 +6412,47 @@ enum RawJsxListReceiver {
         projected: bool,
         known_array: bool,
     },
+}
+
+fn collect_transformed_list_call_spans(node: &RawJsxNode, spans: &mut BTreeSet<(u32, u32)>) {
+    let (attributes, children) = match node {
+        RawJsxNode::Element {
+            attributes,
+            children,
+            ..
+        } => (Some(attributes.as_slice()), children.as_slice()),
+        RawJsxNode::Fragment { children, .. } => (None, children.as_slice()),
+    };
+    if let Some(attributes) = attributes {
+        for attribute in attributes {
+            if let RawJsxAttribute::Named {
+                value: RawJsxAttributeValue::Node(node),
+                ..
+            } = attribute
+            {
+                collect_transformed_list_call_spans(node, spans);
+            }
+        }
+    }
+    for child in children {
+        match child {
+            RawJsxChild::Expression {
+                span,
+                list,
+                embedded_nodes,
+                ..
+            } => {
+                if list.is_some() {
+                    spans.insert((span.start(), span.end()));
+                }
+                for node in embedded_nodes {
+                    collect_transformed_list_call_spans(node, spans);
+                }
+            }
+            RawJsxChild::Node(node) => collect_transformed_list_call_spans(node, spans),
+            RawJsxChild::Text { .. } | RawJsxChild::Spread { .. } => {}
+        }
+    }
 }
 
 fn collect_reactive_component_accessor_spans(
@@ -9551,6 +9619,17 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         collector.symbols
     }
 
+    fn retained_reactive_references(&self, expression: &Expression<'_>) -> BTreeSet<SymbolId> {
+        let mut collector = RetainedReactiveIdentityCollector {
+            scoping: self.scoping,
+            reactive_symbols: self.reactive_symbols,
+            hook_return_shapes: self.hook_return_shapes,
+            symbols: BTreeSet::new(),
+        };
+        collector.visit_expression(expression);
+        collector.symbols
+    }
+
     fn callback_captures(&self, argument: EscapeArgument<'_, '_>) -> BTreeSet<SymbolId> {
         let mut captured = BTreeSet::new();
         for (span, symbols) in self.capturing_functions {
@@ -9580,6 +9659,40 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 .filter(|symbol| self.hook_return_shapes.contains_key(symbol)),
         );
         captured
+    }
+
+    fn analyze_class_retained_expression(&mut self, expression: &Expression<'_>) {
+        let root = expression.get_inner_expression();
+        // Function-valued fields retain a callback rather than a state-derived value. They are
+        // covered by the callback-capture analysis above and should keep its FICT-R005 contract.
+        if matches!(
+            root,
+            Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
+        ) {
+            return;
+        }
+        let argument = EscapeArgument {
+            expression,
+            span: source_span(root.span()),
+            spread: false,
+        };
+        // Direct state roots are compiler-managed reads and are an established compatibility
+        // contract for reactive class declarations (`extends Parent`, static fields, and
+        // computed keys). Projections such as `rows.at(0)` expose nested shallow-state identity
+        // and therefore still fail closed when the class retains them.
+        if self.direct_state_symbol(argument).is_some() {
+            return;
+        }
+        if self.retained_reactive_references(expression).is_empty() {
+            return;
+        }
+        // An instance or static field outlives the initializer evaluation. Without a structural
+        // ownership proof, storing a state-derived projection there can later mutate shallow
+        // state through an untracked receiver, so treat the storage itself as an escape boundary.
+        self.diagnostics.push(EscapeDiagnosticFact {
+            kind: EscapeDiagnosticKind::ReactiveValue,
+            span: argument.span,
+        });
     }
 
     fn emit_direct_state_warnings(&mut self, arguments: &[EscapeArgument<'_, '_>], allowed: bool) {
@@ -9808,6 +9921,25 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
 }
 
 impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
+    fn visit_class(&mut self, class: &Class<'a>) {
+        if let Some(super_class) = &class.super_class {
+            self.analyze_class_retained_expression(super_class);
+        }
+        for element in &class.body.body {
+            let initializer = match element {
+                ClassElement::PropertyDefinition(property) => property.value.as_ref(),
+                ClassElement::AccessorProperty(property) => property.value.as_ref(),
+                ClassElement::StaticBlock(_)
+                | ClassElement::MethodDefinition(_)
+                | ClassElement::TSIndexSignature(_) => None,
+            };
+            if let Some(initializer) = initializer {
+                self.analyze_class_retained_expression(initializer);
+            }
+        }
+        oxc::ast_visit::walk::walk_class(self, class);
+    }
+
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         let arguments = escape_arguments(&call.arguments);
         self.analyze_call(call, &arguments);
@@ -9944,6 +10076,101 @@ impl<'a> Visit<'a> for ReactiveArgumentCollector<'_, '_> {
         if assignment.operator == OxcAssignmentOperator::Assign {
             // The value passed by a plain assignment expression is its RHS. Pattern identifiers
             // are write targets and therefore cannot make that value a reactive escape.
+            self.visit_expression(&assignment.right);
+        } else {
+            oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+        }
+    }
+}
+
+struct RetainedReactiveIdentityCollector<'semantic, 'reactive> {
+    scoping: &'semantic Scoping,
+    reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    hook_return_shapes: &'reactive BTreeMap<SymbolId, LocalHookReturnShape>,
+    symbols: BTreeSet<SymbolId>,
+}
+
+impl<'a> Visit<'a> for RetainedReactiveIdentityCollector<'_, '_> {
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if let Some(symbol) = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            && (self.reactive_symbols.contains(&symbol)
+                || self
+                    .hook_return_shapes
+                    .get(&symbol)
+                    .is_some_and(|shape| shape.direct))
+        {
+            self.symbols.insert(symbol);
+        }
+    }
+
+    fn visit_static_member_expression(
+        &mut self,
+        member: &oxc::ast::ast::StaticMemberExpression<'a>,
+    ) {
+        if let Expression::Identifier(identifier) = member.object.get_inner_expression()
+            && let Some(symbol) = identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            && self
+                .hook_return_shapes
+                .get(&symbol)
+                .is_some_and(|shape| shape.members.contains(member.property.name.as_str()))
+        {
+            self.symbols.insert(symbol);
+            return;
+        }
+        self.visit_expression(&member.object);
+    }
+
+    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        let property = match member.expression.get_inner_expression() {
+            Expression::StringLiteral(property) => Some(property.value.to_string()),
+            Expression::NumericLiteral(property) => Some(property.value.to_string()),
+            _ => None,
+        };
+        if let (Expression::Identifier(identifier), Some(property)) =
+            (member.object.get_inner_expression(), property)
+            && let Some(symbol) = identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            && self
+                .hook_return_shapes
+                .get(&symbol)
+                .is_some_and(|shape| shape.members.contains(&property))
+        {
+            self.symbols.insert(symbol);
+            return;
+        }
+        // The property chooses a slot but is not itself retained as the member value.
+        self.visit_expression(&member.object);
+    }
+
+    fn visit_conditional_expression(
+        &mut self,
+        expression: &oxc::ast::ast::ConditionalExpression<'a>,
+    ) {
+        // The test controls identity selection but cannot become the selected value.
+        self.visit_expression(&expression.consequent);
+        self.visit_expression(&expression.alternate);
+    }
+
+    fn visit_binary_expression(&mut self, _expression: &oxc::ast::ast::BinaryExpression<'a>) {}
+
+    fn visit_unary_expression(&mut self, _expression: &oxc::ast::ast::UnaryExpression<'a>) {}
+
+    fn visit_template_literal(&mut self, _literal: &TemplateLiteral<'a>) {}
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if assignment.operator == OxcAssignmentOperator::Assign {
             self.visit_expression(&assignment.right);
         } else {
             oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
@@ -10970,7 +11197,7 @@ fn classify_state_receiver_call(
         return StateReceiverKind::Unknown;
     };
     let receiver = classify_state_receiver_assignment(scoping, object, receivers);
-    state_method_result_receiver(receiver, method)
+    classify_state_method_result(receiver, method)
 }
 
 fn classify_global_state_factory_call(
@@ -10988,76 +11215,6 @@ fn classify_global_state_factory_call(
             "all" | "allSettled" | "any" | "race" | "reject" | "resolve",
         ) => StateReceiverKind::Promise,
         (StateReceiverKind::String, "raw") => StateReceiverKind::String,
-        _ => StateReceiverKind::Unknown,
-    }
-}
-
-fn state_method_result_receiver(receiver: StateReceiverKind, method: &str) -> StateReceiverKind {
-    match receiver {
-        StateReceiverKind::Array
-            if matches!(
-                method,
-                "concat"
-                    | "filter"
-                    | "flat"
-                    | "flatMap"
-                    | "map"
-                    | "slice"
-                    | "toReversed"
-                    | "toSorted"
-                    | "toSpliced"
-                    | "with"
-            ) =>
-        {
-            StateReceiverKind::Array
-        }
-        StateReceiverKind::TypedArray
-            if matches!(
-                method,
-                "filter" | "map" | "slice" | "subarray" | "toReversed" | "toSorted" | "with"
-            ) =>
-        {
-            StateReceiverKind::TypedArray
-        }
-        StateReceiverKind::Set
-            if matches!(
-                method,
-                "add" | "difference" | "intersection" | "symmetricDifference" | "union"
-            ) =>
-        {
-            StateReceiverKind::Set
-        }
-        StateReceiverKind::Map if method == "set" => StateReceiverKind::Map,
-        StateReceiverKind::Function if method == "bind" => StateReceiverKind::Function,
-        StateReceiverKind::Promise if matches!(method, "catch" | "finally" | "then") => {
-            StateReceiverKind::Promise
-        }
-        StateReceiverKind::String
-            if matches!(
-                method,
-                "concat"
-                    | "normalize"
-                    | "padEnd"
-                    | "padStart"
-                    | "repeat"
-                    | "replace"
-                    | "replaceAll"
-                    | "slice"
-                    | "substring"
-                    | "toLocaleLowerCase"
-                    | "toLocaleUpperCase"
-                    | "toLowerCase"
-                    | "toUpperCase"
-                    | "toWellFormed"
-                    | "trim"
-                    | "trimEnd"
-                    | "trimStart"
-                    | "valueOf"
-            ) =>
-        {
-            StateReceiverKind::String
-        }
-        StateReceiverKind::Number if method == "valueOf" => StateReceiverKind::Number,
         _ => StateReceiverKind::Unknown,
     }
 }

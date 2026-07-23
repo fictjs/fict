@@ -365,6 +365,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(2),
             callee_reference: None,
+            state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
             arguments: vec![CallArgument {
                 value: argument,
                 spread: false,
@@ -383,6 +384,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(2),
                 callee_reference: None,
+                state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
                 arguments: vec![CallArgument {
                     value: argument,
                     spread: false,

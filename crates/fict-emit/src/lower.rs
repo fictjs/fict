@@ -1585,13 +1585,6 @@ fn lower_function(
             }
             match &instruction.kind {
                 HirInstructionKind::Read { place } => {
-                    if instruction
-                        .result
-                        .is_some_and(|result| hook_return_accessor_reads.contains(&result))
-                    {
-                        preserve(&mut operations, block.id, instruction_index, instruction);
-                        continue;
-                    }
                     let direct_slot = place_local(place.base)
                         .and_then(|local| slot_by_local.get(&local).copied())
                         .map(|slot| (slot, 0_usize));
@@ -1624,6 +1617,22 @@ fn lower_function(
                                     .copied()
                                     .map(|slot| (slot, 1_usize))
                             });
+                    let returned_accessor = instruction
+                        .result
+                        .is_some_and(|result| hook_return_accessor_reads.contains(&result));
+                    let exact_accessor_projection = [
+                        direct_slot,
+                        member_slot,
+                        hook_member_slot,
+                        captured_hook_member_slot,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|(_, accessor_depth)| place.projections.len() == accessor_depth);
+                    if returned_accessor && exact_accessor_projection {
+                        preserve(&mut operations, block.id, instruction_index, instruction);
+                        continue;
+                    }
                     let Some((slot, accessor_depth)) = direct_slot
                         .or(member_slot)
                         .or(hook_member_slot)

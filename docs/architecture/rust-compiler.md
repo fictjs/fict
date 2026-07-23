@@ -219,6 +219,20 @@ emission, Preview artifacts, source-map validation/composition, generated-output
 reparsing, deterministic results, and strict/fallback diagnostic policy. A
 reactive class declaration is retained as a fixed request-pipeline seed.
 
+The independent `state_provenance` target generates valid programs from
+separate scenario, projection, alias-depth, write-kind, TypeScript-wrapper, and
+host-method dimensions. It covers conditional/logical/sequence expressions,
+destructuring/default/rest, branch/switch/loop/try merges, optional and computed
+projections, nested callback captures, callback escape, method-chain results,
+class base/member/static storage, computed method names, local and conditional
+callback aliases, unresolved callback boundaries, receiver families, same- and
+cross-family reassignment, generics, annotations, and assertions.
+Known unsafe cases must fail closed with the expected fallback-class diagnostic
+in strict mode and emit the same diagnostic as a warning in fallback mode; safe
+reads and same-family replacements must remain accepted. Every successful
+result is deterministic and reparses as JavaScript. Scheduled and manually
+dispatched CI run all three fuzz targets for 600 seconds each.
+
 ## Compatibility and release
 
 The compatibility sequence is complete: `0.29.0` introduced the published Rust

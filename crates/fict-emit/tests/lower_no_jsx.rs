@@ -52,6 +52,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
             callee_reference: None,
+            state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
             arguments,
             host: CallHost::Unknown,
             macro_kind: Some(macro_kind),
@@ -968,6 +969,7 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(0),
                 callee_reference: None,
+                state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
                 arguments: vec![
                     CallArgument {
                         value: ValueId::new(1),
@@ -1101,6 +1103,7 @@ fn tracks_preserved_memo_store_resource_and_selector_calls() {
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
             callee_reference: None,
+            state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
             arguments: vec![CallArgument {
                 value: ValueId::new(1),
                 spread: false,

@@ -1,7 +1,7 @@
 use crate::{
     BindingId, BlockId, FileId, FunctionId, GlobalId, JavaScriptString, JsxTemplate, LiteralValue,
-    LocalId, Origin, RegionId, ScopeId, SsaName, SyntaxFragment, SyntaxFragmentId, TemplateId,
-    ValueId,
+    LocalId, Origin, RegionId, ScopeId, SsaName, StateReceiverKind, SyntaxFragment,
+    SyntaxFragmentId, TemplateId, ValueId,
 };
 
 /// Lexical scope category produced by frontend semantic analysis.
@@ -942,6 +942,9 @@ pub struct CallInstruction {
     /// semantics without re-evaluating its base or computed keys. Direct value calls keep this
     /// absent.
     pub callee_reference: Option<Place>,
+    /// Proven built-in family of the method receiver when the call is directly rooted in a
+    /// shallow `$state` binding. Unknown and indirect receivers remain fail-closed.
+    pub state_receiver_kind: StateReceiverKind,
     /// Arguments in evaluation order.
     pub arguments: Vec<CallArgument>,
     /// Host classification derived from semantic binding identity.

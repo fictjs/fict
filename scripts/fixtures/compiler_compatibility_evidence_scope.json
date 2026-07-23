@@ -155,8 +155,8 @@
       "artifact": "scripts/fixtures/compiler_diagnostic_deviation_reviews.json",
       "generator": "scripts/generate-compiler-diagnostic-deviation-review.mjs",
       "ciTest": "scripts/compiler-compatibility-corpus.test.mjs",
-      "deviationCount": 292,
-      "sameStatusDeviationCount": 255,
+      "deviationCount": 294,
+      "sameStatusDeviationCount": 257,
       "assertionLevel": "diagnostic-contract",
       "proves": [
         "reviewed-diagnostic-code-and-severity-deltas",

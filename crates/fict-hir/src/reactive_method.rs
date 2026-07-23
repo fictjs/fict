@@ -251,9 +251,91 @@ pub fn classify_state_method_call(
     }
 }
 
+/// Classify the built-in family returned by a method on a proven shallow-state receiver.
+///
+/// Returning [`StateReceiverKind::Unknown`] means that a later chained method call must fail
+/// closed. The receiver family is part of the proof: a custom method named `map`, `then`, or
+/// `slice` is not enough to certify the result.
+#[must_use]
+pub fn classify_state_method_result(
+    receiver: StateReceiverKind,
+    method: &str,
+) -> StateReceiverKind {
+    match receiver {
+        StateReceiverKind::Array
+            if matches!(
+                method,
+                "concat"
+                    | "filter"
+                    | "flat"
+                    | "flatMap"
+                    | "map"
+                    | "slice"
+                    | "toReversed"
+                    | "toSorted"
+                    | "toSpliced"
+                    | "with"
+            ) =>
+        {
+            StateReceiverKind::Array
+        }
+        StateReceiverKind::TypedArray
+            if matches!(
+                method,
+                "filter" | "map" | "slice" | "subarray" | "toReversed" | "toSorted" | "with"
+            ) =>
+        {
+            StateReceiverKind::TypedArray
+        }
+        StateReceiverKind::Set
+            if matches!(
+                method,
+                "add" | "difference" | "intersection" | "symmetricDifference" | "union"
+            ) =>
+        {
+            StateReceiverKind::Set
+        }
+        StateReceiverKind::Map if method == "set" => StateReceiverKind::Map,
+        StateReceiverKind::Function if method == "bind" => StateReceiverKind::Function,
+        StateReceiverKind::Promise if matches!(method, "catch" | "finally" | "then") => {
+            StateReceiverKind::Promise
+        }
+        StateReceiverKind::String
+            if matches!(
+                method,
+                "concat"
+                    | "normalize"
+                    | "padEnd"
+                    | "padStart"
+                    | "repeat"
+                    | "replace"
+                    | "replaceAll"
+                    | "slice"
+                    | "substring"
+                    | "toLocaleLowerCase"
+                    | "toLocaleUpperCase"
+                    | "toLowerCase"
+                    | "toUpperCase"
+                    | "toWellFormed"
+                    | "trim"
+                    | "trimEnd"
+                    | "trimStart"
+                    | "valueOf"
+            ) =>
+        {
+            StateReceiverKind::String
+        }
+        StateReceiverKind::Number if method == "valueOf" => StateReceiverKind::Number,
+        _ => StateReceiverKind::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{StateMethodCallSemantics, StateReceiverKind, classify_state_method_call};
+    use super::{
+        StateMethodCallSemantics, StateReceiverKind, classify_state_method_call,
+        classify_state_method_result,
+    };
 
     #[test]
     fn certifies_methods_only_for_matching_builtin_receivers() {
@@ -290,5 +372,29 @@ mod tests {
                 "{receiver:?}.{name}"
             );
         }
+    }
+
+    #[test]
+    fn preserves_result_families_only_for_matching_builtin_receivers() {
+        assert_eq!(
+            classify_state_method_result(StateReceiverKind::Array, "map"),
+            StateReceiverKind::Array
+        );
+        assert_eq!(
+            classify_state_method_result(StateReceiverKind::TypedArray, "subarray"),
+            StateReceiverKind::TypedArray
+        );
+        assert_eq!(
+            classify_state_method_result(StateReceiverKind::Promise, "then"),
+            StateReceiverKind::Promise
+        );
+        assert_eq!(
+            classify_state_method_result(StateReceiverKind::Unknown, "map"),
+            StateReceiverKind::Unknown
+        );
+        assert_eq!(
+            classify_state_method_result(StateReceiverKind::Map, "map"),
+            StateReceiverKind::Unknown
+        );
     }
 }

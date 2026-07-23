@@ -445,3 +445,148 @@ fn permits_state_roots_plain_aliases_shadowing_and_initial_alias_assignment() {
         }
     }
 }
+
+#[test]
+fn forgets_projected_provenance_after_safe_snapshot_reassignment() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                let item = rows.at(0)
+                item = { done: false }
+                item.done = true
+                return item.done
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ id: 1 }])
+                return rows.map(row => {
+                    let id = row.id
+                    id = 42
+                    return id
+                }).join(',')
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([1])
+                return rows.map(item => {
+                    item = item + 1
+                    return item
+                }).join(',')
+            }
+        "#,
+    ] {
+        let result = compile_source_with_strict(source, CompilerOptions::default(), true);
+        assert!(!result.has_errors(), "{:#?}", result.diagnostics);
+        assert!(result.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-M" | "FICT-R002" | "FICT-R-ALIAS-WRITE"
+            )
+        }));
+    }
+}
+
+#[test]
+fn permits_structural_mutation_of_fresh_state_derived_containers() {
+    let result = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            export let api: { deleteFirst(): void }
+            function App() {
+                let items = $state<Array<string | undefined>>([undefined, 'b'])
+                api = {
+                    deleteFirst() {
+                        const next = items.slice()
+                        delete next[0]
+                        items = next
+                    },
+                }
+                return items.length
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(!result.has_errors(), "{:#?}", result.diagnostics);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-M")
+    );
+}
+
+#[test]
+fn distinguishes_non_retaining_local_reads_from_returned_state_identity() {
+    let safe = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ id: 1 }])
+                return rows.map(row => {
+                    const read = value => value.id
+                    return read(row)
+                }).join(',')
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(!safe.has_errors(), "{:#?}", safe.diagnostics);
+    assert!(
+        safe.diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-M" | "FICT-R002") })
+    );
+
+    let projected_passthrough = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ id: 1 }])
+                const remove = id => id
+                return <div>{rows.map(row => (
+                    <button onClick={() => remove(row.id)}>{row.id}</button>
+                ))}</div>
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(
+        !projected_passthrough.has_errors(),
+        "{:#?}",
+        projected_passthrough.diagnostics
+    );
+    assert!(
+        projected_passthrough
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-M" | "FICT-R002") })
+    );
+
+    let unsafe_result = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function identity(value) { return value }
+            function App() {
+                const rows = $state([{ done: false }])
+                const item = identity(rows.at(0))
+                item.done = true
+                return item.done
+            }
+        "#,
+        CompilerOptions::default(),
+        false,
+    );
+    let diagnostic = find_error(&unsafe_result, "FICT-M");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+    assert_eq!(diagnostic.guarantee_class, GuaranteeClass::Fallback);
+    assert!(!unsafe_result.code.is_empty());
+}

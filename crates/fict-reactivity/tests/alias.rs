@@ -206,6 +206,7 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
                     kind: HirInstructionKind::Call(CallInstruction {
                         callee: ValueId::new(4),
                         callee_reference: None,
+                        state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
                         arguments: vec![CallArgument {
                             value: ValueId::new(3),
                             spread: false,

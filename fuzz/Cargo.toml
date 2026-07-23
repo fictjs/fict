@@ -30,6 +30,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "state_provenance"
+path = "fuzz_targets/state_provenance.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
 resolver = "3"

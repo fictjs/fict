@@ -95,9 +95,10 @@ test('normal CI typechecks the compiler fuzz target before the scheduled fuzz ru
   )
 })
 
-test('scheduled fuzz retains both the HIR and complete public request pipelines', () => {
+test('scheduled fuzz retains the HIR, public request, and structured provenance pipelines', () => {
   assert.match(ciWorkflow, /build compiler_pipeline/)
   assert.match(ciWorkflow, /build compiler_request_pipeline/)
+  assert.match(ciWorkflow, /build state_provenance/)
   assert.match(
     ciWorkflow,
     /run compiler_pipeline --[\s\S]*?-max_total_time=600 -timeout=10 -rss_limit_mb=4096/,
@@ -105,6 +106,10 @@ test('scheduled fuzz retains both the HIR and complete public request pipelines'
   assert.match(
     ciWorkflow,
     /run compiler_request_pipeline --[\s\S]*?-max_total_time=600 -timeout=10 -rss_limit_mb=4096/,
+  )
+  assert.match(
+    ciWorkflow,
+    /run state_provenance --[\s\S]*?-max_total_time=600 -timeout=10 -rss_limit_mb=4096/,
   )
 })
 

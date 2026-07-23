@@ -291,11 +291,21 @@ fn validate_strict_fallback_policy(fallback: &CompileResult, strict: &CompileRes
             continue;
         }
         assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
-        assert!(strict.diagnostics.iter().any(|candidate| {
+        let visible_in_strict = strict.diagnostics.iter().any(|candidate| {
             candidate.code == diagnostic.code
                 && candidate.guarantee_class == GuaranteeClass::Fallback
                 && candidate.severity == DiagnosticSeverity::Error
-        }));
+        });
+        // Strict mode can fail closed in the frontend before fallback mode reaches later core
+        // diagnostics. A fallback-only downstream warning is valid only when strict already has
+        // another fallback-class error proving that early termination occurred.
+        assert!(
+            visible_in_strict
+                || strict.diagnostics.iter().any(|candidate| {
+                    candidate.guarantee_class == GuaranteeClass::Fallback
+                        && candidate.severity == DiagnosticSeverity::Error
+                })
+        );
     }
     for diagnostic in &strict.diagnostics {
         if diagnostic.guarantee_class != GuaranteeClass::Fallback {

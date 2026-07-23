@@ -18,7 +18,7 @@
     "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
     "assertionInventorySha256": "96ad04d4812624987fec46895ca7a54c5cc6b8de3f5552252cba4362051eb186",
-    "rustCodegenCorpusSha256": "8897085d6134d3df1480f7672384681dc0a525b4105bb950f5abdf33e9d5bff6",
+    "rustCodegenCorpusSha256": "4b2829913aef2582333cbe088e254b2ed0b78b22b07a5670e12da37bd1e9366e",
     "generatorSha256": "ec50a19976c812c42f62e87fcd3cd57545b1bdbf24039859c9790f864fadaf72",
     "captureConfigSha256": "5b383415eefeff180428cf22bad269597133a0d190ce35a57b4567434113bc65",
     "selectedTestFiles": 29,
@@ -29,8 +29,8 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "9d5936cc2b445c83f24e74b84309520403eb2373",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-36a33cbec7ffe8c4511eecce883fdbe2a1f543f378ba51908c4d3e69893c466b"
+    "reviewedRevision": "7ccb64f106b834324f3228108fc1984241d42ec4",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-a08cf16945bbaa3e30a032865cc56e0bc4ca9f0a203be0210ecebe4481dc6abd"
   },
   "transitionCounts": {
     "ok-to-error": 3,
@@ -34982,13 +34982,18 @@
         "status": "ok",
         "diagnostics": [
           {
+            "code": "FICT-R002",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
             "code": "FICT-S002",
             "severity": "warning",
             "guaranteeClass": "fallback"
           }
         ],
         "codeSha256": "91bb55387b156498009b1649656029591abdc527a66bd9c9f939f46222ffed02",
-        "deterministicResultSha256": "4164ae80f69d7471de7550a79d938548dfc29fe62bda4a492d35b128a5d0de15"
+        "deterministicResultSha256": "e700e000a1d4c80d2a32f507dfb378648e08f91aba0aefc34376595a7f428412"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -52494,9 +52499,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R002",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "24f6f47c9db05ac4016240064c1b55e0f376ddff5a8d032cc636b8240f77d95e",
-        "deterministicResultSha256": "b8f88d00f340255db0daed2c650d5465ee99301f1d4029a54b162a8e4b94a527"
+        "deterministicResultSha256": "edc4ec1af0d3a2b2065157cb790a7ce0d38e3f064d04688120f59c6f66344f72"
       },
       "statusTransition": null,
       "transitionPolicy": null

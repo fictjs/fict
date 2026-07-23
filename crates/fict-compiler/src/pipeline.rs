@@ -1460,6 +1460,10 @@ mod tests {
                     const count = $state(0);
                     return count + 1;
                 }
+                export function useProjected() {
+                    const rows = $state([{ done: true }]);
+                    return rows[0].done;
+                }
             "#,
             "hook-return-accessors.ts",
         ));
@@ -1490,6 +1494,7 @@ mod tests {
             })
         );
         assert!(!result.module_metadata.hooks.contains_key("useDerived"));
+        assert!(!result.module_metadata.hooks.contains_key("useProjected"));
 
         assert!(result.code.contains("return count;"), "{}", result.code);
         assert!(result.code.contains("direct: count"), "{}", result.code);
@@ -1511,6 +1516,11 @@ mod tests {
         assert!(result.code.contains("return [count];"), "{}", result.code);
         assert!(
             result.code.contains("return count() + 1;"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("return rows()[0].done;"),
             "{}",
             result.code
         );
@@ -3610,12 +3620,22 @@ mod tests {
 
     #[test]
     fn evaluates_keyed_map_keys_once_and_preserves_shadowing() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state } from 'fict'; export function List() { let items = $state([{ id: 1, name: 'A' }]); return <ul>{items.map(item => <li key={makeKey(item)}>{item.name}{(() => { const item = { name: 'shadow' }; return item.name; })()}</li>)}</ul>; }",
             "keyed-map-effects.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-R002"]
+        );
         assert!(result.code.contains("createKeyedList("), "{}", result.code);
         assert_eq!(
             result.code.matches("makeKey(item)").count(),
@@ -3631,12 +3651,22 @@ mod tests {
 
     #[test]
     fn reuses_runtime_keys_for_keyed_component_maps() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state } from 'fict'; const Row = (_props) => null; const __fict_key = 'outer'; export function List() { let rows = $state([{ id: 1, name: 'A' }]); return <main>{rows.map(row => <Row key={makeKey(row)} row={row} label={__fict_key} />)}</main>; }",
             "keyed-component-map.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-R002"]
+        );
         assert!(result.code.contains("createKeyedList("), "{}", result.code);
         assert!(!result.code.contains("rows.map("), "{}", result.code);
         assert_eq!(
@@ -3654,12 +3684,22 @@ mod tests {
 
     #[test]
     fn optimizes_single_return_block_keyed_maps_only() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state } from 'fict'; export function Direct() { let rows = $state([{ id: 1, name: 'A' }]); return <ul>{rows.map(row => { return <li key={row.id}>{row.name}</li>; })}</ul>; } export function Effectful() { let rows = $state([{ id: 2, name: 'B' }]); return <ul>{rows.map(row => { observe(row); return <li key={row.id}>{row.name}</li>; })}</ul>; }",
             "keyed-block-map.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-R002"]
+        );
         assert_eq!(
             result.code.matches("createKeyedList(").count(),
             1,
@@ -3678,12 +3718,22 @@ mod tests {
 
     #[test]
     fn constifies_single_callback_local_key_aliases() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state } from 'fict'; export function Aliased() { let rows = $state([{ id: 1, name: 'A' }]); return <ul>{rows.map(row => { const key = makeKey(row); return <li key={key}>{key}:{row.name}</li>; })}</ul>; } export function Mutable() { let rows = $state([{ id: 2 }]); return <ul>{rows.map(row => { let key = row.id; return <li key={key}>{row.id}</li>; })}</ul>; }",
             "keyed-key-alias.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-R002"]
+        );
         assert_eq!(
             result.code.matches("createKeyedList(").count(),
             1,
@@ -6205,6 +6255,262 @@ mod tests {
         assert_eq!(escalated.diagnostics.len(), 1);
         assert_eq!(escalated.diagnostics[0].code.as_str(), "FICT-M");
         assert_eq!(escalated.diagnostics[0].severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn preserves_state_provenance_across_flow_callbacks_and_method_chains() {
+        let unsafe_cases = [
+            (
+                "conditional",
+                "import { $state } from 'fict'; export function useProbe(flag) { const state = $state([{ done: false }, { done: false }]); const item = flag ? state.at(0) : state.at(1); item.done = true; return item.done; }",
+                "FICT-M",
+            ),
+            (
+                "logical",
+                "import { $state } from 'fict'; export function useProbe(flag) { const state = $state([{ done: false }]); const item = flag && state.at(0); if (item) item.done = true; return item; }",
+                "FICT-M",
+            ),
+            (
+                "sequence",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); const item = (0, state.at(0)); item.done = true; return item.done; }",
+                "FICT-M",
+            ),
+            (
+                "multi-hop",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); const first = state.at(0); const second = first; second.done = true; return second.done; }",
+                "FICT-M",
+            ),
+            (
+                "branch-merge",
+                "import { $state } from 'fict'; export function useProbe(flag) { const state = $state([{ done: false }, { done: false }]); let item; if (flag) item = state.at(0); else item = state.at(1); item.done = true; return item.done; }",
+                "FICT-M",
+            ),
+            (
+                "enumeration-loop",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); for (const item of state) item.done = true; return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "switch-merge",
+                "import { $state } from 'fict'; export function useProbe(flag) { const state = $state([{ done: false }, { done: false }]); let item; switch (flag) { case true: item = state.at(0); break; default: item = state.at(1); } item.done = true; return item.done; }",
+                "FICT-M",
+            ),
+            (
+                "exception-merge",
+                "import { $state } from 'fict'; export function useProbe(flag) { const state = $state([{ done: false }, { done: false }]); let item; try { if (flag) throw 1; item = state.at(0); } catch { item = state.at(1); } finally { state.length; } item.done = true; return item.done; }",
+                "FICT-M",
+            ),
+            (
+                "callback-parameter",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); state.forEach(item => { item.done = true; }); return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "callback-const-alias",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); const mutate = item => { item.done = true; }; state.forEach(mutate); return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "callback-function-declaration",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); function mutate(item) { item.done = true; } state.forEach(mutate); return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "callback-conditional-alias",
+                "import { $state } from 'fict'; export function useProbe(flag) { const state = $state([{ done: false }]); const first = item => { item.done = true; }; const alias = first; const second = item => { item.done = true; }; state.forEach(flag ? alias : second); return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "unknown-callback-boundary",
+                "import { $state } from 'fict'; export function useProbe(callback) { const state = $state([{ done: false }]); state.forEach(callback); return state[0].done; }",
+                "FICT-R002",
+            ),
+            (
+                "callback-receiver",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); state.map((_item, _index, source) => { source.push({ done: true }); return false; }); return state.length; }",
+                "FICT-M",
+            ),
+            (
+                "map-key-parameter",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state(new Map([[{ done: false }, 1]])); state.forEach((_value, key) => { key.done = true; }); return state.size; }",
+                "FICT-M",
+            ),
+            (
+                "nested-callback-capture",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); state.map(item => () => { item.done = true; })[0](); return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "method-chain-result",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); state.map(item => item).at(0).done = true; return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "callback-escape",
+                "import { $state } from 'fict'; function mutate(item) { item.done = true; } export function useProbe() { const state = $state([{ done: false }]); state.map(item => mutate(item)); return state[0].done; }",
+                "FICT-R002",
+            ),
+            (
+                "reduce-implicit-accumulator-escape",
+                "import { $state } from 'fict'; function consume(value) { return value; } export function useProbe() { const state = $state([{ done: false }]); return state.reduce(accumulator => consume(accumulator)); }",
+                "FICT-R002",
+            ),
+            (
+                "reduce-state-derived-accumulator-escape",
+                "import { $state } from 'fict'; function consume(value) { return value; } export function useProbe() { const state = $state([{ done: false }]); return state.reduce(accumulator => consume(accumulator), state.at(0)); }",
+                "FICT-R002",
+            ),
+            (
+                "state-derived-class-field",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); class Box { item = state.at(0); mutate() { this.item.done = true; } } const box = new Box(); box.mutate(); return state[0].done; }",
+                "FICT-R002",
+            ),
+            (
+                "rest-destructuring",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }, { done: false }]); const [, ...rest] = state; const item = rest.at(0); item.done = true; return state[1].done; }",
+                "FICT-M",
+            ),
+            (
+                "cross-family-replacement",
+                "import { $state } from 'fict'; export function useProbe() { let state = $state([{ done: false }]); state = new Map([['item', { done: false }]]); const item = state.get('item'); item.done = true; return item.done; }",
+                "FICT-M",
+            ),
+            (
+                "state-derived-class-base",
+                "import { $state } from 'fict'; export function useProbe() { const bases = $state([class Base {}]); class Child extends bases.at(0) {} return new Child(); }",
+                "FICT-R002",
+            ),
+            (
+                "contained-array-item",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); let container = [state.at(0)]; const item = container.at(0); item.done = true; return state[0].done; }",
+                "FICT-M",
+            ),
+            (
+                "fresh-method-contained-item",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); const copy = state.slice(); copy[0].done = true; return state[0].done; }",
+                "FICT-M",
+            ),
+        ];
+
+        for (name, source, expected_code) in unsafe_cases {
+            let strict = compile(request(source, &format!("state-provenance-{name}.js")));
+            assert!(strict.has_errors(), "{name}: {:?}", strict.diagnostics);
+            assert!(strict.code.is_empty(), "{name}");
+            assert!(
+                strict.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == expected_code
+                        && diagnostic.severity == DiagnosticSeverity::Error
+                        && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                }),
+                "{name}: {:?}",
+                strict.diagnostics
+            );
+            assert!(
+                strict
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| { diagnostic.guarantee_class != GuaranteeClass::Internal })
+            );
+
+            let mut fallback_request = request(source, &format!("state-provenance-{name}.js"));
+            fallback_request.options.strict_guarantee = false;
+            let fallback = compile(fallback_request);
+            assert!(!fallback.has_errors(), "{name}: {:?}", fallback.diagnostics);
+            assert!(!fallback.code.is_empty(), "{name}");
+            assert!(
+                fallback.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == expected_code
+                        && diagnostic.severity == DiagnosticSeverity::Warning
+                        && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                }),
+                "{name}: {:?}",
+                fallback.diagnostics
+            );
+        }
+
+        for (name, source) in [
+            (
+                "array-read",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([1, 2]); return state.map(value => value + 1).join(','); }",
+            ),
+            (
+                "literal-computed-read",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([1, 2]); return state['map'](value => value + 1).filter(Boolean).join(','); }",
+            ),
+            (
+                "same-family-replacement",
+                "import { $state } from 'fict'; export function useProbe() { let state = $state([1, 2]); state = [3, 4]; return state.map(value => value + 1).join(','); }",
+            ),
+            (
+                "callback-read",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); return state.map(item => item.done).join(','); }",
+            ),
+            (
+                "callback-local-read-alias",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); const read = item => item.done; const alias = read; return state.map(alias).join(','); }",
+            ),
+            (
+                "callback-producer",
+                "import { $state } from 'fict'; function makeRead() { return item => item.done; } export function useProbe() { const state = $state([{ done: false }]); return state.map(makeRead()).join(','); }",
+            ),
+            (
+                "callback-source-scalar",
+                "import { $state } from 'fict'; const seen = []; export function useProbe() { const state = $state([{ done: false }]); return state.map((_item, _index, source) => { seen.push(source.length); return false; }).join(','); }",
+            ),
+            (
+                "callback-index",
+                "import { $state } from 'fict'; function consume(value) { return value; } export function useProbe() { const state = $state([{ done: false }]); return state.map((_item, index) => consume(index)).join(','); }",
+            ),
+            (
+                "callback-scalar-expression",
+                "import { $state } from 'fict'; function consume(value) { return value; } export function useProbe() { const state = $state([{ id: 1 }]); return state.map((item, index) => consume(item.id + index)).join(','); }",
+            ),
+            (
+                "reduce-independent-accumulator",
+                "import { $state } from 'fict'; function consume(value) { return value; } export function useProbe() { const state = $state([{ done: false }]); return state.reduce(accumulator => { consume(accumulator); return accumulator; }, 0); }",
+            ),
+            (
+                "typed-array-callback-value",
+                "import { $state } from 'fict'; function consume(value) { return value; } export function useProbe() { const state = $state(new Uint8Array([1, 2])); return state.map(value => consume(value)).join(','); }",
+            ),
+            (
+                "computed-method-name",
+                "import { $state } from 'fict'; export function useProbe() { const keys = $state(['run']); class Box { [keys.at(0)]() { return 1; } } return new Box().run(); }",
+            ),
+            (
+                "plain-class-base-selected-by-state",
+                "import { $state } from 'fict'; class A {} class B {} const bases = { a: A, b: B }; export function useProbe() { const key = $state('a'); class Child extends bases[key] {} return new Child(); }",
+            ),
+            (
+                "plain-conditional-class-base",
+                "import { $state } from 'fict'; class A {} class B {} export function useProbe() { const useA = $state(true); class Child extends (useA ? A : B) {} return new Child(); }",
+            ),
+            (
+                "fresh-container-mutation",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); let container = [state.at(0)]; container.push({ done: true }); return container.length; }",
+            ),
+            (
+                "fresh-method-container-mutation",
+                "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); const copy = state.slice(); delete copy[0]; return copy.length; }",
+            ),
+            (
+                "callback-state-root-replacement",
+                "import { $state } from 'fict'; export function useProbe() { let selected = $state(0); const rows = $state([{ id: 1 }]); rows.forEach(row => { const choose = () => { selected = row.id; }; choose(); }); return selected; }",
+            ),
+        ] {
+            let result = compile(request(source, &format!("state-provenance-safe-{name}.js")));
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(!result.code.is_empty(), "{name}");
+            assert!(
+                result.diagnostics.iter().all(|diagnostic| {
+                    diagnostic.code.as_str() != "FICT-M"
+                        && diagnostic.code.as_str() != "FICT-R002"
+                        && diagnostic.guarantee_class != GuaranteeClass::Internal
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
     }
 
     #[test]

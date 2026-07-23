@@ -4,18 +4,22 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
-    BindingId, BlockId, DeclarationKind, DeleteTarget, FunctionId, HirFile, HirFunction,
-    HirInstructionKind, LocalId, LocalKind, Origin, Place, PlaceBase, Projection, SsaName,
-    StateMethodCallSemantics, StateReceiverKind, ValueId, ValueKind, classify_state_method_call,
+    ArrayElement, BindingId, BindingKind, BlockId, CallHost, DeclarationKind, DeleteTarget,
+    FunctionId, HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind, ObjectEntry, Origin,
+    Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics, StateReceiverKind,
+    TerminatorKind, ValueId, ValueKind, classify_state_method_call, classify_state_method_result,
 };
-use fict_reactivity::{DependencyBase, ReactiveBindingKind, SsaDefinitionLocation};
+use fict_reactivity::{DependencyBase, EscapeKind, ReactiveBindingKind, SsaDefinitionLocation};
 
 use crate::pass_manager::FunctionPassAnalysis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ReadonlyKind {
+    CallbackParameter,
     Alias,
+    ProjectedAlias,
     Derived,
+    FreshContainer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,8 +36,44 @@ struct WriteLocation {
     local: LocalId,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct InstructionLocation {
+    block: BlockId,
+    instruction: u32,
+}
+
+#[derive(Debug, Default)]
+struct CallbackResolution {
+    functions: BTreeSet<FunctionId>,
+    complete: bool,
+}
+
+impl CallbackResolution {
+    fn known(function: FunctionId) -> Self {
+        Self {
+            functions: BTreeSet::from([function]),
+            complete: true,
+        }
+    }
+
+    fn safe_non_callback() -> Self {
+        Self {
+            functions: BTreeSet::new(),
+            complete: true,
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.functions.extend(other.functions);
+        self.complete &= other.complete;
+    }
+}
+
 struct WriteValidationContext<'a> {
+    hir: &'a HirFile,
     analyses: &'a [FunctionPassAnalysis],
+    state_provenance_names: &'a [BTreeSet<SsaName>],
+    readonly_sites: &'a [BTreeMap<SsaName, ReadonlySite>],
     readonly_names: &'a [BTreeSet<SsaName>],
     readonly_bindings: &'a BTreeMap<BindingId, ReadonlySite>,
     strict_guarantee: bool,
@@ -59,6 +99,8 @@ pub(crate) fn validate_reactive_writes(
     let mut state_provenance_names = vec![BTreeSet::new(); hir.functions.len()];
     let mut readonly_sites = vec![BTreeMap::new(); hir.functions.len()];
     let mut state_bindings = BTreeSet::new();
+    let mut state_callback_receiver_bindings = BTreeMap::new();
+    let mut unresolved_state_callbacks = BTreeMap::new();
 
     for analysis in analyses {
         let function_index = analysis.function.as_usize();
@@ -83,27 +125,141 @@ pub(crate) fn validate_reactive_writes(
     // a local. Only definitions transitively rooted in state carry this read-only contract.
     loop {
         let previous = state_provenance_names.clone();
+        let provenance_bindings = provenance_bindings(hir, &previous);
         let mut changed = false;
         for analysis in analyses {
             let function_index = analysis.function.as_usize();
+            let function = &hir.functions[function_index];
             for fact in &analysis.scopes.bindings {
-                let depends_on_state = fact.dependencies.iter().any(|path| {
-                    matches!(path.base, DependencyBase::Ssa(source)
-                        if name_resolves_to_set(source, &previous[function_index]))
-                }) || analysis
-                    .ssa
-                    .phis
-                    .iter()
-                    .find(|phi| phi.target == fact.name)
-                    .is_some_and(|phi| {
-                        phi.sources.iter().any(|(_, source)| {
-                            name_resolves_to_set(*source, &previous[function_index])
-                        })
-                    });
+                let depends_on_state =
+                    definition_source_value(function, fact.location).is_some_and(|value| {
+                        value_preserves_state_identity(
+                            hir,
+                            analyses,
+                            function,
+                            analysis,
+                            value,
+                            &previous[function_index],
+                        )
+                    }) || analysis
+                        .ssa
+                        .phis
+                        .iter()
+                        .find(|phi| phi.target == fact.name)
+                        .is_some_and(|phi| {
+                            phi.sources.iter().any(|(_, source)| {
+                                name_resolves_to_set(*source, &previous[function_index])
+                            })
+                        });
                 if depends_on_state {
                     changed |= state_provenance_names[function_index].insert(fact.name);
                 }
             }
+
+            // Reactive-scope facts intentionally focus on declarations. Sound provenance also
+            // has to follow ordinary assignment definitions and every CFG merge. This keeps a
+            // value state-derived across if/switch/loop/try joins without making the whole
+            // binding flow-insensitively reactive after a later plain replacement.
+            for definition in &analysis.ssa.definitions {
+                let local_binding = function
+                    .locals
+                    .get(definition.name.local.as_usize())
+                    .and_then(|local| local.binding);
+                let state_binding_definition =
+                    local_binding.is_some_and(|binding| state_bindings.contains(&binding));
+                let capture_from_outer_scope = function
+                    .locals
+                    .get(definition.name.local.as_usize())
+                    .is_some_and(|local| {
+                        local.kind == LocalKind::Capture
+                            && local
+                                .binding
+                                .is_some_and(|binding| provenance_bindings.contains(&binding))
+                    });
+                let depends_on_state = definition_source_value(function, definition.location)
+                    .is_some_and(|value| {
+                        value_preserves_state_identity(
+                            hir,
+                            analyses,
+                            function,
+                            analysis,
+                            value,
+                            &previous[function_index],
+                        )
+                    });
+                if !state_binding_definition && !capture_from_outer_scope && !depends_on_state {
+                    continue;
+                }
+                changed |= state_provenance_names[function_index].insert(definition.name);
+                // Scope-owned reactive declarations have a more precise contract below. In
+                // particular, a derived class/function creates a fresh value rather than an
+                // alias of the source state, so recording its SSA definition as `Alias` would
+                // incorrectly reject ordinary static calls and self references.
+                if !analysis
+                    .scopes
+                    .bindings
+                    .iter()
+                    .any(|fact| fact.name == definition.name)
+                {
+                    let kind = if definition_is_fresh_state_container(
+                        function,
+                        analysis,
+                        definition.location,
+                    ) {
+                        ReadonlyKind::FreshContainer
+                    } else {
+                        definition_source_value(function, definition.location)
+                            .and_then(|value| {
+                                projected_alias_kind(
+                                    function,
+                                    value,
+                                    &readonly_sites[function_index],
+                                    &mut BTreeSet::new(),
+                                )
+                            })
+                            .unwrap_or(ReadonlyKind::Alias)
+                    };
+                    record_readonly_site(
+                        function,
+                        definition.name,
+                        definition.location,
+                        kind,
+                        &state_bindings,
+                        &mut readonly_sites[function_index],
+                    );
+                }
+            }
+            for phi in &analysis.ssa.phis {
+                if !phi
+                    .sources
+                    .iter()
+                    .any(|(_, source)| name_resolves_to_set(*source, &previous[function_index]))
+                {
+                    continue;
+                }
+                changed |= state_provenance_names[function_index].insert(phi.target);
+                record_readonly_site(
+                    function,
+                    phi.target,
+                    SsaDefinitionLocation::Phi(phi.block),
+                    ReadonlyKind::Alias,
+                    &state_bindings,
+                    &mut readonly_sites[function_index],
+                );
+            }
+
+            seed_state_callback_parameters(
+                hir,
+                analyses,
+                analysis,
+                &previous[function_index],
+                &state_bindings,
+                &mut state_provenance_names,
+                &mut readonly_sites,
+                &mut state_callback_receiver_bindings,
+                &mut unresolved_state_callbacks,
+                &mut changed,
+            );
         }
         if !changed {
             break;
@@ -114,10 +270,41 @@ pub(crate) fn validate_reactive_writes(
         let function_index = analysis.function.as_usize();
         let function = &hir.functions[function_index];
         for fact in &analysis.scopes.bindings {
-            if !state_provenance_names[function_index].contains(&fact.name) {
+            let carries_state_identity =
+                state_provenance_names[function_index].contains(&fact.name);
+            let derives_from_state = fact.dependencies.iter().any(|path| {
+                matches!(path.base, DependencyBase::Ssa(source)
+                    if name_resolves_to_set(source, &state_provenance_names[function_index]))
+            });
+            if !carries_state_identity
+                && !(fact.kind == ReactiveBindingKind::Derived && derives_from_state)
+            {
+                continue;
+            }
+            if function
+                .locals
+                .get(fact.name.local.as_usize())
+                .and_then(|local| local.binding)
+                .is_some_and(|binding| state_bindings.contains(&binding))
+            {
                 continue;
             }
             let kind = match fact.kind {
+                ReactiveBindingKind::Derived
+                    if !carries_state_identity
+                        && definition_is_readonly_derived_declaration(
+                            function,
+                            fact.location,
+                            fact.name.local,
+                        ) =>
+                {
+                    Some(ReadonlyKind::Derived)
+                }
+                ReactiveBindingKind::Alias | ReactiveBindingKind::Derived
+                    if definition_is_fresh_state_container(function, analysis, fact.location) =>
+                {
+                    Some(ReadonlyKind::FreshContainer)
+                }
                 ReactiveBindingKind::Alias => Some(ReadonlyKind::Alias),
                 ReactiveBindingKind::Derived
                     if definition_is_readonly_derived_declaration(
@@ -241,6 +428,7 @@ pub(crate) fn validate_reactive_writes(
             break;
         }
     }
+    let callback_provenance_names = propagate_callback_provenance(hir, analyses, &readonly_sites);
     let mut readonly_bindings = BTreeMap::new();
     for analysis in analyses {
         let function_index = analysis.function.as_usize();
@@ -262,7 +450,10 @@ pub(crate) fn validate_reactive_writes(
         }
     }
     let validation = WriteValidationContext {
+        hir,
         analyses,
+        state_provenance_names: &state_provenance_names,
+        readonly_sites: &readonly_sites,
         readonly_names: &readonly_names,
         readonly_bindings: &readonly_bindings,
         strict_guarantee,
@@ -276,20 +467,16 @@ pub(crate) fn validate_reactive_writes(
                 match &instruction.kind {
                     HirInstructionKind::Write { place, .. }
                     | HirInstructionKind::ReadWrite { place, .. } => {
-                        if let Some(local) = place_root_local(place) {
-                            validation.validate_local_write(
-                                function,
-                                WriteLocation {
-                                    function: function.id,
-                                    block: block.id,
-                                    instruction: instruction_index,
-                                    local,
-                                },
-                                instruction.origin,
-                                place.projections.is_empty(),
-                                &mut diagnostics,
-                            );
-                        }
+                        validation.validate_place_write(
+                            function,
+                            InstructionLocation {
+                                block: block.id,
+                                instruction: instruction_index,
+                            },
+                            place,
+                            instruction.origin,
+                            &mut diagnostics,
+                        );
                     }
                     HirInstructionKind::PatternAssignment { writes, .. } => {
                         for write in writes {
@@ -302,7 +489,7 @@ pub(crate) fn validate_reactive_writes(
                                     local: write.local,
                                 },
                                 write.origin,
-                                true,
+                                0,
                                 &mut diagnostics,
                             );
                         }
@@ -318,7 +505,7 @@ pub(crate) fn validate_reactive_writes(
                                     local: *local,
                                 },
                                 instruction.origin,
-                                true,
+                                0,
                                 &mut diagnostics,
                             );
                         }
@@ -326,51 +513,57 @@ pub(crate) fn validate_reactive_writes(
                     HirInstructionKind::Delete {
                         target: DeleteTarget::Place(place),
                     } => {
-                        if let Some(local) = place_root_local(place) {
-                            validation.validate_local_write(
-                                function,
-                                WriteLocation {
-                                    function: function.id,
-                                    block: block.id,
-                                    instruction: instruction_index,
-                                    local,
-                                },
-                                instruction.origin,
-                                false,
-                                &mut diagnostics,
-                            );
-                        }
+                        validation.validate_place_write(
+                            function,
+                            InstructionLocation {
+                                block: block.id,
+                                instruction: instruction_index,
+                            },
+                            place,
+                            instruction.origin,
+                            &mut diagnostics,
+                        );
                     }
                     HirInstructionKind::Call(call)
-                        if call
-                            .callee_reference
-                            .as_ref()
-                            .is_some_and(state_method_call_may_mutate) =>
+                        if state_method_call_may_mutate(function, call) =>
                     {
                         let place = call
                             .callee_reference
                             .as_ref()
                             .expect("guarded method reference");
-                        if let Some(local) = place_root_local(place) {
-                            validation.validate_local_write(
-                                function,
-                                WriteLocation {
-                                    function: function.id,
-                                    block: block.id,
-                                    instruction: instruction_index,
-                                    local,
-                                },
-                                instruction.origin,
-                                false,
-                                &mut diagnostics,
-                            );
+                        if value_receiver_call_is_proven_safe(function, place) {
+                            continue;
                         }
+                        validation.validate_place_write(
+                            function,
+                            InstructionLocation {
+                                block: block.id,
+                                instruction: instruction_index,
+                            },
+                            place,
+                            instruction.origin,
+                            &mut diagnostics,
+                        );
                     }
                     _ => {}
                 }
             }
         }
     }
+    validate_callback_provenance_escapes(
+        hir,
+        analyses,
+        &callback_provenance_names,
+        &state_bindings,
+        &state_callback_receiver_bindings,
+        strict_guarantee,
+        &mut diagnostics,
+    );
+    diagnose_unresolved_state_callbacks(
+        &unresolved_state_callbacks,
+        strict_guarantee,
+        &mut diagnostics,
+    );
 
     if diagnostics.has_errors() {
         Err(diagnostics)
@@ -380,12 +573,68 @@ pub(crate) fn validate_reactive_writes(
 }
 
 impl WriteValidationContext<'_> {
+    fn validate_place_write(
+        &self,
+        function: &HirFunction,
+        location: InstructionLocation,
+        place: &Place,
+        write_origin: Origin,
+        diagnostics: &mut DiagnosticBundle,
+    ) {
+        if let Some(local) = place_root_local(place) {
+            self.validate_local_write(
+                function,
+                WriteLocation {
+                    function: function.id,
+                    block: location.block,
+                    instruction: location.instruction,
+                    local,
+                },
+                write_origin,
+                place.projections.len(),
+                diagnostics,
+            );
+            return;
+        }
+        let PlaceBase::Value(value) = place.base else {
+            return;
+        };
+        let Some(analysis) = self.analyses.get(function.id.as_usize()) else {
+            return;
+        };
+        if !value_preserves_state_identity(
+            self.hir,
+            self.analyses,
+            function,
+            analysis,
+            value,
+            &self.state_provenance_names[function.id.as_usize()],
+        ) {
+            return;
+        }
+        let mut diagnostic = Diagnostic::new(
+            DiagnosticCode::new("FICT-M").expect("reactive mutation diagnostic literal"),
+            if self.strict_guarantee {
+                DiagnosticSeverity::Error
+            } else {
+                DiagnosticSeverity::Warning
+            },
+            "nested mutation through a state-derived expression cannot preserve fine-grained reactivity",
+        )
+        .with_help("replace the whole source state value or use $store for nested mutation")
+        .with_guarantee_class(GuaranteeClass::Fallback);
+        if let Some(primary_span) = write_origin.primary_span {
+            diagnostic = diagnostic.with_primary_span(primary_span);
+        }
+        diagnostics.push(diagnostic);
+    }
+
     fn validate_local_write(
         &self,
         function: &HirFunction,
         location: WriteLocation,
         write_origin: Origin,
-        direct_write: bool,
+        projection_depth: usize,
         diagnostics: &mut DiagnosticBundle,
     ) {
         let Some(local_fact) = function.locals.get(location.local.as_usize()) else {
@@ -394,10 +643,19 @@ impl WriteValidationContext<'_> {
         let Some(binding) = local_fact.binding else {
             return;
         };
-        let Some(site) = self.readonly_bindings.get(&binding).copied() else {
+        let Some(site) =
+            self.readonly_site_at(location, binding, local_fact.kind == LocalKind::Capture)
+        else {
             return;
         };
-        if !self.binding_is_readonly_at(location, binding, local_fact.kind == LocalKind::Capture) {
+        if matches!(
+            site.kind,
+            ReadonlyKind::CallbackParameter | ReadonlyKind::ProjectedAlias
+        ) && projection_depth == 0
+        {
+            return;
+        }
+        if site.kind == ReadonlyKind::FreshContainer && projection_depth <= 1 {
             return;
         }
 
@@ -409,7 +667,7 @@ impl WriteValidationContext<'_> {
             .primary_span
             .or(local_fact.origin.primary_span)
             .or(site.origin.primary_span);
-        let (mut diagnostic, label) = if direct_write {
+        let (mut diagnostic, label) = if projection_depth == 0 {
             match site.kind {
                 ReadonlyKind::Alias => (
                     validation_error(
@@ -421,6 +679,9 @@ impl WriteValidationContext<'_> {
                     ),
                     "reactive alias is established here",
                 ),
+                ReadonlyKind::CallbackParameter | ReadonlyKind::ProjectedAlias => {
+                    unreachable!("callback and projected alias roots are mutable snapshots")
+                }
                 ReadonlyKind::Derived => (
                     validation_error(
                         "FICT-R-DERIVED-WRITE",
@@ -433,6 +694,7 @@ impl WriteValidationContext<'_> {
                     ),
                     "derived value is established here",
                 ),
+                ReadonlyKind::FreshContainer => unreachable!("fresh container roots are mutable"),
             }
         } else {
             (
@@ -449,7 +711,11 @@ impl WriteValidationContext<'_> {
                 )
                 .with_help("replace the whole source state value or use $store for nested mutation")
                 .with_guarantee_class(GuaranteeClass::Fallback),
-                "reactive alias is established here",
+                if site.kind == ReadonlyKind::FreshContainer {
+                    "state-derived values are contained here"
+                } else {
+                    "reactive alias is established here"
+                },
             )
         };
         if let Some(primary_span) = primary_span {
@@ -463,32 +729,40 @@ impl WriteValidationContext<'_> {
         diagnostics.push(diagnostic);
     }
 
-    fn binding_is_readonly_at(
+    fn readonly_site_at(
         &self,
         location: WriteLocation,
         binding: BindingId,
         captured: bool,
-    ) -> bool {
+    ) -> Option<ReadonlySite> {
         if captured {
-            return true;
+            return self.readonly_bindings.get(&binding).copied();
         }
-        let Some(analysis) = self.analyses.get(location.function.as_usize()) else {
-            return false;
-        };
-        let Some(previous) = ssa_name_before(analysis, location) else {
-            return false;
-        };
+        let analysis = self.analyses.get(location.function.as_usize())?;
+        let previous = ssa_name_before(analysis, location)?;
+        if let Some(site) = self
+            .readonly_sites
+            .get(location.function.as_usize())
+            .and_then(|sites| sites.get(&previous))
+        {
+            return Some(*site);
+        }
         if self
             .readonly_names
             .get(location.function.as_usize())
             .is_some_and(|names| names.contains(&previous))
         {
-            return true;
+            return self.readonly_bindings.get(&binding).copied();
         }
-        self.readonly_bindings.contains_key(&binding)
-            && analysis.ssa.definitions.iter().any(|definition| {
+        analysis
+            .ssa
+            .definitions
+            .iter()
+            .any(|definition| {
                 definition.name == previous && definition.location == SsaDefinitionLocation::Entry
             })
+            .then(|| self.readonly_bindings.get(&binding).copied())
+            .flatten()
     }
 }
 
@@ -525,6 +799,1696 @@ fn ssa_name_before(analysis: &FunctionPassAnalysis, location: WriteLocation) -> 
     current
 }
 
+fn provenance_bindings(hir: &HirFile, names: &[BTreeSet<SsaName>]) -> BTreeSet<BindingId> {
+    names
+        .iter()
+        .enumerate()
+        .flat_map(|(function_index, names)| {
+            let function = &hir.functions[function_index];
+            names.iter().filter_map(|name| {
+                function
+                    .locals
+                    .get(name.local.as_usize())
+                    .and_then(|local| local.binding)
+            })
+        })
+        .collect()
+}
+
+fn propagate_callback_provenance(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    readonly_sites: &[BTreeMap<SsaName, ReadonlySite>],
+) -> Vec<BTreeSet<SsaName>> {
+    let mut names = readonly_sites
+        .iter()
+        .map(|sites| {
+            sites
+                .iter()
+                .filter_map(|(name, site)| {
+                    (site.kind == ReadonlyKind::CallbackParameter).then_some(*name)
+                })
+                .collect::<BTreeSet<_>>()
+        })
+        .collect::<Vec<_>>();
+    loop {
+        let previous = names.clone();
+        let bindings = provenance_bindings(hir, &previous);
+        let mut changed = false;
+        for analysis in analyses {
+            let function_index = analysis.function.as_usize();
+            let function = &hir.functions[function_index];
+            for definition in &analysis.ssa.definitions {
+                let capture_from_outer_scope = function
+                    .locals
+                    .get(definition.name.local.as_usize())
+                    .is_some_and(|local| {
+                        local.kind == LocalKind::Capture
+                            && local
+                                .binding
+                                .is_some_and(|binding| bindings.contains(&binding))
+                    });
+                let depends_on_callback = definition_source_value(function, definition.location)
+                    .is_some_and(|value| {
+                        value_depends_on_reactive(analysis, value, &previous[function_index])
+                    });
+                if capture_from_outer_scope || depends_on_callback {
+                    changed |= names[function_index].insert(definition.name);
+                }
+            }
+            for phi in &analysis.ssa.phis {
+                if phi
+                    .sources
+                    .iter()
+                    .any(|(_, source)| name_resolves_to_set(*source, &previous[function_index]))
+                {
+                    changed |= names[function_index].insert(phi.target);
+                }
+            }
+        }
+        if !changed {
+            return names;
+        }
+    }
+}
+
+fn validate_callback_provenance_escapes(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    callback_names: &[BTreeSet<SsaName>],
+    state_bindings: &BTreeSet<BindingId>,
+    callback_receiver_bindings: &BTreeMap<BindingId, StateReceiverKind>,
+    strict_guarantee: bool,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let mut reported = BTreeSet::new();
+    for analysis in analyses {
+        let function_index = analysis.function.as_usize();
+        let function = &hir.functions[function_index];
+        for escape in &analysis.dependencies.escapes {
+            if !matches!(
+                escape.kind,
+                EscapeKind::UnknownCall | EscapeKind::Constructor | EscapeKind::ObservableWrite
+            ) {
+                continue;
+            }
+            let DependencyBase::Ssa(source) = escape.path.base else {
+                continue;
+            };
+            if !name_resolves_to_set(source, &callback_names[function_index]) {
+                continue;
+            }
+            let Some(location) = escape.location else {
+                continue;
+            };
+            // Replacing a `$state` root is the supported observable boundary: the setter
+            // records the new identity, and subsequent projected writes are still validated
+            // against that root. Retaining the same value in an arbitrary object, call, or
+            // constructor remains an escape.
+            if escape_location_is_direct_state_root_write(function, location, state_bindings) {
+                continue;
+            }
+            if !escape_location_preserves_callback_identity(
+                hir,
+                analyses,
+                function,
+                analysis,
+                location,
+                &callback_names[function_index],
+                callback_receiver_bindings,
+            ) {
+                continue;
+            }
+            if !reported.insert((analysis.function, location.block, location.instruction)) {
+                continue;
+            }
+            let origin = function
+                .blocks
+                .get(location.block.as_usize())
+                .and_then(|block| block.instructions.get(location.instruction as usize))
+                .map(|instruction| instruction.origin)
+                .unwrap_or(function.origin);
+            let mut diagnostic = Diagnostic::new(
+                DiagnosticCode::new("FICT-R002").expect("reactive escape diagnostic literal"),
+                if strict_guarantee {
+                    DiagnosticSeverity::Error
+                } else {
+                    DiagnosticSeverity::Warning
+                },
+                "state-derived callback value escapes to a boundary that may retain or mutate it",
+            )
+            .with_help(
+                "read the required fields inside the callback, or replace the whole source state value",
+            )
+            .with_guarantee_class(GuaranteeClass::Fallback);
+            if let Some(span) = origin.primary_span {
+                diagnostic = diagnostic.with_primary_span(span);
+            }
+            diagnostics.push(diagnostic);
+        }
+    }
+}
+
+fn escape_location_is_direct_state_root_write(
+    function: &HirFunction,
+    location: fict_reactivity::InstructionLocation,
+    state_bindings: &BTreeSet<BindingId>,
+) -> bool {
+    let Some(HirInstructionKind::Write { place, .. }) = function
+        .blocks
+        .get(location.block.as_usize())
+        .and_then(|block| block.instructions.get(location.instruction as usize))
+        .map(|instruction| &instruction.kind)
+    else {
+        return false;
+    };
+    if !place.projections.is_empty() {
+        return false;
+    }
+    place_root_local(place)
+        .and_then(|local| function.locals.get(local.as_usize()))
+        .and_then(|local| local.binding)
+        .is_some_and(|binding| state_bindings.contains(&binding))
+}
+
+fn call_is_non_retaining_global(
+    hir: &HirFile,
+    function: &HirFunction,
+    call: &fict_hir::CallInstruction,
+) -> bool {
+    let Some(ValueKind::InstructionResult) = function
+        .values
+        .get(call.callee.as_usize())
+        .map(|value| &value.kind)
+    else {
+        return false;
+    };
+    let Some(HirInstructionKind::Read { place }) = function
+        .instruction_for_result(call.callee)
+        .map(|instruction| &instruction.kind)
+    else {
+        return false;
+    };
+    let PlaceBase::Global(global) = place.base else {
+        return false;
+    };
+    place.projections.is_empty()
+        && hir.globals.get(global.as_usize()).is_some_and(|global| {
+            matches!(
+                global.name.as_str(),
+                "String" | "Number" | "Boolean" | "parseInt" | "parseFloat" | "isNaN" | "isFinite"
+            )
+        })
+}
+
+fn callback_receiver_scalar_projection(
+    function: &HirFunction,
+    place: &Place,
+    callback_receiver_bindings: &BTreeMap<BindingId, StateReceiverKind>,
+) -> bool {
+    let Some(receiver) = place_root_local(place)
+        .and_then(|local| function.locals.get(local.as_usize()))
+        .and_then(|local| local.binding)
+        .and_then(|binding| callback_receiver_bindings.get(&binding))
+    else {
+        return false;
+    };
+    let Some(Projection::StaticProperty { name, .. }) = place.projections.first() else {
+        return false;
+    };
+    matches!(
+        (receiver, name.as_str()),
+        (
+            StateReceiverKind::Array | StateReceiverKind::TypedArray | StateReceiverKind::String,
+            "length"
+        ) | (StateReceiverKind::Map | StateReceiverKind::Set, "size")
+    )
+}
+
+fn escape_location_preserves_callback_identity(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    location: fict_reactivity::InstructionLocation,
+    callback_names: &BTreeSet<SsaName>,
+    callback_receiver_bindings: &BTreeMap<BindingId, StateReceiverKind>,
+) -> bool {
+    let Some(instruction) = function
+        .blocks
+        .get(location.block.as_usize())
+        .and_then(|block| block.instructions.get(location.instruction as usize))
+    else {
+        return true;
+    };
+    let mut visiting = BTreeSet::new();
+    let mut preserves = |value| {
+        value_may_preserve_callback_identity(
+            function,
+            analysis,
+            value,
+            callback_names,
+            callback_receiver_bindings,
+            &mut visiting,
+        )
+    };
+    match &instruction.kind {
+        HirInstructionKind::Call(call) => {
+            if call_is_non_retaining_global(hir, function, call) {
+                return false;
+            }
+            call.arguments.iter().enumerate().any(|(index, argument)| {
+                preserves(argument.value)
+                    && !local_call_argument_is_non_retaining(
+                        hir,
+                        analyses,
+                        call,
+                        index,
+                        value_is_projected_callback_identity(
+                            analysis,
+                            argument.value,
+                            callback_names,
+                        ),
+                    )
+            })
+        }
+        HirInstructionKind::New { arguments, .. } => {
+            arguments.iter().any(|argument| preserves(argument.value))
+        }
+        HirInstructionKind::Write { value, .. }
+        | HirInstructionKind::PatternAssignment { value, .. } => preserves(*value),
+        _ => true,
+    }
+}
+
+fn local_call_argument_is_non_retaining(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    call: &fict_hir::CallInstruction,
+    argument_index: usize,
+    allow_identity_return: bool,
+) -> bool {
+    if call
+        .arguments
+        .iter()
+        .take(argument_index + 1)
+        .any(|argument| argument.spread)
+    {
+        return false;
+    }
+    let Some(callee) = resolved_local_callee(hir, call) else {
+        return false;
+    };
+    let Some(parameter) = callee.parameters.get(argument_index) else {
+        return false;
+    };
+    let Some(analysis) = analyses.get(callee.id.as_usize()) else {
+        return false;
+    };
+    let Some(entry) = analysis.ssa.definitions.iter().find_map(|definition| {
+        (definition.name.local == parameter.local
+            && definition.location == SsaDefinitionLocation::Entry)
+            .then_some(definition.name)
+    }) else {
+        return false;
+    };
+    let mutates_identity = analysis.dependencies.writes.iter().any(|write| {
+        matches!(write.path.base, DependencyBase::Ssa(source) if source == entry)
+            && !write.path.segments.is_empty()
+    });
+    let escapes_identity = analysis.dependencies.escapes.iter().any(|escape| {
+        if !matches!(escape.path.base, DependencyBase::Ssa(source) if source == entry) {
+            return false;
+        }
+        match escape.kind {
+            // Returning a projected callback value from a known local helper does not itself
+            // retain or mutate that value. The caller-side identity analysis propagates the
+            // result so a later projected write or unknown boundary is still rejected. Keep
+            // whole callback parameters conservative for accumulator-style callback flows.
+            EscapeKind::Return => escape.path.segments.is_empty() && !allow_identity_return,
+            EscapeKind::SyntaxFragment => !escape.location.is_some_and(|location| {
+                syntax_fragment_escape_is_non_retaining(hir, callee, location)
+            }),
+            _ => true,
+        }
+    });
+    !mutates_identity && !escapes_identity
+}
+
+fn value_is_projected_callback_identity(
+    analysis: &FunctionPassAnalysis,
+    value: ValueId,
+    callback_names: &BTreeSet<SsaName>,
+) -> bool {
+    let mut saw_projection = false;
+    for path in analysis
+        .dependencies
+        .value_dependencies
+        .get(value.as_usize())
+        .into_iter()
+        .flatten()
+    {
+        let DependencyBase::Ssa(source) = path.base else {
+            continue;
+        };
+        if !name_resolves_to_set(source, callback_names) {
+            continue;
+        }
+        if path.segments.is_empty() {
+            return false;
+        }
+        saw_projection = true;
+    }
+    saw_projection
+}
+
+fn syntax_fragment_escape_is_non_retaining(
+    hir: &HirFile,
+    function: &HirFunction,
+    location: fict_reactivity::InstructionLocation,
+) -> bool {
+    let Some(block) = function.blocks.get(location.block.as_usize()) else {
+        return false;
+    };
+    let Some(instruction) = block.instructions.get(location.instruction as usize) else {
+        return false;
+    };
+    let HirInstructionKind::SyntaxFragment { fragment, inputs } = &instruction.kind else {
+        return false;
+    };
+    if inputs.len() != 1 {
+        return false;
+    }
+    if hir
+        .syntax_fragments
+        .get(fragment.as_usize())
+        .is_some_and(|fragment| !fragment.summary.has_side_effects)
+    {
+        return true;
+    }
+    matches!(
+        block.terminator.kind,
+        TerminatorKind::Return {
+            value: Some(value)
+        } if value == inputs[0]
+    )
+}
+
+fn value_may_preserve_callback_identity(
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    value: ValueId,
+    callback_names: &BTreeSet<SsaName>,
+    callback_receiver_bindings: &BTreeMap<BindingId, StateReceiverKind>,
+    visiting: &mut BTreeSet<ValueId>,
+) -> bool {
+    if !visiting.insert(value) {
+        return false;
+    }
+    let result = match function
+        .values
+        .get(value.as_usize())
+        .map(|value| &value.kind)
+    {
+        Some(ValueKind::Ssa(name)) => name_resolves_to_set(*name, callback_names),
+        Some(ValueKind::Parameter(local)) => callback_names
+            .iter()
+            .any(|candidate| candidate.local == *local),
+        Some(ValueKind::Literal(_) | ValueKind::Function(_)) => false,
+        Some(ValueKind::SyntaxFragment(_)) | None => {
+            value_depends_on_reactive(analysis, value, callback_names)
+        }
+        Some(ValueKind::InstructionResult) => {
+            let Some(instruction) = function.instruction_for_result(value) else {
+                visiting.remove(&value);
+                return value_depends_on_reactive(analysis, value, callback_names);
+            };
+            match &instruction.kind {
+                HirInstructionKind::Read { place } => match place.base {
+                    _ if callback_receiver_scalar_projection(
+                        function,
+                        place,
+                        callback_receiver_bindings,
+                    ) =>
+                    {
+                        false
+                    }
+                    PlaceBase::Local(local) => callback_names
+                        .iter()
+                        .any(|candidate| candidate.local == local),
+                    PlaceBase::Ssa(name) => name_resolves_to_set(name, callback_names),
+                    PlaceBase::Value(base) => value_may_preserve_callback_identity(
+                        function,
+                        analysis,
+                        base,
+                        callback_names,
+                        callback_receiver_bindings,
+                        visiting,
+                    ),
+                    PlaceBase::Global(_) => false,
+                },
+                HirInstructionKind::Write { value, .. }
+                | HirInstructionKind::PatternAssignment { value, .. } => {
+                    value_may_preserve_callback_identity(
+                        function,
+                        analysis,
+                        *value,
+                        callback_names,
+                        callback_receiver_bindings,
+                        visiting,
+                    )
+                }
+                HirInstructionKind::Conditional {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    value_may_preserve_callback_identity(
+                        function,
+                        analysis,
+                        *consequent,
+                        callback_names,
+                        callback_receiver_bindings,
+                        visiting,
+                    ) || value_may_preserve_callback_identity(
+                        function,
+                        analysis,
+                        *alternate,
+                        callback_names,
+                        callback_receiver_bindings,
+                        visiting,
+                    )
+                }
+                HirInstructionKind::Sequence { values } => values.last().is_some_and(|value| {
+                    value_may_preserve_callback_identity(
+                        function,
+                        analysis,
+                        *value,
+                        callback_names,
+                        callback_receiver_bindings,
+                        visiting,
+                    )
+                }),
+                HirInstructionKind::Binary {
+                    operator:
+                        fict_hir::BinaryOperator::LogicalAnd
+                        | fict_hir::BinaryOperator::LogicalOr
+                        | fict_hir::BinaryOperator::NullishCoalescing,
+                    left,
+                    right,
+                } => {
+                    value_may_preserve_callback_identity(
+                        function,
+                        analysis,
+                        *left,
+                        callback_names,
+                        callback_receiver_bindings,
+                        visiting,
+                    ) || value_may_preserve_callback_identity(
+                        function,
+                        analysis,
+                        *right,
+                        callback_names,
+                        callback_receiver_bindings,
+                        visiting,
+                    )
+                }
+                HirInstructionKind::Binary { .. }
+                | HirInstructionKind::Unary { .. }
+                | HirInstructionKind::TemplateLiteral { .. }
+                | HirInstructionKind::Literal(_)
+                | HirInstructionKind::UnresolvedTypeof { .. }
+                | HirInstructionKind::Context { .. } => false,
+                _ => value_depends_on_reactive(analysis, value, callback_names),
+            }
+        }
+    };
+    visiting.remove(&value);
+    result
+}
+
+fn definition_source_value(
+    function: &HirFunction,
+    location: SsaDefinitionLocation,
+) -> Option<ValueId> {
+    let SsaDefinitionLocation::Instruction { block, instruction } = location else {
+        return None;
+    };
+    let instruction = function
+        .blocks
+        .get(block.as_usize())?
+        .instructions
+        .get(instruction as usize)?;
+    match &instruction.kind {
+        HirInstructionKind::Declare {
+            initializer: Some(value),
+            ..
+        }
+        | HirInstructionKind::Write { value, .. }
+        | HirInstructionKind::PatternAssignment { value, .. } => Some(*value),
+        HirInstructionKind::Iteration { source, .. } => Some(*source),
+        _ => None,
+    }
+}
+
+fn projected_alias_kind(
+    function: &HirFunction,
+    value: ValueId,
+    sites: &BTreeMap<SsaName, ReadonlySite>,
+    visiting: &mut BTreeSet<ValueId>,
+) -> Option<ReadonlyKind> {
+    if !visiting.insert(value) {
+        return None;
+    }
+    let kind = match function
+        .values
+        .get(value.as_usize())
+        .map(|value| &value.kind)
+    {
+        Some(ValueKind::Ssa(name)) => sites.get(name).and_then(|site| {
+            matches!(
+                site.kind,
+                ReadonlyKind::ProjectedAlias | ReadonlyKind::FreshContainer
+            )
+            .then_some(site.kind)
+        }),
+        Some(ValueKind::InstructionResult) => {
+            function
+                .instruction_for_result(value)
+                .and_then(|instruction| match &instruction.kind {
+                    HirInstructionKind::Read { place } if !place.projections.is_empty() => {
+                        Some(ReadonlyKind::ProjectedAlias)
+                    }
+                    HirInstructionKind::Read {
+                        place:
+                            Place {
+                                base: PlaceBase::Ssa(name),
+                                ..
+                            },
+                    } => sites.get(name).and_then(|site| {
+                        matches!(
+                            site.kind,
+                            ReadonlyKind::ProjectedAlias | ReadonlyKind::FreshContainer
+                        )
+                        .then_some(site.kind)
+                    }),
+                    HirInstructionKind::Read {
+                        place:
+                            Place {
+                                base: PlaceBase::Value(base),
+                                ..
+                            },
+                    } => projected_alias_kind(function, *base, sites, visiting),
+                    HirInstructionKind::Declare {
+                        initializer: Some(initializer),
+                        ..
+                    }
+                    | HirInstructionKind::Write {
+                        value: initializer, ..
+                    }
+                    | HirInstructionKind::PatternAssignment {
+                        value: initializer, ..
+                    }
+                    | HirInstructionKind::Await { value: initializer }
+                    | HirInstructionKind::Yield {
+                        value: Some(initializer),
+                        ..
+                    } => projected_alias_kind(function, *initializer, sites, visiting),
+                    HirInstructionKind::Call(call) if call.callee_reference.is_some() => {
+                        Some(ReadonlyKind::ProjectedAlias)
+                    }
+                    HirInstructionKind::Sequence { values } => values
+                        .last()
+                        .and_then(|value| projected_alias_kind(function, *value, sites, visiting)),
+                    HirInstructionKind::Conditional {
+                        consequent,
+                        alternate,
+                        ..
+                    } => {
+                        let consequent =
+                            projected_alias_kind(function, *consequent, sites, visiting);
+                        let alternate = projected_alias_kind(function, *alternate, sites, visiting);
+                        (consequent == alternate).then_some(consequent).flatten()
+                    }
+                    HirInstructionKind::SyntaxFragment { inputs, .. } if inputs.len() == 1 => {
+                        projected_alias_kind(function, inputs[0], sites, visiting)
+                    }
+                    _ => None,
+                })
+        }
+        _ => None,
+    };
+    visiting.remove(&value);
+    kind
+}
+
+fn record_readonly_site(
+    function: &HirFunction,
+    name: SsaName,
+    location: SsaDefinitionLocation,
+    kind: ReadonlyKind,
+    state_bindings: &BTreeSet<BindingId>,
+    sites: &mut BTreeMap<SsaName, ReadonlySite>,
+) {
+    let Some(binding) = function
+        .locals
+        .get(name.local.as_usize())
+        .and_then(|local| local.binding)
+    else {
+        return;
+    };
+    if state_bindings.contains(&binding) {
+        return;
+    }
+    sites.entry(name).or_insert(ReadonlySite {
+        kind,
+        origin: definition_origin(function, location, name.local),
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn seed_state_callback_parameters(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    analysis: &FunctionPassAnalysis,
+    state_names: &BTreeSet<SsaName>,
+    state_bindings: &BTreeSet<BindingId>,
+    all_state_names: &mut [BTreeSet<SsaName>],
+    all_readonly_sites: &mut [BTreeMap<SsaName, ReadonlySite>],
+    callback_receiver_bindings: &mut BTreeMap<BindingId, StateReceiverKind>,
+    unresolved_callbacks: &mut BTreeMap<(FunctionId, BlockId, u32), Origin>,
+    changed: &mut bool,
+) {
+    let function = &hir.functions[analysis.function.as_usize()];
+    for block in &function.blocks {
+        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            let HirInstructionKind::Call(call) = &instruction.kind else {
+                continue;
+            };
+            let Some(place) = call.callee_reference.as_ref() else {
+                continue;
+            };
+            let Some(parameter_indices) = state_callback_parameter_indices(
+                hir,
+                analyses,
+                function,
+                analysis,
+                state_names,
+                call,
+                place,
+            ) else {
+                continue;
+            };
+            let location = WriteLocation {
+                function: function.id,
+                block: block.id,
+                instruction: count_u32(instruction_index),
+                local: LocalId::new(0),
+            };
+            if !place_depends_on_state(
+                hir,
+                analyses,
+                function,
+                analysis,
+                place,
+                location,
+                state_names,
+            ) {
+                continue;
+            }
+            let Some(callback_argument) = call.arguments.first() else {
+                continue;
+            };
+            let resolution = if callback_argument.spread {
+                CallbackResolution::default()
+            } else {
+                resolve_callback_value(
+                    hir,
+                    analysis,
+                    function,
+                    callback_argument.value,
+                    InstructionLocation {
+                        block: block.id,
+                        instruction: count_u32(instruction_index),
+                    },
+                )
+            };
+            if !resolution.complete {
+                unresolved_callbacks
+                    .entry((function.id, block.id, count_u32(instruction_index)))
+                    .or_insert(instruction.origin);
+            }
+            for callback in resolution.functions {
+                let callback_index = callback.as_usize();
+                let Some(callback_function) = hir.functions.get(callback_index) else {
+                    continue;
+                };
+                let Some(callback_analysis) = analyses.get(callback_index) else {
+                    continue;
+                };
+                for (index, receiver_kind) in &parameter_indices {
+                    let Some(parameter) = callback_function.parameters.get(*index) else {
+                        continue;
+                    };
+                    let Some(definition) =
+                        callback_analysis.ssa.definitions.iter().find(|definition| {
+                            definition.name.local == parameter.local
+                                && definition.location == SsaDefinitionLocation::Entry
+                        })
+                    else {
+                        continue;
+                    };
+                    *changed |= all_state_names[callback_index].insert(definition.name);
+                    record_readonly_site(
+                        callback_function,
+                        definition.name,
+                        definition.location,
+                        ReadonlyKind::CallbackParameter,
+                        state_bindings,
+                        &mut all_readonly_sites[callback_index],
+                    );
+                    if let Some(receiver_kind) = receiver_kind
+                        && let Some(binding) = callback_function
+                            .locals
+                            .get(parameter.local.as_usize())
+                            .and_then(|local| local.binding)
+                    {
+                        callback_receiver_bindings
+                            .entry(binding)
+                            .and_modify(|existing| {
+                                if *existing != *receiver_kind {
+                                    *existing = StateReceiverKind::Unknown;
+                                }
+                            })
+                            .or_insert(*receiver_kind);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn state_callback_parameter_indices(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    state_names: &BTreeSet<SsaName>,
+    call: &fict_hir::CallInstruction,
+    place: &Place,
+) -> Option<Vec<(usize, Option<StateReceiverKind>)>> {
+    let name = state_method_name(function, place)?;
+    match (call.state_receiver_kind, name.as_str()) {
+        (
+            StateReceiverKind::Array,
+            "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"
+            | "forEach" | "map" | "some",
+        ) => Some(vec![(0, None), (2, Some(StateReceiverKind::Array))]),
+        (
+            StateReceiverKind::TypedArray,
+            "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"
+            | "forEach" | "map" | "some",
+        ) => Some(vec![(2, Some(StateReceiverKind::TypedArray))]),
+        (StateReceiverKind::Array, "reduce" | "reduceRight") => {
+            let accumulator_depends_on_state = call.arguments.get(1).is_none_or(|argument| {
+                argument.spread
+                    || value_preserves_state_identity(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        argument.value,
+                        state_names,
+                    )
+            });
+            let mut indices = vec![(1, None), (3, Some(StateReceiverKind::Array))];
+            if accumulator_depends_on_state {
+                indices.insert(0, (0, None));
+            }
+            Some(indices)
+        }
+        (StateReceiverKind::TypedArray, "reduce" | "reduceRight") => {
+            let mut indices = vec![(3, Some(StateReceiverKind::TypedArray))];
+            if call.arguments.get(1).is_some_and(|argument| {
+                argument.spread
+                    || value_preserves_state_identity(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        argument.value,
+                        state_names,
+                    )
+            }) {
+                indices.insert(0, (0, None));
+            }
+            Some(indices)
+        }
+        (receiver @ (StateReceiverKind::Map | StateReceiverKind::Set), "forEach") => {
+            Some(vec![(0, None), (1, None), (2, Some(receiver))])
+        }
+        (StateReceiverKind::Promise, "then") => Some(vec![(0, None)]),
+        _ => None,
+    }
+}
+
+fn place_depends_on_state(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    place: &Place,
+    location: WriteLocation,
+    state_names: &BTreeSet<SsaName>,
+) -> bool {
+    match place.base {
+        PlaceBase::Local(local) => ssa_name_before(analysis, WriteLocation { local, ..location })
+            .is_some_and(|name| name_resolves_to_set(name, state_names)),
+        PlaceBase::Ssa(name) => name_resolves_to_set(name, state_names),
+        PlaceBase::Value(value) => value_preserves_state_identity_in(
+            hir,
+            analyses,
+            function,
+            analysis,
+            value,
+            state_names,
+            &mut BTreeSet::new(),
+        ),
+        PlaceBase::Global(_) => false,
+    }
+}
+
+fn resolve_callback_value(
+    hir: &HirFile,
+    analysis: &FunctionPassAnalysis,
+    function: &HirFunction,
+    value: ValueId,
+    use_location: InstructionLocation,
+) -> CallbackResolution {
+    resolve_callback_value_inner(
+        hir,
+        analysis,
+        function,
+        value,
+        use_location,
+        &mut BTreeSet::new(),
+        &mut BTreeSet::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_callback_value_inner(
+    hir: &HirFile,
+    analysis: &FunctionPassAnalysis,
+    function: &HirFunction,
+    value: ValueId,
+    use_location: InstructionLocation,
+    visiting_values: &mut BTreeSet<ValueId>,
+    visiting_names: &mut BTreeSet<SsaName>,
+) -> CallbackResolution {
+    if !visiting_values.insert(value) {
+        return CallbackResolution::default();
+    }
+    let resolution = match function
+        .values
+        .get(value.as_usize())
+        .map(|value| &value.kind)
+    {
+        Some(ValueKind::Function(callback)) => CallbackResolution::known(*callback),
+        Some(ValueKind::Ssa(name)) => resolve_callback_ssa(
+            hir,
+            analysis,
+            function,
+            *name,
+            use_location,
+            visiting_values,
+            visiting_names,
+        ),
+        Some(ValueKind::Literal(_)) => CallbackResolution::safe_non_callback(),
+        Some(ValueKind::Parameter(_)) | Some(ValueKind::SyntaxFragment(_)) | None => {
+            CallbackResolution::default()
+        }
+        Some(ValueKind::InstructionResult) => {
+            let Some(instruction) = function.instruction_for_result(value) else {
+                visiting_values.remove(&value);
+                return CallbackResolution::default();
+            };
+            let definition_location =
+                instruction_location_for_result(function, value).unwrap_or(use_location);
+            match &instruction.kind {
+                HirInstructionKind::Function { function } => CallbackResolution::known(*function),
+                HirInstructionKind::Read { place } if place.projections.is_empty() => {
+                    match place.base {
+                        PlaceBase::Local(local) => {
+                            let name = ssa_name_before(
+                                analysis,
+                                WriteLocation {
+                                    function: function.id,
+                                    block: definition_location.block,
+                                    instruction: definition_location.instruction,
+                                    local,
+                                },
+                            );
+                            name.map_or_else(CallbackResolution::default, |name| {
+                                resolve_callback_ssa(
+                                    hir,
+                                    analysis,
+                                    function,
+                                    name,
+                                    definition_location,
+                                    visiting_values,
+                                    visiting_names,
+                                )
+                            })
+                        }
+                        PlaceBase::Ssa(name) => resolve_callback_ssa(
+                            hir,
+                            analysis,
+                            function,
+                            name,
+                            definition_location,
+                            visiting_values,
+                            visiting_names,
+                        ),
+                        PlaceBase::Value(base) => resolve_callback_value_inner(
+                            hir,
+                            analysis,
+                            function,
+                            base,
+                            definition_location,
+                            visiting_values,
+                            visiting_names,
+                        ),
+                        PlaceBase::Global(global) => {
+                            if hir
+                                .globals
+                                .get(global.as_usize())
+                                .is_some_and(|global| global.name == "Boolean")
+                            {
+                                CallbackResolution::safe_non_callback()
+                            } else {
+                                CallbackResolution::default()
+                            }
+                        }
+                    }
+                }
+                HirInstructionKind::Write { value, .. }
+                | HirInstructionKind::PatternAssignment { value, .. } => {
+                    resolve_callback_value_inner(
+                        hir,
+                        analysis,
+                        function,
+                        *value,
+                        definition_location,
+                        visiting_values,
+                        visiting_names,
+                    )
+                }
+                HirInstructionKind::Phi { sources, .. } => {
+                    let mut resolution = CallbackResolution::safe_non_callback();
+                    for (_, source) in sources {
+                        resolution.merge(resolve_callback_ssa(
+                            hir,
+                            analysis,
+                            function,
+                            *source,
+                            definition_location,
+                            visiting_values,
+                            visiting_names,
+                        ));
+                    }
+                    resolution
+                }
+                HirInstructionKind::Conditional {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    let mut resolution = resolve_callback_value_inner(
+                        hir,
+                        analysis,
+                        function,
+                        *consequent,
+                        definition_location,
+                        visiting_values,
+                        visiting_names,
+                    );
+                    resolution.merge(resolve_callback_value_inner(
+                        hir,
+                        analysis,
+                        function,
+                        *alternate,
+                        definition_location,
+                        visiting_values,
+                        visiting_names,
+                    ));
+                    resolution
+                }
+                HirInstructionKind::Sequence { values } => {
+                    values
+                        .last()
+                        .map_or_else(CallbackResolution::safe_non_callback, |value| {
+                            resolve_callback_value_inner(
+                                hir,
+                                analysis,
+                                function,
+                                *value,
+                                definition_location,
+                                visiting_values,
+                                visiting_names,
+                            )
+                        })
+                }
+                HirInstructionKind::Binary {
+                    operator:
+                        fict_hir::BinaryOperator::LogicalAnd
+                        | fict_hir::BinaryOperator::LogicalOr
+                        | fict_hir::BinaryOperator::NullishCoalescing,
+                    left,
+                    right,
+                } => {
+                    let mut resolution = resolve_callback_value_inner(
+                        hir,
+                        analysis,
+                        function,
+                        *left,
+                        definition_location,
+                        visiting_values,
+                        visiting_names,
+                    );
+                    resolution.merge(resolve_callback_value_inner(
+                        hir,
+                        analysis,
+                        function,
+                        *right,
+                        definition_location,
+                        visiting_values,
+                        visiting_names,
+                    ));
+                    resolution
+                }
+                HirInstructionKind::Call(call) => match call.host {
+                    CallHost::Function(producer) => resolve_direct_callback_producer(hir, producer),
+                    CallHost::Binding(binding) => hir
+                        .functions
+                        .iter()
+                        .find(|candidate| candidate.binding == Some(binding))
+                        .map_or_else(CallbackResolution::default, |producer| {
+                            resolve_direct_callback_producer(hir, producer.id)
+                        }),
+                    CallHost::Unknown | CallHost::ReactiveScope(_) => CallbackResolution::default(),
+                },
+                HirInstructionKind::Literal(_)
+                | HirInstructionKind::Array { .. }
+                | HirInstructionKind::Object { .. }
+                | HirInstructionKind::Unary { .. }
+                | HirInstructionKind::Binary { .. }
+                | HirInstructionKind::TemplateLiteral { .. }
+                | HirInstructionKind::UnresolvedTypeof { .. }
+                | HirInstructionKind::Context { .. } => CallbackResolution::safe_non_callback(),
+                _ => CallbackResolution::default(),
+            }
+        }
+    };
+    visiting_values.remove(&value);
+    resolution
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_callback_ssa(
+    hir: &HirFile,
+    analysis: &FunctionPassAnalysis,
+    function: &HirFunction,
+    name: SsaName,
+    use_location: InstructionLocation,
+    visiting_values: &mut BTreeSet<ValueId>,
+    visiting_names: &mut BTreeSet<SsaName>,
+) -> CallbackResolution {
+    if !visiting_names.insert(name) {
+        return CallbackResolution::default();
+    }
+    let resolution = if let Some(phi) = analysis.ssa.phis.iter().find(|phi| phi.target == name) {
+        let mut resolution = CallbackResolution::safe_non_callback();
+        for (_, source) in &phi.sources {
+            resolution.merge(resolve_callback_ssa(
+                hir,
+                analysis,
+                function,
+                *source,
+                InstructionLocation {
+                    block: phi.block,
+                    instruction: 0,
+                },
+                visiting_values,
+                visiting_names,
+            ));
+        }
+        resolution
+    } else if let Some(definition) = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| definition.name == name)
+    {
+        if let Some(value) = definition_source_value(function, definition.location) {
+            resolve_callback_value_inner(
+                hir,
+                analysis,
+                function,
+                value,
+                definition_instruction_location(definition.location).unwrap_or(use_location),
+                visiting_values,
+                visiting_names,
+            )
+        } else {
+            callback_function_for_local(hir, function, name.local)
+                .map_or_else(CallbackResolution::default, CallbackResolution::known)
+        }
+    } else {
+        CallbackResolution::default()
+    };
+    visiting_names.remove(&name);
+    resolution
+}
+
+fn resolve_direct_callback_producer(hir: &HirFile, producer: FunctionId) -> CallbackResolution {
+    let Some(function) = hir.functions.get(producer.as_usize()) else {
+        return CallbackResolution::default();
+    };
+    let mut resolution = CallbackResolution::safe_non_callback();
+    let mut saw_return = false;
+    for block in &function.blocks {
+        let TerminatorKind::Return { value } = &block.terminator.kind else {
+            continue;
+        };
+        saw_return = true;
+        resolution.merge(
+            value.map_or_else(CallbackResolution::safe_non_callback, |value| {
+                resolve_direct_callback_result(function, value, &mut BTreeSet::new())
+            }),
+        );
+    }
+    if saw_return {
+        resolution
+    } else {
+        CallbackResolution::safe_non_callback()
+    }
+}
+
+fn resolve_direct_callback_result(
+    function: &HirFunction,
+    value: ValueId,
+    visiting: &mut BTreeSet<ValueId>,
+) -> CallbackResolution {
+    if !visiting.insert(value) {
+        return CallbackResolution::default();
+    }
+    let resolution = match function
+        .values
+        .get(value.as_usize())
+        .map(|value| &value.kind)
+    {
+        Some(ValueKind::Function(callback)) => CallbackResolution::known(*callback),
+        Some(ValueKind::Literal(_)) => CallbackResolution::safe_non_callback(),
+        Some(ValueKind::InstructionResult) => {
+            let Some(instruction) = function.instruction_for_result(value) else {
+                visiting.remove(&value);
+                return CallbackResolution::default();
+            };
+            match &instruction.kind {
+                HirInstructionKind::Function { function } => CallbackResolution::known(*function),
+                HirInstructionKind::Conditional {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    let mut resolution =
+                        resolve_direct_callback_result(function, *consequent, visiting);
+                    resolution.merge(resolve_direct_callback_result(
+                        function, *alternate, visiting,
+                    ));
+                    resolution
+                }
+                HirInstructionKind::Sequence { values } => values
+                    .last()
+                    .map_or_else(CallbackResolution::safe_non_callback, |value| {
+                        resolve_direct_callback_result(function, *value, visiting)
+                    }),
+                HirInstructionKind::Literal(_) => CallbackResolution::safe_non_callback(),
+                _ => CallbackResolution::default(),
+            }
+        }
+        Some(ValueKind::Ssa(_) | ValueKind::Parameter(_) | ValueKind::SyntaxFragment(_)) | None => {
+            CallbackResolution::default()
+        }
+    };
+    visiting.remove(&value);
+    resolution
+}
+
+fn callback_function_for_local(
+    hir: &HirFile,
+    function: &HirFunction,
+    local: LocalId,
+) -> Option<FunctionId> {
+    let local = function.locals.get(local.as_usize())?;
+    let binding = local.binding?;
+    let binding_kind = hir.bindings.get(binding.as_usize())?.kind;
+    let stable_binding = binding_kind == BindingKind::Const
+        || (binding_kind == BindingKind::Function && local.kind != LocalKind::Capture);
+    stable_binding.then(|| {
+        hir.functions
+            .iter()
+            .find(|candidate| candidate.binding == Some(binding))
+            .map(|candidate| candidate.id)
+    })?
+}
+
+fn instruction_location_for_result(
+    function: &HirFunction,
+    value: ValueId,
+) -> Option<InstructionLocation> {
+    function.blocks.iter().find_map(|block| {
+        block
+            .instructions
+            .iter()
+            .position(|instruction| instruction.result == Some(value))
+            .map(|instruction| InstructionLocation {
+                block: block.id,
+                instruction: count_u32(instruction),
+            })
+    })
+}
+
+fn definition_instruction_location(location: SsaDefinitionLocation) -> Option<InstructionLocation> {
+    let SsaDefinitionLocation::Instruction { block, instruction } = location else {
+        return None;
+    };
+    Some(InstructionLocation { block, instruction })
+}
+
+fn diagnose_unresolved_state_callbacks(
+    callbacks: &BTreeMap<(FunctionId, BlockId, u32), Origin>,
+    strict_guarantee: bool,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    for origin in callbacks.values() {
+        let mut diagnostic = Diagnostic::new(
+            DiagnosticCode::new("FICT-R002").expect("reactive escape diagnostic literal"),
+            if strict_guarantee {
+                DiagnosticSeverity::Error
+            } else {
+                DiagnosticSeverity::Warning
+            },
+            "state collection callback cannot be proven not to retain or mutate state-derived values",
+        )
+        .with_help("use an analyzable local callback, or read scalar fields before the boundary")
+        .with_guarantee_class(GuaranteeClass::Fallback);
+        if let Some(span) = origin.primary_span {
+            diagnostic = diagnostic.with_primary_span(span);
+        }
+        diagnostics.push(diagnostic);
+    }
+}
+
+fn value_preserves_state_identity(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    value: ValueId,
+    state_names: &BTreeSet<SsaName>,
+) -> bool {
+    value_preserves_state_identity_in(
+        hir,
+        analyses,
+        function,
+        analysis,
+        value,
+        state_names,
+        &mut BTreeSet::new(),
+    )
+}
+
+fn value_preserves_state_identity_in(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    value: ValueId,
+    state_names: &BTreeSet<SsaName>,
+    visiting: &mut BTreeSet<(FunctionId, ValueId)>,
+) -> bool {
+    let visit_key = (function.id, value);
+    if !visiting.insert(visit_key) {
+        return false;
+    }
+    let result = match function
+        .values
+        .get(value.as_usize())
+        .map(|value| &value.kind)
+    {
+        Some(ValueKind::Ssa(name)) => name_resolves_to_set(*name, state_names),
+        Some(ValueKind::Parameter(local)) => state_names
+            .iter()
+            .any(|candidate| candidate.local == *local),
+        Some(ValueKind::Literal(_) | ValueKind::Function(_)) => false,
+        Some(ValueKind::SyntaxFragment(_)) => {
+            value_depends_on_reactive(analysis, value, state_names)
+        }
+        Some(ValueKind::InstructionResult) => {
+            let Some(instruction) = function.instruction_for_result(value) else {
+                visiting.remove(&visit_key);
+                return false;
+            };
+            let location = instruction_location_for_result(function, value);
+            match &instruction.kind {
+                HirInstructionKind::Declare {
+                    initializer: Some(initializer),
+                    ..
+                } => value_preserves_state_identity_in(
+                    hir,
+                    analyses,
+                    function,
+                    analysis,
+                    *initializer,
+                    state_names,
+                    visiting,
+                ),
+                HirInstructionKind::Read { place } => {
+                    let base_preserves = place_preserves_state_identity(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        place,
+                        location,
+                        state_names,
+                        visiting,
+                    );
+                    base_preserves
+                        || (!place.projections.is_empty()
+                            && value_depends_on_reactive(analysis, value, state_names))
+                }
+                HirInstructionKind::Write { value, .. }
+                | HirInstructionKind::PatternAssignment { value, .. }
+                | HirInstructionKind::Await { value }
+                | HirInstructionKind::Yield {
+                    value: Some(value), ..
+                } => value_preserves_state_identity_in(
+                    hir,
+                    analyses,
+                    function,
+                    analysis,
+                    *value,
+                    state_names,
+                    visiting,
+                ),
+                HirInstructionKind::Conditional {
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        *consequent,
+                        state_names,
+                        visiting,
+                    ) || value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        *alternate,
+                        state_names,
+                        visiting,
+                    )
+                }
+                HirInstructionKind::Sequence { values } => values.last().is_some_and(|value| {
+                    value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        *value,
+                        state_names,
+                        visiting,
+                    )
+                }),
+                HirInstructionKind::Binary {
+                    operator:
+                        fict_hir::BinaryOperator::LogicalAnd
+                        | fict_hir::BinaryOperator::LogicalOr
+                        | fict_hir::BinaryOperator::NullishCoalescing,
+                    left,
+                    right,
+                } => {
+                    value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        *left,
+                        state_names,
+                        visiting,
+                    ) || value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        *right,
+                        state_names,
+                        visiting,
+                    )
+                }
+                HirInstructionKind::Call(call) => {
+                    if let Some(place) = call.callee_reference.as_ref() {
+                        let receiver_preserves = place_preserves_state_identity(
+                            hir,
+                            analyses,
+                            function,
+                            analysis,
+                            place,
+                            location,
+                            state_names,
+                            visiting,
+                        );
+                        let Some(method) = state_method_name(function, place) else {
+                            visiting.remove(&visit_key);
+                            return receiver_preserves;
+                        };
+                        if state_method_returns_fresh_container(call.state_receiver_kind, &method) {
+                            receiver_preserves
+                        } else {
+                            receiver_preserves
+                                || value_depends_on_reactive(analysis, value, state_names)
+                        }
+                    } else {
+                        local_call_returns_state_identity(
+                            hir,
+                            analyses,
+                            function,
+                            analysis,
+                            call,
+                            state_names,
+                            visiting,
+                        )
+                    }
+                }
+                HirInstructionKind::Phi { sources, .. } => sources
+                    .iter()
+                    .any(|(_, source)| name_resolves_to_set(*source, state_names)),
+                HirInstructionKind::SyntaxFragment { inputs, .. } if inputs.len() == 1 => {
+                    value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        inputs[0],
+                        state_names,
+                        visiting,
+                    )
+                }
+                HirInstructionKind::Array { elements } => elements.iter().any(|element| {
+                    let value = match element {
+                        ArrayElement::Value(value) | ArrayElement::Spread { value, .. } => *value,
+                        ArrayElement::Hole(_) => return false,
+                    };
+                    value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        value,
+                        state_names,
+                        visiting,
+                    )
+                }),
+                HirInstructionKind::Object { entries } => entries.iter().any(|entry| {
+                    let value = match entry {
+                        ObjectEntry::Property { value, .. } | ObjectEntry::Spread { value, .. } => {
+                            *value
+                        }
+                    };
+                    value_preserves_state_identity_in(
+                        hir,
+                        analyses,
+                        function,
+                        analysis,
+                        value,
+                        state_names,
+                        visiting,
+                    )
+                }),
+                HirInstructionKind::Declare {
+                    initializer: None, ..
+                }
+                | HirInstructionKind::ReadWrite { .. }
+                | HirInstructionKind::Iteration { .. }
+                | HirInstructionKind::Literal(_)
+                | HirInstructionKind::UnresolvedTypeof { .. }
+                | HirInstructionKind::Context { .. }
+                | HirInstructionKind::Delete { .. }
+                | HirInstructionKind::Unary { .. }
+                | HirInstructionKind::Binary { .. }
+                | HirInstructionKind::TemplateLiteral { .. }
+                | HirInstructionKind::TaggedTemplate { .. }
+                | HirInstructionKind::DynamicImport { .. }
+                | HirInstructionKind::New { .. }
+                | HirInstructionKind::Function { .. }
+                | HirInstructionKind::Jsx { .. }
+                | HirInstructionKind::Yield { value: None, .. }
+                | HirInstructionKind::SyntaxFragment { .. }
+                | HirInstructionKind::Debugger => false,
+            }
+        }
+        None => false,
+    };
+    visiting.remove(&visit_key);
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_preserves_state_identity(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    place: &Place,
+    location: Option<InstructionLocation>,
+    state_names: &BTreeSet<SsaName>,
+    visiting: &mut BTreeSet<(FunctionId, ValueId)>,
+) -> bool {
+    match place.base {
+        PlaceBase::Local(local) => location
+            .and_then(|location| {
+                ssa_name_before(
+                    analysis,
+                    WriteLocation {
+                        function: function.id,
+                        block: location.block,
+                        instruction: location.instruction,
+                        local,
+                    },
+                )
+            })
+            .is_some_and(|name| name_resolves_to_set(name, state_names)),
+        PlaceBase::Ssa(name) => name_resolves_to_set(name, state_names),
+        PlaceBase::Value(value) => value_preserves_state_identity_in(
+            hir,
+            analyses,
+            function,
+            analysis,
+            value,
+            state_names,
+            visiting,
+        ),
+        PlaceBase::Global(_) => false,
+    }
+}
+
+fn local_call_returns_state_identity(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    caller: &HirFunction,
+    caller_analysis: &FunctionPassAnalysis,
+    call: &fict_hir::CallInstruction,
+    caller_state_names: &BTreeSet<SsaName>,
+    visiting: &mut BTreeSet<(FunctionId, ValueId)>,
+) -> bool {
+    let Some(callee) = resolved_local_callee(hir, call) else {
+        return false;
+    };
+    let Some(callee_analysis) = analyses.get(callee.id.as_usize()) else {
+        return false;
+    };
+    if call.arguments.iter().any(|argument| argument.spread) {
+        return false;
+    }
+
+    let mut callee_state_names = BTreeSet::new();
+    for (parameter, argument) in callee.parameters.iter().zip(&call.arguments) {
+        if !value_preserves_state_identity_in(
+            hir,
+            analyses,
+            caller,
+            caller_analysis,
+            argument.value,
+            caller_state_names,
+            visiting,
+        ) {
+            continue;
+        }
+        if let Some(entry) = callee_analysis
+            .ssa
+            .definitions
+            .iter()
+            .find_map(|definition| {
+                (definition.name.local == parameter.local
+                    && definition.location == SsaDefinitionLocation::Entry)
+                    .then_some(definition.name)
+            })
+        {
+            callee_state_names.insert(entry);
+        }
+    }
+    if callee_state_names.is_empty() {
+        return false;
+    }
+
+    callee.blocks.iter().any(|block| {
+        let TerminatorKind::Return { value: Some(value) } = block.terminator.kind else {
+            return false;
+        };
+        value_preserves_state_identity_in(
+            hir,
+            analyses,
+            callee,
+            callee_analysis,
+            value,
+            &callee_state_names,
+            visiting,
+        )
+    })
+}
+
+fn resolved_local_callee<'a>(
+    hir: &'a HirFile,
+    call: &fict_hir::CallInstruction,
+) -> Option<&'a HirFunction> {
+    match call.host {
+        CallHost::Function(function) => hir.functions.get(function.as_usize()),
+        CallHost::Binding(binding) => hir
+            .functions
+            .iter()
+            .find(|function| function.binding == Some(binding)),
+        CallHost::Unknown | CallHost::ReactiveScope(_) => None,
+    }
+}
+
 fn value_depends_on_reactive(
     analysis: &FunctionPassAnalysis,
     value: ValueId,
@@ -545,7 +2509,7 @@ fn value_depends_on_reactive(
 }
 
 fn name_resolves_to_set(name: SsaName, names: &BTreeSet<SsaName>) -> bool {
-    names.contains(&name) || names.iter().any(|candidate| candidate.local == name.local)
+    names.contains(&name)
 }
 
 fn is_pattern_binding_declaration(
@@ -637,6 +2601,87 @@ fn definition_is_readonly_derived_declaration(
         })
 }
 
+fn definition_is_fresh_state_container(
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    location: SsaDefinitionLocation,
+) -> bool {
+    let Some(value) = definition_source_value(function, location) else {
+        return false;
+    };
+    value_is_fresh_state_container(
+        function,
+        analysis,
+        value,
+        &mut BTreeSet::new(),
+        &mut BTreeSet::new(),
+    )
+}
+
+fn value_is_fresh_state_container(
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    value: ValueId,
+    visiting_values: &mut BTreeSet<ValueId>,
+    visiting_names: &mut BTreeSet<SsaName>,
+) -> bool {
+    if !visiting_values.insert(value) {
+        return false;
+    }
+    match function
+        .values
+        .get(value.as_usize())
+        .map(|value| &value.kind)
+    {
+        Some(ValueKind::Ssa(name)) if visiting_names.insert(*name) => {
+            let result = analysis
+                .ssa
+                .definitions
+                .iter()
+                .find(|definition| definition.name == *name)
+                .and_then(|definition| definition_source_value(function, definition.location))
+                .is_some_and(|source| {
+                    value_is_fresh_state_container(
+                        function,
+                        analysis,
+                        source,
+                        visiting_values,
+                        visiting_names,
+                    )
+                });
+            visiting_names.remove(name);
+            result
+        }
+        Some(ValueKind::InstructionResult) => {
+            let Some(instruction) = function.instruction_for_result(value) else {
+                return false;
+            };
+            match &instruction.kind {
+                HirInstructionKind::Array { .. } | HirInstructionKind::Object { .. } => true,
+                HirInstructionKind::Declare {
+                    initializer: Some(initializer),
+                    ..
+                } => value_is_fresh_state_container(
+                    function,
+                    analysis,
+                    *initializer,
+                    visiting_values,
+                    visiting_names,
+                ),
+                HirInstructionKind::Call(call) => call
+                    .callee_reference
+                    .as_ref()
+                    .and_then(|place| state_method_name(function, place))
+                    .is_some_and(|method| {
+                        state_method_returns_fresh_container(call.state_receiver_kind, &method)
+                    }),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 fn select_earlier_site(current: &mut ReadonlySite, candidate: ReadonlySite) {
     let current_start = current
         .origin
@@ -646,9 +2691,7 @@ fn select_earlier_site(current: &mut ReadonlySite, candidate: ReadonlySite) {
         .origin
         .primary_span
         .map_or(u32::MAX, SourceSpan::start);
-    if candidate_start < current_start
-        || (candidate_start == current_start && candidate.kind < current.kind)
-    {
+    if candidate_start < current_start {
         *current = candidate;
     }
 }
@@ -661,16 +2704,124 @@ fn place_root_local(place: &Place) -> Option<LocalId> {
     }
 }
 
-fn state_method_call_may_mutate(place: &Place) -> bool {
-    let Some(method) = place.projections.last() else {
+fn state_method_call_may_mutate(function: &HirFunction, call: &fict_hir::CallInstruction) -> bool {
+    let Some(place) = call.callee_reference.as_ref() else {
         return false;
     };
-    !matches!(
-        method,
-        Projection::StaticProperty { name, .. }
-            if classify_state_method_call(StateReceiverKind::Unknown, name)
-                == StateMethodCallSemantics::ReadOnlyReceiver
-    )
+    state_method_name(function, place).is_none_or(|name| {
+        classify_state_method_call(call.state_receiver_kind, &name)
+            != StateMethodCallSemantics::ReadOnlyReceiver
+    })
+}
+
+fn state_method_returns_fresh_container(receiver: StateReceiverKind, method: &str) -> bool {
+    match receiver {
+        StateReceiverKind::Array => matches!(
+            method,
+            "concat"
+                | "filter"
+                | "flat"
+                | "flatMap"
+                | "map"
+                | "slice"
+                | "toReversed"
+                | "toSorted"
+                | "toSpliced"
+                | "with"
+        ),
+        StateReceiverKind::TypedArray => matches!(
+            method,
+            "filter" | "map" | "slice" | "toReversed" | "toSorted" | "with"
+        ),
+        StateReceiverKind::Set => matches!(
+            method,
+            "difference" | "intersection" | "symmetricDifference" | "union"
+        ),
+        StateReceiverKind::Function => method == "bind",
+        StateReceiverKind::Promise => matches!(method, "catch" | "finally" | "then"),
+        StateReceiverKind::String => {
+            classify_state_method_result(receiver, method) == StateReceiverKind::String
+        }
+        StateReceiverKind::Number => method == "valueOf",
+        StateReceiverKind::Unknown
+        | StateReceiverKind::DataView
+        | StateReceiverKind::Date
+        | StateReceiverKind::Map
+        | StateReceiverKind::WeakMap
+        | StateReceiverKind::WeakSet => false,
+    }
+}
+
+fn value_receiver_call_is_proven_safe(function: &HirFunction, place: &Place) -> bool {
+    let PlaceBase::Value(receiver) = place.base else {
+        return false;
+    };
+    let Some(name) = state_method_name(function, place) else {
+        // Calling a projected value such as `state.map(fn)[0]()` does not itself mutate the
+        // temporary container. Any mutation in an inline callback is validated in that body.
+        return true;
+    };
+    let receiver = state_derived_result_receiver(function, receiver);
+    classify_state_method_call(receiver, &name) == StateMethodCallSemantics::ReadOnlyReceiver
+}
+
+fn state_derived_result_receiver(function: &HirFunction, value: ValueId) -> StateReceiverKind {
+    state_derived_result_receiver_inner(function, value, &mut BTreeSet::new())
+}
+
+fn state_derived_result_receiver_inner(
+    function: &HirFunction,
+    value: ValueId,
+    visiting: &mut BTreeSet<ValueId>,
+) -> StateReceiverKind {
+    if !visiting.insert(value) {
+        return StateReceiverKind::Unknown;
+    }
+    let Some(instruction) = function.instruction_for_result(value) else {
+        return StateReceiverKind::Unknown;
+    };
+    let call = match &instruction.kind {
+        HirInstructionKind::Array { .. } => return StateReceiverKind::Array,
+        HirInstructionKind::Literal(fict_hir::LiteralValue::String(_)) => {
+            return StateReceiverKind::String;
+        }
+        HirInstructionKind::Literal(fict_hir::LiteralValue::Number(_)) => {
+            return StateReceiverKind::Number;
+        }
+        HirInstructionKind::Call(call) => call,
+        _ => return StateReceiverKind::Unknown,
+    };
+    let Some(place) = call.callee_reference.as_ref() else {
+        return StateReceiverKind::Unknown;
+    };
+    let Some(name) = state_method_name(function, place) else {
+        return StateReceiverKind::Unknown;
+    };
+    let receiver = if call.state_receiver_kind == StateReceiverKind::Unknown
+        && let PlaceBase::Value(receiver) = place.base
+    {
+        state_derived_result_receiver_inner(function, receiver, visiting)
+    } else {
+        call.state_receiver_kind
+    };
+    classify_state_method_result(receiver, &name)
+}
+
+fn state_method_name(function: &HirFunction, place: &Place) -> Option<String> {
+    match place.projections.last()? {
+        Projection::StaticProperty { name, .. } => Some(name.clone()),
+        Projection::ComputedProperty { key, .. } => {
+            let ValueKind::Literal(fict_hir::LiteralValue::String(name)) = function
+                .values
+                .get(key.as_usize())
+                .map(|value| &value.kind)?
+            else {
+                return None;
+            };
+            name.to_utf8()
+        }
+        Projection::Index { .. } => None,
+    }
 }
 
 fn validation_error(code: &'static str, message: impl Into<String>) -> Diagnostic {

@@ -415,6 +415,83 @@ test('function-valued state calls preserve the authored invocation chain', async
   container.remove()
 })
 
+test('state accessors materialize at exact object and array container boundaries', async () => {
+  const compiled = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export const log = []
+      export let snapshot
+
+      function useObjectContainerTiming() {
+        log.length = 0
+        let count = $state(1)
+        let source = 1
+        const read = () => {
+          log.push('object:' + source)
+          return source
+        }
+        const out = {
+          method() { return count },
+          get current() { return count },
+          set current(value) { count = value },
+          arrow: () => count,
+          fn: function() { return count },
+          data: read(),
+        }
+        source = 2
+        return [out.data, [...log], out.method(), out.current, out.arrow(), out.fn()]
+      }
+
+      function useArrayContainerTiming() {
+        log.length = 0
+        let count = $state(1)
+        let source = 1
+        const read = () => {
+          log.push('array:' + source)
+          return source
+        }
+        const out = [() => count, function() { return count }, read()]
+        source = 2
+        return [out[2], [...log], out[0](), out[1]()]
+      }
+
+      function useIifeContainerControl() {
+        let count = $state(1)
+        const out = { data: (() => count)() }
+        return out.data
+      }
+
+      function App() {
+        snapshot = {
+          object: useObjectContainerTiming(),
+          array: useArrayContainerTiming(),
+          iife: useIifeContainerControl(),
+        }
+        return null
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'state-accessor-container-boundaries',
+  )
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.deepEqual(compiled.snapshot, {
+    object: [1, ['object:1'], 1, 1, 1, 1],
+    array: [1, ['array:1'], 1, 1],
+    iife: 1,
+  })
+
+  dispose()
+  container.remove()
+})
+
 test('native template extraction preserves static HTML and live binding paths', async () => {
   const result = binding.transformSync({
     code: `
@@ -1238,6 +1315,143 @@ test('state method calls fail closed unless receiver mutation is ruled out', () 
   const fallbackFindings = fallback.diagnostics.filter(({ code }) => code === 'FICT-M')
   assert.equal(fallbackFindings.length, 6, JSON.stringify(fallback.diagnostics, null, 2))
   assert.ok(fallbackFindings.every(({ severity }) => severity === 'warning'))
+})
+
+test('state provenance failures execute only through explicit fallback mode', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    export function useRetained() {
+      const retained = $state([{ done: false }])
+      class Box {
+        item = retained.at(0)
+        mutate() { this.item.done = true }
+      }
+      const box = new Box()
+      box.mutate()
+      return retained[0].done
+    }
+
+    function useRest() {
+      const rows = $state([{ done: false }, { done: false }])
+      const [, ...rest] = rows
+      const item = rest.at(0)
+      item.done = true
+      return rows[1].done
+    }
+
+    function useCrossFamily() {
+      let collection = $state([{ done: false }])
+      collection = new Map([['item', { done: false }]])
+      const item = collection.get('item')
+      item.done = true
+      return item.done
+    }
+
+    function useClassBase() {
+      const bases = $state([class Base { static marker = 'base' }])
+      class Child extends bases.at(0) {}
+      return Object.getPrototypeOf(Child).marker
+    }
+
+    function useComputedMethod() {
+      const keys = $state(['run'])
+      class Box { [keys.at(0)]() { return 'computed' } }
+      return new Box().run()
+    }
+
+    function App({ flag }) {
+      const branch = $state([{ done: false }, { done: false }])
+      let branchItem
+      if (flag) branchItem = branch.at(0)
+      else branchItem = branch.at(1)
+      branchItem.done = true
+
+      const callback = $state([{ done: false }])
+      callback.forEach(item => { item.done = true })
+
+      const callbackReceiver = $state([{ done: false }])
+      callbackReceiver.map((_item, _index, source) => {
+        source[0].done = true
+        return false
+      })
+
+      const chain = $state([{ done: false }])
+      chain.map(item => item).at(0).done = true
+
+      const retainedDone = useRetained()
+
+      return <output data-id="state-provenance">{
+        [
+          branch[0].done,
+          callback[0].done,
+          callbackReceiver[0].done,
+          chain[0].done,
+          retainedDone,
+          useRest(),
+          useCrossFamily(),
+          useClassBase(),
+          useComputedMethod(),
+        ].join(':')
+      }</output>
+    }
+
+    export function mount(container) {
+      return render(() => <App flag={true} />, container)
+    }
+  `
+
+  const strict = binding.transformSync({
+    code: source,
+    filename: '/fixtures/state-provenance-runtime.tsx',
+    options: { strictGuarantee: true },
+  })
+  assert.equal(strict.code, '')
+  assert.ok(
+    strict.diagnostics.some(
+      ({ code, guaranteeClass, severity }) =>
+        code === 'FICT-R002' && guaranteeClass === 'fallback' && severity === 'error',
+    ),
+    JSON.stringify(strict.diagnostics, null, 2),
+  )
+
+  const fallback = binding.transformSync({
+    code: source,
+    filename: '/fixtures/state-provenance-runtime.tsx',
+    moduleId: '/fixtures/state-provenance-runtime.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.notEqual(fallback.code, '')
+  const provenanceDiagnostics = fallback.diagnostics.filter(({ code }) =>
+    ['FICT-M', 'FICT-R002'].includes(code),
+  )
+  assert.equal(
+    provenanceDiagnostics.filter(({ code }) => code === 'FICT-M').length,
+    8,
+    JSON.stringify(fallback.diagnostics, null, 2),
+  )
+  assert.equal(
+    provenanceDiagnostics.filter(({ code }) => code === 'FICT-R002').length,
+    2,
+    JSON.stringify(fallback.diagnostics, null, 2),
+  )
+  assert.ok(
+    provenanceDiagnostics.every(
+      ({ guaranteeClass, severity }) => guaranteeClass === 'fallback' && severity === 'warning',
+    ),
+  )
+
+  const compiled = await importCompiledModule(fallback.code, 'state-provenance-runtime')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+  assert.equal(
+    container.querySelector('[data-id="state-provenance"]')?.textContent,
+    'true:true:true:true:true:true:true:base:computed',
+  )
+  dispose()
+  container.remove()
 })
 
 test('derived cycles fail closed even when strict guarantees are disabled', () => {

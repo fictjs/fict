@@ -51,6 +51,7 @@ fn runtime_reactive_call(result: u32, binding: u32, kind: ReactiveCallKind) -> H
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
             callee_reference: None,
+            state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
             arguments: vec![CallArgument {
                 value: ValueId::new(1),
                 spread: false,
@@ -86,6 +87,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
         HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
             callee_reference: None,
+            state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
             arguments,
             host: CallHost::Unknown,
             macro_kind: Some(kind),

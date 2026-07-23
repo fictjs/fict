@@ -347,6 +347,7 @@ fn cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier() {
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(0),
                 callee_reference: None,
+                state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
                 arguments: Vec::new(),
                 host: CallHost::Unknown,
                 macro_kind: None,
@@ -495,6 +496,7 @@ fn cse_and_dce_remap_method_call_references_with_their_callee_reads() {
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(4),
                 callee_reference: Some(method),
+                state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
                 arguments: Vec::new(),
                 host: CallHost::Unknown,
                 macro_kind: None,

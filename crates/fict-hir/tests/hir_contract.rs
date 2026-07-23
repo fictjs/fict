@@ -140,6 +140,7 @@ fn verifier_only_allows_configured_reactive_hosts_without_lexical_bindings() {
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(0),
                 callee_reference: None,
+                state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
                 arguments: vec![CallArgument {
                     value: ValueId::new(0),
                     spread: false,
@@ -465,6 +466,7 @@ fn verifier_requires_method_calls_to_retain_the_exact_callee_read_reference() {
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(0),
                 callee_reference: Some(method.clone()),
+                state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
                 arguments: Vec::new(),
                 host: CallHost::Unknown,
                 macro_kind: None,
