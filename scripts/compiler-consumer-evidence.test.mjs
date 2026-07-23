@@ -10,11 +10,15 @@ import {
   buildCompilerConsumerEvidence,
   collectCompilerConsumerEvidence,
   persistCompilerConsumerEvidence,
+  REQUIRED_CANDIDATE_FEATURES,
+  REQUIRED_CANDIDATE_NATIVE_PACKAGE,
+  REQUIRED_CANDIDATE_VALIDATIONS,
   REQUIRED_REAL_CONSUMER_PACKAGES,
 } from './compiler-consumer-evidence.mjs'
 
 const version = '0.30.0'
 const satelliteVersion = '0.28.2'
+const candidateVersion = '0.32.0-next.0'
 const repositoryName = 'fictjs/real-consumer'
 const repositoryUrl = `https://github.com/${repositoryName}`
 const commitSha = 'a'.repeat(40)
@@ -145,6 +149,112 @@ jobs:
   }
 }
 
+function candidateFixture() {
+  const source = fixture()
+  source.version = candidateVersion
+
+  const manifest = JSON.parse(Buffer.from(source.files.manifest.content, 'base64').toString('utf8'))
+  for (const packageName of REQUIRED_REAL_CONSUMER_PACKAGES) {
+    if (packageName === '@fictjs/ssr') continue
+    const group = manifest.dependencies?.[packageName] ? 'dependencies' : 'devDependencies'
+    manifest[group][packageName] = candidateVersion
+  }
+  Object.assign(manifest.scripts, {
+    'test:unit': 'vitest run',
+    'test:e2e': 'playwright test',
+    'test:ssr': 'node scripts/verify-ssr-hydration.mjs',
+    'test:hmr': 'node scripts/verify-dev-hmr.mjs',
+  })
+  source.files.manifest = fileDocument(JSON.stringify(manifest), 5)
+
+  const candidatePackages = [
+    ...REQUIRED_REAL_CONSUMER_PACKAGES,
+    REQUIRED_CANDIDATE_NATIVE_PACKAGE,
+  ].sort()
+  const candidateIntegrities = Object.fromEntries(
+    candidatePackages.map((packageName, index) => [
+      packageName,
+      `sha512-${Buffer.from(`candidate-package-${index}`).toString('base64')}`,
+    ]),
+  )
+  const candidateVersions = Object.fromEntries(
+    candidatePackages.map(packageName => [
+      packageName,
+      packageName === '@fictjs/ssr' ? satelliteVersion : candidateVersion,
+    ]),
+  )
+  const lockfile = `lockfileVersion: '9.0'
+
+packages:
+${candidatePackages
+  .map(
+    packageName =>
+      `  '${packageName}@${candidateVersions[packageName]}':\n    resolution: {integrity: ${candidateIntegrities[packageName]}}`,
+  )
+  .join('\n')}
+`
+  source.files.lockfile = fileDocument(lockfile, 6)
+
+  const coverageDocument = {
+    schemaVersion: 1,
+    features: Object.fromEntries(
+      REQUIRED_CANDIDATE_FEATURES.map(name => [name, ['src/candidate-coverage.tsx']]),
+    ),
+    validations: Object.fromEntries(
+      REQUIRED_CANDIDATE_VALIDATIONS.map(name => [name, ['e2e/candidate.spec.ts']]),
+    ),
+  }
+  source.files.coverage = fileDocument(JSON.stringify(coverageDocument), 7)
+  source.files.coverageEntries = {
+    [`${projectPath}/src/candidate-coverage.tsx`]: fileDocument(
+      'export function useCandidateCoverage() { return new Map() }',
+      8,
+    ),
+    [`${projectPath}/e2e/candidate.spec.ts`]: fileDocument(
+      "test('candidate coverage', () => {})",
+      9,
+    ),
+  }
+  source.files.workflow = fileDocument(
+    `name: CI
+on: push
+jobs:
+  consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --dir ${projectPath} install --frozen-lockfile
+      - run: pnpm --dir ${projectPath} verify:compiler
+      - run: pnpm --dir ${projectPath} typecheck
+      - run: pnpm --dir ${projectPath} build
+      - run: pnpm --dir ${projectPath} test:unit
+      - run: pnpm --dir ${projectPath} test:e2e
+      - run: pnpm --dir ${projectPath} test:ssr
+      - run: pnpm --dir ${projectPath} test:hmr
+`,
+    10,
+  )
+
+  source.packuments = Object.fromEntries(
+    candidatePackages.map(packageName => {
+      const packageVersion = candidateVersions[packageName]
+      return [
+        packageName,
+        {
+          versions: {
+            [packageVersion]: {
+              name: packageName,
+              version: packageVersion,
+              dist: { integrity: candidateIntegrities[packageName] },
+            },
+          },
+          time: { [packageVersion]: '2026-07-31T10:00:00.000Z' },
+        },
+      ]
+    }),
+  )
+  return source
+}
+
 test('consumer evidence CLI rejects unknown and incomplete arguments', () => {
   const unknown = spawnSync(process.execPath, [evidenceScript, '--unknown'], { encoding: 'utf8' })
   assert.notEqual(unknown.status, 0)
@@ -171,6 +281,66 @@ test('builds one digest-bound record from a published Rust-default consumer', ()
     satelliteVersion,
   )
   assert.match(evidence.evidenceDigest, /^sha256:[0-9a-f]{64}$/)
+})
+
+test('binds a prerelease candidate to native integrity and full external validation', () => {
+  const evidence = buildCompilerConsumerEvidence(candidateFixture())
+  assert.equal(evidence.schemaVersion, 2)
+  assert.equal(evidence.release, candidateVersion)
+  assert.equal(evidence.profile, 'release-candidate')
+  assert.equal(evidence.project.scripts.unit, 'vitest run')
+  assert.equal(evidence.project.scripts.browserE2E, 'playwright test')
+  assert.deepEqual(Object.keys(evidence.project.coverage.features), REQUIRED_CANDIDATE_FEATURES)
+  assert.deepEqual(
+    Object.keys(evidence.project.coverage.validations),
+    REQUIRED_CANDIDATE_VALIDATIONS,
+  )
+  assert.equal(
+    evidence.packages.find(packageEntry => packageEntry.name === REQUIRED_CANDIDATE_NATIVE_PACKAGE)
+      .version,
+    candidateVersion,
+  )
+  assert.match(evidence.evidenceDigest, /^sha256:[0-9a-f]{64}$/)
+})
+
+test('candidate evidence fails closed on missing workflows, coverage, and native integrity', () => {
+  const missingHmr = candidateFixture()
+  const manifest = JSON.parse(
+    Buffer.from(missingHmr.files.manifest.content, 'base64').toString('utf8'),
+  )
+  delete manifest.scripts['test:hmr']
+  missingHmr.files.manifest = fileDocument(JSON.stringify(manifest), 11)
+  assert.throws(
+    () => buildCompilerConsumerEvidence(missingHmr),
+    /package\.json requires a test:hmr script/,
+  )
+
+  const missingFeature = candidateFixture()
+  const coverage = JSON.parse(
+    Buffer.from(missingFeature.files.coverage.content, 'base64').toString('utf8'),
+  )
+  delete coverage.features.customHooks
+  missingFeature.files.coverage = fileDocument(JSON.stringify(coverage), 12)
+  assert.throws(
+    () => buildCompilerConsumerEvidence(missingFeature),
+    /coverage features\.customHooks requires file paths/,
+  )
+
+  const unboundNative = candidateFixture()
+  unboundNative.files.lockfile = fileDocument(
+    Buffer.from(unboundNative.files.lockfile.content, 'base64')
+      .toString('utf8')
+      .replace(
+        unboundNative.packuments[REQUIRED_CANDIDATE_NATIVE_PACKAGE].versions[candidateVersion].dist
+          .integrity,
+        'sha512-unbound',
+      ),
+    13,
+  )
+  assert.throws(
+    () => buildCompilerConsumerEvidence(unboundNative),
+    /lockfile does not bind @fictjs\/compiler-linux-x64-gnu/,
+  )
 })
 
 test('rejects links, overrides, ranges, cross-revision runs, and pre-publication evidence', () => {
@@ -213,7 +383,7 @@ test('rejects links, overrides, ranges, cross-revision runs, and pre-publication
   rangedSatellite.files.manifest = fileDocument(JSON.stringify(rangedSatelliteManifest), 8)
   assert.throws(
     () => buildCompilerConsumerEvidence(rangedSatellite),
-    /must pin @fictjs\/ssr to one exact stable version/,
+    /must pin @fictjs\/ssr to one exact published version/,
   )
 
   const crossRevision = fixture()
@@ -291,6 +461,70 @@ test('collects only immutable GitHub files, one successful run, and npm packumen
     requested.find(request => request.url.startsWith('https://registry.npmjs.org')).options.headers
       .authorization,
     undefined,
+  )
+})
+
+test('collects candidate coverage files from the same immutable revision', async () => {
+  const source = candidateFixture()
+  const githubApi = `https://api.github.com/repos/${repositoryName}`
+  const filePaths = {
+    manifest: `${projectPath}/package.json`,
+    lockfile: `${projectPath}/pnpm-lock.yaml`,
+    viteConfig: `${projectPath}/vite.config.mjs`,
+    verification: `${projectPath}/scripts/verify-compiler.mjs`,
+    workflow: workflowPath,
+    coverage: `${projectPath}/compiler-candidate-coverage.json`,
+  }
+  const responses = new Map([
+    [githubApi, source.repository],
+    [`${githubApi}/commits/${commitSha}`, source.commit],
+    [`${githubApi}/actions/runs?event=push&status=completed&per_page=100`, source.workflowRuns],
+    ...Object.entries(filePaths).map(([key, filePath]) => [
+      `${githubApi}/contents/${filePath
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}?ref=${commitSha}`,
+      source.files[key],
+    ]),
+    ...Object.entries(source.files.coverageEntries).map(([filePath, document]) => [
+      `${githubApi}/contents/${filePath
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}?ref=${commitSha}`,
+      document,
+    ]),
+    ...Object.entries(source.packuments).map(([packageName, packument]) => [
+      `https://registry.npmjs.org/${encodeURIComponent(packageName)}`,
+      packument,
+    ]),
+  ])
+  const requested = []
+  const fetchImpl = async url => {
+    requested.push(url)
+    return {
+      ok: responses.has(url),
+      status: responses.has(url) ? 200 : 404,
+      async json() {
+        return responses.get(url)
+      },
+    }
+  }
+  const evidence = await collectCompilerConsumerEvidence(
+    {
+      version: candidateVersion,
+      repositoryName,
+      commitSha,
+      workflowPath,
+      projectPath,
+    },
+    { fetchImpl },
+  )
+  assert.equal(evidence.schemaVersion, 2)
+  assert.equal(requested.length, 17)
+  assert.ok(
+    requested.includes(
+      `${githubApi}/contents/${projectPath}/src/candidate-coverage.tsx?ref=${commitSha}`,
+    ),
   )
 })
 

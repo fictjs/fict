@@ -20,13 +20,40 @@ export const REQUIRED_REAL_CONSUMER_PACKAGES = [
   ...REQUIRED_REAL_CONSUMER_CORE_PACKAGES,
   ...REQUIRED_REAL_CONSUMER_SATELLITE_PACKAGES,
 ].sort()
+export const REQUIRED_CANDIDATE_NATIVE_PACKAGE = '@fictjs/compiler-linux-x64-gnu'
+export const REQUIRED_CANDIDATE_FEATURES = [
+  'collections',
+  'customHooks',
+  'hmr',
+  'keyedLists',
+  'propsDestructuring',
+  'sourceMaps',
+  'ssrResume',
+  'wrapperRegistry',
+].sort()
+export const REQUIRED_CANDIDATE_VALIDATIONS = [
+  'browserE2E',
+  'devHmr',
+  'ssrHydration',
+  'unit',
+].sort()
 const requiredCorePackages = new Set(REQUIRED_REAL_CONSUMER_CORE_PACKAGES)
 const REQUIRED_PROJECT_SCRIPTS = ['build', 'typecheck', 'verify:compiler']
+const REQUIRED_CANDIDATE_PROJECT_SCRIPTS = [
+  ...REQUIRED_PROJECT_SCRIPTS,
+  'test:e2e',
+  'test:hmr',
+  'test:ssr',
+  'test:unit',
+]
 
-function assertStableVersion(version) {
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '')) {
-    throw new Error(`Compiler consumer evidence requires a stable semver version: ${version}`)
-  }
+function releaseProfile(version) {
+  const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+  const prerelease =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*$/
+  if (stable.test(version ?? '')) return 'stable'
+  if (prerelease.test(version ?? '')) return 'release-candidate'
+  throw new Error(`Compiler consumer evidence requires an exact semver version: ${version}`)
 }
 
 function assertCommitSha(commitSha) {
@@ -140,7 +167,11 @@ function assertConsumerSources(
   { manifest, lockfile, viteConfig, verification, workflow },
   options,
 ) {
-  for (const script of REQUIRED_PROJECT_SCRIPTS) {
+  const requiredScripts =
+    options.profile === 'release-candidate'
+      ? REQUIRED_CANDIDATE_PROJECT_SCRIPTS
+      : REQUIRED_PROJECT_SCRIPTS
+  for (const script of requiredScripts) {
     if (typeof manifest?.scripts?.[script] !== 'string' || !manifest.scripts[script].trim()) {
       throw new Error(`Real consumer package.json requires a ${script} script`)
     }
@@ -155,6 +186,12 @@ function assertConsumerSources(
   }
   if (/(?:specifier|version):\s*link:/.test(lockfile)) {
     throw new Error('Real consumer lockfile cannot use workspace links for released packages')
+  }
+  if (
+    options.profile === 'release-candidate' &&
+    !/^\s*runs-on:\s*ubuntu-(?:latest|[0-9.]+)\s*$/m.test(workflow)
+  ) {
+    throw new Error('Release-candidate consumer workflow must run its native lane on Ubuntu')
   }
   if (!/from\s+['"]@fictjs\/vite-plugin['"]/.test(viteConfig)) {
     throw new Error('Real consumer Vite config must import @fictjs/vite-plugin')
@@ -173,6 +210,73 @@ function assertConsumerSources(
   }
 }
 
+function candidateCoveragePath(projectPath, relativePath, label) {
+  const normalized = normalizeRepositoryPath(relativePath, label)
+  if (normalized === '.') throw new Error(`${label} must identify one file`)
+  return projectFile(projectPath, normalized)
+}
+
+function validateCandidateCoverage(files, decodedCoverage, projectPath) {
+  let document
+  try {
+    document = JSON.parse(decodedCoverage)
+  } catch {
+    throw new Error('Release-candidate coverage manifest is not valid JSON')
+  }
+  if (document?.schemaVersion !== 1) {
+    throw new Error('Release-candidate coverage manifest requires schemaVersion 1')
+  }
+
+  const groups = {
+    features: REQUIRED_CANDIDATE_FEATURES,
+    validations: REQUIRED_CANDIDATE_VALIDATIONS,
+  }
+  const coverage = {}
+  for (const [group, requiredNames] of Object.entries(groups)) {
+    const actual = document?.[group]
+    if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+      throw new Error(`Release-candidate coverage manifest requires a ${group} object`)
+    }
+    const unexpected = Object.keys(actual)
+      .filter(name => !requiredNames.includes(name))
+      .sort()
+    if (unexpected.length > 0) {
+      throw new Error(
+        `Release-candidate coverage manifest has unexpected ${group}: ${unexpected.join(', ')}`,
+      )
+    }
+    coverage[group] = Object.fromEntries(
+      requiredNames.map(name => {
+        const paths = actual[name]
+        if (
+          !Array.isArray(paths) ||
+          paths.length === 0 ||
+          paths.some(filePath => typeof filePath !== 'string')
+        ) {
+          throw new Error(`Release-candidate coverage ${group}.${name} requires file paths`)
+        }
+        const entries = paths.map(relativePath => {
+          const filePath = candidateCoveragePath(
+            projectPath,
+            relativePath,
+            `Release-candidate coverage ${group}.${name}`,
+          )
+          const content = decodeGitHubFile(
+            files?.coverageEntries?.[filePath],
+            `Release-candidate coverage file ${filePath}`,
+          )
+          if (!content.trim()) {
+            throw new Error(`Release-candidate coverage file is empty: ${filePath}`)
+          }
+          return { path: filePath, digest: sha256(content) }
+        })
+        return [name, entries]
+      }),
+    )
+  }
+  return coverage
+}
+
 export function buildCompilerConsumerEvidence({
   version,
   repositoryName,
@@ -185,7 +289,7 @@ export function buildCompilerConsumerEvidence({
   files,
   packuments,
 }) {
-  assertStableVersion(version)
+  const profile = releaseProfile(version)
   assertRepositoryName(repositoryName)
   assertCommitSha(commitSha)
   workflowPath = normalizeRepositoryPath(workflowPath, 'workflow')
@@ -226,6 +330,9 @@ export function buildCompilerConsumerEvidence({
     viteConfig: projectFile(projectPath, 'vite.config.mjs'),
     verification: projectFile(projectPath, 'scripts/verify-compiler.mjs'),
     workflow: workflowPath,
+    ...(profile === 'release-candidate'
+      ? { coverage: projectFile(projectPath, 'compiler-candidate-coverage.json') }
+      : {}),
   }
   const decodedFiles = Object.fromEntries(
     Object.entries(expectedFilePaths).map(([key, filePath]) => [
@@ -250,21 +357,35 @@ export function buildCompilerConsumerEvidence({
       verification: decodedFiles.verification,
       workflow: decodedFiles.workflow,
     },
-    { projectPath },
+    { projectPath, profile },
   )
 
-  const packages = REQUIRED_REAL_CONSUMER_PACKAGES.map(packageName => {
-    const declaredVersion = requiredDependencyVersion(manifest, packageName)
+  const candidateCoverage =
+    profile === 'release-candidate'
+      ? validateCandidateCoverage(files, decodedFiles.coverage, projectPath)
+      : null
+
+  const requiredPackages = [
+    ...REQUIRED_REAL_CONSUMER_PACKAGES,
+    ...(profile === 'release-candidate' ? [REQUIRED_CANDIDATE_NATIVE_PACKAGE] : []),
+  ].sort()
+  const packages = requiredPackages.map(packageName => {
+    const isNativePackage = packageName === REQUIRED_CANDIDATE_NATIVE_PACKAGE
+    const declaredVersion = isNativePackage
+      ? version
+      : requiredDependencyVersion(manifest, packageName)
     if (requiredCorePackages.has(packageName) && declaredVersion !== version) {
       throw new Error(`Real consumer must pin ${packageName} to exact release ${version}`)
     }
-    if (
-      !requiredCorePackages.has(packageName) &&
-      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(declaredVersion)
-    ) {
-      throw new Error(`Real consumer must pin ${packageName} to one exact stable version`)
+    if (!requiredCorePackages.has(packageName) && !isNativePackage) {
+      try {
+        releaseProfile(declaredVersion)
+      } catch {
+        throw new Error(`Real consumer must pin ${packageName} to one exact published version`)
+      }
     }
-    const packageVersion = requiredCorePackages.has(packageName) ? version : declaredVersion
+    const packageVersion =
+      requiredCorePackages.has(packageName) || isNativePackage ? version : declaredVersion
     const packument = packuments?.[packageName]
     const published = packument?.versions?.[packageVersion]
     if (
@@ -299,9 +420,10 @@ export function buildCompilerConsumerEvidence({
   }
 
   const payload = {
-    schemaVersion: 1,
+    schemaVersion: profile === 'release-candidate' ? 2 : 1,
     status: 'pass',
     release: version,
+    ...(profile === 'release-candidate' ? { profile } : {}),
     repository: repositoryUrl,
     defaultBranch: repository.default_branch,
     commitSha,
@@ -319,7 +441,16 @@ export function buildCompilerConsumerEvidence({
         build: manifest.scripts.build,
         typecheck: manifest.scripts.typecheck,
         verifyCompiler: manifest.scripts['verify:compiler'],
+        ...(profile === 'release-candidate'
+          ? {
+              unit: manifest.scripts['test:unit'],
+              browserE2E: manifest.scripts['test:e2e'],
+              ssrHydration: manifest.scripts['test:ssr'],
+              devHmr: manifest.scripts['test:hmr'],
+            }
+          : {}),
       },
+      ...(candidateCoverage ? { coverage: candidateCoverage } : {}),
     },
     files: Object.fromEntries(
       Object.entries(expectedFilePaths).map(([key, filePath]) => [
@@ -341,7 +472,7 @@ export async function collectCompilerConsumerEvidence(
   { fetchImpl = fetch, githubToken = process.env.GITHUB_TOKEN } = {},
 ) {
   const { version, repositoryName, commitSha } = options
-  assertStableVersion(version)
+  const profile = releaseProfile(version)
   assertRepositoryName(repositoryName)
   assertCommitSha(commitSha)
   const workflowPath = normalizeRepositoryPath(options.workflowPath, 'workflow')
@@ -352,6 +483,9 @@ export async function collectCompilerConsumerEvidence(
     viteConfig: projectFile(projectPath, 'vite.config.mjs'),
     verification: projectFile(projectPath, 'scripts/verify-compiler.mjs'),
     workflow: workflowPath,
+    ...(profile === 'release-candidate'
+      ? { coverage: projectFile(projectPath, 'compiler-candidate-coverage.json') }
+      : {}),
   }
   const githubApi = `https://api.github.com/repos/${repositoryName}`
   const headers = githubHeaders(githubToken)
@@ -377,7 +511,10 @@ export async function collectCompilerConsumerEvidence(
       ]),
     ),
     Promise.all(
-      REQUIRED_REAL_CONSUMER_PACKAGES.map(async packageName => [
+      [
+        ...REQUIRED_REAL_CONSUMER_PACKAGES,
+        ...(profile === 'release-candidate' ? [REQUIRED_CANDIDATE_NATIVE_PACKAGE] : []),
+      ].map(async packageName => [
         packageName,
         await fetchJson(
           `${registry}/${encodeURIComponent(packageName)}`,
@@ -387,6 +524,36 @@ export async function collectCompilerConsumerEvidence(
       ]),
     ),
   ])
+  const files = Object.fromEntries(fileEntries)
+  if (profile === 'release-candidate') {
+    const coverageSource = decodeGitHubFile(files.coverage, `Real consumer ${filePaths.coverage}`)
+    let coverageDocument
+    try {
+      coverageDocument = JSON.parse(coverageSource)
+    } catch {
+      throw new Error('Release-candidate coverage manifest is not valid JSON')
+    }
+    const referencedPaths = [
+      ...REQUIRED_CANDIDATE_FEATURES.flatMap(name => coverageDocument?.features?.[name] ?? []),
+      ...REQUIRED_CANDIDATE_VALIDATIONS.flatMap(
+        name => coverageDocument?.validations?.[name] ?? [],
+      ),
+    ].map(relativePath =>
+      candidateCoveragePath(projectPath, relativePath, 'Release-candidate coverage path'),
+    )
+    files.coverageEntries = Object.fromEntries(
+      await Promise.all(
+        [...new Set(referencedPaths)].map(async filePath => [
+          filePath,
+          await fetchJson(
+            `${githubApi}/contents/${contentApiPath(filePath)}?ref=${commitSha}`,
+            `GitHub consumer ${filePath}`,
+            { fetchImpl, headers },
+          ),
+        ]),
+      ),
+    )
+  }
   return buildCompilerConsumerEvidence({
     version,
     repositoryName,
@@ -396,7 +563,7 @@ export async function collectCompilerConsumerEvidence(
     repository,
     commit,
     workflowRuns,
-    files: Object.fromEntries(fileEntries),
+    files,
     packuments: Object.fromEntries(packageEntries),
   })
 }

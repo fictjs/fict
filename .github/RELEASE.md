@@ -154,6 +154,33 @@ overrides, and local links are rejected. The record also binds file digests and
 the successful GitHub Actions run. M9 must embed the matching release,
 repository, commit, status, and evidence digest rather than a manual claim.
 
+Prerelease versions use the stricter schema-v2 candidate profile. Before a
+candidate can be called externally validated, the independent project must pin
+the exact Core prerelease, pin one exact SSR version, and resolve the Ubuntu x64
+GNU native compiler package from npm. Its default-branch workflow must perform a
+frozen install and run all of `verify:compiler`, `typecheck`, `build`,
+`test:unit`, `test:e2e`, `test:ssr`, and `test:hmr`. Record it with the same
+collector, for example:
+
+```bash
+pnpm release:evidence:consumer \
+  --version 0.32.0-next.0 \
+  --repository fictjs/shadcn \
+  --commit <40-character-commit> \
+  --workflow .github/workflows/ci.yml \
+  --project apps/v4
+```
+
+The project must also commit `compiler-candidate-coverage.json` at its project
+root. Schema 1 names repository-relative files for every required feature
+(`customHooks`, `collections`, `propsDestructuring`, `wrapperRegistry`,
+`keyedLists`, `ssrResume`, `sourceMaps`, and `hmr`) and validation
+(`unit`, `browserE2E`, `ssrHydration`, and `devHmr`). The collector fetches every
+referenced file at the exact consumer commit and binds its digest. A local
+tarball run is useful prepublication evidence, but it cannot create this record:
+missing npm integrity, an unpublished native tarball, or a CI run that predates
+publication fails closed.
+
 Before entering `legacy-removal`, update the four exact stable release fields
 in `.github/compiler-rollout-state.json`, replace the exact pending document in
 `.github/compiler-legacy-removal-evidence.json` with one digest-bound passing

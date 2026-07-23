@@ -70,3 +70,27 @@ is not evidence of broad ecosystem adoption. Release owners should still run
 pre-release builds in independent applications and review production telemetry,
 memory behavior, accessibility, and browser diversity. A green fixture suite
 must never be presented as a substitute for real external user load.
+
+## External release-candidate evidence
+
+The three-minute soak and external-consumer proof answer different questions.
+The soak stresses maintained in-repository applications. Candidate evidence
+proves that packages published to npm install and operate in an immutable,
+independent repository without workspace links.
+
+For a prerelease, `pnpm release:evidence:consumer` uses schema 2 and requires all
+of the following from one successful default-branch Ubuntu workflow:
+
+1. A frozen-lockfile install of exact published Core versions, one exact SSR
+   version, and the matching `@fictjs/compiler-linux-x64-gnu` native package.
+2. Rust-native compiler smoke, typecheck, and production client/server build.
+3. Unit, browser E2E, SSR/hydration, and real dev-server HMR commands.
+4. `compiler-candidate-coverage.json`, whose referenced source and test files
+   cover custom hooks, collections, props destructuring, wrapper/registry
+   component identities, keyed lists, SSR/resume, source maps, and HMR.
+5. A workflow completion time after every recorded npm publication time.
+
+The evidence record binds npm integrity, the lockfile, the immutable consumer
+commit and workflow run, the workflow/configuration files, and every coverage
+file digest. It intentionally cannot be generated from local workspace links or
+from tarballs that have not been published.
