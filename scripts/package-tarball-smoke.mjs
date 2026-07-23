@@ -306,7 +306,7 @@ function writeTypeConsumer(filePath, mode, specifiers) {
   writeFileSync(filePath, `${imports.join('\n')}\nvoid [${values}]\n`)
 }
 
-function writeViteRustIsolationConsumer(filePath) {
+export function writeViteRustIsolationConsumer(filePath) {
   writeFileSync(
     filePath,
     `'use strict'
@@ -340,7 +340,7 @@ const nativeFacade = {
       compilerBuildRevision: null,
       compilerProtocolVersion: 1,
       metadataSchemaVersion: 1,
-      compilerCapabilityManifestVersion,
+      compilerCapabilityManifestVersion: ${compilerCapabilityManifestVersion},
       compilerCapabilityManifestDigest: 'sha256:' + '0'.repeat(64),
       compilerCapabilityPackageVersion: 'test-capability-package',
     }),
@@ -389,7 +389,14 @@ Module._load = function (request, parent, isMain) {
     {
       emitFile() {},
       warn() {},
-      error(error) { throw error instanceof Error ? error : new Error(String(error)) },
+      error(error) {
+        if (error instanceof Error) throw error
+        const message =
+          error && typeof error === 'object' && typeof error.message === 'string'
+            ? error.message
+            : String(error)
+        throw new Error(message, { cause: error })
+      },
     },
     'export function App() { return <main /> }',
     '/project/src/App.tsx',

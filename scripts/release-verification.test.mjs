@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
@@ -12,6 +13,7 @@ import {
   findNativeCompilerVersionMismatches,
   findWorkspaceProtocols,
   verifyReleaseContract,
+  writeViteRustIsolationConsumer,
 } from './package-tarball-smoke.mjs'
 import {
   dirtyCheckoutMessage,
@@ -23,6 +25,9 @@ import {
 const rootPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const compilerPackage = JSON.parse(
   readFileSync(new URL('../packages/compiler/package.json', import.meta.url), 'utf8'),
+)
+const compilerCapabilities = JSON.parse(
+  readFileSync(new URL('../packages/compiler/compiler-capabilities.json', import.meta.url), 'utf8'),
 )
 const rolloutState = JSON.parse(
   readFileSync(new URL('../.github/compiler-rollout-state.json', import.meta.url), 'utf8'),
@@ -73,6 +78,21 @@ const ssrPackage = JSON.parse(
 
 test('release verification retains regression, tarball, SSR, browser, and clean-checkout gates', () => {
   assert.deepEqual(verifyReleaseContract(rootPackage, releaseWorkflow), [])
+})
+
+test('tarball Vite smoke binds the compiler capability version into its generated consumer', t => {
+  const tempDirectory = mkdtempSync(path.join(os.tmpdir(), 'fict-vite-tarball-consumer-'))
+  t.after(() => rmSync(tempDirectory, { recursive: true, force: true }))
+  const consumerPath = path.join(tempDirectory, 'consumer.cjs')
+  writeViteRustIsolationConsumer(consumerPath)
+  const consumer = readFileSync(consumerPath, 'utf8')
+
+  assert.match(
+    consumer,
+    new RegExp(`compilerCapabilityManifestVersion: ${compilerCapabilities.schemaVersion},`),
+  )
+  assert.doesNotMatch(consumer, /^\s+compilerCapabilityManifestVersion,$/m)
+  assert.match(consumer, /typeof error\.message === 'string'/)
 })
 
 test('CI validates the live compiler rollout state', () => {
