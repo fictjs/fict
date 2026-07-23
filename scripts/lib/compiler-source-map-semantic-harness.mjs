@@ -2,6 +2,77 @@ import assert from 'node:assert/strict'
 
 import { TraceMap, originalPositionFor } from '@jridgewell/trace-mapping'
 
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+function encodeVlq(value) {
+  let encoded = ''
+  let remaining = value < 0 ? ((-value << 1) | 1) >>> 0 : (value << 1) >>> 0
+  do {
+    let digit = remaining & 31
+    remaining >>>= 5
+    if (remaining > 0) digit |= 32
+    encoded += BASE64[digit]
+  } while (remaining > 0)
+  return encoded
+}
+
+function encodeMappedLine(text, sourceIndex, originalLine, state) {
+  let previousGeneratedColumn = 0
+  const segments = []
+  for (let column = 0; column <= text.length; column += 1) {
+    segments.push(
+      encodeVlq(column - previousGeneratedColumn) +
+        encodeVlq(sourceIndex - state.sourceIndex) +
+        encodeVlq(originalLine - state.originalLine) +
+        encodeVlq(column - state.originalColumn),
+    )
+    previousGeneratedColumn = column
+    state.sourceIndex = sourceIndex
+    state.originalLine = originalLine
+    state.originalColumn = column
+  }
+  return segments.join(',')
+}
+
+export function materializeSourceMapFixture(fixture) {
+  if (fixture.inputComposition === undefined) return fixture
+  assert.equal(fixture.source, undefined, `${fixture.id}: composed source must be generated`)
+  const composition = fixture.inputComposition
+  assert.equal(typeof composition.sourceRoot, 'string', `${fixture.id}: source root`)
+  assert.ok(Array.isArray(composition.sources), `${fixture.id}: composed sources`)
+  assert.ok(composition.sources.length > 1, `${fixture.id}: multi-source composition`)
+  const prefix = composition.generatedPrefix ?? ''
+  assert.equal(typeof prefix, 'string', `${fixture.id}: generated prefix`)
+  assert.ok(prefix === '' || prefix.endsWith('\n'), `${fixture.id}: prefix must end with newline`)
+
+  const mappingLines = prefix === '' ? [] : Array(prefix.slice(0, -1).split('\n').length).fill('')
+  const state = { sourceIndex: 0, originalLine: 0, originalColumn: 0 }
+  const sourceBodies = []
+  for (const [sourceIndex, source] of composition.sources.entries()) {
+    assert.equal(typeof source.name, 'string', `${fixture.id}: source ${sourceIndex} name`)
+    assert.equal(typeof source.content, 'string', `${fixture.id}: source ${sourceIndex} content`)
+    assert.equal(source.content.endsWith('\n'), false, `${fixture.id}: source trailing newline`)
+    sourceBodies.push(source.content)
+    for (const [line, text] of source.content.split('\n').entries()) {
+      mappingLines.push(encodeMappedLine(text, sourceIndex, line, state))
+    }
+  }
+
+  const source = `${prefix}${sourceBodies.join('\n')}`
+  const inputSourceMap = {
+    version: 3,
+    file: fixture.filename,
+    sourceRoot: composition.sourceRoot,
+    sources: composition.sources.map(entry => entry.name),
+    sourcesContent: sourceBodies,
+    names: composition.names ?? [],
+    mappings: mappingLines.join(';'),
+    x_google_ignoreList: composition.ignoreSourceIndices ?? [],
+  }
+  assert.equal(source.split('\n').length, mappingLines.length, `${fixture.id}: mapped line count`)
+  return { ...fixture, source, inputSourceMap }
+}
+
 function occurrenceIndex(text, locator, context) {
   assert.equal(typeof locator?.needle, 'string', `${context}: needle`)
   assert.ok(locator.needle.length > 0, `${context}: non-empty needle`)
@@ -70,6 +141,16 @@ export function validateSourceMapFixture(fixture) {
     `${fixture.id}: module kind`,
   )
   assert.equal(typeof fixture.source, 'string', `${fixture.id}: source`)
+  if (fixture.inputSourceMap !== undefined) {
+    assert.equal(fixture.inputSourceMap.version, 3, `${fixture.id}: input map version`)
+    assert.equal(fixture.inputSourceMap.file, fixture.filename, `${fixture.id}: input map file`)
+    assert.ok(fixture.inputSourceMap.sources.length > 1, `${fixture.id}: input map sources`)
+    assert.equal(
+      fixture.inputSourceMap.sourcesContent.length,
+      fixture.inputSourceMap.sources.length,
+      `${fixture.id}: input map sourcesContent`,
+    )
+  }
   assert.ok(Array.isArray(fixture.probes), `${fixture.id}: probes`)
   assert.ok(fixture.probes.length > 0, `${fixture.id}: non-empty probes`)
   const ids = new Set()
@@ -98,6 +179,12 @@ export function validateSourceMapFixture(fixture) {
         'string',
         `${fixture.id}:${probe.id}: source locator`,
       )
+      if (probe.source.sourceIndex !== undefined) {
+        assert.ok(
+          Number.isSafeInteger(probe.source.sourceIndex) && probe.source.sourceIndex >= 0,
+          `${fixture.id}:${probe.id}: source index`,
+        )
+      }
     }
     if (probe.disposition === 'rust-precision-improvement') {
       assert.notEqual(probe.source, null, `${fixture.id}:${probe.id}: improved source locator`)
@@ -115,6 +202,18 @@ export function validateSourceMapFixture(fixture) {
   }
 }
 
+function fixtureSourcePosition(fixture, locator, context) {
+  if (locator.sourceIndex === undefined) {
+    return sourcePosition(fixture.source, fixture.filename, locator, context)
+  }
+  assert.ok(fixture.inputSourceMap, `${context}: missing input source map`)
+  const content = fixture.inputSourceMap.sourcesContent?.[locator.sourceIndex]
+  const resolvedSource = new TraceMap(fixture.inputSourceMap).resolvedSources[locator.sourceIndex]
+  assert.equal(typeof content, 'string', `${context}: missing source content`)
+  assert.equal(typeof resolvedSource, 'string', `${context}: missing resolved source`)
+  return sourcePosition(content, resolvedSource, locator, context)
+}
+
 export function assertProbeMapping({ code, fixture, implementation, map, probe }) {
   assert.ok(['babel', 'rust'].includes(implementation))
   const context = `${fixture.id}:${probe.id}:${implementation}`
@@ -126,21 +225,11 @@ export function assertProbeMapping({ code, fixture, implementation, map, probe }
   const expected =
     sourceLocator === null
       ? null
-      : sourcePosition(fixture.source, fixture.filename, sourceLocator, `${context}:source`)
+      : fixtureSourcePosition(fixture, sourceLocator, `${context}:source`)
   assert.deepEqual(traced.original, expected, `${context}: original position`)
   if (probe.disposition === 'rust-precision-improvement') {
-    const intended = sourcePosition(
-      fixture.source,
-      fixture.filename,
-      probe.source,
-      `${context}:intended-source`,
-    )
-    const legacy = sourcePosition(
-      fixture.source,
-      fixture.filename,
-      probe.legacySource,
-      `${context}:legacy-source`,
-    )
+    const intended = fixtureSourcePosition(fixture, probe.source, `${context}:intended-source`)
+    const legacy = fixtureSourcePosition(fixture, probe.legacySource, `${context}:legacy-source`)
     assert.notDeepEqual(legacy, intended, `${context}: legacy position must differ`)
   }
   return traced

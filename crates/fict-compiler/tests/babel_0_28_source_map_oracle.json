@@ -13,9 +13,9 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "traceMappingDependency": "@jridgewell/trace-mapping@0.3.31",
-    "oracleInputsSha256": "756661304e04d27ef5381b4f2080c224f9b0fe15ab3c333fb7171b6060ee630f",
-    "sourceMapHarnessSha256": "782f4b270e4098fa6195cabf2a87d3e19aa411aab697b6c3e4449f75d5c48b25",
-    "comparisonModel": "frozen-babel-generated-tokens-vs-live-rust-authored-original-positions"
+    "oracleInputsSha256": "a1d2e9668c3ab050430189cfb953038140419b7c8f927708de1c932184e8adab",
+    "sourceMapHarnessSha256": "ecdbc7dc312e01205efef0c24283bcedf6bb9b04d2123f49b9cc139dac5da528",
+    "comparisonModel": "frozen-babel-generated-tokens-vs-live-rust-authored-original-positions-including-multi-source-input-map-composition"
   },
   "fixtures": [
     {
@@ -561,6 +561,122 @@
               "offset": 0
             },
             "original": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "multi-source-input-composition",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "af61cb05b6a3d9f92a4bb628bc273fe3ae83f954f93cd5e4f03c3c51fb2938c0",
+      "babelMapSha256": "5f755fa0bcbb76845c683d071d49988df470071e4b94857ade8a2892506e3ed8",
+      "babelCode": "import { __fictUseSignal, __fictUseMemo, template, resolvePath, addEventListener, getSlotEnd, createElementInNamespace, insertBetween, bindAttribute, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from \"fict/internal\";\nexport const initial = 2;\nexport function App(props) {\n  const __fictCtx = __fictUseContext();\n  const count = __fictUseSignal(__fictCtx, initial + props.offset, {\n    name: \"count\"\n  });\n  return __fictElementNamespaceMatches(\"button\", \"html\") ? __fictUseMemo(__fictCtx, () => {\n    const __tmpl_1 = template(\"<button><!--fict:slot:start--><!--fict:slot:end-->:<!--fict:slot:start--><!--fict:slot:end--></button>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = resolvePath(__root_0, [0]);\n    const __el_3 = resolvePath(__root_0, [2]);\n    addEventListener(__root_0, \"click\", (...__fictArgs) => {\n      (() => (__prev_4 => (__old_5 => (count(__prev_4), __old_5))(__prev_4++))(count()))(...__fictArgs);\n    }, true);\n    const __end_6 = getSlotEnd(__el_2);\n    insertBetween(__el_2, __end_6, () => props.label, __node => createElementInNamespace(__node, \"html\"));\n    const __end_7 = getSlotEnd(__el_3);\n    insertBetween(__el_3, __end_7, () => count(), __node => createElementInNamespace(__node, \"html\"));\n    bindAttribute(__root_0, \"data-label\", () => props.label);\n    return __root_0;\n  }, 1000)() : {\n    type: \"button\",\n    props: {\n      \"data-label\": __fictReactive(() => props.label),\n      onClick: (...__fictArgs) => {\n        (() => (__prev_8 => (__old_9 => (count(__prev_8), __old_9))(__prev_8++))(count()))(...__fictArgs);\n      },\n      children: [__fictReactive(() => props.label), \":\", __fictReactive(() => count())]\n    }\n  };\n}",
+      "babelMap": {
+        "version": 3,
+        "names": [
+          "initial",
+          "App",
+          "props",
+          "__fictCtx",
+          "__fictUseContext",
+          "count",
+          "__fictUseSignal",
+          "offset",
+          "name",
+          "__fictElementNamespaceMatches",
+          "__fictUseMemo",
+          "__tmpl_1",
+          "template",
+          "__root_0",
+          "__el_2",
+          "resolvePath",
+          "__el_3",
+          "addEventListener",
+          "__fictArgs",
+          "__prev_4",
+          "__old_5",
+          "__end_6",
+          "getSlotEnd",
+          "insertBetween",
+          "label",
+          "__node",
+          "createElementInNamespace",
+          "__end_7",
+          "bindAttribute",
+          "type",
+          "__fictReactive",
+          "onClick",
+          "__prev_8",
+          "__old_9",
+          "children"
+        ],
+        "sources": [
+          "/workspace/fict-source-map-oracle/src/state.ts",
+          "/workspace/fict-source-map-oracle/src/view.tsx"
+        ],
+        "sourcesContent": [
+          "import { $state } from 'fict'\nexport const initial: number = 2",
+          "export function App(props: { offset: number; label: string }) {\n  let count = $state(initial + props.offset)\n  return (\n    <button data-label={props.label} onClick={() => count++}>\n      {props.label}:{count}\n    </button>\n  )\n}"
+        ],
+        "mappings": ";OACa,MAAAA,OAAA,GAAkB,CAAC;AAAA,OCDzB,SAAAC,IAAAC,KAAA;EAAA,MAAAC,SAAA,GAAAC,gBAAA;EAAA,MAAAC,KAAA,GAAAC,eAAA,CAAAH,SAAA,EAAAH,OAAA,GAAAE,KAAA,CAAAK,MAAA;IAAAC,IAAA;EAAA;EAAA,OAAAC,6BAAA,qBAAAC,aAAA,CAAAP,SAAA;IAAA,MAAAQ,QAAA,GAAAC,QAAA;IAAA,MAAAC,QAAA,GAAAF,QAAA;IAAA,MAAAG,MAAA,GAAAC,WAAA,CAAAF,QAAA;IAAA,MAAAG,MAAA,GAAAD,WAAA,CAAAF,QAAA;IAAAI,gBAAA,CAAAJ,QAAA,eAAAK,UAAA;MAAA,CAGuC,MAAM,CAAAC,QAAA,KAAAC,OAAA,KAAAf,KAAA,CAAAc,QAAA,GAAAC,OAAA,GAAAD,QAAA,KAAAd,KAAA,EAAM,CAAC,KAAAa,UAAA;IAAA;IAAA,MAAAG,OAAA,GAAAC,UAAA,CAAAR,MAAA;IAAAS,aAAA,CAAAT,MAAA,EAAAO,OAAA,QACpDnB,KAAA,CAAAsB,KAAW,EAAAC,MAAA,IAAAC,wBAAA,CAAAD,MAAA;IAAA,MAAAE,OAAA,GAAAL,UAAA,CAAAN,MAAA;IAAAO,aAAA,CAAAP,MAAA,EAAAW,OAAA,QAAAtB,KAAA,IAAAoB,MAAA,IAAAC,wBAAA,CAAAD,MAAA;IAAAG,aAAA,CAAAf,QAAA,sBADMX,KAAA,CAAAsB,KAAW;IAAA,OAAAX,QAAA;EAAA;IAAAgB,IAAA;IAAA3B,KAAA;MAAA,cAAA4B,cAAA,OAAA5B,KAAA,CAAAsB,KAAA;MAAAO,OAAA,EAAAA,CAAA,GAAAb,UAAA;QAAA,CAAW,MAAM,CAAAc,QAAA,KAAAC,OAAA,KAAA5B,KAAA,CAAA2B,QAAA,GAAAC,OAAA,GAAAD,QAAA,KAAA3B,KAAA,EAAM,CAAC,KAAAa,UAAA;MAAA;MAAAgB,QAAA,GAAAJ,cAAA,OAAA5B,KAAA,CAAAsB,KAAA,QAAAM,cAAA,OAAAzB,KAAA;IAAA;EAAA;AAAA",
+        "ignoreList": []
+      },
+      "probes": [
+        {
+          "id": "composed-state-declaration",
+          "kind": "input-map-first-source",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 2,
+              "column": 13,
+              "needle": "initial = 2",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": {
+              "source": "/workspace/fict-source-map-oracle/src/state.ts",
+              "line": 2,
+              "column": 13
+            }
+          }
+        },
+        {
+          "id": "composed-component-declaration",
+          "kind": "input-map-second-source",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 3,
+              "column": 7,
+              "needle": "function App",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": {
+              "source": "/workspace/fict-source-map-oracle/src/view.tsx",
+              "line": 1,
+              "column": 7
+            }
+          }
+        },
+        {
+          "id": "composed-event-update",
+          "kind": "input-map-reactive-rewrite",
+          "disposition": "exact-parity",
+          "babel": {
+            "generated": {
+              "line": 14,
+              "column": 39,
+              "needle": "count(__prev_4)",
+              "occurrence": 0,
+              "offset": 0
+            },
+            "original": {
+              "source": "/workspace/fict-source-map-oracle/src/view.tsx",
+              "line": 4,
+              "column": 52
+            }
           }
         }
       ]

@@ -267,6 +267,13 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.equal(crossModuleSemantic.currentRustOutputExecutedInCi, true)
   assert.equal(crossModuleSemantic.babelAndRustMetadataComparedInCi, true)
   assert.equal(crossModuleSemantic.sharedSyntheticRuntime, true)
+  assert.equal(crossModuleSemantic.sharedCurrentRuntime, true)
+  assert.equal(crossModuleSemantic.bundlerPackage, crossModuleOracle.provenance.bundlerPackage)
+  assert.equal(crossModuleSemantic.bundlerPackage, 'webpack@5.105.2')
+  assert.equal(
+    crossModuleOracle.provenance.bundlerHarnessSha256,
+    sha256(read(crossModuleSemantic.bundlerHarness)),
+  )
   assert.equal(crossModuleSemantic.assertionLevel, 'cross-module-runtime-semantics')
   assert.ok(
     crossModuleSemantic.proves.includes(
@@ -274,11 +281,13 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     ),
   )
   assert.ok(crossModuleSemantic.proves.includes('cross-implementation-module-metadata-equivalence'))
+  assert.ok(crossModuleSemantic.proves.includes('webpack-bundled-current-runtime-execution'))
   assert.ok(
     crossModuleSemantic.doesNotProve.includes('all-legacy-cross-module-fixture-equivalence'),
   )
   const crossModuleTest = read(crossModuleSemantic.ciTest)
   assert.match(crossModuleTest, /executeCommonJsGraph\(/)
+  assert.match(crossModuleTest, /executeBundledCommonJsGraph\(/)
   assert.match(crossModuleTest, /module\.result\.moduleMetadata/)
   assert.match(crossModuleTest, /compileRustCrossModuleSemanticFixture/)
   const crossModuleGenerator = read(crossModuleSemantic.generator)
@@ -296,6 +305,9 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const reviewedDomDeviations = requiredPropsFixtures.filter(
     fixture => fixture.rustDeviation !== undefined,
   )
+  const diagnosedR006Fallbacks = domSemanticInputs.fixtures.filter(
+    fixture => fixture.r006AuditFixtureId !== undefined,
+  )
   assert.equal(domSemantic.requiredPropsCorpusMounts, requiredPropsFixtures.length)
   assert.equal(domSemantic.requiredPropsCorpusMounts, 26)
   assert.equal(
@@ -303,6 +315,8 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     requiredPropsFixtures.length - reviewedDomDeviations.length,
   )
   assert.equal(domSemantic.reviewedIntentionalLegacyBugFixes, reviewedDomDeviations.length)
+  assert.equal(domSemantic.diagnosedR006FallbackParity, diagnosedR006Fallbacks.length)
+  assert.equal(domSemantic.diagnosedR006FallbackParity, 3)
   assert.deepEqual(
     reviewedDomDeviations.map(fixture => fixture.id),
     ['props-warnings-structured-hook-branch'],
@@ -318,6 +332,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'focus-blur',
     'callback-ref-lifecycle',
     'portal',
+    'diagnosed-reactive-control-flow-fallbacks',
   ])
   assert.equal(domSemantic.exactBabelCompilerExecutedDuringGeneration, true)
   assert.equal(domSemantic.frozenBabelOutputExecutedInCi, true)
@@ -329,12 +344,14 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     domSemantic.proves.includes('normal-props-mount-for-all-26-previous-double-error-components'),
   )
   assert.ok(domSemantic.proves.includes('explicit-review-of-intentional-legacy-output-deviation'))
+  assert.ok(domSemantic.proves.includes('diagnosed-r006-fallback-mount-mutate-observe-equivalence'))
   assert.ok(domSemantic.doesNotProve.includes('all-legacy-dom-fixture-equivalence'))
   const domSemanticTest = read(domSemantic.ciTest)
   assert.match(domSemanticTest, /executeDomCommonJs\(expected\.babelCode/)
   assert.match(domSemanticTest, /executeDomCommonJs\(result\.code/)
   assert.match(domSemanticTest, /treeShape\(actual\[0\]\.value\.tree\)/)
   assert.match(domSemanticTest, /expectedRustDeviationIds/)
+  assert.match(domSemanticTest, /expectedR006FallbackFixtureIds/)
   const domSemanticGenerator = read(domSemantic.generator)
   assert.match(domSemanticGenerator, /resolveConfig\(options\.output\)/)
 
@@ -344,7 +361,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const ssrSemanticOracle = readJson(ssrSemantic.artifact)
   assert.equal(ssrSemantic.fixtureCount, ssrSemanticInputs.fixtures.length)
   assert.equal(ssrSemantic.fixtureCount, ssrSemanticOracle.fixtures.length)
-  assert.equal(ssrSemantic.fixtureCount, 3)
+  assert.equal(ssrSemantic.fixtureCount, 5)
   assert.equal(ssrSemanticOracle.provenance.oracleInputsSha256, sha256(ssrSemanticInputsText))
   assert.equal(
     ssrSemanticOracle.provenance.semanticHarnessSha256,
@@ -356,6 +373,9 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'eager-event-update',
     'snapshot-resume',
     'resumable-event-update',
+    'web-readable-stream',
+    'node-pipeable-stream',
+    'suspense-shell-and-resolution-patch',
   ])
   assert.equal(ssrSemantic.exactBabelCompilerExecutedDuringGeneration, true)
   assert.equal(ssrSemantic.frozenBabelOutputExecutedInCi, true)
@@ -365,8 +385,9 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.equal(ssrSemantic.assertionLevel, 'ssr-runtime-semantics')
   assert.ok(ssrSemantic.proves.includes('reviewed-cross-implementation-ssr-structure-semantics'))
   assert.ok(ssrSemantic.proves.includes('snapshot-resume-and-resumable-update-semantics'))
+  assert.ok(ssrSemantic.proves.includes('streaming-shell-chunk-and-suspense-resolution-semantics'))
   assert.ok(ssrSemantic.doesNotProve.includes('all-legacy-ssr-fixture-equivalence'))
-  assert.ok(ssrSemantic.doesNotProve.includes('streaming-or-suspense-equivalence'))
+  assert.ok(ssrSemantic.doesNotProve.includes('all-streaming-suspense-error-and-nesting-modes'))
   const ssrSemanticTest = read(ssrSemantic.ciTest)
   assert.match(ssrSemanticTest, /executeSsrEsm\(/)
   assert.match(ssrSemanticTest, /expected\.babelCode/)
@@ -456,9 +477,9 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const sourceMapDispositionCounts = Object.groupBy(sourceMapProbes, probe => probe.disposition)
   assert.equal(sourceMapScope.fixtureCount, sourceMapInputs.fixtures.length)
   assert.equal(sourceMapScope.fixtureCount, sourceMapOracle.fixtures.length)
-  assert.equal(sourceMapScope.fixtureCount, 3)
+  assert.equal(sourceMapScope.fixtureCount, 4)
   assert.equal(sourceMapScope.probeCount, sourceMapProbes.length)
-  assert.equal(sourceMapScope.probeCount, 23)
+  assert.equal(sourceMapScope.probeCount, 26)
   assert.equal(sourceMapScope.coverageScope, 'reviewed-cross-implementation-sample')
   assert.equal(
     sourceMapScope.exactParityPositions,
@@ -468,7 +489,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     sourceMapScope.reviewedRustPrecisionImprovements,
     sourceMapDispositionCounts['rust-precision-improvement'].length,
   )
-  assert.equal(sourceMapScope.exactParityPositions, 10)
+  assert.equal(sourceMapScope.exactParityPositions, 13)
   assert.equal(sourceMapScope.reviewedRustPrecisionImprovements, 13)
   assert.equal(sourceMapOracle.provenance.oracleInputsSha256, sha256(sourceMapInputsText))
   assert.equal(
@@ -488,6 +509,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     'unicode-utf16-columns',
     'typescript-commonjs-rewrites',
     'generated-unmapped-prelude',
+    'multi-source-input-map-composition',
   ])
   assert.equal(sourceMapScope.exactBabelCompilerExecutedDuringGeneration, true)
   assert.equal(sourceMapScope.frozenBabelMapReplayedInCi, true)
@@ -499,6 +521,7 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   assert.ok(
     sourceMapScope.proves.includes('explicit-babel-to-rust-source-map-deviation-accounting'),
   )
+  assert.ok(sourceMapScope.proves.includes('two-authored-source-input-map-composition'))
   assert.ok(sourceMapScope.doesNotProve.includes('identical-generated-token-layout'))
   assert.ok(sourceMapScope.doesNotProve.includes('exhaustive-source-map-token-equivalence'))
   assert.ok(
@@ -520,9 +543,11 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
   const sourceMapTest = read(sourceMapScope.ciTest)
   assert.match(sourceMapTest, /traceGeneratedPosition\(/)
   assert.match(sourceMapTest, /assertProbeMapping\(/)
+  assert.match(sourceMapTest, /materializeSourceMapFixture\(/)
   assert.match(sourceMapTest, /rust\.original, replayedBabel\.original/)
   const sourceMapGenerator = read(sourceMapScope.generator)
   assert.match(sourceMapGenerator, /sourceMaps: true/)
+  assert.match(sourceMapGenerator, /inputSourceMap: fixture\.inputSourceMap/)
   assert.match(sourceMapGenerator, /assertProbeMapping\(/)
   assert.match(sourceMapGenerator, /resolveConfig\(path\.join\(repositoryRoot, 'package\.json'\)\)/)
   assert.match(packageJson, /test:compiler:babel-source-map-oracle/)
@@ -661,14 +686,42 @@ test('keeps codegen, request, and semantic compatibility evidence roles distinct
     r006Counts['strict-reactivity-fail-closed'].length,
   )
   assert.equal(r006Scope.verifiedEmitCapability, r006Counts['verified-emit-capability'].length)
-  assert.equal(r006Scope.assertionLevel, 'diagnostic-and-native-runtime')
+  assert.equal(r006Scope.diagnosedFallbackRuntimeParity, diagnosedR006Fallbacks.length)
+  assert.equal(r006Scope.diagnosedFallbackRuntimeParity, 3)
+  assert.equal(r006Scope.assertionLevel, 'diagnostic-and-cross-implementation-runtime')
   assert.ok(r006Scope.proves.includes('exact-lost-r006-fixture-accounting'))
   assert.ok(r006Scope.proves.includes('mount-mutate-update-for-every-suppressed-shape'))
-  assert.ok(r006Scope.doesNotProve.includes('runtime-equivalence-for-diagnosed-fallback-output'))
+  assert.ok(
+    r006Scope.proves.includes(
+      'babel-rust-runtime-equivalence-for-three-reviewed-diagnosed-fallback-shapes',
+    ),
+  )
+  assert.ok(
+    r006Scope.doesNotProve.includes('runtime-equivalence-for-all-diagnosed-fallback-output-shapes'),
+  )
+  for (const fixture of diagnosedR006Fallbacks) {
+    assert.ok(
+      r006Audit.cases.some(
+        candidate =>
+          candidate.id === fixture.r006AuditFixtureId &&
+          candidate.disposition === 'strict-reactivity-fail-closed',
+      ),
+      fixture.id,
+    )
+    const oracleFixture = domSemanticOracle.fixtures.find(candidate => candidate.id === fixture.id)
+    assert.deepEqual(
+      oracleFixture.babelDiagnostics.map(diagnostic => `${diagnostic.code}:${diagnostic.severity}`),
+      ['FICT-R006:warning'],
+      fixture.id,
+    )
+  }
   const r006Test = read(r006Scope.ciTest)
   assert.match(r006Test, /strictReactivity: true/)
   assert.match(r006Test, /module\.update\(\)/)
   assert.match(r006Test, /updatedElement/)
+  const r006FallbackTest = read(r006Scope.fallbackRuntimeOracle)
+  assert.match(r006FallbackTest, /expectedR006FallbackFixtureIds/)
+  assert.match(r006FallbackTest, /executeDomCommonJs\(expected\.babelCode/)
 
   const architecture = read('docs/architecture/rust-compiler.md')
   const rollout = read('docs/features/rust-compiler-rollout/rollout.md')

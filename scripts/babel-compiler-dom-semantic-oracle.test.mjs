@@ -50,6 +50,11 @@ const expectedRequiredPropsCorpusFixtureIds = [
   'packages/compiler/test/warnings-as-errors.test.ts:487:transform',
 ]
 const expectedRustDeviationIds = ['props-warnings-structured-hook-branch']
+const expectedR006FallbackFixtureIds = [
+  'packages/compiler/test/default-options.test.ts:170:transform',
+  'packages/compiler/test/control-flow.test.ts:670:runTransform',
+  'packages/compiler/test/spec-complete.test.ts:417:transform',
+]
 
 function textNodes(nodes) {
   return nodes.flatMap(node =>
@@ -121,7 +126,7 @@ test('Babel 0.28 DOM semantic oracle has exact independent provenance', () => {
     sharedRuntimePackage: `${runtimePackage.name}@${runtimePackage.version}`,
     runtimeExecutionModel: 'frozen-babel-and-live-rust-output-share-current-runtime',
   })
-  assert.equal(inputs.fixtures.length, 27)
+  assert.equal(inputs.fixtures.length, 30)
   assert.equal(oracle.fixtures.length, inputs.fixtures.length)
   assert.deepEqual(
     inputs.fixtures
@@ -135,6 +140,22 @@ test('Babel 0.28 DOM semantic oracle has exact independent provenance', () => {
       .map(fixture => fixture.id),
     expectedRustDeviationIds,
   )
+  assert.deepEqual(
+    inputs.fixtures
+      .filter(fixture => fixture.r006AuditFixtureId !== undefined)
+      .map(fixture => fixture.r006AuditFixtureId),
+    expectedR006FallbackFixtureIds,
+  )
+  for (const fixture of oracle.fixtures.filter(candidate =>
+    candidate.id.startsWith('r006-fallback-'),
+  )) {
+    assert.deepEqual(
+      diagnosticSignature(fixture.babelDiagnostics),
+      ['FICT-R006:warning'],
+      `${fixture.id}: diagnosed Babel fallback`,
+    )
+    assert.ok(fixture.expected.length >= 2, `${fixture.id}: mutation trace`)
+  }
 })
 
 const oracleById = new Map(oracle.fixtures.map(fixture => [fixture.id, fixture]))

@@ -28,7 +28,7 @@
         {
           "id": "/oracle/cross-module/reactive-exports-through-barrel/state.tsx",
           "dependencies": {},
-          "source": "import { createMemo, createSignal } from 'fict/advanced'\nexport const count = createSignal(2)\nexport const doubled = createMemo(() => count() * 2)\nexport function increment() { count(count() + 1) }\n"
+          "source": "import { createMemo } from 'fict'\nimport { createSignal } from 'fict/advanced'\nexport const count = createSignal(2)\nexport const doubled = createMemo(() => count() * 2)\nexport function increment() { count(count() + 1) }\n"
         },
         {
           "id": "/oracle/cross-module/reactive-exports-through-barrel/barrel.tsx",
@@ -151,7 +151,7 @@
         {
           "id": "/oracle/cross-module/reactive-namespace-import/state.tsx",
           "dependencies": {},
-          "source": "import { createMemo, createSignal } from 'fict/advanced'\nexport const count = createSignal(10)\nexport const doubled = createMemo(() => count() * 2)\nexport function increment() { count(count() + 1) }\n"
+          "source": "import { createMemo } from 'fict'\nimport { createSignal } from 'fict/advanced'\nexport const count = createSignal(10)\nexport const doubled = createMemo(() => count() * 2)\nexport function increment() { count(count() + 1) }\n"
         },
         {
           "id": "/oracle/cross-module/reactive-namespace-import/entry.tsx",

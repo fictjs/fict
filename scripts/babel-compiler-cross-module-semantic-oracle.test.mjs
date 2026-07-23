@@ -5,6 +5,10 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import test from 'node:test'
 
+import {
+  crossModuleBundlerProvenance,
+  executeBundledCommonJsGraph,
+} from './lib/compiler-cross-module-bundler-harness.mjs'
 import { compileRustCrossModuleSemanticFixture } from './lib/compiler-cross-module-semantic-fixtures.mjs'
 import { executeCommonJsGraph } from './lib/compiler-semantic-harness.mjs'
 
@@ -14,6 +18,7 @@ const read = relative => readFileSync(path.join(repositoryRoot, relative), 'utf8
 const inputsText = read('scripts/fixtures/babel_0_28_cross_module_semantic_inputs.json')
 const inputs = JSON.parse(inputsText)
 const semanticHarnessText = read('scripts/lib/compiler-semantic-harness.mjs')
+const bundlerHarnessText = read('scripts/lib/compiler-cross-module-bundler-harness.mjs')
 const oracle = JSON.parse(
   read('crates/fict-compiler/tests/babel_0_28_cross_module_semantic_oracle.json'),
 )
@@ -47,7 +52,9 @@ test('Babel 0.28 cross-module semantic oracle has exact independent provenance',
     },
     oracleInputsSha256: sha256(inputsText),
     semanticHarnessSha256: sha256(semanticHarnessText),
+    bundlerHarnessSha256: sha256(bundlerHarnessText),
     runtimeExecutionModel: 'frozen-babel-and-live-rust-graphs-share-synthetic-runtime',
+    ...crossModuleBundlerProvenance(),
   })
   assert.deepEqual(
     inputs.fixtures.map(fixture => fixture.id),
@@ -62,7 +69,7 @@ test('Babel 0.28 cross-module semantic oracle has exact independent provenance',
 
 const oracleById = new Map(oracle.fixtures.map(fixture => [fixture.id, fixture]))
 for (const fixture of inputs.fixtures) {
-  test(`Rust matches Babel 0.28 cross-module semantics: ${fixture.id}`, () => {
+  test(`Rust matches Babel 0.28 cross-module semantics: ${fixture.id}`, async () => {
     const expected = oracleById.get(fixture.id)
     assert.ok(expected, `missing Babel cross-module oracle ${fixture.id}`)
     assert.equal(expected.entryId, fixture.entryId, fixture.id)
@@ -97,6 +104,24 @@ for (const fixture of inputs.fixtures) {
       expected.expected,
       `${fixture.id} frozen Babel graph`,
     )
+    assert.deepEqual(
+      await executeBundledCommonJsGraph(
+        expected.modules.map(module => ({
+          id: module.id,
+          dependencies: module.dependencies,
+          code: module.babelCode,
+        })),
+        expected.entryId,
+        expected.invocation,
+      ),
+      expected.bundledExpected,
+      `${fixture.id} frozen Babel graph through Webpack and the real runtime`,
+    )
+    assert.deepEqual(
+      expected.bundledExpected,
+      expected.expected,
+      `${fixture.id} real and synthetic runtime observations`,
+    )
 
     const compiled = compileRustCrossModuleSemanticFixture(binding, fixture)
     assert.equal(compiled.modules.length, expected.modules.length, fixture.id)
@@ -116,6 +141,11 @@ for (const fixture of inputs.fixtures) {
       executeCommonJsGraph(compiled.modules, compiled.entryId, compiled.invocation),
       expected.expected,
       `${fixture.id} Rust graph`,
+    )
+    assert.deepEqual(
+      await executeBundledCommonJsGraph(compiled.modules, compiled.entryId, compiled.invocation),
+      expected.bundledExpected,
+      `${fixture.id} Rust graph through Webpack and the real runtime`,
     )
   })
 }

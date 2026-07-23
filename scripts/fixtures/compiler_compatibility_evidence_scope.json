@@ -171,14 +171,17 @@
       "fixtureCount": 29,
       "strictReactivityFailClosed": 27,
       "verifiedEmitCapability": 2,
-      "assertionLevel": "diagnostic-and-native-runtime",
+      "diagnosedFallbackRuntimeParity": 3,
+      "fallbackRuntimeOracle": "scripts/babel-compiler-dom-semantic-oracle.test.mjs",
+      "assertionLevel": "diagnostic-and-cross-implementation-runtime",
       "proves": [
         "exact-lost-r006-fixture-accounting",
         "strict-reactivity-fail-closed-for-unsupported-shapes",
-        "mount-mutate-update-for-every-suppressed-shape"
+        "mount-mutate-update-for-every-suppressed-shape",
+        "babel-rust-runtime-equivalence-for-three-reviewed-diagnosed-fallback-shapes"
       ],
       "doesNotProve": [
-        "runtime-equivalence-for-diagnosed-fallback-output",
+        "runtime-equivalence-for-all-diagnosed-fallback-output-shapes",
         "full-babel-runtime-equivalence"
       ]
     },
@@ -216,15 +219,19 @@
       "currentRustOutputExecutedInCi": true,
       "babelAndRustMetadataComparedInCi": true,
       "sharedSyntheticRuntime": true,
+      "sharedCurrentRuntime": true,
+      "bundlerPackage": "webpack@5.105.2",
+      "bundlerHarness": "scripts/lib/compiler-cross-module-bundler-harness.mjs",
       "assertionLevel": "cross-module-runtime-semantics",
       "proves": [
         "reviewed-cross-implementation-multi-file-runtime-semantics",
         "cross-implementation-module-metadata-equivalence",
-        "recursive-commonjs-graph-execution"
+        "recursive-commonjs-graph-execution",
+        "webpack-bundled-current-runtime-execution"
       ],
       "doesNotProve": [
         "all-legacy-cross-module-fixture-equivalence",
-        "real-runtime-version-equivalence",
+        "all-supported-bundlers-and-runtime-versions",
         "exact-diagnostic-parity"
       ]
     },
@@ -233,17 +240,19 @@
       "artifact": "crates/fict-compiler/tests/babel_0_28_dom_semantic_oracle.json",
       "generator": "scripts/generate-babel-dom-semantic-oracle.mjs",
       "ciTest": "scripts/babel-compiler-dom-semantic-oracle.test.mjs",
-      "fixtureCount": 27,
+      "fixtureCount": 30,
       "requiredPropsCorpusMounts": 26,
       "exactRequiredPropsParity": 25,
       "reviewedIntentionalLegacyBugFixes": 1,
+      "diagnosedR006FallbackParity": 3,
       "interactionSurfaces": [
         "input",
         "form-submit",
         "keyboard",
         "focus-blur",
         "callback-ref-lifecycle",
-        "portal"
+        "portal",
+        "diagnosed-reactive-control-flow-fallbacks"
       ],
       "exactBabelCompilerExecutedDuringGeneration": true,
       "frozenBabelOutputExecutedInCi": true,
@@ -255,7 +264,8 @@
         "mount-mutate-observe-dispose-lifecycle",
         "normal-props-mount-for-all-26-previous-double-error-components",
         "semantic-dom-tree-text-attributes-and-namespaces",
-        "explicit-review-of-intentional-legacy-output-deviation"
+        "explicit-review-of-intentional-legacy-output-deviation",
+        "diagnosed-r006-fallback-mount-mutate-observe-equivalence"
       ],
       "doesNotProve": ["all-legacy-dom-fixture-equivalence", "legacy-runtime-version-equivalence"]
     },
@@ -264,13 +274,16 @@
       "artifact": "crates/fict-compiler/tests/babel_0_28_ssr_semantic_oracle.json",
       "generator": "scripts/generate-babel-ssr-semantic-oracle.mjs",
       "ciTest": "scripts/babel-compiler-ssr-semantic-oracle.test.mjs",
-      "fixtureCount": 3,
+      "fixtureCount": 5,
       "executionSurfaces": [
         "render-to-string",
         "hydration-node-claim",
         "eager-event-update",
         "snapshot-resume",
-        "resumable-event-update"
+        "resumable-event-update",
+        "web-readable-stream",
+        "node-pipeable-stream",
+        "suspense-shell-and-resolution-patch"
       ],
       "exactBabelCompilerExecutedDuringGeneration": true,
       "frozenBabelOutputExecutedInCi": true,
@@ -281,12 +294,13 @@
       "proves": [
         "reviewed-cross-implementation-ssr-structure-semantics",
         "hydration-claim-and-eager-update-semantics",
-        "snapshot-resume-and-resumable-update-semantics"
+        "snapshot-resume-and-resumable-update-semantics",
+        "streaming-shell-chunk-and-suspense-resolution-semantics"
       ],
       "doesNotProve": [
         "all-legacy-ssr-fixture-equivalence",
         "legacy-runtime-version-equivalence",
-        "streaming-or-suspense-equivalence"
+        "all-streaming-suspense-error-and-nesting-modes"
       ]
     },
     "babelToolingSemanticOracle": {
@@ -325,10 +339,10 @@
       "artifact": "crates/fict-compiler/tests/babel_0_28_source_map_oracle.json",
       "generator": "scripts/generate-babel-source-map-oracle.mjs",
       "ciTest": "scripts/babel-compiler-source-map-oracle.test.mjs",
-      "fixtureCount": 3,
-      "probeCount": 23,
+      "fixtureCount": 4,
+      "probeCount": 26,
       "coverageScope": "reviewed-cross-implementation-sample",
-      "exactParityPositions": 10,
+      "exactParityPositions": 13,
       "reviewedRustPrecisionImprovements": 13,
       "positionSurfaces": [
         "reactivity-and-memos",
@@ -338,7 +352,8 @@
         "jsx-and-dom-bindings",
         "unicode-utf16-columns",
         "typescript-commonjs-rewrites",
-        "generated-unmapped-prelude"
+        "generated-unmapped-prelude",
+        "multi-source-input-map-composition"
       ],
       "exactBabelCompilerExecutedDuringGeneration": true,
       "frozenBabelMapReplayedInCi": true,
@@ -347,13 +362,14 @@
       "proves": [
         "reviewed-cross-implementation-authored-source-positions",
         "explicit-babel-to-rust-source-map-deviation-accounting",
-        "utf16-column-and-generated-unmapped-contracts"
+        "utf16-column-and-generated-unmapped-contracts",
+        "two-authored-source-input-map-composition"
       ],
       "doesNotProve": [
         "identical-generated-token-layout",
         "exhaustive-source-map-token-equivalence",
         "cross-implementation-coverage-for-every-native-source-map-probe",
-        "input-source-map-composition-equivalence-beyond-request-contract"
+        "all-upstream-source-map-shapes-and-bundler-compositions"
       ]
     },
     "nativeSourceMapPrecision": {

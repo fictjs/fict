@@ -111,6 +111,7 @@
           "markers": [
             "Rust matches Babel 0.28 cross-module semantics",
             "executeCommonJsGraph(",
+            "executeBundledCommonJsGraph(",
             "module.result.moduleMetadata"
           ]
         },
@@ -129,7 +130,7 @@
           ]
         }
       ],
-      "claimBoundary": "Compares seven reviewed Babel and Rust CommonJS graphs across hook return shapes, reactive exports, barrels, namespaces, wrapper chains, type-only edges, and reserved export names. It also exercises the versioned Rust host snapshot and real Vite graph convergence, but does not claim equivalence for every isolated legacy import fixture."
+      "claimBoundary": "Compares seven reviewed Babel and Rust CommonJS graphs across hook return shapes, reactive exports, barrels, namespaces, wrapper chains, type-only edges, and reserved export names in both the recursive oracle and Webpack 5 bundles using the current real runtime. It also exercises the versioned Rust host snapshot and real Vite graph convergence, but does not claim equivalence for every isolated legacy import fixture, bundler, or runtime version."
     },
     {
       "id": "module-and-source-identity-matrix",
@@ -211,7 +212,7 @@
           ]
         }
       ],
-      "claimBoundary": "Compares static renderToString structure, strict DOM-node claiming with eager updates, and snapshot-driven resumable clicks across compiler outputs using one shared current SSR/runtime pair. It does not claim legacy-runtime ABI, streaming, Suspense, or exhaustive SSR equivalence."
+      "claimBoundary": "Compares static renderToString structure, strict DOM-node claiming with eager updates, snapshot-driven resumable clicks, Web ReadableStream output, and Node pipeable Suspense shell-to-resolution chunks across compiler outputs using one shared current SSR/runtime pair. It does not claim legacy-runtime ABI or every streaming error, rejection, nesting, and patch mode."
     },
     {
       "id": "complex-source-map-lowering",
@@ -222,7 +223,7 @@
           "path": "scripts/babel-compiler-source-map-oracle.test.mjs",
           "markers": [
             "Rust source-map positions match the reviewed Babel 0.28 baseline",
-            "assert.equal(probes.length, 23)",
+            "assert.equal(probes.length, 26)",
             "rust.original, replayedBabel.original"
           ]
         },
@@ -246,7 +247,7 @@
           "markers": ["\"composed-input-source-map\""]
         }
       ],
-      "claimBoundary": "Traces 23 reviewed generated tokens across three frozen Babel maps and live Rust maps to authored line and UTF-16 columns: ten positions are exact parity and thirteen are explicit Rust precision improvements over coarser Babel positions. Eight native probe suites add deeper lowering coverage, including erased TypeScript class fields and multiline JSX, and the request matrix checks non-indexed input-map composition. Native-only probes are not Babel equivalence evidence; this does not assert identical generated-token layouts or exhaustive source-map token equivalence."
+      "claimBoundary": "Traces 26 reviewed generated tokens across four frozen Babel maps and live Rust maps to authored line and UTF-16 columns: thirteen positions are exact parity and thirteen are explicit Rust precision improvements over coarser Babel positions. The fourth fixture composes a generated intermediate TSX file through two authored sources, sourceRoot, sourcesContent, and an ignore list before compiler lowering. Eight native probe suites add deeper lowering coverage, including erased TypeScript class fields and multiline JSX. Native-only probes are not Babel equivalence evidence; this does not assert identical generated-token layouts, every upstream map shape, or exhaustive token equivalence."
     },
     {
       "id": "rust-acceptance-runtime-results",

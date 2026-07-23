@@ -6,9 +6,11 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { format, resolveConfig } from 'prettier'
+import { TraceMap } from '@jridgewell/trace-mapping'
 
 import {
   assertProbeMapping,
+  materializeSourceMapFixture,
   validateSourceMapFixture,
 } from './lib/compiler-source-map-semantic-harness.mjs'
 
@@ -138,7 +140,8 @@ assert.ok(Array.isArray(input.fixtures))
 const fixtureIds = new Set()
 const probeIds = new Set()
 const fixtures = []
-for (const fixture of input.fixtures) {
+for (const fixtureInput of input.fixtures) {
+  const fixture = materializeSourceMapFixture(fixtureInput)
   validateSourceMapFixture(fixture)
   assert.equal(fixtureIds.has(fixture.id), false, `duplicate fixture ${fixture.id}`)
   fixtureIds.add(fixture.id)
@@ -152,6 +155,7 @@ for (const fixture of input.fixtures) {
     filename: fixture.filename,
     sourceFileName: fixture.filename,
     sourceMaps: true,
+    ...(fixture.inputSourceMap ? { inputSourceMap: fixture.inputSourceMap } : {}),
     configFile: false,
     babelrc: false,
     sourceType: 'module',
@@ -187,12 +191,25 @@ for (const fixture of input.fixtures) {
   })
   assert.equal(typeof transformed?.code, 'string', `${fixture.id}: Babel output`)
   assert.equal(transformed?.map?.version, 3, `${fixture.id}: Babel source map`)
-  assert.deepEqual(transformed.map.sources, [fixture.filename], `${fixture.id}: Babel sources`)
-  assert.deepEqual(
-    transformed.map.sourcesContent,
-    [fixture.source],
-    `${fixture.id}: Babel sourcesContent`,
-  )
+  if (fixture.inputSourceMap) {
+    assert.deepEqual(
+      new TraceMap(transformed.map).resolvedSources,
+      new TraceMap(fixture.inputSourceMap).resolvedSources,
+      `${fixture.id}: Babel composed sources`,
+    )
+    assert.deepEqual(
+      transformed.map.sourcesContent,
+      fixture.inputSourceMap.sourcesContent,
+      `${fixture.id}: Babel composed sourcesContent`,
+    )
+  } else {
+    assert.deepEqual(transformed.map.sources, [fixture.filename], `${fixture.id}: Babel sources`)
+    assert.deepEqual(
+      transformed.map.sourcesContent,
+      [fixture.source],
+      `${fixture.id}: Babel sourcesContent`,
+    )
+  }
 
   const babelMapText = JSON.stringify(transformed.map)
   fixtures.push({
@@ -230,7 +247,8 @@ const oracle = {
     traceMappingDependency: `@jridgewell/trace-mapping@${traceMappingVersion}`,
     oracleInputsSha256: sha256(inputText),
     sourceMapHarnessSha256: sha256(harnessText),
-    comparisonModel: 'frozen-babel-generated-tokens-vs-live-rust-authored-original-positions',
+    comparisonModel:
+      'frozen-babel-generated-tokens-vs-live-rust-authored-original-positions-including-multi-source-input-map-composition',
   },
   fixtures,
 }

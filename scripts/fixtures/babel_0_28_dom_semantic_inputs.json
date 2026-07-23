@@ -215,6 +215,76 @@
         "expectedTextNodes": ["0"],
         "reason": "Rust insert recursively resolves the signal returned from the inconsistent hook branch; Babel bindText stringified that signal function."
       }
+    },
+    {
+      "id": "r006-fallback-conditional-return",
+      "r006AuditFixtureId": "packages/compiler/test/default-options.test.ts:170:transform",
+      "request": {
+        "code": "import { $state, render } from 'fict'\n\nlet setCount\nlet oracleRoot\n\nfunction Component() {\n  let count = $state(0)\n  setCount = next => { count = next }\n  if (count > 0) return <div>{count}</div>\n  return <span>{count}</span>\n}\n\nexport function update(next) { setCount(next) }\nexport function mount(root) {\n  oracleRoot = root\n  return render(() => <Component />, root)\n}\nexport function observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent,\n  }\n}\n",
+        "filename": "/oracle/r006-fallback-conditional-return.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false,
+          "lazyConditional": false
+        }
+      },
+      "scenario": {
+        "mountExport": "mount",
+        "observeExport": "observe",
+        "steps": [
+          { "kind": "record", "label": "initial" },
+          { "kind": "call", "exportName": "update", "arguments": [2] },
+          { "kind": "record", "label": "updated" }
+        ]
+      }
+    },
+    {
+      "id": "r006-fallback-switch-assignment",
+      "r006AuditFixtureId": "packages/compiler/test/control-flow.test.ts:670:runTransform",
+      "request": {
+        "code": "import { $state, render } from 'fict'\n\nlet setMode\nlet oracleRoot\n\nfunction Component() {\n  let mode = $state(0)\n  setMode = next => { mode = next }\n  let label = 'A'\n  switch (mode) {\n    case 0:\n      label = 'A'\n      break\n    case 1:\n      label = 'B'\n      break\n    default:\n      label = 'D'\n  }\n  return <div>{label}</div>\n}\n\nexport function update(next) { setMode(next) }\nexport function mount(root) {\n  oracleRoot = root\n  return render(() => <Component />, root)\n}\nexport function observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent,\n  }\n}\n",
+        "filename": "/oracle/r006-fallback-switch-assignment.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false
+        }
+      },
+      "scenario": {
+        "mountExport": "mount",
+        "observeExport": "observe",
+        "steps": [
+          { "kind": "record", "label": "initial" },
+          { "kind": "call", "exportName": "update", "arguments": [1] },
+          { "kind": "record", "label": "case-one" },
+          { "kind": "call", "exportName": "update", "arguments": [2] },
+          { "kind": "record", "label": "default" }
+        ]
+      }
+    },
+    {
+      "id": "r006-fallback-derived-assignment",
+      "r006AuditFixtureId": "packages/compiler/test/spec-complete.test.ts:417:transform",
+      "request": {
+        "code": "import { $state, render } from 'fict'\n\nlet reveal\nlet oracleRoot\n\nfunction Component() {\n  let show = $state(false)\n  let data = $state({ items: [] })\n  reveal = () => {\n    data = { items: ['a', 'b'] }\n    show = true\n  }\n  let heading = 'Empty'\n  let count = 0\n  if (show) {\n    count = data.items.length\n    heading = count + ' items'\n  }\n  return <div>{heading}</div>\n}\n\nexport function update() { reveal() }\nexport function mount(root) {\n  oracleRoot = root\n  return render(() => <Component />, root)\n}\nexport function observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent,\n  }\n}\n",
+        "filename": "/oracle/r006-fallback-derived-assignment.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false,
+          "lazyConditional": true
+        }
+      },
+      "scenario": {
+        "mountExport": "mount",
+        "observeExport": "observe",
+        "steps": [
+          { "kind": "record", "label": "initial" },
+          { "kind": "call", "exportName": "update" },
+          { "kind": "record", "label": "updated" }
+        ]
+      }
     }
   ]
 }

@@ -43,11 +43,19 @@ test('Babel 0.28 SSR semantic oracle has exact independent provenance', () => {
     runtimeExecutionModel:
       'frozen-babel-and-live-rust-output-share-current-ssr-runtime-and-client-runtime',
   })
-  assert.equal(inputs.fixtures.length, 3)
+  assert.equal(inputs.fixtures.length, 5)
   assert.deepEqual(
     inputs.fixtures.map(fixture => fixture.mode),
-    ['ssr', 'hydrate', 'resume'],
+    ['ssr', 'hydrate', 'resume', 'stream', 'stream-suspense'],
   )
+  const diagnosticDeviations = inputs.fixtures.filter(
+    fixture => fixture.rustDiagnosticSignatures !== undefined,
+  )
+  assert.deepEqual(
+    diagnosticDeviations.map(fixture => fixture.id),
+    ['pipeable-stream-suspense'],
+  )
+  assert.ok(diagnosticDeviations[0].diagnosticDeviationReason.length > 0)
   assert.equal(oracle.fixtures.length, inputs.fixtures.length)
 })
 
@@ -92,7 +100,7 @@ for (const fixture of inputs.fixtures) {
     )
     assert.deepEqual(
       diagnosticSignature(result.diagnostics),
-      diagnosticSignature(expected.babelDiagnostics),
+      fixture.rustDiagnosticSignatures ?? diagnosticSignature(expected.babelDiagnostics),
       `${fixture.id} diagnostics`,
     )
     assert.deepEqual(

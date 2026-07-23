@@ -12,7 +12,7 @@
       "@babel/plugin-transform-modules-commonjs": "7.28.6",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "oracleInputsSha256": "38ff0afdb3268096ddfa44e514c30356c23f416d31b7900e1b246c621bc4dc63",
+    "oracleInputsSha256": "da6f9e7a18c9d2be46ca1fc6bcdb34d8a6e569d6cc5fbbe817c5f25afd01e2bb",
     "rustCodegenCorpusSha256": "4b2829913aef2582333cbe088e254b2ed0b78b22b07a5670e12da37bd1e9366e",
     "sharedRuntimePackage": "@fictjs/runtime@0.32.0-next.0",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-runtime"
@@ -1502,6 +1502,55 @@
             ]
           }
         }
+      ]
+    },
+    {
+      "id": "r006-fallback-conditional-return",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "message": "Reactive control-flow reads (count) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates."
+        }
+      ],
+      "babelCodeSha256": "6f90b4b523161cea488e3f4ed5664c81aa8e053a343686450760616f9ad83382",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.mount = mount;\nexports.observe = observe;\nexports.update = update;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nlet setCount = void 0;\nlet oracleRoot = void 0;\nfunction Component() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"count\",\n    devToolsSource: \"/oracle/r006-fallback-conditional-return.tsx:7:14\"\n  });\n  setCount = next => {\n    count(next);\n  };\n  if (count() > 0) {\n    return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (() => {\n      const __tmpl_1 = (0, _internal.template)(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n      const __root_0 = __tmpl_1();\n      const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n      const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n      (0, _internal.insertBetween)(__el_2, __end_3, () => count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n      return __root_0;\n    })() : {\n      type: \"div\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => count())\n      }\n    };\n  } else {\n    return (0, _internal.__fictElementNamespaceMatches)(\"span\", \"html\") ? (() => {\n      const __tmpl_5 = (0, _internal.template)(\"<span><!--fict:slot:start--><!--fict:slot:end--></span>\");\n      const __root_4 = __tmpl_5();\n      const __el_6 = (0, _internal.resolvePath)(__root_4, [0]);\n      const __end_7 = (0, _internal.getSlotEnd)(__el_6);\n      (0, _internal.insertBetween)(__el_6, __end_7, () => count(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n      return __root_4;\n    })() : {\n      type: \"span\",\n      props: {\n        children: (0, _internal.__fictReactive)(() => count())\n      }\n    };\n  }\n}\nfunction update(next) {\n  setCount(next);\n}\nfunction mount(root) {\n  oracleRoot = root;\n  return (0, _fict.render)(() => ({\n    type: Component,\n    props: null\n  }), root);\n}\nfunction observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent\n  };\n}",
+      "expected": [
+        { "label": "initial", "value": { "tag": "span", "text": "0" } },
+        { "label": "updated", "value": { "tag": "span", "text": "2" } }
+      ]
+    },
+    {
+      "id": "r006-fallback-switch-assignment",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "message": "Reactive control-flow reads (mode) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates."
+        }
+      ],
+      "babelCodeSha256": "4c0707177d518d710ca2390736e2a6f98c9786027611c3160f714fd15f18f336",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.mount = mount;\nexports.observe = observe;\nexports.update = update;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nlet setMode = void 0;\nlet oracleRoot = void 0;\nfunction Component() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const mode = (0, _internal.__fictUseSignal)(__fictCtx, 0, {\n    name: \"mode\",\n    devToolsSource: \"/oracle/r006-fallback-switch-assignment.tsx:7:13\"\n  });\n  setMode = next => {\n    mode(next);\n  };\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    let label = \"A\";\n    switch (mode()) {\n      case 0:\n        label = \"A\";\n        break;\n      case 1:\n        label = \"B\";\n        break;\n      default:\n        label = \"D\";\n        break;\n    }\n    return {\n      label\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const label = () => __region_0().label;\n  return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => label(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1001)() : {\n    type: \"div\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => label())\n    }\n  };\n}\nfunction update(next) {\n  setMode(next);\n}\nfunction mount(root) {\n  oracleRoot = root;\n  return (0, _fict.render)(() => ({\n    type: Component,\n    props: null\n  }), root);\n}\nfunction observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent\n  };\n}",
+      "expected": [
+        { "label": "initial", "value": { "tag": "div", "text": "A" } },
+        { "label": "case-one", "value": { "tag": "div", "text": "B" } },
+        { "label": "default", "value": { "tag": "div", "text": "D" } }
+      ]
+    },
+    {
+      "id": "r006-fallback-derived-assignment",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R006",
+          "severity": "warning",
+          "message": "Reactive control-flow reads (show) force region re-execution. Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates."
+        }
+      ],
+      "babelCodeSha256": "3b525fb9223b4088d1c246fafaf6b9fd5bf1e74dc5cc1b2f7535ccf82cf735d7",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.mount = mount;\nexports.observe = observe;\nexports.update = update;\nvar _internal = require(\"fict/internal\");\nvar _fict = require(\"fict\");\nlet reveal = void 0;\nlet oracleRoot = void 0;\nfunction Component() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const show = (0, _internal.__fictUseSignal)(__fictCtx, false, {\n    name: \"show\",\n    devToolsSource: \"/oracle/r006-fallback-derived-assignment.tsx:7:13\"\n  });\n  const data = (0, _internal.__fictUseSignal)(__fictCtx, {\n    items: []\n  }, {\n    name: \"data\",\n    devToolsSource: \"/oracle/r006-fallback-derived-assignment.tsx:8:13\"\n  });\n  reveal = () => {\n    data({\n      items: [\"a\", \"b\"]\n    });\n    show(true);\n  };\n  const __region_1 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    let heading = \"Empty\";\n    let count = 0;\n    if (show()) {\n      count = data().items.length;\n      heading = count + \" items\";\n    }\n    return {\n      heading,\n      count\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const heading = () => __region_1().heading;\n  const count = () => __region_1().count;\n  return (0, _internal.__fictElementNamespaceMatches)(\"div\", \"html\") ? (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const __tmpl_1 = (0, _internal.template)(\"<div><!--fict:slot:start--><!--fict:slot:end--></div>\");\n    const __root_0 = __tmpl_1();\n    const __el_2 = (0, _internal.resolvePath)(__root_0, [0]);\n    const __end_3 = (0, _internal.getSlotEnd)(__el_2);\n    (0, _internal.insertBetween)(__el_2, __end_3, () => heading(), __node => (0, _internal.createElementInNamespace)(__node, \"html\"));\n    return __root_0;\n  }, 1001)() : {\n    type: \"div\",\n    props: {\n      children: (0, _internal.__fictReactive)(() => heading())\n    }\n  };\n}\nfunction update() {\n  reveal();\n}\nfunction mount(root) {\n  oracleRoot = root;\n  return (0, _fict.render)(() => ({\n    type: Component,\n    props: null\n  }), root);\n}\nfunction observe() {\n  return {\n    tag: oracleRoot.firstElementChild?.tagName.toLowerCase() ?? null,\n    text: oracleRoot.textContent\n  };\n}",
+      "expected": [
+        { "label": "initial", "value": { "tag": "div", "text": "Empty" } },
+        { "label": "updated", "value": { "tag": "div", "text": "2 items" } }
       ]
     }
   ]

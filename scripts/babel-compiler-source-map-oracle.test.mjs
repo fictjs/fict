@@ -4,9 +4,11 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import test from 'node:test'
+import { TraceMap } from '@jridgewell/trace-mapping'
 
 import {
   assertProbeMapping,
+  materializeSourceMapFixture,
   traceGeneratedPosition,
   validateSourceMapFixture,
 } from './lib/compiler-source-map-semantic-harness.mjs'
@@ -24,6 +26,7 @@ const expectedFixtureIds = [
   'reactive-jsx-control-flow',
   'unicode-effects-and-async-handler',
   'commonjs-typescript-rewrite',
+  'multi-source-input-composition',
 ]
 
 test('Babel 0.28 source-map oracle has exact independent provenance', () => {
@@ -45,7 +48,8 @@ test('Babel 0.28 source-map oracle has exact independent provenance', () => {
     traceMappingDependency: '@jridgewell/trace-mapping@0.3.31',
     oracleInputsSha256: sha256(inputsText),
     sourceMapHarnessSha256: sha256(harnessText),
-    comparisonModel: 'frozen-babel-generated-tokens-vs-live-rust-authored-original-positions',
+    comparisonModel:
+      'frozen-babel-generated-tokens-vs-live-rust-authored-original-positions-including-multi-source-input-map-composition',
   })
   assert.equal(require('@jridgewell/trace-mapping/package.json').version, '0.3.31')
   assert.deepEqual(
@@ -55,8 +59,8 @@ test('Babel 0.28 source-map oracle has exact independent provenance', () => {
   assert.equal(oracle.fixtures.length, expectedFixtureIds.length)
 
   const probes = inputs.fixtures.flatMap(fixture => fixture.probes)
-  assert.equal(probes.length, 23)
-  assert.equal(probes.filter(probe => probe.disposition === 'exact-parity').length, 10)
+  assert.equal(probes.length, 26)
+  assert.equal(probes.filter(probe => probe.disposition === 'exact-parity').length, 13)
   assert.equal(
     probes.filter(probe => probe.disposition === 'rust-precision-improvement').length,
     13,
@@ -65,19 +69,37 @@ test('Babel 0.28 source-map oracle has exact independent provenance', () => {
 })
 
 const oracleById = new Map(oracle.fixtures.map(fixture => [fixture.id, fixture]))
-for (const fixture of inputs.fixtures) {
+for (const fixtureInput of inputs.fixtures) {
+  const fixture = materializeSourceMapFixture(fixtureInput)
   validateSourceMapFixture(fixture)
   test(`Rust source-map positions match the reviewed Babel 0.28 baseline: ${fixture.id}`, () => {
     const expected = oracleById.get(fixture.id)
     assert.ok(expected, `missing Babel source-map oracle ${fixture.id}`)
     assert.equal(sha256(expected.babelCode), expected.babelCodeSha256, fixture.id)
     assert.equal(sha256(JSON.stringify(expected.babelMap)), expected.babelMapSha256, fixture.id)
-    assert.deepEqual(expected.babelMap.sources, [fixture.filename], `${fixture.id}: Babel sources`)
-    assert.deepEqual(
-      expected.babelMap.sourcesContent,
-      [fixture.source],
-      `${fixture.id}: Babel sourcesContent`,
-    )
+    if (fixture.inputSourceMap) {
+      assert.deepEqual(
+        new TraceMap(expected.babelMap).resolvedSources,
+        new TraceMap(fixture.inputSourceMap).resolvedSources,
+        `${fixture.id}: Babel composed sources`,
+      )
+      assert.deepEqual(
+        expected.babelMap.sourcesContent,
+        fixture.inputSourceMap.sourcesContent,
+        `${fixture.id}: Babel composed sourcesContent`,
+      )
+    } else {
+      assert.deepEqual(
+        expected.babelMap.sources,
+        [fixture.filename],
+        `${fixture.id}: Babel sources`,
+      )
+      assert.deepEqual(
+        expected.babelMap.sourcesContent,
+        [fixture.source],
+        `${fixture.id}: Babel sourcesContent`,
+      )
+    }
     assert.deepEqual(
       expected.probes.map(probe => ({
         id: probe.id,
@@ -98,6 +120,7 @@ for (const fixture of inputs.fixtures) {
       moduleId: fixture.filename,
       language: fixture.language,
       moduleKind: fixture.moduleKind,
+      ...(fixture.inputSourceMap ? { inputSourceMap: fixture.inputSourceMap } : {}),
       options: {
         dev: false,
         fineGrainedDom: true,
@@ -111,12 +134,27 @@ for (const fixture of inputs.fixtures) {
       `${fixture.id}: ${JSON.stringify(result.diagnostics)}`,
     )
     assert.equal(result.map?.version, 3, `${fixture.id}: Rust source map`)
-    assert.deepEqual(result.map.sources, [fixture.filename], `${fixture.id}: Rust sources`)
-    assert.deepEqual(
-      result.map.sourcesContent,
-      [fixture.source],
-      `${fixture.id}: Rust sourcesContent`,
-    )
+    if (fixture.inputSourceMap) {
+      assert.deepEqual(
+        new TraceMap(result.map).resolvedSources,
+        new TraceMap(fixture.inputSourceMap).resolvedSources,
+        `${fixture.id}: Rust composed sources`,
+      )
+      assert.deepEqual(
+        result.map.sourcesContent,
+        fixture.inputSourceMap.sourcesContent,
+        `${fixture.id}: Rust composed sourcesContent`,
+      )
+      assert.equal(result.map.sourceRoot, fixture.inputSourceMap.sourceRoot)
+      assert.deepEqual(result.map.x_google_ignoreList, [0])
+    } else {
+      assert.deepEqual(result.map.sources, [fixture.filename], `${fixture.id}: Rust sources`)
+      assert.deepEqual(
+        result.map.sourcesContent,
+        [fixture.source],
+        `${fixture.id}: Rust sourcesContent`,
+      )
+    }
 
     for (const [index, probe] of fixture.probes.entries()) {
       const oracleProbe = expected.probes[index]

@@ -49,6 +49,51 @@
         { "kind": "click", "selector": "button", "expectedText": "resumed:6" },
         { "kind": "click", "selector": "button", "expectedText": "resumed:7" }
       ]
+    },
+    {
+      "id": "readable-stream-structure",
+      "mode": "stream",
+      "source": "export function App(props) {\n  return (\n    <section data-mode=\"stream\">\n      <h2>{props.title}</h2>\n      <ul>{props.items.map(item => <li data-id={item.id}>{item.label}</li>)}</ul>\n    </section>\n  )\n}\n",
+      "props": {
+        "title": "stream & structure",
+        "items": [
+          { "id": "first", "label": "Alpha" },
+          { "id": "second", "label": "Beta <safe>" }
+        ]
+      },
+      "expectedStream": {
+        "finalIncludes": [
+          "<section data-mode=\"stream\">",
+          "stream &amp; structure",
+          "<li data-id=\"first\">",
+          "Alpha",
+          "<li data-id=\"second\">",
+          "Beta &lt;safe&gt;"
+        ]
+      }
+    },
+    {
+      "id": "pipeable-stream-suspense",
+      "mode": "stream-suspense",
+      "source": "import { Suspense, createSuspenseToken } from 'fict'\n\nconst pending = createSuspenseToken()\nlet ready = false\n\nfunction Deferred(props) {\n  if (!ready) throw pending.token\n  return <strong data-phase=\"ready\">ready:{props.label}</strong>\n}\n\nexport function release() {\n  ready = true\n  pending.resolve()\n}\n\nexport function App(props) {\n  return (\n    <main>\n      <h2>stream:{props.title}</h2>\n      <Suspense fallback={<em data-phase=\"loading\">loading:{props.label}</em>}>\n        <Deferred label={props.label} />\n      </Suspense>\n      <footer>end</footer>\n    </main>\n  )\n}\n",
+      "props": {
+        "label": "deferred",
+        "title": "suspense"
+      },
+      "expectedStream": {
+        "releaseExport": "release",
+        "shellIncludes": [
+          "stream:",
+          "suspense",
+          "data-phase=\"loading\"",
+          "loading:deferred",
+          "fict:suspense-start"
+        ],
+        "shellExcludes": ["data-phase=\"ready\"", "ready:"],
+        "finalIncludes": ["data-phase=\"ready\"", "ready:", "deferred", "data-fict-suspense"]
+      },
+      "rustDiagnosticSignatures": [],
+      "diagnosticDeviationReason": "Babel 0.28 emitted FICT-R003 for the Suspense child component shape; Rust accepts that supported component child while the streamed shell and resolution trace remain the comparison contract."
     }
   ]
 }

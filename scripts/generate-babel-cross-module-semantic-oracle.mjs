@@ -7,6 +7,10 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { format, resolveConfig } from 'prettier'
 
+import {
+  crossModuleBundlerProvenance,
+  executeBundledCommonJsGraph,
+} from './lib/compiler-cross-module-bundler-harness.mjs'
 import { executeCommonJsGraph } from './lib/compiler-semantic-harness.mjs'
 import { validateCrossModuleSemanticFixture } from './lib/compiler-cross-module-semantic-fixtures.mjs'
 
@@ -114,6 +118,10 @@ const semanticHarnessText = readFileSync(
   path.join(repositoryRoot, 'scripts/lib/compiler-semantic-harness.mjs'),
   'utf8',
 )
+const bundlerHarnessText = readFileSync(
+  path.join(repositoryRoot, 'scripts/lib/compiler-cross-module-bundler-harness.mjs'),
+  'utf8',
+)
 assert.equal(input.schemaVersion, 1)
 assert.ok(Array.isArray(input.fixtures))
 const fixtureIds = new Set()
@@ -177,17 +185,19 @@ for (const fixture of input.fixtures) {
     })
   }
 
+  const executableModules = modules.map(module => ({
+    id: module.id,
+    dependencies: module.dependencies,
+    code: module.babelCode,
+  }))
   fixtures.push({
     id: fixture.id,
     entryId: fixture.entryId,
     invocation: fixture.invocation,
     modules,
-    expected: executeCommonJsGraph(
-      modules.map(module => ({
-        id: module.id,
-        dependencies: module.dependencies,
-        code: module.babelCode,
-      })),
+    expected: executeCommonJsGraph(executableModules, fixture.entryId, fixture.invocation),
+    bundledExpected: await executeBundledCommonJsGraph(
+      executableModules,
       fixture.entryId,
       fixture.invocation,
     ),
@@ -206,7 +216,9 @@ const oracle = {
     babelDependencies: dependencyVersions,
     oracleInputsSha256: sha256(inputText),
     semanticHarnessSha256: sha256(semanticHarnessText),
+    bundlerHarnessSha256: sha256(bundlerHarnessText),
     runtimeExecutionModel: 'frozen-babel-and-live-rust-graphs-share-synthetic-runtime',
+    ...crossModuleBundlerProvenance(),
   },
   fixtures,
 }

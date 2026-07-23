@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 
 const require = createRequire(import.meta.url)
@@ -215,13 +216,159 @@ function materializeModule(code, artifacts, publicModuleId) {
 
 function assertFixture(fixture) {
   assert.equal(typeof fixture?.id, 'string')
-  assert.ok(['ssr', 'hydrate', 'resume'].includes(fixture.mode), `${fixture.id}: mode`)
+  assert.ok(
+    ['ssr', 'hydrate', 'resume', 'stream', 'stream-suspense'].includes(fixture.mode),
+    `${fixture.id}: mode`,
+  )
   assert.equal(typeof fixture.source, 'string', `${fixture.id}: source`)
   assert.equal(typeof fixture.props, 'object', `${fixture.id}: props`)
-  assert.equal(typeof fixture.expectedInitialText, 'string', `${fixture.id}: expected initial text`)
+  if (fixture.mode.startsWith('stream')) {
+    assert.equal(typeof fixture.expectedStream, 'object', `${fixture.id}: expected stream`)
+    assert.ok(
+      Array.isArray(fixture.expectedStream.finalIncludes),
+      `${fixture.id}: final stream assertions`,
+    )
+    if (fixture.mode === 'stream-suspense') {
+      assert.ok(
+        Array.isArray(fixture.expectedStream.shellIncludes),
+        `${fixture.id}: shell stream assertions`,
+      )
+      assert.equal(
+        typeof fixture.expectedStream.releaseExport,
+        'string',
+        `${fixture.id}: release export`,
+      )
+      assert.ok(
+        Array.isArray(fixture.expectedStream.shellExcludes),
+        `${fixture.id}: shell exclusion assertions`,
+      )
+    }
+  } else {
+    assert.equal(
+      typeof fixture.expectedInitialText,
+      'string',
+      `${fixture.id}: expected initial text`,
+    )
+  }
   assert.ok(Array.isArray(fixture.steps ?? []), `${fixture.id}: steps`)
   for (const step of fixture.steps ?? []) {
     assert.equal(typeof step.expectedText, 'string', `${fixture.id}: expected step text`)
+  }
+}
+
+function assertStreamIncludes(html, expected, context) {
+  for (const value of expected) {
+    assert.equal(typeof value, 'string', `${context}: expected substring`)
+    assert.ok(html.includes(value), `${context}: missing ${JSON.stringify(value)}`)
+  }
+}
+
+function normalizeCompilerStreamMarkers(html) {
+  return html
+    .replaceAll('<!--fict:slot:start-->', '')
+    .replaceAll('<!--fict:slot:end-->', '')
+    .replaceAll('<!--fict:child-->', '')
+    .replaceAll('<!---->', '')
+}
+
+async function readReadableChunks(stream) {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  const chunks = []
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(decoder.decode(value, { stream: true }))
+  }
+  const tail = decoder.decode()
+  if (tail) chunks.push(tail)
+  return chunks
+}
+
+function streamOptions(fixture) {
+  const prefix = fixture.id.replace(/[^A-Za-z0-9_]/g, '_')
+  return {
+    fullDocument: false,
+    includeSnapshot: false,
+    mode: 'shell',
+    nonce: 'oracle-stream-nonce',
+    scopeIdentifierPrefix: `oracle-${prefix}`,
+    streamIdentifierPrefix: `oracle_${prefix}`,
+  }
+}
+
+async function executeReadableStream(App, fixture) {
+  const stream = ssr.renderToStream(
+    () => ({ type: App, props: structuredClone(fixture.props), key: undefined }),
+    streamOptions(fixture),
+  )
+  const chunks = await readReadableChunks(stream)
+  const html = chunks.join('')
+  assert.ok(chunks.length > 0, `${fixture.id}: readable stream chunks`)
+  assertStreamIncludes(html, fixture.expectedStream.finalIncludes, `${fixture.id}: final stream`)
+  const normalizedChunks = chunks.map(normalizeCompilerStreamMarkers)
+  return {
+    transport: 'web-readable-stream',
+    chunks: normalizedChunks,
+    html: normalizedChunks.join(''),
+  }
+}
+
+async function executeSuspenseStream(module, App, fixture) {
+  const release = module[fixture.expectedStream.releaseExport]
+  assert.equal(
+    typeof release,
+    'function',
+    `${fixture.id}: missing ${fixture.expectedStream.releaseExport}`,
+  )
+  const { pipe, shellReady, allReady, abort } = ssr.renderToPipeableStream(
+    () => ({ type: App, props: structuredClone(fixture.props), key: undefined }),
+    streamOptions(fixture),
+  )
+  const sink = new PassThrough()
+  const chunks = []
+  const ended = new Promise((resolve, reject) => {
+    sink.on('data', chunk => chunks.push(Buffer.from(chunk).toString('utf8')))
+    sink.once('end', resolve)
+    sink.once('error', reject)
+  })
+  pipe(sink)
+  try {
+    await shellReady
+    await Promise.resolve()
+    const shellChunks = [...chunks]
+    const shellHtml = shellChunks.join('')
+    assert.ok(shellChunks.length > 0, `${fixture.id}: pipeable shell chunks`)
+    assertStreamIncludes(
+      shellHtml,
+      fixture.expectedStream.shellIncludes,
+      `${fixture.id}: suspense shell`,
+    )
+    for (const value of fixture.expectedStream.shellExcludes) {
+      assert.equal(
+        shellHtml.includes(value),
+        false,
+        `${fixture.id}: resolved content leaked into shell: ${JSON.stringify(value)}`,
+      )
+    }
+
+    release()
+    await allReady
+    await ended
+    const html = chunks.join('')
+    assertStreamIncludes(html, fixture.expectedStream.finalIncludes, `${fixture.id}: final stream`)
+    const normalizedShellChunks = shellChunks.map(normalizeCompilerStreamMarkers)
+    const normalizedChunks = chunks.map(normalizeCompilerStreamMarkers)
+    return {
+      transport: 'node-pipeable-stream',
+      shellChunks: normalizedShellChunks,
+      chunks: normalizedChunks,
+      shellHtml: normalizedShellChunks.join(''),
+      html: normalizedChunks.join(''),
+    }
+  } catch (error) {
+    abort(error)
+    throw error
   }
 }
 
@@ -278,6 +425,10 @@ export async function executeSsrEsm(compiled, fixture, publicModuleId) {
         'function',
         `${fixture.id}: missing ${resumeKey}`,
       )
+    }
+    if (fixture.mode === 'stream') return await executeReadableStream(App, fixture)
+    if (fixture.mode === 'stream-suspense') {
+      return await executeSuspenseStream(module, App, fixture)
     }
     const html = ssr.renderToString(
       () => ({ type: App, props: structuredClone(fixture.props), key: undefined }),
