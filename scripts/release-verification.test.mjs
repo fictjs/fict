@@ -61,6 +61,7 @@ const releaseWorkflow = readFileSync(
   new URL('../.github/workflows/release.yml', import.meta.url),
   'utf8',
 )
+const gitAttributes = readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8')
 const zigRequirements = readFileSync(
   new URL('../.github/requirements-zig-linux.txt', import.meta.url),
   'utf8',
@@ -354,6 +355,13 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
   assert.match(certificationSource, /uses: pnpm\/action-setup@v5[\s\S]*?version: 9\.1\.1/)
   assert.match(releaseSource, /needs: native-certification/)
   assert.doesNotMatch(releaseSource, /Download all native runtime evidence/)
+})
+
+test('native certification hashes one byte-identical frozen corpus on every runner', () => {
+  const corpusPath = 'crates/fict-compiler/tests/rust_frozen_codegen_corpus.json'
+  const corpusRules = gitAttributes.split(/\r?\n/).filter(line => line.startsWith(`${corpusPath} `))
+
+  assert.deepEqual(corpusRules, [`${corpusPath} text eol=lf`])
 })
 
 test('Rust-default approval binds the complete native certification to its candidate', () => {
