@@ -105,13 +105,15 @@ describe('release strict guarantee scope', () => {
     expect(fuzzJob).toContain(
       "if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
     )
-    expect(fuzzJob).toContain('timeout-minutes: 30')
+    expect(fuzzJob).toContain('timeout-minutes: 55')
     expect(fuzzJob).toContain('nightly-2026-04-28')
     expect(fuzzJob).toContain('node --test scripts/run-locked-fuzz.test.mjs')
     expect(fuzzJob).toContain('node scripts/run-locked-fuzz.mjs --verify-lock')
-    expect(fuzzJob).toContain('node scripts/run-locked-fuzz.mjs build compiler_pipeline')
-    expect(fuzzJob).toContain('node scripts/run-locked-fuzz.mjs run compiler_pipeline')
-    expect(fuzzJob).toContain('-max_total_time=600')
+    for (const target of ['compiler_pipeline', 'compiler_request_pipeline', 'state_provenance']) {
+      expect(fuzzJob).toContain(`node scripts/run-locked-fuzz.mjs build ${target}`)
+      expect(fuzzJob).toContain(`node scripts/run-locked-fuzz.mjs run ${target}`)
+    }
+    expect(fuzzJob.match(/-max_total_time=600/g)).toHaveLength(3)
     expect(fuzzJob).toContain('path: fuzz/artifacts')
   })
 })
