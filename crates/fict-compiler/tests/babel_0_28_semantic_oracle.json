@@ -12,7 +12,7 @@
       "@babel/plugin-transform-modules-commonjs": "7.28.6",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "oracleInputsSha256": "9f1fb096d88f7ef473b8a26aa4d582005ef7dd2e854ce9fac2bdeb70cbcff372"
+    "oracleInputsSha256": "c9d1bcafd74821b4828448b77c5b5b2da92f681f1d0e9440933236873ddbf2be"
   },
   "fixtures": [
     {

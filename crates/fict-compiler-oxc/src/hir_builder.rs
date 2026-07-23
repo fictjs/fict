@@ -9680,7 +9680,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         // contract for reactive class declarations (`extends Parent`, static fields, and
         // computed keys). Projections such as `rows.at(0)` expose nested shallow-state identity
         // and therefore still fail closed when the class retains them.
-        if self.direct_state_symbol(argument).is_some() {
+        if self.direct_class_state_symbol(root).is_some() {
             return;
         }
         if self.retained_reactive_references(expression).is_empty() {
@@ -9693,6 +9693,21 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             kind: EscapeDiagnosticKind::ReactiveValue,
             span: argument.span,
         });
+    }
+
+    fn direct_class_state_symbol(&self, expression: &Expression<'_>) -> Option<SymbolId> {
+        let root = expression.get_inner_expression();
+        if let Expression::SequenceExpression(sequence) = root {
+            return sequence
+                .expressions
+                .last()
+                .and_then(|expression| self.direct_class_state_symbol(expression));
+        }
+        self.direct_state_symbol(EscapeArgument {
+            expression: root,
+            span: source_span(root.span()),
+            spread: false,
+        })
     }
 
     fn emit_direct_state_warnings(&mut self, arguments: &[EscapeArgument<'_, '_>], allowed: bool) {
@@ -10174,6 +10189,15 @@ impl<'a> Visit<'a> for RetainedReactiveIdentityCollector<'_, '_> {
             self.visit_expression(&assignment.right);
         } else {
             oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+        }
+    }
+
+    fn visit_sequence_expression(&mut self, expression: &oxc::ast::ast::SequenceExpression<'a>) {
+        // Only the tail becomes the sequence result. Earlier expressions still receive their
+        // own call/write diagnostics while their values are discarded rather than retained by
+        // the surrounding class base or field.
+        if let Some(value) = expression.expressions.last() {
+            self.visit_expression(value);
         }
     }
 }

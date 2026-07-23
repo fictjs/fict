@@ -73,14 +73,6 @@ for (const fixture of inputs.fixtures) {
     } else if (fixture.diagnosticDeviation === 'rust-removes-spurious-hook-member-escape-warning') {
       assert.deepEqual(babelDiagnostics, ['FICT-R005:warning', 'FICT-R005:warning'], fixture.id)
       assert.deepEqual(rustDiagnostics, [], fixture.id)
-    } else if (fixture.diagnosticDeviation === 'rust-adds-derived-projection-mutation-warning') {
-      assert.equal(
-        fixture.diagnosticDeviation,
-        'rust-adds-derived-projection-mutation-warning',
-        fixture.id,
-      )
-      assert.deepEqual(babelDiagnostics, ['FICT-R002:warning'], fixture.id)
-      assert.deepEqual(rustDiagnostics, ['FICT-M:warning', 'FICT-R002:warning'], fixture.id)
     } else {
       assert.equal(
         fixture.diagnosticDeviation,
@@ -111,7 +103,6 @@ test('Babel semantic oracle contains no unreferenced or duplicate fixtures', () 
       .map(fixture => [fixture.id, fixture.diagnosticDeviation]),
     [
       ['structured-hook-return', 'rust-removes-spurious-hook-member-escape-warning'],
-      ['optional-nullish-dependency', 'rust-adds-derived-projection-mutation-warning'],
       ['vnode-event-order', 'rust-adds-unproven-reactive-receiver-warning'],
     ],
   )

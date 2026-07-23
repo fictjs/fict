@@ -6486,6 +6486,14 @@ mod tests {
                 "import { $state } from 'fict'; class A {} class B {} export function useProbe() { const useA = $state(true); class Child extends (useA ? A : B) {} return new Child(); }",
             ),
             (
+                "sequenced-state-root-class-base",
+                "import { $state } from 'fict'; class Base {} export function useProbe() { const log = []; let Parent = $state(Base); class Child extends (log.push('extends'), Parent) {} return new Child(); }",
+            ),
+            (
+                "sequenced-state-root-class-field",
+                "import { $state } from 'fict'; class Base {} export function useProbe() { const log = []; let Parent = $state(Base); class Child { static parent = (log.push('field'), Parent); } return Child; }",
+            ),
+            (
                 "fresh-container-mutation",
                 "import { $state } from 'fict'; export function useProbe() { const state = $state([{ done: false }]); let container = [state.at(0)]; container.push({ done: true }); return container.length; }",
             ),
