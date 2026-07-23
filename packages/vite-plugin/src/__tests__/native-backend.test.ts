@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -51,6 +51,7 @@ const config = {
   base: '/',
   build: { ssr: true },
   resolve: { alias: [], preserveSymlinks: false },
+  server: { fs: { allow: ['/project'] } },
 }
 
 function compileResult(overrides: Partial<CompileResult> = {}): CompileResult {
@@ -681,5 +682,32 @@ describe('Rust compiler backend', () => {
     expect(native.scan).not.toHaveBeenCalled()
     expect(native.scanSync).not.toHaveBeenCalled()
     expect(native.transform).not.toHaveBeenCalled()
+  })
+
+  it('adds an equivalent physical dev root to the Vite filesystem allowlist', async () => {
+    const physicalRoot = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-real-root-')))
+    const logicalRoot = `${physicalRoot}-logical`
+    const allow = [logicalRoot]
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+
+    try {
+      await symlink(physicalRoot, logicalRoot, process.platform === 'win32' ? 'junction' : 'dir')
+      plugin.configResolved?.({
+        ...config,
+        command: 'serve',
+        root: logicalRoot,
+        server: { fs: { allow } },
+      } as never)
+
+      expect(allow).toContain(physicalRoot)
+    } finally {
+      await rm(logicalRoot, { recursive: true, force: true })
+      await rm(physicalRoot, { recursive: true, force: true })
+    }
   })
 })

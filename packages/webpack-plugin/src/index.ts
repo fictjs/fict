@@ -1009,7 +1009,7 @@ async function rebuildModuleWithFingerprint(
   compilation: Compilation,
   state: FictWebpackCompilationState,
   node: MetadataGraphNode,
-): Promise<void> {
+): Promise<boolean> {
   const fingerprint = dependencyFingerprint(node, state)
   state.pendingDependencyFingerprints.set(node.identifier, fingerprint)
   try {
@@ -1018,7 +1018,10 @@ async function rebuildModuleWithFingerprint(
     state.pendingDependencyFingerprints.delete(node.identifier)
   }
   const rebuildError = node.module.getErrors()?.[Symbol.iterator]().next().value
-  if (rebuildError) throw rebuildError
+  // Loader errors already belong to the module and therefore to compilation.errors. Do not
+  // turn a recoverable watch compilation into a fatal finishMake hook rejection: Webpack must
+  // finish installing the loader's missing/context dependencies so a later edit can recover.
+  if (rebuildError) return false
   const persistedFingerprint = state.compiledDependencyFingerprints.get(node.identifier)
   const currentFingerprint = dependencyFingerprint(node, state)
   if (persistedFingerprint !== fingerprint && persistedFingerprint !== currentFingerprint) {
@@ -1034,6 +1037,7 @@ async function rebuildModuleWithFingerprint(
     }
     storeFictModuleMetadata(state, node.module, metadata, currentFingerprint)
   }
+  return true
 }
 
 function componentMetadataSnapshot(
@@ -1081,7 +1085,7 @@ async function convergeMetadataGraph(
           }
           storeFictModuleMetadata(state, node.module, metadata, fingerprint)
         } else {
-          await rebuildModuleWithFingerprint(compilation, state, node)
+          if (!(await rebuildModuleWithFingerprint(compilation, state, node))) return
         }
       }
       continue
@@ -1102,7 +1106,9 @@ async function convergeMetadataGraph(
     for (let pass = 0; pass < passLimit; pass++) {
       const before = componentMetadataSnapshot(sortedComponent, state)
       for (const identifier of sortedComponent) {
-        await rebuildModuleWithFingerprint(compilation, state, graph.get(identifier)!)
+        if (!(await rebuildModuleWithFingerprint(compilation, state, graph.get(identifier)!))) {
+          return
+        }
       }
       const after = componentMetadataSnapshot(sortedComponent, state)
       if (after === before && fingerprintsAreCurrent()) {

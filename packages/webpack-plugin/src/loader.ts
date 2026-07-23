@@ -51,6 +51,7 @@ export interface FictWebpackLoaderOptions extends Omit<
 
 interface FictLoaderContext {
   async(): (error?: Error | null, content?: string, sourceMap?: RawSourceMap | null) => void
+  addContextDependency(directory: string): void
   addDependency(file: string): void
   addMissingDependency(file: string): void
   cacheable(flag?: boolean): void
@@ -165,6 +166,7 @@ function resolveMetadataSnapshot(
   moduleIdentifier: string,
   binding: NonNullable<ReturnType<typeof getLoaderBinding>>,
   registerMetadataDependency: (dependency: string) => void,
+  registerMissingLocalDependency: (sourceRequest: string) => void,
 ): ResolvedMetadataInput {
   binding.state.metadataSourcesByIdentifier.get(moduleIdentifier)!.add(sourceRequest)
   const packageResolutions = binding.state.packageResolutionsByIdentifier.get(moduleIdentifier)
@@ -199,7 +201,10 @@ function resolveMetadataSnapshot(
   )
   if (dependency) {
     const metadata = binding.state.moduleMetadata.get(dependency)
-    if (!metadata) return missingMetadataSnapshot(sourceRequest)
+    if (!metadata) {
+      registerMissingLocalDependency(sourceRequest)
+      return missingMetadataSnapshot(sourceRequest)
+    }
     return metadataSnapshot(
       sourceRequest,
       dependency,
@@ -211,9 +216,11 @@ function resolveMetadataSnapshot(
     return opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
   }
 
-  return binding.state.metadataGraphPrepared
-    ? missingMetadataSnapshot(sourceRequest)
-    : opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
+  if (binding.state.metadataGraphPrepared) {
+    registerMissingLocalDependency(sourceRequest)
+    return missingMetadataSnapshot(sourceRequest)
+  }
+  return opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
 }
 
 function rewriteTypeScriptRequest(source: string): string {
@@ -364,6 +371,22 @@ export default function fictWebpackLoader(
       else this.addMissingDependency(watched)
     }
   }
+  const registerMissingLocalDependency = (sourceRequest: string): void => {
+    if (
+      (!sourceRequest.startsWith('./') && !sourceRequest.startsWith('../')) ||
+      sourceRequest.includes('?') ||
+      sourceRequest.includes('#') ||
+      sourceRequest.includes('!')
+    ) {
+      return
+    }
+    const requestedPath = path.resolve(path.dirname(compilerFilename), sourceRequest)
+    registerMetadataDependency(requestedPath)
+    // An extensionless request can reappear as any configured Webpack extension. Watching the
+    // containing directory preserves delete/recreate recovery even though strict metadata
+    // validation fails before Webpack parses the import and records its own missing edge.
+    this.addContextDependency(path.dirname(requestedPath))
+  }
   const compilerOptions: FictWebpackLoaderOptions = {
     ...options,
     dev: options.dev ?? this.mode !== 'production',
@@ -403,6 +426,7 @@ export default function fictWebpackLoader(
           moduleIdentifier,
           binding,
           registerMetadataDependency,
+          registerMissingLocalDependency,
         )
       })
       const request: CompileRequest = {

@@ -1828,7 +1828,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         } else {
           const environment = context.environment!
           const requestUrl =
-            environment.moduleGraph?.getModuleById(loadOptions.id)?.url ?? loadOptions.id
+            environment.moduleGraph?.getModuleById(loadOptions.id)?.url ??
+            (config?.root
+              ? createDevTransformRequestUrl(
+                  loadOptions.id,
+                  config.root,
+                  config.resolve.preserveSymlinks === true,
+                )
+              : loadOptions.id)
           await environment.transformRequest!(requestUrl)
         }
         assertTransformStateActive(state)
@@ -1897,6 +1904,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               `in dev mode: ${JSON.stringify(effectiveRoot)}. Rename the project directory ` +
               'or expose it through a delimiter-free symlink with preserveSymlinks enabled.',
           )
+        }
+        if (
+          effectiveRoot !== resolvedConfig.root &&
+          !resolvedConfig.server.fs.allow.includes(effectiveRoot)
+        ) {
+          // Vite resolves module ids through real paths by default, but its dev filesystem
+          // allowlist can retain the logical root spelling (/var versus /private/var on macOS).
+          // Metadata preloads use /@fs requests before ModuleGraph can mark those ids safe.
+          resolvedConfig.server.fs.allow.push(effectiveRoot)
         }
       }
       config = resolvedConfig
@@ -2969,6 +2985,27 @@ function createDevPublicModuleId(
   const absolute = encodeViteModulePath(identityFilename)
   const fsPath = absolute.startsWith('/') ? absolute : `/${absolute}`
   return prependViteDevUrl(`/@fs${fsPath}${suffix}`, options)
+}
+
+/**
+ * Produce an internal Vite request URL for a resolved dependency that has not entered the
+ * module graph yet. Always use /@fs so Vite treats an absolute file id as a filesystem request
+ * instead of a project-root URL. configResolved exposes an equivalent physical root spelling
+ * (notably /private/var for /var on macOS) to the dev filesystem allowlist.
+ */
+function createDevTransformRequestUrl(
+  id: string,
+  rootDir: string,
+  preserveSymlinks = false,
+): string {
+  const { filename, suffix } = splitModuleId(id, { root: rootDir })
+  let requestFilename = normalizeFileName(filename, rootDir)
+  if (!preserveSymlinks) requestFilename = normalizeIdentityPath(requestFilename)
+
+  assertServableViteDevPath(requestFilename, requestFilename)
+  const absolute = encodeViteModulePath(requestFilename)
+  const fsPath = absolute.startsWith('/') ? absolute : `/${absolute}`
+  return `/@fs${fsPath}${suffix}`
 }
 
 function createDevHandlerModuleId(

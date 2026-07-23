@@ -397,7 +397,9 @@ test('legacy-removal approval binds the final release window and evidence digest
   assert.match(rolloutReadiness, /review\.evidenceDigest !== evidence\.evidenceDigest/)
 })
 
-test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
+test('browser E2E includes native Vite HMR, production-shaped applications, and scheduled soak', () => {
+  assert.match(rootPackage.scripts['test:e2e'], /pnpm test:vite:hmr:e2e/)
+  assert.equal(rootPackage.scripts['test:vite:hmr:e2e'], 'node scripts/native-vite-hmr-e2e.mjs')
   assert.match(rootPackage.scripts['test:e2e'], /pnpm test:real-apps/)
   assert.match(rootPackage.scripts['test:real-apps'], /examples:build-real-apps/)
   assert.match(rootPackage.scripts['test:real-apps'], /run-real-app-e2e\.mjs/)

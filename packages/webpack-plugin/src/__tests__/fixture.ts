@@ -67,6 +67,7 @@ export function createWebpackConfiguration(
   options: {
     alias?: Record<string, string>
     cache?: Configuration['cache']
+    devtool?: Configuration['devtool']
     externals?: Record<string, string | string[]>
     loaderOptions?: Record<string, unknown>
     plugins?: NonNullable<Configuration['plugins']>
@@ -77,7 +78,7 @@ export function createWebpackConfiguration(
     ...(options.cache ? { cache: options.cache } : {}),
     ...(options.snapshot ? { snapshot: options.snapshot } : {}),
     context: root,
-    devtool: false,
+    devtool: options.devtool ?? false,
     entry: './entry.ts',
     externals: {
       fict: `commonjs ${fictEntry}`,
@@ -291,12 +292,17 @@ export function buildAssetMatches(
   pattern: RegExp,
   assetName = 'bundle.cjs',
 ): boolean {
+  const source = buildAssetSource(stats, assetName)
+  pattern.lastIndex = 0
+  return pattern.test(source)
+}
+
+export function buildAssetSource(stats: Stats, assetName = 'bundle.cjs'): string {
   const source = capturedAssets.get(stats.compilation)?.get(assetName)
   if (source === undefined) {
     throw new Error(`No captured Webpack asset named "${assetName}".`)
   }
-  pattern.lastIndex = 0
-  return pattern.test(source)
+  return source
 }
 
 export function runCompiler(configuration: Configuration): Promise<Stats> {
