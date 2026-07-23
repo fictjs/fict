@@ -73,14 +73,22 @@ interface StoredWebpackMetadata {
 }
 
 function storedMetadata(stats: Stats, resource: string): StoredWebpackMetadata {
-  const module = [...stats.compilation.modules].find(
+  const candidates = [...stats.compilation.modules].filter(
     candidate => (candidate as { resource?: unknown }).resource === resource,
-  ) as { buildInfo?: Record<string, unknown> } | undefined
-  const stored = module?.buildInfo?.fictWebpackMetadataV7
-  if (!stored || typeof stored !== 'object') {
-    throw new Error(`No persisted Fict metadata found for ${resource}.`)
+  ) as { buildInfo?: Record<string, unknown> }[]
+  const stored = candidates
+    .map(candidate => candidate.buildInfo?.fictWebpackMetadataV7)
+    .filter(
+      (metadata): metadata is Record<string, unknown> =>
+        metadata !== null && typeof metadata === 'object',
+    )
+  if (stored.length !== 1) {
+    throw new Error(
+      `Expected one persisted Fict metadata record for ${resource}; ` +
+        `found ${stored.length} across ${candidates.length} matching Webpack modules.`,
+    )
   }
-  return stored as StoredWebpackMetadata
+  return stored[0] as unknown as StoredWebpackMetadata
 }
 
 async function readBundle(root: string): Promise<string> {
@@ -120,6 +128,26 @@ function createRebuildObserver(): {
 }
 
 describe('@fictjs/webpack-plugin package metadata', () => {
+  it('selects persisted metadata by module identity when resources are duplicated', () => {
+    const resource = '/virtual/entry.ts'
+    const expected: StoredWebpackMetadata = {
+      version: 7,
+      incomplete: false,
+      dependencyFingerprint: 'fingerprint',
+      metadataDependencies: [],
+    }
+    const stats = {
+      compilation: {
+        modules: new Set([
+          { resource, buildInfo: {} },
+          { resource, buildInfo: { fictWebpackMetadataV7: expected } },
+        ]),
+      },
+    } as unknown as Stats
+
+    expect(storedMetadata(stats, resource)).toBe(expected)
+  })
+
   it('watches package manifests and sidecars and rebuilds their importer', async () => {
     const root = await createFixture({
       'entry.ts': entrySource,
