@@ -26,6 +26,46 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
         sourcemap: false,
     }
 }
+
+#[test]
+fn lowers_internal_import_equals_as_a_local_alias_initialization() {
+    let output = build_hir(
+        "const Child = class {}\nimport Alias = Child\nexport const instance = new Alias()\n",
+        options(OxcSourceLanguage::TypeScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let alias = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "Alias")
+        .expect("internal import-equals alias");
+    assert_eq!(alias.kind, fict_hir::BindingKind::Var);
+    assert!(alias.import.is_none());
+
+    let module = &hir.functions[0];
+    let alias_local = module
+        .locals
+        .iter()
+        .find(|local| local.binding == Some(alias.id))
+        .expect("alias local");
+    assert!(
+        module
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(
+                instruction.kind,
+                HirInstructionKind::Write {
+                    ref place,
+                    ..
+                } if place.base == fict_hir::PlaceBase::Local(alias_local.id)
+                    && place.projections.is_empty()
+            ))
+    );
+}
+
 #[test]
 fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
     let output = build_hir(

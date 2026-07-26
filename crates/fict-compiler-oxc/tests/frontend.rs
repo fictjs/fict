@@ -45,6 +45,43 @@ fn records_external_import_equals_as_callable_namespace_identity() {
 }
 
 #[test]
+fn records_internal_import_equals_as_a_local_runtime_alias() {
+    let frontend = summary(
+        "import versionediagnoslf = Child\n  141\n",
+        OxcSourceLanguage::TypeScript,
+    );
+    let alias = frontend
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "versionediagnoslf")
+        .expect("internal import-equals alias");
+
+    assert_eq!(alias.kind, FrontendBindingKind::Alias);
+    assert!(alias.import.is_none());
+    assert!(alias.is_runtime);
+}
+
+#[test]
+fn records_qualified_internal_import_equals_as_a_local_runtime_alias() {
+    let frontend = summary(
+        concat!(
+            "namespace Registry { export class Child {} }\n",
+            "import RuntimeAlias = Registry.Child\n",
+        ),
+        OxcSourceLanguage::TypeScript,
+    );
+    let runtime = frontend
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "RuntimeAlias")
+        .expect("qualified runtime alias");
+
+    assert_eq!(runtime.kind, FrontendBindingKind::Alias);
+    assert!(runtime.import.is_none());
+    assert!(runtime.is_runtime);
+}
+
+#[test]
 fn records_typescript_export_assignment_as_the_commonjs_default_export() {
     let output = analyze_frontend(
         "function useCounter() { return 1; } export = useCounter;",

@@ -38,13 +38,14 @@ use oxc::{
             CallExpression, ChainElement, Class, ClassElement, ClassType, ComputedMemberExpression,
             Decorator, Expression, ExpressionStatement, FormalParameter, FormalParameterRest,
             FormalParameters, Function, FunctionBody, FunctionType, IdentifierReference,
-            ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
-            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
-            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
-            NewExpression, ObjectAssignmentTarget, ObjectPropertyKind as OxcObjectPropertyKind,
-            Program, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
-            SimpleAssignmentTarget, Statement, Super, TSLiteral, TSType, TSTypeName,
+            ImportExpression, ImportOrExportKind, ImportPhase as OxcImportPhase, JSXAttributeItem,
+            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
+            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
+            JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
+            MetaProperty, NewExpression, ObjectAssignmentTarget,
+            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
+            PropertyKind, ReturnStatement, SimpleAssignmentTarget, Statement, Super,
+            TSImportEqualsDeclaration, TSLiteral, TSModuleReference, TSType, TSTypeName,
             TSTypeOperatorOperator, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
             UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
@@ -55,8 +56,8 @@ use oxc::{
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
             walk_call_expression, walk_expression, walk_expression_statement, walk_function,
-            walk_jsx_element, walk_return_statement, walk_variable_declaration,
-            walk_variable_declarator,
+            walk_jsx_element, walk_return_statement, walk_ts_import_equals_declaration,
+            walk_variable_declaration, walk_variable_declarator,
         },
     },
     semantic::{Scoping, Semantic, SemanticBuilder},
@@ -596,6 +597,35 @@ impl<'a> Visit<'a> for VariableDeclarationCollector {
             }
         }
         walk_variable_declaration(self, declaration);
+    }
+
+    fn visit_ts_import_equals_declaration(&mut self, declaration: &TSImportEqualsDeclaration<'a>) {
+        if declaration.import_kind != ImportOrExportKind::Type
+            && !matches!(
+                declaration.module_reference,
+                TSModuleReference::ExternalModuleReference(_)
+            )
+            && let Some(symbol) = declaration.id.symbol_id.get()
+        {
+            self.facts.push(VariableDeclarationFact {
+                // TypeScript lowers an internal import-equals alias to `var`, including
+                // its pre-declaration `undefined` behavior. Model the emitted runtime
+                // storage instead of treating the source-level alias as an ESM import.
+                declaration_kind: DeclarationKind::Var,
+                declarator_span: source_span(declaration.span),
+                pattern_span: source_span(declaration.id.span),
+                initializer_span: Some(source_span(declaration.module_reference.span())),
+                initializer_has_effects: true,
+                bindings: vec![symbol],
+                simple_binding: Some(symbol),
+                has_defaults: false,
+                has_rest: false,
+                contains_await: false,
+                contains_yield: false,
+                contains_jsx: false,
+            });
+        }
+        walk_ts_import_equals_declaration(self, declaration);
     }
 }
 
@@ -11762,7 +11792,7 @@ fn build_hir_bindings(
                 BindingKind::Parameter
             } else {
                 match binding.kind {
-                    FrontendBindingKind::Var => BindingKind::Var,
+                    FrontendBindingKind::Var | FrontendBindingKind::Alias => BindingKind::Var,
                     FrontendBindingKind::Let => BindingKind::Let,
                     FrontendBindingKind::Const => BindingKind::Const,
                     FrontendBindingKind::Function => BindingKind::Function,
@@ -11845,7 +11875,7 @@ fn classify_named_function(name: Option<&str>) -> FunctionKind {
 
 fn declaration_kind(kind: FrontendBindingKind) -> DeclarationKind {
     match kind {
-        FrontendBindingKind::Var => DeclarationKind::Var,
+        FrontendBindingKind::Var | FrontendBindingKind::Alias => DeclarationKind::Var,
         FrontendBindingKind::Let => DeclarationKind::Let,
         FrontendBindingKind::Const | FrontendBindingKind::Enum | FrontendBindingKind::Namespace => {
             DeclarationKind::Const

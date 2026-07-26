@@ -135,6 +135,8 @@ pub enum FrontendBindingKind {
     Class,
     /// Runtime import.
     Import,
+    /// Runtime TypeScript `import alias = Local.Entity` binding.
+    Alias,
     /// Catch parameter.
     Catch,
     /// Runtime enum.
@@ -371,7 +373,10 @@ fn build_summary(
 ) -> FrontendSummary {
     let mut import_collector = ImportCollector::default();
     import_collector.visit_program(program);
-    let import_records = import_collector.records;
+    let ImportCollector {
+        records: import_records,
+        local_aliases,
+    } = import_collector;
     let import_by_symbol: BTreeMap<_, _> = import_records
         .iter()
         .map(|record| (record.symbol, record))
@@ -379,7 +384,7 @@ fn build_summary(
 
     let scoping = semantic.scoping();
     let scopes = build_scopes(scoping);
-    let bindings = build_bindings(scoping, &import_by_symbol);
+    let bindings = build_bindings(scoping, &import_by_symbol, &local_aliases);
     let symbol_to_binding: BTreeMap<_, _> = scoping
         .symbol_ids()
         .enumerate()
@@ -822,6 +827,7 @@ fn build_scopes(scoping: &Scoping) -> Vec<FrontendScope> {
 fn build_bindings(
     scoping: &Scoping,
     imports: &BTreeMap<SymbolId, &ImportRecord>,
+    local_aliases: &BTreeSet<SymbolId>,
 ) -> Vec<FrontendBinding> {
     scoping
         .symbol_ids()
@@ -844,7 +850,11 @@ fn build_bindings(
             FrontendBinding {
                 id: binding_id(index),
                 scope: scope_id(scoping.symbol_scope_id(symbol).index()),
-                kind: binding_kind(flags),
+                kind: if local_aliases.contains(&symbol) && symbol_is_runtime(flags) {
+                    FrontendBindingKind::Alias
+                } else {
+                    binding_kind(flags)
+                },
                 display_name: scoping.symbol_name(symbol).into(),
                 declaration_span: source_span(scoping.symbol_span(symbol)),
                 import,
@@ -919,6 +929,7 @@ struct ImportRecord {
 #[derive(Default)]
 struct ImportCollector {
     records: Vec<ImportRecord>,
+    local_aliases: BTreeSet<SymbolId>,
 }
 
 impl<'a> Visit<'a> for ImportCollector {
@@ -956,20 +967,22 @@ impl<'a> Visit<'a> for ImportCollector {
     }
 
     fn visit_ts_import_equals_declaration(&mut self, declaration: &TSImportEqualsDeclaration<'a>) {
-        let TSModuleReference::ExternalModuleReference(reference) = &declaration.module_reference
-        else {
-            walk_ts_import_equals_declaration(self, declaration);
-            return;
-        };
         if let Some(symbol) = declaration.id.symbol_id.get() {
-            self.records.push(ImportRecord {
-                symbol,
-                source: reference.expression.value.to_string(),
-                imported: ImportedName::ImportEquals,
-                local_name: declaration.id.name.to_string(),
-                type_only: declaration.import_kind == ImportOrExportKind::Type,
-                span: source_span(declaration.id.span),
-            });
+            match &declaration.module_reference {
+                TSModuleReference::ExternalModuleReference(reference) => {
+                    self.records.push(ImportRecord {
+                        symbol,
+                        source: reference.expression.value.to_string(),
+                        imported: ImportedName::ImportEquals,
+                        local_name: declaration.id.name.to_string(),
+                        type_only: declaration.import_kind == ImportOrExportKind::Type,
+                        span: source_span(declaration.id.span),
+                    });
+                }
+                TSModuleReference::IdentifierReference(_) | TSModuleReference::QualifiedName(_) => {
+                    self.local_aliases.insert(symbol);
+                }
+            }
         }
         walk_ts_import_equals_declaration(self, declaration);
     }

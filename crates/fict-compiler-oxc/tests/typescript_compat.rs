@@ -88,6 +88,33 @@ fn safe_typescript_lowering_rewrites_extensions_and_rebuilds_semantics() {
 }
 
 #[test]
+fn lowers_internal_import_equals_with_runtime_var_semantics() {
+    let output = compile_passthrough(
+        concat!(
+            "export const before = Alias;\n",
+            "const Child = class { static value = 141 };\n",
+            "import Alias = Child;\n",
+            "export const after = Alias.value;\n",
+        ),
+        "internal-import-equals.ts",
+        options(OxcModuleKind::Module),
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(
+        output.code.contains("const before = Alias"),
+        "{}",
+        output.code
+    );
+    assert!(output.code.contains("var Alias = Child"), "{}", output.code);
+    assert!(
+        output.code.contains("const after = Alias.value"),
+        "{}",
+        output.code
+    );
+}
+
+#[test]
 fn lowers_mutable_and_merged_namespaces_before_the_oxc_transform() {
     let mutable_source = "namespace Counter { export let value = 1; export function inc() { value++; } export function assign(input) { ({ value } = input); [value] = [2]; } export function read() { return { value }; } }";
     let analysis = analyze_typescript_compatibility(mutable_source, options(OxcModuleKind::Module));

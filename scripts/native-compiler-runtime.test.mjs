@@ -154,6 +154,21 @@ async function exerciseCoreModule(module) {
   return snapshot
 }
 
+test('executes internal TypeScript import-equals aliases with runtime var semantics', async () => {
+  const module = await compileAndImport(
+    `
+      export const before = Alias
+      const Child = class { static value = 141 }
+      import Alias = Child
+      export const after = Alias.value
+    `,
+    'internal-import-equals',
+  )
+
+  assert.equal(module.before, undefined)
+  assert.equal(module.after, 141)
+})
+
 test('Rust compiler output preserves Core reactive runtime behavior', async () => {
   const source = `
     import { $effect, $memo, $state, render } from 'fict'

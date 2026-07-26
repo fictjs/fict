@@ -726,6 +726,54 @@ mod tests {
     }
 
     #[test]
+    fn compiles_internal_typescript_import_equals_without_an_internal_diagnostic() {
+        let crash_regression = compile(request(
+            "import versionediagnoslf = Child\n  141\n",
+            "internal-import-equals-crash.ts",
+        ));
+        assert!(
+            !crash_regression.has_errors(),
+            "{:#?}",
+            crash_regression.diagnostics
+        );
+        assert!(
+            crash_regression
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.guarantee_class != GuaranteeClass::Internal)
+        );
+        assert!(
+            crash_regression.code.contains("141"),
+            "{}",
+            crash_regression.code
+        );
+
+        let result = compile(request(
+            "export const before = Alias\nconst Child = class { static value = 141 }\nimport Alias = Child\nexport const after = Alias.value\n",
+            "internal-import-equals.ts",
+        ));
+
+        assert!(!result.has_errors(), "{:#?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.guarantee_class != GuaranteeClass::Internal)
+        );
+        assert!(result.code.contains("var Alias = Child"), "{}", result.code);
+        assert!(
+            result.code.contains("const before = Alias"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("const after = Alias.value"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn honors_program_compiler_disable_before_fict_and_typescript_policy() {
         let result = compile(request(
             concat!(
