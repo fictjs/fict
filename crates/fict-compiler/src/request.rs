@@ -661,16 +661,15 @@ fn validate_identity(
 }
 
 fn source_mode_filename(filename: &str) -> &str {
+    // `filename` is the physical source identity; a literal POSIX `?` or `#` can therefore
+    // precede its real extension. Only interpret a delimiter as a bundler suffix when the
+    // complete filename does not already provide an unambiguous source mode.
+    if infer_language(filename).is_some() {
+        return filename;
+    }
     let query = filename.find('?').unwrap_or(filename.len());
     let fragment = filename.find('#').unwrap_or(filename.len());
-    let physical_filename = &filename[..query.min(fragment)];
-    // Prefer an unambiguous physical extension, but retain delimiter characters that are part of
-    // a literal POSIX filename when the prefix has no recognized source extension.
-    if infer_language(physical_filename).is_some() {
-        physical_filename
-    } else {
-        filename
-    }
+    &filename[..query.min(fragment)]
 }
 
 fn infer_language(filename: &str) -> Option<SourceLanguage> {
@@ -771,10 +770,14 @@ mod tests {
     }
 
     #[test]
-    fn recognized_physical_extension_wins_over_query_and_fragment_suffixes() {
+    fn complete_physical_filename_extension_wins_over_delimiter_prefixes() {
         for filename in ["/src/view.ts?lang.tsx", "/src/view.ts#lang.tsx"] {
             let compile = request(filename).normalize().expect("normalize compile");
-            assert_eq!(compile.language, SourceLanguage::TypeScript, "{filename}");
+            assert_eq!(
+                compile.language,
+                SourceLanguage::TypeScriptJsx,
+                "{filename}"
+            );
             assert_eq!(compile.module_kind, ModuleKind::Module, "{filename}");
 
             let scan: ScanRequest = serde_json::from_value(json!({
@@ -783,7 +786,7 @@ mod tests {
             }))
             .expect("deserialize scan request");
             let scan = scan.normalize().expect("normalize scan");
-            assert_eq!(scan.language, SourceLanguage::TypeScript, "{filename}");
+            assert_eq!(scan.language, SourceLanguage::TypeScriptJsx, "{filename}");
             assert_eq!(scan.module_kind, ModuleKind::Module, "{filename}");
 
             let analyze: AnalyzeRequest = serde_json::from_value(json!({
@@ -792,7 +795,11 @@ mod tests {
             }))
             .expect("deserialize analysis request");
             let analyze = analyze.normalize().expect("normalize analysis");
-            assert_eq!(analyze.language, SourceLanguage::TypeScript, "{filename}");
+            assert_eq!(
+                analyze.language,
+                SourceLanguage::TypeScriptJsx,
+                "{filename}"
+            );
             assert_eq!(analyze.module_kind, ModuleKind::Module, "{filename}");
         }
 
@@ -816,8 +823,31 @@ mod tests {
             .map(|request| (request.language, request.module_kind)),
         ] {
             assert_eq!(
-                normalized.expect("normalize CommonJS request"),
+                normalized.expect("normalize physical TSX request"),
+                (SourceLanguage::TypeScriptJsx, ModuleKind::Module)
+            );
+        }
+
+        let normalized = request("/src/legacy.cjs?view.mjs")
+            .normalize()
+            .expect("normalize physical MJS request");
+        assert_eq!(normalized.language, SourceLanguage::JavaScript);
+        assert_eq!(normalized.module_kind, ModuleKind::Module);
+    }
+
+    #[test]
+    fn strips_module_suffixes_when_the_complete_filename_has_no_source_extension() {
+        for filename in ["/src/view.tsx?worker", "/src/view.cts#server"] {
+            let normalized = request(filename).normalize().expect("normalize request");
+            let expected = if filename.contains(".cts") {
                 (SourceLanguage::TypeScript, ModuleKind::CommonJs)
+            } else {
+                (SourceLanguage::TypeScriptJsx, ModuleKind::Module)
+            };
+            assert_eq!(
+                (normalized.language, normalized.module_kind),
+                expected,
+                "{filename}"
             );
         }
     }

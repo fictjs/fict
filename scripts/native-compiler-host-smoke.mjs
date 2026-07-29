@@ -206,30 +206,31 @@ for (const [format, facade] of [
   assert.equal(parserError.diagnostics[0]?.code, 'FICT-PARSE')
   assert.ok(parserError.diagnostics[0]?.primarySpan)
 
-  const querySpoofedTypeScript = {
-    code: 'export const value = <number>1',
+  const literalDelimiterTsx = {
+    code: 'export const value = <span>1</span>',
     filename: '/fixtures/view.ts?lang.tsx',
   }
-  const querySpoofedTransform = binding.transformSync(querySpoofedTypeScript)
+  const literalDelimiterTransform = binding.transformSync(literalDelimiterTsx)
   for (const [operation, result] of [
-    ['transform', querySpoofedTransform],
-    ['scan', binding.scanSync(querySpoofedTypeScript)],
-    ['analyze', binding.analyzeSync(querySpoofedTypeScript)],
+    ['transform', literalDelimiterTransform],
+    ['scan', binding.scanSync(literalDelimiterTsx)],
+    ['analyze', binding.analyzeSync(literalDelimiterTsx)],
   ]) {
     assert.deepEqual(
       result.diagnostics,
       [],
-      `${format}: ${operation} must parse the physical .ts extension`,
+      `${format}: ${operation} must parse the complete physical .tsx extension`,
     )
   }
-  assert.match(querySpoofedTransform.code, /export const value = 1/)
+  assert.match(literalDelimiterTransform.code, /export const value =/)
 
-  const querySpoofedCommonJs = binding.transformSync({
-    code: 'export const value = <number>1',
+  const literalDelimiterModule = binding.transformSync({
+    code: 'export const value = <span>1</span>',
     filename: '/fixtures/value.cts?lang.tsx',
   })
-  assert.deepEqual(querySpoofedCommonJs.diagnostics, [])
-  assert.match(querySpoofedCommonJs.code, /Object\.defineProperty\(__fict_cjs_exports, "value"/)
+  assert.deepEqual(literalDelimiterModule.diagnostics, [])
+  assert.match(literalDelimiterModule.code, /export const value =/)
+  assert.doesNotMatch(literalDelimiterModule.code, /__fict_cjs_exports/)
 
   const malformed = binding.transformSync({ code: 42, filename: 'malformed.ts' })
   assert.equal(malformed.code, '')
