@@ -38,9 +38,35 @@ export type PackageModuleMetadataResolution =
   | { kind: 'missing' }
   | { kind: 'invalid' }
 
+export interface PackageModuleMetadataResolveRequest {
+  source: string
+  importer: string
+  packageName: string
+  publicSubpath: '.' | `./${string}`
+}
+
+export interface PackageModuleMetadataBoundary {
+  packageJsonPath: string
+  publicSubpath?: '.' | `./${string}`
+}
+
+export type PackageModuleMetadataHostResolution =
+  | PackageModuleMetadataBoundary
+  | PackageModuleMetadataResolution
+  | null
+  | undefined
+
 export interface PackageModuleMetadataResolutionOptions {
   /** Called for every package manifest and metadata asset consulted by the graph host. */
   onDependency?: (filename: string) => void
+  /**
+   * Host-owned package resolution for PnP, virtual modules, aliases, and custom module roots.
+   * Return `undefined` to use the physical node_modules fallback, `null` for an authoritative
+   * miss, a package boundary for graph-host metadata loading, or a final discriminated state.
+   */
+  resolvePackage?: (
+    request: PackageModuleMetadataResolveRequest,
+  ) => PackageModuleMetadataHostResolution
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -182,6 +208,13 @@ function isCanonicalPackageNameSegment(segment: string): boolean {
   )
 }
 
+function isCanonicalPublicSubpath(subpath: string): subpath is '.' | `./${string}` {
+  if (subpath === '.') return true
+  if (!subpath.startsWith('./') || subpath.includes('\\') || subpath.includes('\0')) return false
+  const segments = subpath.slice(2).split('/')
+  return segments.every(segment => !!segment && segment !== '.' && segment !== '..')
+}
+
 function splitPackageSource(
   source: string,
 ): { packageName: string; subpath: string; rawSubpath: string } | null {
@@ -312,14 +345,45 @@ export function resolvePackageModuleMetadataState(
   options: PackageModuleMetadataResolutionOptions = {},
 ): PackageModuleMetadataResolution {
   const parsedSource = splitPackageSource(source)
-  if (!parsedSource || !normalizeConcreteFileName(importer)) return { kind: 'invalid' }
+  const normalizedImporter = normalizeConcreteFileName(importer)
+  if (!parsedSource || !normalizedImporter) return { kind: 'invalid' }
 
-  const packageJsonPath = findPackageJsonPath(
-    parsedSource.packageName,
-    importer,
-    options.onDependency,
-  )
-  if (!packageJsonPath) return { kind: 'missing' }
+  let hostResolution: PackageModuleMetadataHostResolution
+  try {
+    hostResolution = options.resolvePackage?.({
+      source,
+      importer: normalizedImporter,
+      packageName: parsedSource.packageName,
+      publicSubpath: parsedSource.subpath as '.' | `./${string}`,
+    })
+  } catch {
+    return { kind: 'invalid' }
+  }
+
+  if (hostResolution === null) return { kind: 'missing' }
+  if (hostResolution && 'kind' in hostResolution) return hostResolution
+
+  let publicSubpath = parsedSource.subpath
+  let rawPublicSubpath = parsedSource.rawSubpath
+  let packageJsonPath: string | null
+  if (hostResolution) {
+    if (
+      !hostResolution.packageJsonPath ||
+      hostResolution.packageJsonPath.includes('\0') ||
+      (hostResolution.publicSubpath !== undefined &&
+        !isCanonicalPublicSubpath(hostResolution.publicSubpath))
+    ) {
+      return { kind: 'invalid' }
+    }
+    packageJsonPath = path.resolve(hostResolution.packageJsonPath)
+    publicSubpath = hostResolution.publicSubpath ?? publicSubpath
+    rawPublicSubpath = publicSubpath
+    options.onDependency?.(packageJsonPath)
+    if (!pathIsFile(packageJsonPath)) return { kind: 'missing' }
+  } else {
+    packageJsonPath = findPackageJsonPath(parsedSource.packageName, importer, options.onDependency)
+    if (!packageJsonPath) return { kind: 'missing' }
+  }
 
   const packageConfigResult = readPackageConfig(packageJsonPath)
   if (packageConfigResult.kind !== 'configured') return packageConfigResult
@@ -327,9 +391,9 @@ export function resolvePackageModuleMetadataState(
 
   const packageDir = path.dirname(packageJsonPath)
   const declaredPath =
-    packageConfig.exports?.[parsedSource.rawSubpath] ??
-    packageConfig.exports?.[parsedSource.subpath] ??
-    (parsedSource.subpath === '.' ? packageConfig.metadata : undefined)
+    packageConfig.exports?.[rawPublicSubpath] ??
+    packageConfig.exports?.[publicSubpath] ??
+    (publicSubpath === '.' ? packageConfig.metadata : undefined)
   if (declaredPath === undefined) return { kind: 'plain' }
 
   const metadataPath = normalizePackageMetadataPath(packageDir, declaredPath)

@@ -227,4 +227,72 @@ describe('@fictjs/compiler/graph-host', () => {
       })
     },
   )
+
+  it('uses a host package boundary outside node_modules for PnP-style resolution', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-pnp-'))
+    tempRoots.push(root)
+    const importer = path.join(root, 'workspace', 'src', 'App.tsx')
+    const packageRoot = path.join(root, '.pnp-store', 'virtual-hook')
+    const packageJsonPath = path.join(packageRoot, 'package.json')
+    const metadataPath = path.join(packageRoot, 'hook.fict.meta.json')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(importer, 'export {}')
+    await writeFile(
+      packageJsonPath,
+      JSON.stringify({ fict: { exports: { './hook': './hook.fict.meta.json' } } }),
+    )
+    await writeFile(metadataPath, JSON.stringify({ version: 1, exports: { value: 'signal' } }))
+
+    const { resolvePackageModuleMetadataState } = await import('../src/graph-host')
+    const dependencies: string[] = []
+    const requests: unknown[] = []
+    expect(
+      resolvePackageModuleMetadataState('virtual-hook/hook', importer, {
+        onDependency: dependency => dependencies.push(dependency),
+        resolvePackage: request => {
+          requests.push(request)
+          return { packageJsonPath }
+        },
+      }),
+    ).toEqual({
+      kind: 'resolved',
+      metadata: { version: 1, exports: { value: 'signal' } },
+    })
+    expect(requests).toEqual([
+      {
+        source: 'virtual-hook/hook',
+        importer,
+        packageName: 'virtual-hook',
+        publicSubpath: './hook',
+      },
+    ])
+    expect(dependencies).toEqual([packageJsonPath, metadataPath])
+  })
+
+  it('accepts authoritative virtual package states without physical traversal', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-virtual-'))
+    tempRoots.push(root)
+    const importer = path.join(root, 'src', 'App.tsx')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await writeFile(importer, 'export {}')
+
+    const { resolvePackageModuleMetadataState } = await import('../src/graph-host')
+    expect(
+      resolvePackageModuleMetadataState('virtual-hook', importer, {
+        resolvePackage: () => ({
+          kind: 'resolved',
+          metadata: { version: 1, exports: { virtual: 'memo' } },
+        }),
+      }),
+    ).toEqual({
+      kind: 'resolved',
+      metadata: { version: 1, exports: { virtual: 'memo' } },
+    })
+    expect(
+      resolvePackageModuleMetadataState('missing-virtual-hook', importer, {
+        resolvePackage: () => null,
+      }),
+    ).toEqual({ kind: 'missing' })
+  })
 })
