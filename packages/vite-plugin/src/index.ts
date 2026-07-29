@@ -3606,9 +3606,23 @@ function isCanonicalPackagePublicSubpath(subpath: string): subpath is '.' | `./$
   return subpath
     .slice(2)
     .split('/')
-    .every(
-      segment => !!segment && segment !== '.' && segment !== '..' && segment !== 'node_modules',
-    )
+    .every(segment => {
+      let decoded: string
+      try {
+        decoded = decodeURIComponent(segment)
+      } catch {
+        return false
+      }
+      return (
+        !!decoded &&
+        decoded !== '.' &&
+        decoded !== '..' &&
+        decoded.toLowerCase() !== 'node_modules' &&
+        !decoded.includes('/') &&
+        !decoded.includes('\\') &&
+        !decoded.includes('\0')
+      )
+    })
 }
 
 function resolvePackageSourceFromResolvedFile(

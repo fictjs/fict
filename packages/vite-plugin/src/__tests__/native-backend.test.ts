@@ -777,6 +777,21 @@ describe('Rust compiler backend', () => {
       'custom.js',
     ],
     ['implicit index entry', {}, ['browser', 'module'], 'index.js'],
+    [
+      'valid root entry beside invalid encoded entries',
+      {
+        exports: {
+          '.': './index.js',
+          './%2Fescape': './index.js',
+          './%5cescape': './index.js',
+          './%00escape': './index.js',
+          './invalid%': './index.js',
+          './NODE_MODULES/escape': './index.js',
+        },
+      },
+      ['browser', 'module'],
+      'index.js',
+    ],
   ] as const)(
     'loads package-import metadata from a Vite-resolved %s',
     async (_label, entryManifest, mainFields, entryFileName) => {
