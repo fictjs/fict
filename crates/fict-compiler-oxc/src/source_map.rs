@@ -333,11 +333,11 @@ fn strip_source_module_suffix(identity: &str) -> &str {
         return &identity[..suffix_start];
     }
     // POSIX permits both delimiters in physical filenames, so stripping either one would make
-    // distinct files share an identity. A `?` cannot occur in a Windows drive path; accept that
-    // narrowly identifiable bundler form while keeping fragment-only paths literal.
-    let windows_drive = identity.as_bytes().get(1) == Some(&b':');
+    // distinct files share an identity. A `?` cannot occur in a Windows drive or UNC path; accept
+    // those narrowly identifiable bundler forms while keeping fragment-only paths literal.
+    let windows_path = identity.starts_with("//") || identity.as_bytes().get(1) == Some(&b':');
     let physical_prefix = &identity[..query];
-    if windows_drive
+    if windows_path
         && query < fragment
         && query < identity.len()
         && has_supported_source_extension(physical_prefix)
@@ -622,6 +622,20 @@ mod tests {
 
         let composed = compose_source_map_json(generated, input)
             .expect("opaque URI scheme casing should not change source identity");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            ["original.tsx", "virtual:helper.js"]
+        );
+    }
+
+    #[test]
+    fn matches_unc_sources_after_query_suffix_fallback() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["\\\\server\\share\\intermediate.ts?worker","virtual:helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"\\\\server\\share\\intermediate.ts","sources":["original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed = compose_source_map_json(generated, input)
+            .expect("UNC source identity should match after query fallback");
         let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
         assert_eq!(
             composed.get_sources().collect::<Vec<_>>(),
