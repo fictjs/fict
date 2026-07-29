@@ -220,9 +220,29 @@ function isCanonicalPackageNameSegment(segment: string): boolean {
 
 function isCanonicalPublicSubpath(subpath: string): subpath is '.' | `./${string}` {
   if (subpath === '.') return true
-  if (!subpath.startsWith('./') || subpath.includes('\\') || subpath.includes('\0')) return false
-  const segments = subpath.slice(2).split('/')
-  return segments.every(segment => !!segment && segment !== '.' && segment !== '..')
+  if (!subpath.startsWith('./') || subpath.includes('\\') || subpath.includes('\0')) {
+    return false
+  }
+  return subpath
+    .slice(2)
+    .split('/')
+    .every(segment => {
+      let decoded: string
+      try {
+        decoded = decodeURIComponent(segment)
+      } catch {
+        return false
+      }
+      return (
+        !!decoded &&
+        decoded !== '.' &&
+        decoded !== '..' &&
+        decoded.toLowerCase() !== 'node_modules' &&
+        !decoded.includes('/') &&
+        !decoded.includes('\\') &&
+        !decoded.includes('\0')
+      )
+    })
 }
 
 function splitPackageSource(
