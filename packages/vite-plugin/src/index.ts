@@ -3769,7 +3769,7 @@ function collectPatternExportSubpaths(
             : replaceWildcardPattern(normalizedTarget, selected.wildcard)
         return concreteTarget === chunkPackagePath
       })
-      if (selectsChunk) subpaths.add(candidate)
+      if (selectsChunk && isCanonicalPackagePublicSubpath(candidate)) subpaths.add(candidate)
     }
   }
   return subpaths
@@ -3784,7 +3784,7 @@ function buildFictPackageMappingResult(
   const packageTargets = collectPackageTargets(pkg)
   const targetToSubpaths = new Map<string, Set<string>>()
   for (const { subpath, target } of packageTargets) {
-    if (subpath.includes('*')) continue
+    if (subpath.includes('*') || !isCanonicalPackagePublicSubpath(subpath)) continue
     const normalizedTarget = normalizePackageJsonTarget(target)
     if (!normalizedTarget) continue
     const subpaths = targetToSubpaths.get(normalizedTarget) ?? new Set<string>()

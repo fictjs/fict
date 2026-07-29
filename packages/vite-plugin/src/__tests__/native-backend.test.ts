@@ -197,6 +197,11 @@ describe('Vite package metadata mapping', () => {
         exports: {
           '.': './index.js',
           './invalid': './dist/../index.js',
+          './%2Fescape': './index.js',
+          './%5cescape': './index.js',
+          './%00escape': './index.js',
+          './invalid%': './index.js',
+          './NODE_MODULES/escape': './index.js',
         },
       },
       '/package',
