@@ -235,15 +235,13 @@ fn composed_source_id(
     generated: &SourceMapPayload,
     input: &SourceMapPayload,
 ) -> Result<u32, String> {
-    if generated.sources.len() == 1 {
-        return Ok(0);
-    }
     if generated.sources.is_empty() {
         return Err("generated source map has no source to compose".to_owned());
     }
-    let input_file = input.file.as_deref().ok_or_else(|| {
-        "multi-source composition requires the input map file identity".to_owned()
-    })?;
+    let input_file = input
+        .file
+        .as_deref()
+        .ok_or_else(|| "source-map composition requires the input map file identity".to_owned())?;
 
     let exact = matching_source_ids(generated, input_file, false);
     let matches = if exact.is_empty() {
@@ -266,44 +264,151 @@ fn composed_source_id(
 fn matching_source_ids(
     generated: &SourceMapPayload,
     input_file: &str,
-    physical_only: bool,
+    strip_module_suffix: bool,
 ) -> Vec<u32> {
-    let input_file = normalized_source_identity(input_file, physical_only);
+    let input_file = normalized_source_identity(input_file, strip_module_suffix);
     generated
         .sources
         .iter()
         .enumerate()
         .filter(|(_, source)| {
-            let source = normalized_source_identity(source, physical_only);
-            if source == input_file {
-                return true;
-            }
-            generated.source_root.as_deref().is_some_and(|root| {
-                let rooted = rooted_source_identity(root, &source);
-                normalized_source_identity(&rooted, physical_only) == input_file
-            })
+            normalized_resolved_source_identity(
+                generated.source_root.as_deref(),
+                source,
+                strip_module_suffix,
+            ) == input_file
         })
         .filter_map(|(index, _)| u32::try_from(index).ok())
         .collect()
 }
 
-fn normalized_source_identity(identity: &str, physical_only: bool) -> String {
-    let identity = identity.replace('\\', "/");
-    if physical_only {
-        let query = identity.find('?').unwrap_or(identity.len());
-        let fragment = identity.find('#').unwrap_or(identity.len());
-        identity[..query.min(fragment)].to_owned()
+fn normalized_resolved_source_identity(
+    root: Option<&str>,
+    source: &str,
+    strip_module_suffix: bool,
+) -> String {
+    let resolved = root.map_or_else(
+        || source.to_owned(),
+        |root| rooted_source_identity(root, source),
+    );
+    normalized_source_identity(&resolved, strip_module_suffix)
+}
+
+fn normalized_source_identity(identity: &str, strip_module_suffix: bool) -> String {
+    let slashed = identity.replace('\\', "/");
+    let identity = if strip_module_suffix {
+        strip_source_module_suffix(&slashed)
+    } else {
+        slashed.as_str()
+    };
+
+    if let Some(scheme_separator) = hierarchical_scheme_separator(identity) {
+        let scheme = identity[..scheme_separator].to_ascii_lowercase();
+        let remainder = &identity[scheme_separator + 3..];
+        let (authority, path) = remainder.find('/').map_or((remainder, ""), |index| {
+            (&remainder[..index], &remainder[index..])
+        });
+        return format!("{scheme}://{authority}{}", normalize_path_segments(path));
+    }
+    if has_uri_scheme(identity) {
+        return identity.to_owned();
+    }
+    normalize_path_segments(identity)
+}
+
+fn strip_source_module_suffix(identity: &str) -> &str {
+    let query = identity.find('?').unwrap_or(identity.len());
+    let fragment = identity.find('#').unwrap_or(identity.len());
+    let suffix_start = query.min(fragment);
+    if suffix_start == identity.len() {
+        return identity;
+    }
+    if hierarchical_scheme_separator(identity).is_some() {
+        return &identity[..suffix_start];
+    }
+    // POSIX permits both delimiters in physical filenames, so stripping either one would make
+    // distinct files share an identity. A `?` cannot occur in a Windows drive path; accept that
+    // narrowly identifiable bundler form while keeping fragment-only paths literal.
+    let windows_drive = identity.as_bytes().get(1) == Some(&b':');
+    let physical_prefix = &identity[..query];
+    if windows_drive
+        && query < fragment
+        && query < identity.len()
+        && has_supported_source_extension(physical_prefix)
+    {
+        physical_prefix
     } else {
         identity
     }
 }
 
+fn has_supported_source_extension(identity: &str) -> bool {
+    let lower = identity.to_ascii_lowercase();
+    [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+}
+
+fn hierarchical_scheme_separator(identity: &str) -> Option<usize> {
+    let separator = identity.find("://")?;
+    is_uri_scheme(&identity[..separator]).then_some(separator)
+}
+
+fn has_uri_scheme(identity: &str) -> bool {
+    let Some(separator) = identity.find(':') else {
+        return false;
+    };
+    if separator == 1 && identity.as_bytes()[0].is_ascii_alphabetic() {
+        return false;
+    }
+    is_uri_scheme(&identity[..separator])
+}
+
+fn is_uri_scheme(candidate: &str) -> bool {
+    candidate
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
+        && candidate
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+}
+
+fn normalize_path_segments(identity: &str) -> String {
+    if identity.is_empty() {
+        return String::new();
+    }
+    let drive =
+        (identity.as_bytes().get(1) == Some(&b':')).then(|| identity[..2].to_ascii_uppercase());
+    let rest = drive.as_ref().map_or(identity, |_| &identity[2..]);
+    let leading_slashes = if rest.starts_with("//") {
+        2
+    } else if rest.starts_with('/') {
+        1
+    } else {
+        0
+    };
+    let absolute = leading_slashes > 0;
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in rest.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." if segments.last().is_some_and(|last| *last != "..") => {
+                segments.pop();
+            }
+            ".." if !absolute => segments.push(segment),
+            ".." => {}
+            _ => segments.push(segment),
+        }
+    }
+    let mut normalized = drive.unwrap_or_default();
+    normalized.push_str(&"/".repeat(leading_slashes));
+    normalized.push_str(&segments.join("/"));
+    normalized
+}
+
 fn rooted_source_identity(root: &str, source: &str) -> String {
-    if source.starts_with('/')
-        || source.as_bytes().get(1) == Some(&b':')
-        || source.contains("://")
-        || source.starts_with("virtual:")
-    {
+    if source.starts_with('/') || source.starts_with("\\\\") || has_uri_scheme(source) {
         return source.to_owned();
     }
     format!("{}/{}", root.trim_end_matches(['/', '\\']), source)
@@ -334,17 +439,20 @@ fn intern_name(names: &mut Vec<String>, name: &str) -> Result<u32, String> {
 mod tests {
     use oxc_sourcemap::{SourceMap, SourceMapBuilder};
 
-    use super::{compose_source_map_json, validate_source_map_json};
+    use super::{
+        compose_source_map_json, decode_payload, matching_source_ids, validate_source_map_json,
+    };
 
     #[test]
     fn validates_and_composes_owned_json_payloads() {
-        let map =
-            r#"{"version":3,"file":"out.js","sources":["in.js"],"names":[],"mappings":"AAAA"}"#;
+        let generated = r#"{"version":3,"file":"out.js","sources":["intermediate.js"],"names":[],"mappings":"AAAA"}"#;
+        let input = r#"{"version":3,"file":"intermediate.js","sources":["original.js"],"names":[],"mappings":"AAAA"}"#;
 
-        assert_eq!(validate_source_map_json(map), Ok(()));
-        let composed = compose_source_map_json(map, map).expect("composed source map");
+        assert_eq!(validate_source_map_json(generated), Ok(()));
+        assert_eq!(validate_source_map_json(input), Ok(()));
+        let composed = compose_source_map_json(generated, input).expect("composed source map");
         assert!(composed.contains("\"version\":3"));
-        assert!(composed.contains("\"sources\":[\"in.js\"]"));
+        assert!(composed.contains("\"sources\":[\"original.js\"]"));
     }
 
     #[test]
@@ -421,5 +529,50 @@ mod tests {
         assert!(compose_source_map_json(generated, missing_file).is_err());
         assert!(compose_source_map_json(generated, unknown_file).is_err());
         assert!(compose_source_map_json(duplicate_generated, ambiguous).is_err());
+    }
+
+    #[test]
+    fn rejects_a_mismatched_single_source_input_file() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["actual-intermediate.js"],"names":[],"mappings":"AAAA"}"#;
+        let mismatched = r#"{"version":3,"file":"other-intermediate.js","sources":["original.js"],"names":[],"mappings":"AAAA"}"#;
+
+        let error = compose_source_map_json(generated, mismatched)
+            .expect_err("single-source composition must validate input.file");
+        assert!(
+            error.contains("does not identify a generated source"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn normalizes_source_root_dot_segments_and_hierarchical_uri_schemes() {
+        let generated = r#"{"version":3,"file":"out.js","sourceRoot":"WEBPACK://project/src/./","sources":["./transforms/../intermediate.ts","virtual:helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"webpack://project/src/intermediate.ts","sourceRoot":"webpack://project/authored/./nested/..","sources":["./original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed =
+            compose_source_map_json(generated, input).expect("URI identities should match");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            [
+                "webpack://project/authored/original.tsx",
+                "virtual:helper.js",
+            ]
+        );
+    }
+
+    #[test]
+    fn suffix_fallback_does_not_collapse_literal_posix_source_filenames() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["/tmp/a.ts?worker","/tmp/a.ts#client"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let payload = decode_payload(generated).expect("generated payload");
+        assert!(matching_source_ids(&payload, "/tmp/a.ts", true).is_empty());
+
+        let input = r#"{"version":3,"file":"/tmp/a.ts","sources":["/src/original.tsx"],"names":[],"mappings":"AAAA"}"#;
+        let error = compose_source_map_json(generated, input)
+            .expect_err("literal POSIX filenames must never match a stripped identity");
+        assert!(
+            error.contains("does not identify a generated source"),
+            "{error}"
+        );
     }
 }
