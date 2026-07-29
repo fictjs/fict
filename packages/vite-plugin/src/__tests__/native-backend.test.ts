@@ -190,6 +190,36 @@ describe('Vite alias metadata resolution', () => {
 })
 
 describe('Vite package metadata mapping', () => {
+  it('removes invalid preserved declarations while applying generated mappings', () => {
+    const pkg: Record<string, unknown> = {
+      fict: {
+        metadata: 42,
+        exports: {
+          hooks: './invalid-key.fict.meta.json',
+          './invalid-value': 42,
+          './preserved': './preserved.fict.meta.json',
+        },
+      },
+    }
+
+    expect(
+      __fictVitePluginInternals.applyFictPackageMappings(
+        pkg,
+        new Map([
+          ['.', './index.fict.meta.json'],
+          ['./hooks', './hooks.fict.meta.json'],
+        ]),
+      ),
+    ).toBe(true)
+    expect(pkg.fict).toEqual({
+      exports: {
+        '.': './index.fict.meta.json',
+        './hooks': './hooks.fict.meta.json',
+        './preserved': './preserved.fict.meta.json',
+      },
+    })
+  })
+
   it('ignores invalid runtime export targets beside a valid entry', () => {
     const result = __fictVitePluginInternals.buildFictPackageMappingResult(
       [{ chunkFileName: 'index.js', metadataFileName: 'index.fict.meta.json' }],

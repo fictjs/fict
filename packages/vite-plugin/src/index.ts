@@ -3856,11 +3856,19 @@ function applyFictPackageMappings(
     pkg.fict && typeof pkg.fict === 'object' && !Array.isArray(pkg.fict)
       ? { ...(pkg.fict as Record<string, unknown>) }
       : {}
+  if ('metadata' in existingFict && typeof existingFict.metadata !== 'string') {
+    delete existingFict.metadata
+  }
   const existingExports =
     existingFict.exports &&
     typeof existingFict.exports === 'object' &&
     !Array.isArray(existingFict.exports)
-      ? { ...(existingFict.exports as Record<string, unknown>) }
+      ? Object.fromEntries(
+          Object.entries(existingFict.exports as Record<string, unknown>).filter(
+            ([subpath, metadataPath]) =>
+              isCanonicalPackagePublicSubpath(subpath) && typeof metadataPath === 'string',
+          ),
+        )
       : {}
   const sortedExports = (exports: Record<string, unknown>): Record<string, unknown> =>
     Object.fromEntries(Object.entries(exports).sort(([a], [b]) => a.localeCompare(b)))
