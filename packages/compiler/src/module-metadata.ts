@@ -354,6 +354,7 @@ export function resolvePackageModuleMetadataState(
   const normalizedImporter = normalizeConcreteFileName(importer)
   const hostImporter = normalizedImporter ?? importer?.trim()
   if (!parsedSource || !hostImporter) return { kind: 'invalid' }
+  if (!isCanonicalPublicSubpath(parsedSource.subpath)) return { kind: 'invalid' }
 
   let hostResolution: PackageModuleMetadataHostResolution
   try {
@@ -361,7 +362,7 @@ export function resolvePackageModuleMetadataState(
       source,
       importer: hostImporter,
       packageName: parsedSource.packageName,
-      publicSubpath: parsedSource.subpath as '.' | `./${string}`,
+      publicSubpath: parsedSource.subpath,
     })
   } catch {
     return { kind: 'invalid' }

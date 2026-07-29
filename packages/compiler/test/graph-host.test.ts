@@ -146,6 +146,24 @@ describe('@fictjs/compiler/graph-host', () => {
     },
   )
 
+  it.each(['package/../escape', 'package/./hook', 'package//hook', 'package/hook/'])(
+    'rejects non-canonical package public subpath %s before host resolution',
+    async source => {
+      const { resolvePackageModuleMetadataState } = await import('../src/graph-host')
+      const dependencies: string[] = []
+      const resolvePackage = vi.fn()
+
+      expect(
+        resolvePackageModuleMetadataState(source, 'virtual:entry', {
+          onDependency: dependency => dependencies.push(dependency),
+          resolvePackage,
+        }),
+      ).toEqual({ kind: 'invalid' })
+      expect(resolvePackage).not.toHaveBeenCalled()
+      expect(dependencies).toEqual([])
+    },
+  )
+
   it.skipIf(process.platform === 'win32').each(['?', '#'])(
     'preserves a literal %s in a physical importer path',
     async literal => {
