@@ -243,6 +243,7 @@ interface ResolvedMetadataModule {
   key: string
   filename: string
   packageJsonPath?: string
+  packageSource?: string
 }
 
 interface ResolvedCompilerModuleMetadata {
@@ -1190,7 +1191,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     )
     const aliasEntries = normalizeAliases(config?.resolve?.alias)
     let resolvedSource = exactResolution?.filename ?? null
-    let packageSource: string | null = isBarePackageSource(source) ? source : null
+    let packageSource: string | null =
+      exactResolution?.packageSource ?? (isBarePackageSource(source) ? source : null)
 
     if (!resolvedSource) {
       if (path.isAbsolute(source)) {
@@ -1287,7 +1289,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const localFile =
         exactResolution?.filename ??
         resolveLocalModuleSource(source, normalizedFilename, config?.root, aliasEntries)
-      const packageSource = resolveAliasedPackageSource(source, aliasEntries)
+      const packageSource =
+        exactResolution?.packageSource ?? resolveAliasedPackageSource(source, aliasEntries)
       const opaqueSource = resolveOpaqueModuleSource(source, aliasEntries)
       let resolvedId = exactResolution?.key ?? localFile ?? packageSource
       let status: ResolvedMetadataInput['status']
@@ -1536,15 +1539,27 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         if (!resolved) continue
         const resolutionKey = createLocalResolutionKey(identity.key, source)
         if (!shouldCompileModule(resolved.filename)) {
-          const packageSource = resolveAliasedPackageSource(source, aliasEntries)
-          const boundary = packageSource
-            ? findOwningPackageBoundary(resolved.filename, packageBoundaryCache)
-            : null
-          if (boundary) {
+          const aliasedPackageSource = resolveAliasedPackageSource(source, aliasEntries)
+          const packageImportsSource = resolvePackageImportsSource(source, aliasEntries)
+          const boundary =
+            aliasedPackageSource || packageImportsSource
+              ? findOwningPackageBoundary(resolved.filename, packageBoundaryCache)
+              : null
+          const packageSource =
+            aliasedPackageSource ??
+            (boundary && packageImportsSource
+              ? resolvePackageSourceFromResolvedFile(
+                  boundary,
+                  path.join(boundary.root, 'package.json'),
+                  resolved.filename,
+                )
+              : null)
+          if (boundary && packageSource) {
             state.resolvedLocalModules.set(resolutionKey, {
               key: resolved.key,
               filename: resolved.filename,
               packageJsonPath: path.join(boundary.root, 'package.json'),
+              packageSource,
             })
           }
           continue
@@ -3489,6 +3504,59 @@ function collectPackageTargets(
   return targets
 }
 
+function isCanonicalPackagePublicSubpath(subpath: string): subpath is '.' | `./${string}` {
+  if (subpath === '.') return true
+  if (!subpath.startsWith('./') || subpath.includes('\\') || subpath.includes('\0')) return false
+  return subpath
+    .slice(2)
+    .split('/')
+    .every(
+      segment => !!segment && segment !== '.' && segment !== '..' && segment !== 'node_modules',
+    )
+}
+
+function resolvePackageSourceFromResolvedFile(
+  boundary: PackageBoundary,
+  packageJsonPath: string,
+  resolvedFilename: string,
+): string | null {
+  let pkg: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    pkg = parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+
+  const resolvedIdentity = normalizeIdentityPath(resolvedFilename)
+  const resolvedPackagePath = toPackageJsonRelativePath(boundary.root, resolvedFilename)
+  const subpaths = new Set<string>()
+  for (const { subpath, target } of collectPackageTargets(pkg)) {
+    const normalizedTarget = normalizePackageJsonTarget(target, true)
+    if (!normalizedTarget || normalizedTarget.includes('*')) continue
+    const targetFile = resolveExistingModuleFile(
+      path.resolve(boundary.root, normalizedTarget.slice(2)),
+    )
+    if (
+      normalizedTarget === resolvedPackagePath ||
+      (targetFile && normalizeIdentityPath(targetFile) === resolvedIdentity)
+    ) {
+      subpaths.add(subpath)
+    }
+  }
+  for (const subpath of collectPatternExportSubpaths(pkg.exports, resolvedPackagePath)) {
+    subpaths.add(subpath)
+  }
+
+  const canonical = [...subpaths].filter(isCanonicalPackagePublicSubpath)
+  if (canonical.length !== 1) return null
+  const publicSubpath = canonical[0]!
+  return publicSubpath === '.'
+    ? boundary.name
+    : `${boundary.name}/${publicSubpath.slice('./'.length)}`
+}
+
 function collectPackageExportEntries(value: unknown): [string, unknown][] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [['.', value]]
   const entries = Object.entries(value as Record<string, unknown>)
@@ -4181,6 +4249,7 @@ function isBarePackageSource(source: string): boolean {
     !path.isAbsolute(source) &&
     !path.win32.isAbsolute(source) &&
     !source.startsWith('.') &&
+    !source.startsWith('#') &&
     !source.startsWith('/@fs/') &&
     !hasModuleScheme(source)
   )
@@ -4190,6 +4259,13 @@ function resolveAliasedPackageSource(source: string, aliases: AliasEntry[]): str
   const aliased = applyAlias(source, aliases)
   if (aliased) return isBarePackageSource(aliased) ? aliased : null
   return isBarePackageSource(source) ? source : null
+}
+
+function resolvePackageImportsSource(source: string, aliases: AliasEntry[]): string | null {
+  const candidate = applyAlias(source, aliases) ?? source
+  return candidate.length > 1 && candidate.startsWith('#') && !candidate.startsWith('#/')
+    ? candidate
+    : null
 }
 
 function resolveOpaqueModuleSource(source: string, aliases: AliasEntry[]): string | null {
@@ -4590,7 +4666,8 @@ function computePackageMetadataCacheFingerprint(
     const exactResolution = resolvedLocalModules?.get(
       createLocalResolutionKey(currentMetadataKey, source),
     )
-    const packageSource = resolveAliasedPackageSource(source, aliases)
+    const packageSource =
+      exactResolution?.packageSource ?? resolveAliasedPackageSource(source, aliases)
     if (packageSource && exactResolution?.packageJsonPath) {
       const resolution = resolvePackageModuleMetadataState(packageSource, normalizedFilename, {
         ...(onPackageMetadataDependency ? { onDependency: onPackageMetadataDependency } : {}),
