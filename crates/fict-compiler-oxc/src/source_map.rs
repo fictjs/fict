@@ -323,7 +323,7 @@ fn normalized_source_identity(identity: &str, strip_module_suffix: bool) -> Stri
 }
 
 fn strip_source_module_suffix(identity: &str) -> &str {
-    let query = identity.find('?').unwrap_or(identity.len());
+    let query = module_query_start(identity);
     let fragment = identity.find('#').unwrap_or(identity.len());
     let suffix_start = query.min(fragment);
     if suffix_start == identity.len() {
@@ -346,6 +346,17 @@ fn strip_source_module_suffix(identity: &str) -> &str {
     } else {
         identity
     }
+}
+
+fn module_query_start(identity: &str) -> usize {
+    let search_start = if identity.starts_with("//?/") || identity.starts_with(r"\\?\") {
+        4
+    } else {
+        0
+    };
+    identity[search_start..]
+        .find('?')
+        .map_or(identity.len(), |index| search_start + index)
 }
 
 fn has_supported_source_extension(identity: &str) -> bool {
@@ -636,6 +647,20 @@ mod tests {
 
         let composed = compose_source_map_json(generated, input)
             .expect("UNC source identity should match after query fallback");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            ["original.tsx", "virtual:helper.js"]
+        );
+    }
+
+    #[test]
+    fn matches_windows_device_sources_after_query_suffix_fallback() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["\\\\?\\C:\\project\\intermediate.ts?worker","virtual:helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"\\\\?\\C:\\project\\intermediate.ts","sources":["original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed = compose_source_map_json(generated, input)
+            .expect("Windows device source identity should match after query fallback");
         let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
         assert_eq!(
             composed.get_sources().collect::<Vec<_>>(),

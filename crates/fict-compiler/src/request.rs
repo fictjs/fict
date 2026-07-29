@@ -661,7 +661,7 @@ fn validate_identity(
 }
 
 fn source_mode_filename(filename: &str) -> &str {
-    let query = filename.find('?').unwrap_or(filename.len());
+    let query = module_query_start(filename);
     let fragment = filename.find('#').unwrap_or(filename.len());
     if has_uri_scheme(filename) {
         return &filename[..query.min(fragment)];
@@ -676,6 +676,17 @@ fn source_mode_filename(filename: &str) -> &str {
         return filename;
     }
     &filename[..query.min(fragment)]
+}
+
+fn module_query_start(filename: &str) -> usize {
+    let search_start = if filename.starts_with(r"\\?\") || filename.starts_with("//?/") {
+        4
+    } else {
+        0
+    };
+    filename[search_start..]
+        .find('?')
+        .map_or(filename.len(), |index| search_start + index)
 }
 
 fn is_windows_path(filename: &str) -> bool {
@@ -885,6 +896,7 @@ mod tests {
     fn strips_windows_and_uri_suffixes_across_public_requests() {
         for filename in [
             r"C:\src\legacy.cts?lang.tsx",
+            r"\\?\C:\src\legacy.cts?lang.tsx",
             "virtual:legacy.cts?lang.tsx",
             "x://project/src/legacy.cts#lang.tsx",
             "webpack://project/src/legacy.cts#lang.tsx",
