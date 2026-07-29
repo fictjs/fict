@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -213,6 +214,31 @@ describe('@fictjs/compiler/graph-host', () => {
       })
     },
   )
+
+  it('resolves packages from file URL importers with mixed-case schemes', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-file-url-'))
+    tempRoots.push(root)
+    const importer = path.join(root, 'src', 'App.tsx')
+    const packageRoot = path.join(root, 'node_modules', 'fict-library')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(importer, 'export {}')
+    await writeFile(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({ fict: { metadata: './index.fict.meta.json' } }),
+    )
+    await writeFile(
+      path.join(packageRoot, 'index.fict.meta.json'),
+      JSON.stringify({ version: 1, exports: { value: 'signal' } }),
+    )
+
+    const importerUrl = pathToFileURL(importer).href.replace(/^file:/, 'FiLe:')
+    const { resolvePackageModuleMetadata } = await import('../src/graph-host')
+    expect(resolvePackageModuleMetadata('fict-library', importerUrl)).toEqual({
+      version: 1,
+      exports: { value: 'signal' },
+    })
+  })
 
   it('reports every missing package boundary candidate as a watch dependency', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-missing-package-'))

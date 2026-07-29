@@ -178,7 +178,7 @@ function normalizeConcreteFileName(fileName: string | undefined): string | null 
       rawFsPath.startsWith('/') || isWindowsDrivePath(rawFsPath) ? rawFsPath : `/${rawFsPath}`
     normalized = pathIsFile(fsPath) ? fsPath : stripUrlLikeSuffix(fsPath)
   }
-  if (normalized.startsWith('file://')) {
+  if (/^file:\/\//i.test(normalized)) {
     try {
       normalized = fileURLToPath(normalized)
     } catch {
