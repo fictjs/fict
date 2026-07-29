@@ -157,6 +157,16 @@ function isBarePackageSource(source: string): boolean {
   return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
 }
 
+function isCanonicalPackageNameSegment(segment: string): boolean {
+  return (
+    !!segment &&
+    segment !== '.' &&
+    segment !== '..' &&
+    !segment.includes('\\') &&
+    !segment.includes('\0')
+  )
+}
+
 function splitPackageSource(
   source: string,
 ): { packageName: string; subpath: string; rawSubpath: string } | null {
@@ -167,8 +177,9 @@ function splitPackageSource(
   if (normalizedSource.startsWith('@')) {
     if (
       normalizedParts.length < 2 ||
-      !normalizedParts[0] ||
-      !normalizedParts[1] ||
+      !normalizedParts[0]?.startsWith('@') ||
+      !isCanonicalPackageNameSegment(normalizedParts[0].slice(1)) ||
+      !isCanonicalPackageNameSegment(normalizedParts[1] ?? '') ||
       rawParts.length < 2
     ) {
       return null
@@ -182,11 +193,11 @@ function splitPackageSource(
       rawSubpath: rawRest ? `./${rawRest}` : '.',
     }
   }
-  if (!normalizedParts[0]) return null
+  if (!isCanonicalPackageNameSegment(normalizedParts[0] ?? '')) return null
   const normalizedRest = normalizedParts.slice(1).join('/')
   const rawRest = rawParts.slice(1).join('/')
   return {
-    packageName: normalizedParts[0],
+    packageName: normalizedParts[0]!,
     subpath: normalizedRest ? `./${normalizedRest}` : '.',
     rawSubpath: rawRest ? `./${rawRest}` : '.',
   }
