@@ -275,26 +275,17 @@ fn matching_source_ids(
         .iter()
         .enumerate()
         .filter(|(_, source)| {
-            normalized_resolved_source_identity(
-                generated.source_root.as_deref(),
-                source,
-                strip_module_suffix,
-            ) == input_file
+            let source = normalized_source_identity(source, strip_module_suffix);
+            source == input_file
+                || generated.source_root.as_deref().is_some_and(|root| {
+                    normalized_source_identity(
+                        &rooted_source_identity(root, &source),
+                        strip_module_suffix,
+                    ) == input_file
+                })
         })
         .filter_map(|(index, _)| u32::try_from(index).ok())
         .collect()
-}
-
-fn normalized_resolved_source_identity(
-    root: Option<&str>,
-    source: &str,
-    strip_module_suffix: bool,
-) -> String {
-    let resolved = root.map_or_else(
-        || source.to_owned(),
-        |root| rooted_source_identity(root, source),
-    );
-    normalized_source_identity(&resolved, strip_module_suffix)
 }
 
 fn normalized_source_identity(identity: &str, strip_module_suffix: bool) -> String {
@@ -595,6 +586,20 @@ mod tests {
                 "webpack://project/authored/original.tsx",
                 "virtual:helper.js",
             ]
+        );
+    }
+
+    #[test]
+    fn matches_a_source_before_applying_the_generated_source_root() {
+        let generated = r#"{"version":3,"file":"out.js","sourceRoot":"/generated","sources":["intermediate.ts","virtual:helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"intermediate.ts","sources":["original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed = compose_source_map_json(generated, input)
+            .expect("the direct source identity should remain composable");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            ["original.tsx", "virtual:helper.js"]
         );
     }
 
