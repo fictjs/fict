@@ -313,8 +313,11 @@ fn normalized_source_identity(identity: &str, strip_module_suffix: bool) -> Stri
         });
         return format!("{scheme}://{authority}{}", normalize_path_segments(path));
     }
-    if has_uri_scheme(identity) {
-        return identity.to_owned();
+    if has_uri_scheme(identity)
+        && let Some(scheme_separator) = identity.find(':')
+    {
+        let scheme = identity[..scheme_separator].to_ascii_lowercase();
+        return format!("{scheme}{}", &identity[scheme_separator..]);
     }
     normalize_path_segments(identity)
 }
@@ -605,6 +608,20 @@ mod tests {
 
         let composed =
             compose_source_map_json(generated, input).expect("opaque URI identity should match");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            ["original.tsx", "virtual:helper.js"]
+        );
+    }
+
+    #[test]
+    fn matches_opaque_uri_schemes_case_insensitively() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["VIRTUAL:intermediate.ts","virtual:helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"virtual:intermediate.ts","sources":["original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed = compose_source_map_json(generated, input)
+            .expect("opaque URI scheme casing should not change source identity");
         let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
         assert_eq!(
             composed.get_sources().collect::<Vec<_>>(),
