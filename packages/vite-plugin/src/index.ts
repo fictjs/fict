@@ -3644,6 +3644,7 @@ function resolvePackageSourceFromResolvedFile(
   const resolvedPackagePath = toPackageJsonRelativePath(boundary.root, resolvedFilename)
   const subpaths = new Set<string>()
   for (const { subpath, target } of collectPackageTargets(pkg, mainFields)) {
+    if (subpath.includes('*')) continue
     const normalizedTarget = normalizePackageJsonTarget(target, true)
     if (!normalizedTarget || normalizedTarget.includes('*')) continue
     const targetFile = resolveExistingModuleFile(
@@ -3773,6 +3774,7 @@ function buildFictPackageMappingResult(
   const packageTargets = collectPackageTargets(pkg)
   const targetToSubpaths = new Map<string, Set<string>>()
   for (const { subpath, target } of packageTargets) {
+    if (subpath.includes('*')) continue
     const normalizedTarget = normalizePackageJsonTarget(target)
     if (!normalizedTarget) continue
     const subpaths = targetToSubpaths.get(normalizedTarget) ?? new Set<string>()

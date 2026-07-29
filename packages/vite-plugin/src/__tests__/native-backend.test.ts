@@ -188,6 +188,24 @@ describe('Vite alias metadata resolution', () => {
   })
 })
 
+describe('Vite package metadata mapping', () => {
+  it('does not publish a non-invertible public export pattern', () => {
+    const asset = {
+      chunkFileName: 'shared.js',
+      metadataFileName: 'shared.fict.meta.json',
+    }
+    const result = __fictVitePluginInternals.buildFictPackageMappingResult(
+      [asset],
+      { exports: { './*': './shared.js' } },
+      '/package',
+      '/package',
+    )
+
+    expect([...result.mappings]).toEqual([])
+    expect(result.unmappedAssets).toEqual([asset])
+  })
+})
+
 describe('Rust compiler backend', () => {
   beforeEach(() => {
     native.load.mockReset()
@@ -624,6 +642,68 @@ describe('Rust compiler backend', () => {
       expect(resolve).toHaveBeenCalledWith('#virtual-hook', importer, { skipSelf: true })
       expect(metadataDependencies).toHaveBeenCalledWith(packageJsonPath)
       expect(metadataDependencies).toHaveBeenCalledWith(metadataPath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed for a Vite-resolved non-invertible package export pattern', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-pattern-'))
+    const importer = path.join(root, 'src', 'App.ts')
+    const packageRoot = path.join(root, '.store', 'node_modules', 'hook-lib')
+    const packageEntry = path.join(packageRoot, 'shared.js')
+    const metadataPath = path.join(packageRoot, 'shared.fict.meta.json')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(importer, 'export {}')
+    await writeFile(packageEntry, 'export function useVirtual() {}')
+    await writeFile(
+      path.join(packageRoot, 'package.json'),
+      JSON.stringify({
+        name: 'hook-lib',
+        exports: { './*': './shared.js' },
+        fict: { exports: { './*': './shared.fict.meta.json' } },
+      }),
+    )
+    await writeFile(
+      metadataPath,
+      JSON.stringify({ version: 1, exports: {}, hooks: { useVirtual: {} } }),
+    )
+
+    try {
+      native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+      native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+      native.transform.mockResolvedValue(compileResult())
+      const plugin = createTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        useTypeScriptProject: false,
+        publicIdentityNamespace: 'native-test@1',
+      })
+      plugin.configResolved?.({
+        ...config,
+        root,
+        server: { fs: { allow: [root] } },
+      } as never)
+      const resolve = vi.fn(async (source: string) =>
+        source === '#virtual-hook' ? { id: packageEntry } : null,
+      )
+
+      await plugin.transform?.call(
+        { ...context(), resolve } as never,
+        "import { useVirtual } from '#virtual-hook'; export const value = useVirtual();",
+        importer,
+      )
+
+      const request = native.transform.mock.calls[0]![0] as CompileRequest
+      expect(request.metadata).toEqual([
+        expect.objectContaining({
+          request: '#virtual-hook',
+          resolvedId: null,
+          status: 'missing',
+          metadata: null,
+        }),
+      ])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
