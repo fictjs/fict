@@ -133,14 +133,20 @@ function readFictPackageConfig(packageData: unknown): FictPackageConfig | undefi
     const fict = data.fict as { metadata?: unknown; exports?: unknown }
     if (Object.prototype.hasOwnProperty.call(fict, 'metadata')) {
       hasConfig = true
+      if (typeof fict.metadata !== 'string') return { hasValidDeclaration: false }
       config.metadata = normalizeMetadataDeclaration(fict.metadata)
       if (config.metadata) config.hasValidDeclaration = true
     }
-    if (fict.exports && typeof fict.exports === 'object' && !Array.isArray(fict.exports)) {
+    if (Object.prototype.hasOwnProperty.call(fict, 'exports')) {
+      if (!fict.exports || typeof fict.exports !== 'object' || Array.isArray(fict.exports)) {
+        return { hasValidDeclaration: false }
+      }
+      hasConfig = true
       const exportsConfig: Record<string, string | null> = {}
       for (const [subpath, metadataPath] of Object.entries(fict.exports)) {
-        if (!isCanonicalPublicSubpath(subpath)) continue
-        hasConfig = true
+        if (!isCanonicalPublicSubpath(subpath) || typeof metadataPath !== 'string') {
+          return { hasValidDeclaration: false }
+        }
         exportsConfig[subpath] = normalizeMetadataDeclaration(metadataPath)
         if (exportsConfig[subpath]) config.hasValidDeclaration = true
       }

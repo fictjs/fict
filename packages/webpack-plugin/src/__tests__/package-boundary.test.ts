@@ -374,6 +374,12 @@ describe('Webpack package metadata boundaries', () => {
     const plainPackage = { name: 'ordinary-package', version: '1.0.0' }
     const invalidOnly = { name: 'hook-lib', fict: { exports: { '../escape': './meta.json' } } }
     const invalidEntry = { name: 'hook-lib', fict: { exports: { './hooks': '' } } }
+    const mixedInvalidKey = {
+      name: 'hook-lib',
+      fict: {
+        exports: { './hooks': './hooks.meta.json', hooks: './invalid.meta.json' },
+      },
+    }
     const absentEntry = {
       name: 'hook-lib',
       fict: { exports: { './other': './other.meta.json' } },
@@ -402,6 +408,18 @@ describe('Webpack package metadata boundaries', () => {
       expect(
         readPackageMetadataAtBoundary(
           createResolution(packageJsonPath, './hooks', invalidEntry),
+          () => {},
+        ),
+      ).toEqual({ kind: 'unresolved' })
+
+      writeFileSync(
+        path.join(root, 'hooks.meta.json'),
+        JSON.stringify({ version: 1, exports: {}, hooks: { useHook: {} } }),
+      )
+      writeFileSync(packageJsonPath, JSON.stringify(mixedInvalidKey))
+      expect(
+        readPackageMetadataAtBoundary(
+          createResolution(packageJsonPath, './hooks', mixedInvalidKey),
           () => {},
         ),
       ).toEqual({ kind: 'unresolved' })
