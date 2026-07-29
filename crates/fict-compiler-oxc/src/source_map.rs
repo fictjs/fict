@@ -326,7 +326,7 @@ fn strip_source_module_suffix(identity: &str) -> &str {
     if suffix_start == identity.len() {
         return identity;
     }
-    if hierarchical_scheme_separator(identity).is_some() {
+    if has_uri_scheme(identity) {
         return &identity[..suffix_start];
     }
     // POSIX permits both delimiters in physical filenames, so stripping either one would make
@@ -592,6 +592,20 @@ mod tests {
         assert_eq!(
             composed.get_sources().collect::<Vec<_>>(),
             ["C:/project/original.tsx", "virtual:helper.js"]
+        );
+    }
+
+    #[test]
+    fn matches_opaque_scheme_sources_after_module_suffix_fallback() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["virtual:intermediate.ts?worker","virtual:helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"virtual:intermediate.ts","sources":["original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed =
+            compose_source_map_json(generated, input).expect("opaque URI identity should match");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            ["original.tsx", "virtual:helper.js"]
         );
     }
 
