@@ -411,7 +411,13 @@ fn normalize_path_segments(identity: &str) -> String {
 }
 
 fn rooted_source_identity(root: &str, source: &str) -> String {
-    if source.starts_with('/') || source.starts_with("\\\\") || has_uri_scheme(source) {
+    let windows_drive =
+        source.as_bytes().get(1) == Some(&b':') && source.as_bytes()[0].is_ascii_alphabetic();
+    if source.starts_with('/')
+        || source.starts_with("\\\\")
+        || windows_drive
+        || has_uri_scheme(source)
+    {
         return source.to_owned();
     }
     format!("{}/{}", root.trim_end_matches(['/', '\\']), source)
@@ -572,6 +578,20 @@ mod tests {
                 "webpack://project/authored/original.tsx",
                 "virtual:helper.js",
             ]
+        );
+    }
+
+    #[test]
+    fn preserves_windows_absolute_sources_outside_source_root() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["intermediate.ts","virtual:helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"intermediate.ts","sourceRoot":"/authored","sources":["C:\\project\\original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed =
+            compose_source_map_json(generated, input).expect("Windows source should stay absolute");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            ["C:/project/original.tsx", "virtual:helper.js"]
         );
     }
 
