@@ -296,7 +296,7 @@ function readPackageConfig(packageJsonPath: string): PackageConfigReadResult {
       const exportsConfig: Record<string, string> = {}
       for (const [key, value] of Object.entries(pkg.fict.exports)) {
         hasDeclaration = true
-        if (typeof value !== 'string') return { kind: 'invalid' }
+        if (!isCanonicalPublicSubpath(key) || typeof value !== 'string') return { kind: 'invalid' }
         exportsConfig[key] = value
       }
       if (Object.keys(exportsConfig).length > 0) config.exports = exportsConfig

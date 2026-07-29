@@ -224,6 +224,12 @@ describe('@fictjs/compiler/graph-host', () => {
       'invalid',
     ],
     ['invalid-config-library', { fict: { metadata: 42 } }, undefined, 'invalid'],
+    [
+      'invalid-exports-key-library',
+      { fict: { exports: { hooks: './index.fict.meta.json' } } },
+      undefined,
+      'invalid',
+    ],
   ])(
     'preserves the %s package metadata resolution state',
     async (packageName, manifest, metadataContents, expectedKind) => {
