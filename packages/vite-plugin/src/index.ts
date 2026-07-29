@@ -1471,7 +1471,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       if (resolved) {
         const resolvedParts = splitModuleId(resolved.id, { root: config?.root })
         if (shouldSkipMetadataForModuleSuffix(resolvedParts.suffix)) return null
-        if (isInternalModuleId(resolved.id) || hasModuleScheme(resolvedParts.filename)) {
+        if (
+          isInternalModuleId(resolved.id) ||
+          (hasModuleScheme(resolvedParts.filename) && !isFileUrl(resolvedParts.filename))
+        ) {
           return {
             key: resolved.id,
             opaqueSource: resolved.id,
@@ -2884,7 +2887,7 @@ function resolvePhysicalModuleCandidate(
 
   if (candidate.startsWith('/@fs/')) {
     candidates.push(candidate.slice('/@fs/'.length))
-  } else if (candidate.startsWith('file://')) {
+  } else if (isFileUrl(candidate)) {
     // URL search/hash delimiters are unambiguously suffixes. Physical `?` / `#`
     // characters in a file URL are percent-encoded and therefore need no probing.
     return null
@@ -2999,7 +3002,7 @@ function normalizeFileName(id: string, root?: string): string {
   if (clean.startsWith('/@fs/')) {
     clean = clean.slice('/@fs/'.length)
   }
-  if (clean.startsWith('file://')) {
+  if (isFileUrl(clean)) {
     try {
       clean = fileURLToPath(clean)
     } catch {
@@ -4397,6 +4400,10 @@ function resolveOpaqueModuleSource(source: string, aliases: AliasEntry[]): strin
 function hasModuleScheme(source: string): boolean {
   const scheme = /^[a-zA-Z][a-zA-Z\d+.-]*:/.exec(source)
   return !!scheme && (source.startsWith('//', scheme[0].length) || !path.win32.isAbsolute(source))
+}
+
+function isFileUrl(source: string): boolean {
+  return /^file:\/\//i.test(source)
 }
 
 function shouldSkipMetadataForModuleQuery(source: string, options?: SplitModuleIdOptions): boolean {

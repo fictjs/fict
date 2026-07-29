@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type {
   CompileRequest,
@@ -1040,6 +1041,63 @@ describe('Rust compiler backend', () => {
       ),
     )
     expect(request.metadata).toHaveLength(sources.length)
+  })
+
+  it('prepares local metadata from a mixed-case file URL resolver result', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-file-url-'))
+    const hookFile = path.join(root, 'hooks.ts')
+    const appFile = path.join(root, 'app.ts')
+    const hookSource = 'export function useCounter() { return 1 }'
+    const appSource = "import { useCounter } from '#file-hook'; export const value = useCounter()"
+    await writeFile(hookFile, hookSource)
+    await writeFile(appFile, appSource)
+    native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+    native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+    native.transform.mockImplementation(async request => {
+      const input = request as CompileRequest
+      return compileResult({
+        moduleMetadata:
+          input.filename === hookFile
+            ? {
+                version: 1,
+                exports: {},
+                hooks: { useCounter: { directAccessor: 'signal' } },
+              }
+            : { version: 1, exports: {} },
+      })
+    })
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    plugin.configResolved?.({ ...config, root } as never)
+    const hookUrl = pathToFileURL(hookFile).href.replace(/^file:/, 'FiLe:')
+    const resolve = vi.fn(async (source: string) =>
+      source === '#file-hook' ? { id: hookUrl } : null,
+    )
+
+    try {
+      await plugin.transform?.call({ ...context(), resolve } as never, appSource, appFile)
+      const appRequest = native.transform.mock.calls
+        .map(call => call[0] as CompileRequest)
+        .find(request => request.filename === appFile)
+      expect(appRequest?.metadata).toEqual([
+        expect.objectContaining({
+          request: '#file-hook',
+          resolvedId: hookFile,
+          status: 'resolved',
+          metadata: {
+            version: 1,
+            exports: {},
+            hooks: { useCounter: { directAccessor: 'signal' } },
+          },
+        }),
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('propagates partial local metadata as incompleteCycle without discarding known facts', async () => {
