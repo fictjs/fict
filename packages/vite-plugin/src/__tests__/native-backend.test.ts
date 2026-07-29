@@ -550,6 +550,40 @@ describe('Rust compiler backend', () => {
     }
   })
 
+  it('keeps scheme imports opaque instead of reporting missing package metadata', async () => {
+    native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+    native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+    native.transform.mockResolvedValue(compileResult())
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    plugin.configResolved?.(config as never)
+    const sources = ['node:async_hooks', 'virtual:hook', 'https://example.test/hook.js']
+    const code = sources
+      .map((source, index) => `import { useHook as useHook${index} } from '${source}'`)
+      .join('\n')
+
+    await plugin.transform?.call(context() as never, code, '/project/src/App.ts')
+
+    const request = native.transform.mock.calls[0]![0] as CompileRequest
+    expect(request.metadata).toEqual(
+      expect.arrayContaining(
+        sources.map(source =>
+          expect.objectContaining({
+            request: source,
+            resolvedId: source,
+            status: 'opaque',
+            metadata: null,
+          }),
+        ),
+      ),
+    )
+    expect(request.metadata).toHaveLength(sources.length)
+  })
+
   it('propagates partial local metadata as incompleteCycle without discarding known facts', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-partial-metadata-'))
     const hookFile = path.join(root, 'hooks.ts')

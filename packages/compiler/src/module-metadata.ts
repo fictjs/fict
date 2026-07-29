@@ -195,7 +195,13 @@ function pathIsFile(pathName: string): boolean {
 }
 
 function isBarePackageSource(source: string): boolean {
-  return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
+  return (
+    !path.isAbsolute(source) &&
+    !isWindowsDrivePath(source) &&
+    !source.startsWith('.') &&
+    !source.startsWith('/@fs/') &&
+    !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(source)
+  )
 }
 
 function isCanonicalPackageNameSegment(segment: string): boolean {

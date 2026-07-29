@@ -1288,6 +1288,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         exactResolution?.filename ??
         resolveLocalModuleSource(source, normalizedFilename, config?.root, aliasEntries)
       const packageSource = resolveAliasedPackageSource(source, aliasEntries)
+      const opaqueSource = resolveOpaqueModuleSource(source, aliasEntries)
       let resolvedId = exactResolution?.key ?? localFile ?? packageSource
       let status: ResolvedMetadataInput['status']
       let resolvedMetadata: ModuleReactiveMetadata | null = null
@@ -1303,13 +1304,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         resolvedMetadata = metadata
         resolvedId ??= `resolver:${source}`
       } else if (
+        opaqueSource ||
         shouldSkipMetadataForModuleQuery(source, {
           root: config?.root,
           importer: normalizedFilename,
         })
       ) {
         status = 'opaque'
-        resolvedId ??= source
+        resolvedId ??= opaqueSource ?? source
       } else if (resolution.packageResolution?.kind === 'plain') {
         status = 'opaque'
         resolvedId ??= packageSource ?? source
@@ -4177,13 +4179,29 @@ function applyAlias(source: string, aliases: AliasEntry[]): string | null {
 }
 
 function isBarePackageSource(source: string): boolean {
-  return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
+  return (
+    !path.isAbsolute(source) &&
+    !path.win32.isAbsolute(source) &&
+    !source.startsWith('.') &&
+    !source.startsWith('/@fs/') &&
+    !hasModuleScheme(source)
+  )
 }
 
 function resolveAliasedPackageSource(source: string, aliases: AliasEntry[]): string | null {
   const aliased = applyAlias(source, aliases)
   if (aliased) return isBarePackageSource(aliased) ? aliased : null
   return isBarePackageSource(source) ? source : null
+}
+
+function resolveOpaqueModuleSource(source: string, aliases: AliasEntry[]): string | null {
+  const aliased = applyAlias(source, aliases)
+  const candidate = aliased ?? source
+  return hasModuleScheme(candidate) ? candidate : null
+}
+
+function hasModuleScheme(source: string): boolean {
+  return !path.win32.isAbsolute(source) && /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(source)
 }
 
 function shouldSkipMetadataForModuleQuery(source: string, options?: SplitModuleIdOptions): boolean {
