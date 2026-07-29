@@ -208,13 +208,14 @@ function isBarePackageSource(source: string): boolean {
   )
 }
 
+const PACKAGE_NAME_SEGMENT_RE = /^[A-Za-z0-9._~-]+$/
+
 function isCanonicalPackageNameSegment(segment: string): boolean {
   return (
-    !!segment &&
     segment !== '.' &&
     segment !== '..' &&
-    !segment.includes('\\') &&
-    !segment.includes('\0')
+    segment.toLowerCase() !== 'node_modules' &&
+    PACKAGE_NAME_SEGMENT_RE.test(segment)
   )
 }
 

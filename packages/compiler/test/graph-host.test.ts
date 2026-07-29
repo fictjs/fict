@@ -98,35 +98,43 @@ describe('@fictjs/compiler/graph-host', () => {
     expect(resolvePackageModuleMetadata('legacy-library', importer)).toBeUndefined()
   })
 
-  it.each(['@scope/.', '@scope/..', '@scope/../x', '@scope\\escape/package'])(
-    'rejects non-canonical package request %s before reading a manifest',
-    async source => {
-      const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-package-name-'))
-      tempRoots.push(root)
-      const importer = path.join(root, 'workspace', 'src', 'App.tsx')
-      const escapedManifest = path.join(root, 'workspace', 'node_modules', 'package.json')
-      await mkdir(path.dirname(importer), { recursive: true })
-      await mkdir(path.dirname(escapedManifest), { recursive: true })
-      await writeFile(importer, 'export {}')
-      await writeFile(
-        escapedManifest,
-        JSON.stringify({ fict: { metadata: './escaped.fict.meta.json' } }),
-      )
-      await writeFile(
-        path.join(path.dirname(escapedManifest), 'escaped.fict.meta.json'),
-        JSON.stringify({ version: 1, exports: { escaped: 'signal' } }),
-      )
+  it.each([
+    '@scope/.',
+    '@scope/..',
+    '@scope/../x',
+    '@scope\\escape/package',
+    'node_modules',
+    'NODE_MODULES',
+    '%2e%2e',
+    '@%2e%2e/package',
+    '@scope/%2e%2e',
+    'loader!package',
+  ])('rejects non-canonical package request %s before reading a manifest', async source => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-package-name-'))
+    tempRoots.push(root)
+    const importer = path.join(root, 'workspace', 'src', 'App.tsx')
+    const escapedManifest = path.join(root, 'workspace', 'node_modules', 'package.json')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await mkdir(path.dirname(escapedManifest), { recursive: true })
+    await writeFile(importer, 'export {}')
+    await writeFile(
+      escapedManifest,
+      JSON.stringify({ fict: { metadata: './escaped.fict.meta.json' } }),
+    )
+    await writeFile(
+      path.join(path.dirname(escapedManifest), 'escaped.fict.meta.json'),
+      JSON.stringify({ version: 1, exports: { escaped: 'signal' } }),
+    )
 
-      const { resolvePackageModuleMetadata } = await import('../src/graph-host')
-      const dependencies: string[] = []
-      expect(
-        resolvePackageModuleMetadata(source, importer, {
-          onDependency: dependency => dependencies.push(dependency),
-        }),
-      ).toBeUndefined()
-      expect(dependencies).toEqual([])
-    },
-  )
+    const { resolvePackageModuleMetadata } = await import('../src/graph-host')
+    const dependencies: string[] = []
+    expect(
+      resolvePackageModuleMetadata(source, importer, {
+        onDependency: dependency => dependencies.push(dependency),
+      }),
+    ).toBeUndefined()
+    expect(dependencies).toEqual([])
+  })
 
   it.each(['node:async_hooks', 'virtual:hook', 'https://example.test/hook.js'])(
     'does not treat scheme import %s as an npm package request',
