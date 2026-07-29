@@ -1552,6 +1552,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                   boundary,
                   path.join(boundary.root, 'package.json'),
                   resolved.filename,
+                  config?.resolve?.mainFields,
                 )
               : null)
           if (boundary && packageSource) {
@@ -3493,15 +3494,73 @@ function collectExportTargets(
 
 function collectPackageTargets(
   pkg: Record<string, unknown>,
+  mainFields?: readonly string[],
 ): { subpath: string; target: string }[] {
   const targets = collectExportTargets(pkg.exports)
-  for (const field of ['module', 'main'] as const) {
+  const entryFields = mainFields
+    ? [...new Set([...mainFields.filter(field => field !== 'browser'), 'main'])]
+    : ['module', 'main']
+  if (mainFields?.includes('browser')) {
+    const browser = pkg.browser
+    if (typeof browser === 'string') {
+      targets.push({ subpath: '.', target: browser })
+    } else if (
+      browser &&
+      typeof browser === 'object' &&
+      !Array.isArray(browser) &&
+      typeof (browser as Record<string, unknown>)['.'] === 'string'
+    ) {
+      targets.push({
+        subpath: '.',
+        target: (browser as Record<string, string>)['.']!,
+      })
+    }
+  }
+  for (const field of entryFields) {
     if (typeof pkg[field] === 'string') {
       const target = normalizePackageJsonTarget(pkg[field], true)
       if (target) targets.push({ subpath: '.', target })
     }
   }
+
+  if (mainFields && !targets.some(target => target.subpath === '.')) {
+    for (const target of ['./index.js', './index.json', './index.node']) {
+      targets.push({ subpath: '.', target })
+    }
+  }
+
+  if (
+    mainFields?.includes('browser') &&
+    pkg.browser &&
+    typeof pkg.browser === 'object' &&
+    !Array.isArray(pkg.browser)
+  ) {
+    const browser = pkg.browser as Record<string, unknown>
+    for (const entry of [...targets]) {
+      const normalizedTarget = normalizePackageJsonTarget(entry.target, true)
+      if (!normalizedTarget) continue
+      const mapping = Object.entries(browser).find(([key]) =>
+        packageBrowserTargetsMatch(normalizedTarget, key),
+      )?.[1]
+      if (typeof mapping === 'string') {
+        targets.push({ subpath: entry.subpath, target: mapping })
+      }
+    }
+  }
   return targets
+}
+
+function packageBrowserTargetsMatch(target: string, key: string): boolean {
+  const normalizedKey = normalizePackageJsonTarget(key, true)
+  if (!normalizedKey) return false
+  const normalizedTarget = path.posix.normalize(target)
+  const browserKey = path.posix.normalize(normalizedKey)
+  return (
+    normalizedTarget === browserKey ||
+    (browserKey.endsWith('.js') && browserKey.slice(0, -'.js'.length) === normalizedTarget) ||
+    (browserKey.endsWith('/index.js') &&
+      browserKey.slice(0, -'/index.js'.length) === normalizedTarget)
+  )
 }
 
 function isCanonicalPackagePublicSubpath(subpath: string): subpath is '.' | `./${string}` {
@@ -3519,6 +3578,7 @@ function resolvePackageSourceFromResolvedFile(
   boundary: PackageBoundary,
   packageJsonPath: string,
   resolvedFilename: string,
+  mainFields?: readonly string[],
 ): string | null {
   let pkg: Record<string, unknown>
   try {
@@ -3532,7 +3592,7 @@ function resolvePackageSourceFromResolvedFile(
   const resolvedIdentity = normalizeIdentityPath(resolvedFilename)
   const resolvedPackagePath = toPackageJsonRelativePath(boundary.root, resolvedFilename)
   const subpaths = new Set<string>()
-  for (const { subpath, target } of collectPackageTargets(pkg)) {
+  for (const { subpath, target } of collectPackageTargets(pkg, mainFields)) {
     const normalizedTarget = normalizePackageJsonTarget(target, true)
     if (!normalizedTarget || normalizedTarget.includes('*')) continue
     const targetFile = resolveExistingModuleFile(
