@@ -238,6 +238,9 @@ fn composed_source_id(
     if generated.sources.is_empty() {
         return Err("generated source map has no source to compose".to_owned());
     }
+    if generated.sources.len() == 1 && input.file.is_none() {
+        return Ok(0);
+    }
     let input_file = input
         .file
         .as_deref()
@@ -542,6 +545,17 @@ mod tests {
             error.contains("does not identify a generated source"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn composes_a_single_source_input_without_a_file_identity() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["intermediate.js"],"names":[],"mappings":"AAAA"}"#;
+        let input = r#"{"version":3,"sources":["original.ts"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed = compose_source_map_json(generated, input)
+            .expect("a single generated source does not need disambiguation");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(composed.get_sources().collect::<Vec<_>>(), ["original.ts"]);
     }
 
     #[test]
