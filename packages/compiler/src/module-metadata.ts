@@ -346,13 +346,14 @@ export function resolvePackageModuleMetadataState(
 ): PackageModuleMetadataResolution {
   const parsedSource = splitPackageSource(source)
   const normalizedImporter = normalizeConcreteFileName(importer)
-  if (!parsedSource || !normalizedImporter) return { kind: 'invalid' }
+  const hostImporter = normalizedImporter ?? importer?.trim()
+  if (!parsedSource || !hostImporter) return { kind: 'invalid' }
 
   let hostResolution: PackageModuleMetadataHostResolution
   try {
     hostResolution = options.resolvePackage?.({
       source,
-      importer: normalizedImporter,
+      importer: hostImporter,
       packageName: parsedSource.packageName,
       publicSubpath: parsedSource.subpath as '.' | `./${string}`,
     })
@@ -381,7 +382,12 @@ export function resolvePackageModuleMetadataState(
     options.onDependency?.(packageJsonPath)
     if (!pathIsFile(packageJsonPath)) return { kind: 'missing' }
   } else {
-    packageJsonPath = findPackageJsonPath(parsedSource.packageName, importer, options.onDependency)
+    if (!normalizedImporter) return { kind: 'invalid' }
+    packageJsonPath = findPackageJsonPath(
+      parsedSource.packageName,
+      normalizedImporter,
+      options.onDependency,
+    )
     if (!packageJsonPath) return { kind: 'missing' }
   }
 

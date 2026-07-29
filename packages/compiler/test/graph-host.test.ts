@@ -295,4 +295,42 @@ describe('@fictjs/compiler/graph-host', () => {
       }),
     ).toEqual({ kind: 'missing' })
   })
+
+  it('lets host resolution handle packages imported by virtual modules', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-virtual-importer-'))
+    tempRoots.push(root)
+    const packageJsonPath = path.join(root, 'virtual-hook', 'package.json')
+    const metadataPath = path.join(root, 'virtual-hook', 'hook.fict.meta.json')
+    await mkdir(path.dirname(packageJsonPath), { recursive: true })
+    await writeFile(
+      packageJsonPath,
+      JSON.stringify({ fict: { exports: { './hook': './hook.fict.meta.json' } } }),
+    )
+    await writeFile(metadataPath, JSON.stringify({ version: 1, exports: { value: 'signal' } }))
+
+    const { resolvePackageModuleMetadataState } = await import('../src/graph-host')
+    const requests: unknown[] = []
+    expect(
+      resolvePackageModuleMetadataState('virtual-hook/hook', 'virtual:entry', {
+        resolvePackage: request => {
+          requests.push(request)
+          return { packageJsonPath }
+        },
+      }),
+    ).toEqual({
+      kind: 'resolved',
+      metadata: { version: 1, exports: { value: 'signal' } },
+    })
+    expect(requests).toEqual([
+      {
+        source: 'virtual-hook/hook',
+        importer: 'virtual:entry',
+        packageName: 'virtual-hook',
+        publicSubpath: './hook',
+      },
+    ])
+    expect(resolvePackageModuleMetadataState('virtual-hook', 'virtual:entry')).toEqual({
+      kind: 'invalid',
+    })
+  })
 })
