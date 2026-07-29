@@ -3512,7 +3512,8 @@ function collectExportTargets(
   subpath = '.',
 ): { subpath: string; target: string }[] {
   if (typeof value === 'string') {
-    return [{ subpath, target: value }]
+    const target = normalizePackageExportTarget(value)
+    return target ? [{ subpath, target }] : []
   }
   if (Array.isArray(value)) {
     return value.flatMap(item => collectExportTargets(item, subpath))
@@ -3623,6 +3624,12 @@ function isCanonicalPackagePublicSubpath(subpath: string): subpath is '.' | `./$
         !decoded.includes('\0')
       )
     })
+}
+
+function normalizePackageExportTarget(target: string): string | null {
+  if (target.includes('\\') || target.includes('?') || target.includes('#')) return null
+  const normalized = normalizePackageJsonTarget(target)
+  return normalized && isCanonicalPackagePublicSubpath(normalized) ? normalized : null
 }
 
 function resolvePackageSourceFromResolvedFile(
@@ -3741,7 +3748,7 @@ function collectPatternExportSubpaths(
   for (const [subpathPattern, value] of collectPackageExportEntries(exportsValue)) {
     if (!subpathPattern.includes('*')) continue
     for (const target of collectConditionalTargets(value)) {
-      const targetPattern = normalizePackageJsonTarget(target)
+      const targetPattern = normalizePackageExportTarget(target)
       if (!targetPattern?.includes('*')) continue
       const wildcard = matchRepeatedWildcardPattern(targetPattern, chunkPackagePath)
       if (wildcard === null) continue
@@ -3751,7 +3758,7 @@ function collectPatternExportSubpaths(
       if (!selected) continue
       const selectedTargets = collectConditionalTargets(selected.value)
       const selectsChunk = selectedTargets.some(selectedTarget => {
-        const normalizedTarget = normalizePackageJsonTarget(selectedTarget)
+        const normalizedTarget = normalizePackageExportTarget(selectedTarget)
         if (!normalizedTarget) return false
         const concreteTarget =
           selected.wildcard === null

@@ -189,6 +189,23 @@ describe('Vite alias metadata resolution', () => {
 })
 
 describe('Vite package metadata mapping', () => {
+  it('ignores invalid runtime export targets beside a valid entry', () => {
+    const result = __fictVitePluginInternals.buildFictPackageMappingResult(
+      [{ chunkFileName: 'index.js', metadataFileName: 'index.fict.meta.json' }],
+      {
+        exports: {
+          '.': './index.js',
+          './invalid': './dist/../index.js',
+        },
+      },
+      '/package',
+      '/package',
+    )
+
+    expect([...result.mappings]).toEqual([['.', './index.fict.meta.json']])
+    expect(result.unmappedAssets).toEqual([])
+  })
+
   it('does not publish a non-invertible public export pattern', () => {
     const asset = {
       chunkFileName: 'shared.js',
@@ -857,6 +874,17 @@ describe('Rust compiler backend', () => {
       'custom.js',
     ],
     ['implicit index entry', {}, ['browser', 'module'], 'index.js'],
+    [
+      'valid root entry beside an invalid runtime target',
+      {
+        exports: {
+          '.': './index.js',
+          './invalid': './dist/../index.js',
+        },
+      },
+      ['browser', 'module'],
+      'index.js',
+    ],
     [
       'valid root entry beside invalid encoded entries',
       {
