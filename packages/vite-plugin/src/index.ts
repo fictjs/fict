@@ -242,6 +242,7 @@ interface MetadataLoadOptions {
 interface ResolvedMetadataModule {
   key: string
   filename: string
+  packageJsonPath?: string
 }
 
 interface ResolvedCompilerModuleMetadata {
@@ -1242,6 +1243,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
     const packageResolution = resolvePackageModuleMetadataState(packageSource, importerFile, {
       onDependency: file => registerPackageMetadataDependency(state, file),
+      ...(exactResolution?.packageJsonPath
+        ? {
+            resolvePackage: () => ({
+              packageJsonPath: exactResolution.packageJsonPath!,
+            }),
+          }
+        : {}),
     })
     return {
       metadata: packageResolution.kind === 'resolved' ? packageResolution.metadata : undefined,
@@ -1520,10 +1528,26 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       // pipeline loader retain the recursive on-disk preparation fallback.
       if (pipelineCode === undefined && hasMetadataPipelineLoader(context)) return
 
+      const aliasEntries = normalizeAliases(config?.resolve?.alias)
       for (const source of await collectCompilerStaticModuleSources(code, node.filename, node.id)) {
         const resolved = await resolveGraphDependency(context, source, node.id)
-        if (!resolved || !shouldCompileModule(resolved.filename)) continue
-        state.resolvedLocalModules.set(createLocalResolutionKey(identity.key, source), {
+        if (!resolved) continue
+        const resolutionKey = createLocalResolutionKey(identity.key, source)
+        if (!shouldCompileModule(resolved.filename)) {
+          const packageSource = resolveAliasedPackageSource(source, aliasEntries)
+          const boundary = packageSource
+            ? findOwningPackageBoundary(resolved.filename, packageBoundaryCache)
+            : null
+          if (boundary) {
+            state.resolvedLocalModules.set(resolutionKey, {
+              key: resolved.key,
+              filename: resolved.filename,
+              packageJsonPath: path.join(boundary.root, 'package.json'),
+            })
+          }
+          continue
+        }
+        state.resolvedLocalModules.set(resolutionKey, {
           key: resolved.key,
           filename: resolved.filename,
         })
@@ -4550,6 +4574,22 @@ function computePackageMetadataCacheFingerprint(
     const exactResolution = resolvedLocalModules?.get(
       createLocalResolutionKey(currentMetadataKey, source),
     )
+    const packageSource = resolveAliasedPackageSource(source, aliases)
+    if (packageSource && exactResolution?.packageJsonPath) {
+      const resolution = resolvePackageModuleMetadataState(packageSource, normalizedFilename, {
+        ...(onPackageMetadataDependency ? { onDependency: onPackageMetadataDependency } : {}),
+        resolvePackage: () => ({ packageJsonPath: exactResolution.packageJsonPath! }),
+      })
+      const serializedResolution = stableStringify(
+        resolution.kind === 'resolved' ? [resolution.kind, resolution.metadata] : [resolution.kind],
+      )
+      entries.push(
+        packageSource === source
+          ? [source, serializedResolution]
+          : [source, serializedResolution, `alias:${packageSource}`],
+      )
+      continue
+    }
     const localFile =
       exactResolution?.filename ??
       resolveLocalModuleSource(source, normalizedFilename, root, aliases)
@@ -4582,7 +4622,6 @@ function computePackageMetadataCacheFingerprint(
       }
       continue
     }
-    const packageSource = resolveAliasedPackageSource(source, aliases)
     if (packageSource) {
       const resolution = resolvePackageModuleMetadataState(packageSource, normalizedFilename, {
         ...(onPackageMetadataDependency ? { onDependency: onPackageMetadataDependency } : {}),
