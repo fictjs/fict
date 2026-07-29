@@ -58,13 +58,18 @@ describe('@fictjs/compiler/graph-host', () => {
     )
     await writeFile(metadataPath, JSON.stringify({ version: 1, exports: { count: 'signal' } }))
 
-    const { resolvePackageModuleMetadata } = await import('../src/graph-host')
+    const { resolvePackageModuleMetadata, resolvePackageModuleMetadataState } =
+      await import('../src/graph-host')
     const dependencies: string[] = []
     expect(
       resolvePackageModuleMetadata('fict-library', importer, {
         onDependency: dependency => dependencies.push(dependency),
       }),
     ).toEqual({ version: 1, exports: { count: 'signal' } })
+    expect(resolvePackageModuleMetadataState('fict-library', importer)).toEqual({
+      kind: 'resolved',
+      metadata: { version: 1, exports: { count: 'signal' } },
+    })
     expect(dependencies).toEqual([
       path.join(path.dirname(importer), 'node_modules', 'fict-library', 'package.json'),
       path.join(packageRoot, 'package.json'),
@@ -184,4 +189,42 @@ describe('@fictjs/compiler/graph-host', () => {
     }
     expect(dependencies).toEqual(expected)
   })
+
+  it.each([
+    ['plain-library', {}, undefined, 'plain'],
+    [
+      'missing-metadata-library',
+      { fict: { metadata: './missing.fict.meta.json' } },
+      undefined,
+      'missing',
+    ],
+    ['invalid-metadata-library', { fict: { metadata: './index.fict.meta.json' } }, '{', 'invalid'],
+    [
+      'outside-metadata-library',
+      { fict: { metadata: '../outside.fict.meta.json' } },
+      undefined,
+      'invalid',
+    ],
+    ['invalid-config-library', { fict: { metadata: 42 } }, undefined, 'invalid'],
+  ])(
+    'preserves the %s package metadata resolution state',
+    async (packageName, manifest, metadataContents, expectedKind) => {
+      const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-state-'))
+      tempRoots.push(root)
+      const importer = path.join(root, 'src', 'App.tsx')
+      const packageRoot = path.join(root, 'node_modules', packageName as string)
+      await mkdir(path.dirname(importer), { recursive: true })
+      await mkdir(packageRoot, { recursive: true })
+      await writeFile(importer, 'export {}')
+      await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify(manifest))
+      if (metadataContents !== undefined) {
+        await writeFile(path.join(packageRoot, 'index.fict.meta.json'), metadataContents as string)
+      }
+
+      const { resolvePackageModuleMetadataState } = await import('../src/graph-host')
+      expect(resolvePackageModuleMetadataState(packageName as string, importer)).toEqual({
+        kind: expectedKind,
+      })
+    },
+  )
 })

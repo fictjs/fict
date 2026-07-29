@@ -20,7 +20,10 @@ import {
   type ResolvedMetadataInput,
   type ScanResult,
 } from '@fictjs/compiler'
-import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
+import {
+  resolvePackageModuleMetadataState,
+  type PackageModuleMetadataResolution,
+} from '@fictjs/compiler/graph-host'
 import {
   loadNativeCompilerBinding,
   type NativeCompilerBinding,
@@ -244,6 +247,7 @@ interface ResolvedMetadataModule {
 interface ResolvedCompilerModuleMetadata {
   metadata: ModuleReactiveMetadata | null | undefined
   stateKey: string | null
+  packageResolution: PackageModuleMetadataResolution | null
 }
 
 interface DevHandlerGeneration {
@@ -1166,16 +1170,18 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     importerKey?: string,
   ): ResolvedCompilerModuleMetadata => {
     const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
-    if (userResolved !== undefined) return { metadata: userResolved, stateKey: null }
+    if (userResolved !== undefined) {
+      return { metadata: userResolved, stateKey: null, packageResolution: null }
+    }
     if (
       shouldSkipMetadataForModuleQuery(source, {
         root: config?.root,
         importer,
       })
     ) {
-      return { metadata: undefined, stateKey: null }
+      return { metadata: undefined, stateKey: null, packageResolution: null }
     }
-    if (!importer) return { metadata: undefined, stateKey: null }
+    if (!importer) return { metadata: undefined, stateKey: null, packageResolution: null }
 
     const importerFile = normalizeFileName(importer, config?.root)
     const exactResolution = state.resolvedLocalModules.get(
@@ -1217,7 +1223,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           : undefined
         : lookupStoredMetadata(state, resolvedSource)
       if (resolvedMetadata) {
-        return { metadata: resolvedMetadata.metadata, stateKey: resolvedMetadata.key }
+        return {
+          metadata: resolvedMetadata.metadata,
+          stateKey: resolvedMetadata.key,
+          packageResolution: null,
+        }
       }
       if (shouldCompileModule(resolvedSource)) {
         throw new Error(
@@ -1227,12 +1237,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
     }
 
-    if (!packageSource) return { metadata: undefined, stateKey: null }
+    if (!packageSource) {
+      return { metadata: undefined, stateKey: null, packageResolution: null }
+    }
+    const packageResolution = resolvePackageModuleMetadataState(packageSource, importerFile, {
+      onDependency: file => registerPackageMetadataDependency(state, file),
+    })
     return {
-      metadata: resolvePackageModuleMetadata(packageSource, importerFile, {
-        onDependency: file => registerPackageMetadataDependency(state, file),
-      }),
+      metadata: packageResolution.kind === 'resolved' ? packageResolution.metadata : undefined,
       stateKey: null,
+      packageResolution,
     }
   }
 
@@ -1288,6 +1302,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       ) {
         status = 'opaque'
         resolvedId ??= source
+      } else if (resolution.packageResolution?.kind === 'plain') {
+        status = 'opaque'
+        resolvedId ??= packageSource ?? source
+      } else if (resolution.packageResolution) {
+        status = 'missing'
+        resolvedId = null
       } else if (resolvedId) {
         status = 'opaque'
       } else {
@@ -4564,14 +4584,16 @@ function computePackageMetadataCacheFingerprint(
     }
     const packageSource = resolveAliasedPackageSource(source, aliases)
     if (packageSource) {
-      const metadata = resolvePackageModuleMetadata(packageSource, normalizedFilename, {
+      const resolution = resolvePackageModuleMetadataState(packageSource, normalizedFilename, {
         ...(onPackageMetadataDependency ? { onDependency: onPackageMetadataDependency } : {}),
       })
-      const serializedMetadata = metadata ? stableStringify(metadata) : null
+      const serializedResolution = stableStringify(
+        resolution.kind === 'resolved' ? [resolution.kind, resolution.metadata] : [resolution.kind],
+      )
       entries.push(
         packageSource === source
-          ? [source, serializedMetadata]
-          : [source, serializedMetadata, `alias:${packageSource}`],
+          ? [source, serializedResolution]
+          : [source, serializedResolution, `alias:${packageSource}`],
       )
     }
   }

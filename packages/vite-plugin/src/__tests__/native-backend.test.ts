@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -398,8 +398,8 @@ describe('Rust compiler backend', () => {
       }),
       expect.objectContaining({
         request: 'legacy',
-        resolvedId: 'legacy',
-        status: 'opaque',
+        resolvedId: null,
+        status: 'missing',
         metadata: null,
       }),
     ])
@@ -418,6 +418,69 @@ describe('Rust compiler backend', () => {
       }),
     )
     expect(metadataDependencies).toHaveBeenCalledWith('dep')
+  })
+
+  it('marks only plain packages opaque and fails closed for broken Fict declarations', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-state-'))
+    const importer = path.join(root, 'src', 'App.ts')
+    const plainPackage = path.join(root, 'node_modules', 'plain-library')
+    const brokenPackage = path.join(root, 'node_modules', 'broken-library')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await mkdir(plainPackage, { recursive: true })
+    await mkdir(brokenPackage, { recursive: true })
+    await writeFile(importer, 'export {}')
+    await writeFile(
+      path.join(plainPackage, 'package.json'),
+      JSON.stringify({ name: 'plain-library' }),
+    )
+    await writeFile(
+      path.join(brokenPackage, 'package.json'),
+      JSON.stringify({ name: 'broken-library', fict: { metadata: './index.fict.meta.json' } }),
+    )
+    await writeFile(path.join(brokenPackage, 'index.fict.meta.json'), '{')
+
+    try {
+      native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+      native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+      native.transform.mockResolvedValue(compileResult())
+      const plugin = createTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        useTypeScriptProject: false,
+        publicIdentityNamespace: 'native-test@1',
+      })
+      plugin.configResolved?.({
+        ...config,
+        root,
+        server: { fs: { allow: [root] } },
+      } as never)
+
+      await plugin.transform?.call(
+        context() as never,
+        "import 'plain-library'; import { useBroken } from 'broken-library'; export const value = useBroken();",
+        importer,
+      )
+
+      const request = native.transform.mock.calls[0]![0] as CompileRequest
+      expect(request.metadata).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            request: 'plain-library',
+            resolvedId: 'plain-library',
+            status: 'opaque',
+            metadata: null,
+          }),
+          expect.objectContaining({
+            request: 'broken-library',
+            resolvedId: null,
+            status: 'missing',
+            metadata: null,
+          }),
+        ]),
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('propagates partial local metadata as incompleteCycle without discarding known facts', async () => {

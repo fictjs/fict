@@ -27,6 +27,17 @@ interface FictPackageConfig {
   exports?: Record<string, string>
 }
 
+type PackageConfigReadResult =
+  | { kind: 'configured'; config: FictPackageConfig }
+  | { kind: 'invalid' }
+  | { kind: 'plain' }
+
+export type PackageModuleMetadataResolution =
+  | { kind: 'resolved'; metadata: ModuleReactiveMetadata }
+  | { kind: 'plain' }
+  | { kind: 'missing' }
+  | { kind: 'invalid' }
+
 export interface PackageModuleMetadataResolutionOptions {
   /** Called for every package manifest and metadata asset consulted by the graph host. */
   onDependency?: (filename: string) => void
@@ -227,23 +238,33 @@ function findPackageJsonPath(
   }
 }
 
-function readPackageConfig(packageJsonPath: string): FictPackageConfig | null {
+function readPackageConfig(packageJsonPath: string): PackageConfigReadResult {
   try {
-    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { fict?: unknown }
-    if (!isPlainObject(pkg.fict)) return null
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as unknown
+    if (!isPlainObject(pkg)) return { kind: 'invalid' }
+    if (!Object.prototype.hasOwnProperty.call(pkg, 'fict')) return { kind: 'plain' }
+    if (!isPlainObject(pkg.fict)) return { kind: 'invalid' }
 
     const config: FictPackageConfig = {}
-    if (typeof pkg.fict.metadata === 'string') config.metadata = pkg.fict.metadata
-    if (isPlainObject(pkg.fict.exports)) {
+    let hasDeclaration = false
+    if (Object.prototype.hasOwnProperty.call(pkg.fict, 'metadata')) {
+      hasDeclaration = true
+      if (typeof pkg.fict.metadata !== 'string') return { kind: 'invalid' }
+      config.metadata = pkg.fict.metadata
+    }
+    if (Object.prototype.hasOwnProperty.call(pkg.fict, 'exports')) {
+      if (!isPlainObject(pkg.fict.exports)) return { kind: 'invalid' }
       const exportsConfig: Record<string, string> = {}
       for (const [key, value] of Object.entries(pkg.fict.exports)) {
-        if (typeof value === 'string') exportsConfig[key] = value
+        hasDeclaration = true
+        if (typeof value !== 'string') return { kind: 'invalid' }
+        exportsConfig[key] = value
       }
       if (Object.keys(exportsConfig).length > 0) config.exports = exportsConfig
     }
-    return config.metadata || config.exports ? config : null
+    return hasDeclaration ? { kind: 'configured', config } : { kind: 'invalid' }
   } catch {
-    return null
+    return { kind: 'invalid' }
   }
 }
 
@@ -271,16 +292,50 @@ function normalizePackageMetadataPath(packageDir: string, metadataPath: string):
 function readPackageMetadataFile(
   metadataPath: string,
   packageDir: string,
-): ModuleReactiveMetadata | undefined {
-  if (!pathIsFile(metadataPath)) return undefined
+): PackageModuleMetadataResolution {
+  if (!pathIsFile(metadataPath)) return { kind: 'missing' }
   try {
     const packageRoot = realpathSync(packageDir)
     const realMetadataPath = realpathSync(metadataPath)
-    if (!isPathInside(packageRoot, realMetadataPath)) return undefined
-    return parseModuleReactiveMetadata(readFileSync(realMetadataPath, 'utf8')) ?? undefined
+    if (!isPathInside(packageRoot, realMetadataPath)) return { kind: 'invalid' }
+    const metadata = parseModuleReactiveMetadata(readFileSync(realMetadataPath, 'utf8'))
+    return metadata ? { kind: 'resolved', metadata } : { kind: 'invalid' }
   } catch {
-    return undefined
+    return { kind: 'invalid' }
   }
+}
+
+/** Resolve package-published Rust metadata without collapsing plain and failed declarations. */
+export function resolvePackageModuleMetadataState(
+  source: string,
+  importer: string | undefined,
+  options: PackageModuleMetadataResolutionOptions = {},
+): PackageModuleMetadataResolution {
+  const parsedSource = splitPackageSource(source)
+  if (!parsedSource || !normalizeConcreteFileName(importer)) return { kind: 'invalid' }
+
+  const packageJsonPath = findPackageJsonPath(
+    parsedSource.packageName,
+    importer,
+    options.onDependency,
+  )
+  if (!packageJsonPath) return { kind: 'missing' }
+
+  const packageConfigResult = readPackageConfig(packageJsonPath)
+  if (packageConfigResult.kind !== 'configured') return packageConfigResult
+  const packageConfig = packageConfigResult.config
+
+  const packageDir = path.dirname(packageJsonPath)
+  const declaredPath =
+    packageConfig.exports?.[parsedSource.rawSubpath] ??
+    packageConfig.exports?.[parsedSource.subpath] ??
+    (parsedSource.subpath === '.' ? packageConfig.metadata : undefined)
+  if (declaredPath === undefined) return { kind: 'plain' }
+
+  const metadataPath = normalizePackageMetadataPath(packageDir, declaredPath)
+  if (!metadataPath) return { kind: 'invalid' }
+  options.onDependency?.(metadataPath)
+  return readPackageMetadataFile(metadataPath, packageDir)
 }
 
 /** Resolve package-published Rust metadata. Source-adjacent Babel sidecars are not supported. */
@@ -289,28 +344,6 @@ export function resolvePackageModuleMetadata(
   importer: string | undefined,
   options: PackageModuleMetadataResolutionOptions = {},
 ): ModuleReactiveMetadata | undefined {
-  const parsedSource = splitPackageSource(source)
-  if (!parsedSource) return undefined
-
-  const packageJsonPath = findPackageJsonPath(
-    parsedSource.packageName,
-    importer,
-    options.onDependency,
-  )
-  if (!packageJsonPath) return undefined
-
-  const packageConfig = readPackageConfig(packageJsonPath)
-  if (!packageConfig) return undefined
-
-  const packageDir = path.dirname(packageJsonPath)
-  const declaredPath =
-    packageConfig.exports?.[parsedSource.rawSubpath] ??
-    packageConfig.exports?.[parsedSource.subpath] ??
-    (parsedSource.subpath === '.' ? packageConfig.metadata : undefined)
-  if (!declaredPath) return undefined
-
-  const metadataPath = normalizePackageMetadataPath(packageDir, declaredPath)
-  if (!metadataPath) return undefined
-  options.onDependency?.(metadataPath)
-  return readPackageMetadataFile(metadataPath, packageDir)
+  const resolution = resolvePackageModuleMetadataState(source, importer, options)
+  return resolution.kind === 'resolved' ? resolution.metadata : undefined
 }
