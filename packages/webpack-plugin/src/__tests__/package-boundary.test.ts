@@ -184,6 +184,10 @@ describe('Webpack package metadata boundaries', () => {
       './NODE_MODULES/private',
       './%2e%2e/private',
       './%6eode_modules/private',
+      './%2Fprivate',
+      './%5cprivate',
+      './%00private',
+      './invalid%',
       './*',
     ]) {
       expect(isCanonicalPublicSubpath(subpath)).toBe(false)
@@ -286,6 +290,10 @@ describe('Webpack package metadata boundaries', () => {
       './%6eode_modules/hook.js',
       './NoDe_MoDuLeS/hook.js',
       './%4eode_%6dodules/hook.js',
+      './dist/%2Fhook.js',
+      './dist/%5chook.js',
+      './dist/%00hook.js',
+      './dist/invalid%',
       '.',
       './',
     ]) {

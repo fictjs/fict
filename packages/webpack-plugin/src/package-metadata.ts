@@ -60,14 +60,20 @@ function resolveContainedFile(packageRoot: string, filename: string): string | n
 }
 
 function isCanonicalPackagePathSegment(segment: string): boolean {
-  const decodedSegment = segment.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) =>
-    String.fromCharCode(Number.parseInt(hex, 16)),
-  )
+  let decodedSegment: string
+  try {
+    decodedSegment = decodeURIComponent(segment)
+  } catch {
+    return false
+  }
   return (
     segment !== '' &&
     decodedSegment !== '.' &&
     decodedSegment !== '..' &&
-    decodedSegment.toLowerCase() !== 'node_modules'
+    decodedSegment.toLowerCase() !== 'node_modules' &&
+    !decodedSegment.includes('/') &&
+    !decodedSegment.includes('\\') &&
+    !decodedSegment.includes('\0')
   )
 }
 
