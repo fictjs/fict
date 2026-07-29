@@ -661,15 +661,43 @@ fn validate_identity(
 }
 
 fn source_mode_filename(filename: &str) -> &str {
+    let query = filename.find('?').unwrap_or(filename.len());
+    let fragment = filename.find('#').unwrap_or(filename.len());
+    if has_uri_scheme(filename) {
+        return &filename[..query.min(fragment)];
+    }
+    if is_windows_path(filename) && query < filename.len() {
+        return &filename[..query];
+    }
     // `filename` is the physical source identity; a literal POSIX `?` or `#` can therefore
     // precede its real extension. Only interpret a delimiter as a bundler suffix when the
     // complete filename does not already provide an unambiguous source mode.
     if infer_language(filename).is_some() {
         return filename;
     }
-    let query = filename.find('?').unwrap_or(filename.len());
-    let fragment = filename.find('#').unwrap_or(filename.len());
     &filename[..query.min(fragment)]
+}
+
+fn is_windows_path(filename: &str) -> bool {
+    let bytes = filename.as_bytes();
+    filename.starts_with("\\\\") || (bytes.get(1) == Some(&b':') && bytes[0].is_ascii_alphabetic())
+}
+
+fn has_uri_scheme(filename: &str) -> bool {
+    let Some(separator) = filename.find(':') else {
+        return false;
+    };
+    !is_windows_path(filename) && is_uri_scheme(&filename[..separator])
+}
+
+fn is_uri_scheme(candidate: &str) -> bool {
+    candidate
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
+        && candidate
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
 }
 
 fn infer_language(filename: &str) -> Option<SourceLanguage> {
@@ -850,6 +878,47 @@ mod tests {
                 "{filename}"
             );
         }
+    }
+
+    #[test]
+    fn strips_windows_and_uri_suffixes_across_public_requests() {
+        for filename in [
+            r"C:\src\legacy.cts?lang.tsx",
+            "virtual:legacy.cts?lang.tsx",
+            "webpack://project/src/legacy.cts#lang.tsx",
+        ] {
+            for normalized in [
+                request(filename)
+                    .normalize()
+                    .map(|request| (request.language, request.module_kind)),
+                serde_json::from_value::<ScanRequest>(json!({
+                    "code": "export = 1",
+                    "filename": filename,
+                }))
+                .expect("deserialize scan request")
+                .normalize()
+                .map(|request| (request.language, request.module_kind)),
+                serde_json::from_value::<AnalyzeRequest>(json!({
+                    "code": "export = 1",
+                    "filename": filename,
+                }))
+                .expect("deserialize analysis request")
+                .normalize()
+                .map(|request| (request.language, request.module_kind)),
+            ] {
+                assert_eq!(
+                    normalized.expect("normalize suffixed request"),
+                    (SourceLanguage::TypeScript, ModuleKind::CommonJs),
+                    "{filename}"
+                );
+            }
+        }
+
+        let literal_fragment = request(r"C:\src\legacy#view.tsx")
+            .normalize()
+            .expect("normalize Windows fragment filename");
+        assert_eq!(literal_fragment.language, SourceLanguage::TypeScriptJsx);
+        assert_eq!(literal_fragment.module_kind, ModuleKind::Module);
     }
 
     #[test]
