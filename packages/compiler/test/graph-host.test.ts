@@ -118,4 +118,40 @@ describe('@fictjs/compiler/graph-host', () => {
       expect(dependencies).toEqual([])
     },
   )
+
+  it.skipIf(process.platform === 'win32').each(['?', '#'])(
+    'preserves a literal %s in a physical importer path',
+    async literal => {
+      const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-literal-importer-'))
+      tempRoots.push(root)
+      const literalWorkspace = path.join(root, `workspace${literal}literal`)
+      const importer = path.join(literalWorkspace, 'src', 'App.tsx')
+      const correctPackageRoot = path.join(literalWorkspace, 'node_modules', 'fict-library')
+      const incorrectPackageRoot = path.join(root, 'workspace', 'node_modules', 'fict-library')
+      await mkdir(path.dirname(importer), { recursive: true })
+      await mkdir(correctPackageRoot, { recursive: true })
+      await mkdir(incorrectPackageRoot, { recursive: true })
+      await writeFile(importer, 'export {}')
+
+      for (const [packageRoot, exportName] of [
+        [correctPackageRoot, 'correct'],
+        [incorrectPackageRoot, 'incorrect'],
+      ] as const) {
+        await writeFile(
+          path.join(packageRoot, 'package.json'),
+          JSON.stringify({ fict: { metadata: './index.fict.meta.json' } }),
+        )
+        await writeFile(
+          path.join(packageRoot, 'index.fict.meta.json'),
+          JSON.stringify({ version: 1, exports: { [exportName]: 'signal' } }),
+        )
+      }
+
+      const { resolvePackageModuleMetadata } = await import('../src/graph-host')
+      expect(resolvePackageModuleMetadata('fict-library', importer)).toEqual({
+        version: 1,
+        exports: { correct: 'signal' },
+      })
+    },
+  )
 })

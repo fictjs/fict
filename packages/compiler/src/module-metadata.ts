@@ -130,10 +130,12 @@ function stripUrlLikeSuffix(value: string): string {
 
 function normalizeConcreteFileName(fileName: string | undefined): string | null {
   if (!fileName || isVirtualFileName(fileName)) return null
-  let normalized = stripUrlLikeSuffix(fileName)
+  let normalized = fileName
   if (normalized.startsWith('/@fs/')) {
-    const fsPath = normalized.slice('/@fs/'.length)
-    normalized = fsPath.startsWith('/') || isWindowsDrivePath(fsPath) ? fsPath : `/${fsPath}`
+    const rawFsPath = normalized.slice('/@fs/'.length)
+    const fsPath =
+      rawFsPath.startsWith('/') || isWindowsDrivePath(rawFsPath) ? rawFsPath : `/${rawFsPath}`
+    normalized = pathIsFile(fsPath) ? fsPath : stripUrlLikeSuffix(fsPath)
   }
   if (normalized.startsWith('file://')) {
     try {
@@ -141,6 +143,8 @@ function normalizeConcreteFileName(fileName: string | undefined): string | null 
     } catch {
       return null
     }
+  } else if (!pathIsFile(path.resolve(normalized))) {
+    normalized = stripUrlLikeSuffix(normalized)
   }
   return path.resolve(normalized)
 }
