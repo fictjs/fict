@@ -241,6 +241,7 @@ interface MetadataLoadOptions {
 
 interface ResolvedMetadataModule {
   key: string
+  external?: boolean
   filename?: string
   packageJsonPath?: string
   packageSource?: string
@@ -1477,15 +1478,21 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             loadOptions: resolved,
           }
         }
-        if (!resolved.external) {
-          const resolvedFile = resolveExistingModuleFile(resolvedParts.filename)
-          if (resolvedFile) {
-            const identity = createMetadataModuleIdentity(resolved.id, config?.root)
-            return {
-              filename: normalizeFileName(resolvedFile, config?.root),
-              key: identity.key,
-              loadOptions: resolved,
-            }
+        if (resolved.external && isBarePackageSource(resolvedParts.filename)) {
+          return {
+            key: resolved.id,
+            packageSource: resolvedParts.filename,
+            loadOptions: resolved,
+          }
+        }
+        const resolvedFile = resolveExistingModuleFile(resolvedParts.filename)
+        if (resolvedFile) {
+          const identity = createMetadataModuleIdentity(resolved.id, config?.root)
+          return {
+            external: !!resolved.external,
+            filename: normalizeFileName(resolvedFile, config?.root),
+            key: identity.key,
+            loadOptions: resolved,
           }
         }
       }
@@ -1556,9 +1563,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           })
           continue
         }
+        if (resolved.packageSource) {
+          state.resolvedLocalModules.set(resolutionKey, {
+            key: resolved.key,
+            packageSource: resolved.packageSource,
+          })
+          continue
+        }
         const resolvedFilename = resolved.filename
         if (!resolvedFilename) continue
-        if (!shouldCompileModule(resolvedFilename)) {
+        if (resolved.external || !shouldCompileModule(resolvedFilename)) {
           const aliasedPackageSource = resolveAliasedPackageSource(source, aliasEntries)
           const packageImportsSource = resolvePackageImportsSource(source, aliasEntries)
           const boundary =

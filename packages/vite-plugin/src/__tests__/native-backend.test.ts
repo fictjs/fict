@@ -629,6 +629,134 @@ describe('Rust compiler backend', () => {
     }
   })
 
+  it('loads package metadata for package imports externalized to a bare package', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-external-package-imports-'))
+    const importer = path.join(root, 'src', 'App.ts')
+    const packageRoot = path.join(root, 'node_modules', 'hook-lib')
+    const packageJsonPath = path.join(packageRoot, 'package.json')
+    const metadataPath = path.join(packageRoot, 'index.fict.meta.json')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(importer, 'export {}')
+    await writeFile(
+      packageJsonPath,
+      JSON.stringify({
+        name: 'hook-lib',
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+    )
+    await writeFile(
+      metadataPath,
+      JSON.stringify({ version: 1, exports: {}, hooks: { useVirtual: {} } }),
+    )
+
+    try {
+      native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+      native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+      native.transform.mockResolvedValue(compileResult())
+      const metadataDependencies = vi.fn()
+      const plugin = createTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        useTypeScriptProject: false,
+        publicIdentityNamespace: 'native-test@1',
+        onModuleMetadataDependency: metadataDependencies,
+      })
+      plugin.configResolved?.({
+        ...config,
+        root,
+        server: { fs: { allow: [root] } },
+      } as never)
+      const resolve = vi.fn(async (source: string) =>
+        source === '#virtual-hook' ? { id: 'hook-lib', external: true } : null,
+      )
+
+      await plugin.transform?.call(
+        { ...context(), resolve } as never,
+        "import { useVirtual } from '#virtual-hook'; export const value = useVirtual();",
+        importer,
+      )
+
+      const request = native.transform.mock.calls[0]![0] as CompileRequest
+      expect(request.metadata).toEqual([
+        expect.objectContaining({
+          request: '#virtual-hook',
+          resolvedId: 'hook-lib',
+          status: 'resolved',
+          metadata: { version: 1, exports: {}, hooks: { useVirtual: {} } },
+        }),
+      ])
+      expect(resolve).toHaveBeenCalledWith('#virtual-hook', importer, { skipSelf: true })
+      expect(metadataDependencies).toHaveBeenCalledWith(packageJsonPath)
+      expect(metadataDependencies).toHaveBeenCalledWith(metadataPath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('loads package metadata for package imports externalized to a physical entry', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-external-package-entry-'))
+    const importer = path.join(root, 'src', 'App.ts')
+    const packageRoot = path.join(root, 'node_modules', 'hook-lib')
+    const packageEntry = path.join(packageRoot, 'index.js')
+    const packageJsonPath = path.join(packageRoot, 'package.json')
+    const metadataPath = path.join(packageRoot, 'index.fict.meta.json')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await mkdir(packageRoot, { recursive: true })
+    await writeFile(importer, 'export {}')
+    await writeFile(packageEntry, 'export function useVirtual() {}')
+    await writeFile(
+      packageJsonPath,
+      JSON.stringify({
+        name: 'hook-lib',
+        exports: './index.js',
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+    )
+    await writeFile(
+      metadataPath,
+      JSON.stringify({ version: 1, exports: {}, hooks: { useVirtual: {} } }),
+    )
+
+    try {
+      native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+      native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+      native.transform.mockResolvedValue(compileResult())
+      const plugin = createTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        useTypeScriptProject: false,
+        publicIdentityNamespace: 'native-test@1',
+      })
+      plugin.configResolved?.({
+        ...config,
+        root,
+        server: { fs: { allow: [root] } },
+      } as never)
+      const resolve = vi.fn(async (source: string) =>
+        source === '#virtual-hook' ? { id: packageEntry, external: true } : null,
+      )
+
+      await plugin.transform?.call(
+        { ...context(), resolve } as never,
+        "import { useVirtual } from '#virtual-hook'; export const value = useVirtual();",
+        importer,
+      )
+
+      const request = native.transform.mock.calls[0]![0] as CompileRequest
+      expect(request.metadata).toEqual([
+        expect.objectContaining({
+          request: '#virtual-hook',
+          resolvedId: packageEntry,
+          status: 'resolved',
+          metadata: { version: 1, exports: {}, hooks: { useVirtual: {} } },
+        }),
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     [
       'browser entry',
