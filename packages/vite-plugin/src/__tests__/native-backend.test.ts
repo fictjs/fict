@@ -720,6 +720,42 @@ describe('Rust compiler backend', () => {
     },
   )
 
+  it.each([
+    ['virtual scheme', { id: 'virtual:hook' }],
+    ['internal id', { id: '\0virtual-hook' }],
+    ['external scheme', { id: 'node:hook', external: true }],
+  ] as const)('keeps a package import resolved to an opaque %s', async (_label, resolution) => {
+    native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
+    native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))
+    native.transform.mockResolvedValue(compileResult())
+    const plugin = createTestPlugin({
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    plugin.configResolved?.(config as never)
+    const resolve = vi.fn(async (source: string) =>
+      source === '#virtual-hook' ? resolution : null,
+    )
+
+    await plugin.transform?.call(
+      { ...context(), resolve } as never,
+      "import { useVirtual } from '#virtual-hook'; export const value = useVirtual();",
+      '/project/src/App.ts',
+    )
+
+    const request = native.transform.mock.calls[0]![0] as CompileRequest
+    expect(request.metadata).toEqual([
+      expect.objectContaining({
+        request: '#virtual-hook',
+        resolvedId: resolution.id,
+        status: 'opaque',
+        metadata: null,
+      }),
+    ])
+  })
+
   it('keeps scheme imports opaque instead of reporting missing package metadata', async () => {
     native.scan.mockImplementation(async request => scanAllStaticImports(request as ScanRequest))
     native.scanSync.mockImplementation(request => scanAllStaticImports(request as ScanRequest))

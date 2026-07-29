@@ -241,9 +241,10 @@ interface MetadataLoadOptions {
 
 interface ResolvedMetadataModule {
   key: string
-  filename: string
+  filename?: string
   packageJsonPath?: string
   packageSource?: string
+  opaqueSource?: string
 }
 
 interface ResolvedCompilerModuleMetadata {
@@ -1291,7 +1292,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         resolveLocalModuleSource(source, normalizedFilename, config?.root, aliasEntries)
       const packageSource =
         exactResolution?.packageSource ?? resolveAliasedPackageSource(source, aliasEntries)
-      const opaqueSource = resolveOpaqueModuleSource(source, aliasEntries)
+      const opaqueSource =
+        exactResolution?.opaqueSource ?? resolveOpaqueModuleSource(source, aliasEntries)
       let resolvedId = exactResolution?.key ?? localFile ?? packageSource
       let status: ResolvedMetadataInput['status']
       let resolvedMetadata: ModuleReactiveMetadata | null = null
@@ -1465,16 +1467,25 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
     if (context.resolve) {
       const resolved = await context.resolve(source, importer, { skipSelf: true })
-      if (resolved && !resolved.external && !isInternalModuleId(resolved.id)) {
+      if (resolved) {
         const resolvedParts = splitModuleId(resolved.id, { root: config?.root })
         if (shouldSkipMetadataForModuleSuffix(resolvedParts.suffix)) return null
-        const resolvedFile = resolveExistingModuleFile(resolvedParts.filename)
-        if (resolvedFile) {
-          const identity = createMetadataModuleIdentity(resolved.id, config?.root)
+        if (isInternalModuleId(resolved.id) || hasModuleScheme(resolvedParts.filename)) {
           return {
-            filename: normalizeFileName(resolvedFile, config?.root),
-            key: identity.key,
+            key: resolved.id,
+            opaqueSource: resolved.id,
             loadOptions: resolved,
+          }
+        }
+        if (!resolved.external) {
+          const resolvedFile = resolveExistingModuleFile(resolvedParts.filename)
+          if (resolvedFile) {
+            const identity = createMetadataModuleIdentity(resolved.id, config?.root)
+            return {
+              filename: normalizeFileName(resolvedFile, config?.root),
+              key: identity.key,
+              loadOptions: resolved,
+            }
           }
         }
       }
@@ -1538,12 +1549,21 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const resolved = await resolveGraphDependency(context, source, node.id)
         if (!resolved) continue
         const resolutionKey = createLocalResolutionKey(identity.key, source)
-        if (!shouldCompileModule(resolved.filename)) {
+        if (resolved.opaqueSource) {
+          state.resolvedLocalModules.set(resolutionKey, {
+            key: resolved.key,
+            opaqueSource: resolved.opaqueSource,
+          })
+          continue
+        }
+        const resolvedFilename = resolved.filename
+        if (!resolvedFilename) continue
+        if (!shouldCompileModule(resolvedFilename)) {
           const aliasedPackageSource = resolveAliasedPackageSource(source, aliasEntries)
           const packageImportsSource = resolvePackageImportsSource(source, aliasEntries)
           const boundary =
             aliasedPackageSource || packageImportsSource
-              ? findOwningPackageBoundary(resolved.filename, packageBoundaryCache)
+              ? findOwningPackageBoundary(resolvedFilename, packageBoundaryCache)
               : null
           const packageSource =
             aliasedPackageSource ??
@@ -1551,14 +1571,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               ? resolvePackageSourceFromResolvedFile(
                   boundary,
                   path.join(boundary.root, 'package.json'),
-                  resolved.filename,
+                  resolvedFilename,
                   config?.resolve?.mainFields,
                 )
               : null)
           if (boundary && packageSource) {
             state.resolvedLocalModules.set(resolutionKey, {
               key: resolved.key,
-              filename: resolved.filename,
+              filename: resolvedFilename,
               packageJsonPath: path.join(boundary.root, 'package.json'),
               packageSource,
             })
@@ -1567,7 +1587,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         }
         state.resolvedLocalModules.set(resolutionKey, {
           key: resolved.key,
-          filename: resolved.filename,
+          filename: resolvedFilename,
         })
         node.dependencies.add(resolved.key)
         await visit(resolved.loadOptions.id, undefined, resolved.loadOptions)
@@ -2916,7 +2936,10 @@ function stripQuery(id: string, options?: SplitModuleIdOptions): string {
   return splitModuleId(id, options).filename
 }
 
-function createMetadataModuleIdentity(id: string, root?: string): ResolvedMetadataModule {
+function createMetadataModuleIdentity(
+  id: string,
+  root?: string,
+): ResolvedMetadataModule & { filename: string } {
   const { filename, suffix } = splitModuleId(id, { root })
   const normalizedFilename = normalizeFileName(filename, root)
   return {
@@ -4726,6 +4749,10 @@ function computePackageMetadataCacheFingerprint(
     const exactResolution = resolvedLocalModules?.get(
       createLocalResolutionKey(currentMetadataKey, source),
     )
+    if (exactResolution?.opaqueSource) {
+      entries.push([source, null, `opaque:${exactResolution.opaqueSource}`])
+      continue
+    }
     const packageSource =
       exactResolution?.packageSource ?? resolveAliasedPackageSource(source, aliases)
     if (packageSource && exactResolution?.packageJsonPath) {
