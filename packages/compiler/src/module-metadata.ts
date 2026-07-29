@@ -207,13 +207,18 @@ function splitPackageSource(
   }
 }
 
-function findPackageJsonPath(packageName: string, importer: string | undefined): string | null {
+function findPackageJsonPath(
+  packageName: string,
+  importer: string | undefined,
+  onDependency: ((filename: string) => void) | undefined,
+): string | null {
   const normalizedImporter = normalizeConcreteFileName(importer)
   if (!normalizedImporter) return null
 
   let current = path.dirname(normalizedImporter)
   while (true) {
     const candidate = path.join(current, 'node_modules', packageName, 'package.json')
+    onDependency?.(candidate)
     if (pathIsFile(candidate)) return candidate
 
     const parent = path.dirname(current)
@@ -287,9 +292,12 @@ export function resolvePackageModuleMetadata(
   const parsedSource = splitPackageSource(source)
   if (!parsedSource) return undefined
 
-  const packageJsonPath = findPackageJsonPath(parsedSource.packageName, importer)
+  const packageJsonPath = findPackageJsonPath(
+    parsedSource.packageName,
+    importer,
+    options.onDependency,
+  )
   if (!packageJsonPath) return undefined
-  options.onDependency?.(packageJsonPath)
 
   const packageConfig = readPackageConfig(packageJsonPath)
   if (!packageConfig) return undefined

@@ -65,7 +65,11 @@ describe('@fictjs/compiler/graph-host', () => {
         onDependency: dependency => dependencies.push(dependency),
       }),
     ).toEqual({ version: 1, exports: { count: 'signal' } })
-    expect(dependencies).toEqual([path.join(packageRoot, 'package.json'), metadataPath])
+    expect(dependencies).toEqual([
+      path.join(path.dirname(importer), 'node_modules', 'fict-library', 'package.json'),
+      path.join(packageRoot, 'package.json'),
+      metadataPath,
+    ])
   })
 
   it('does not read the retired root fictMetadata declaration', async () => {
@@ -154,4 +158,30 @@ describe('@fictjs/compiler/graph-host', () => {
       })
     },
   )
+
+  it('reports every missing package boundary candidate as a watch dependency', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-graph-host-missing-package-'))
+    tempRoots.push(root)
+    const importer = path.join(root, 'workspace', 'src', 'App.tsx')
+    await mkdir(path.dirname(importer), { recursive: true })
+    await writeFile(importer, 'export {}')
+
+    const { resolvePackageModuleMetadata } = await import('../src/graph-host')
+    const dependencies: string[] = []
+    expect(
+      resolvePackageModuleMetadata('future-library', importer, {
+        onDependency: dependency => dependencies.push(dependency),
+      }),
+    ).toBeUndefined()
+
+    const expected: string[] = []
+    let current = path.dirname(importer)
+    while (true) {
+      expected.push(path.join(current, 'node_modules', 'future-library', 'package.json'))
+      const parent = path.dirname(current)
+      if (parent === current) break
+      current = parent
+    }
+    expect(dependencies).toEqual(expected)
+  })
 })
