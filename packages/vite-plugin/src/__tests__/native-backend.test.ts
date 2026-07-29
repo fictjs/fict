@@ -722,6 +722,7 @@ describe('Rust compiler backend', () => {
 
   it.each([
     ['virtual scheme', { id: 'virtual:hook' }],
+    ['one-character hierarchical scheme', { id: 'x://hook' }],
     ['internal id', { id: '\0virtual-hook' }],
     ['external scheme', { id: 'node:hook', external: true }],
   ] as const)('keeps a package import resolved to an opaque %s', async (_label, resolution) => {
@@ -767,7 +768,7 @@ describe('Rust compiler backend', () => {
       publicIdentityNamespace: 'native-test@1',
     })
     plugin.configResolved?.(config as never)
-    const sources = ['node:async_hooks', 'virtual:hook', 'https://example.test/hook.js']
+    const sources = ['node:async_hooks', 'virtual:hook', 'x://hook', 'https://example.test/hook.js']
     const code = sources
       .map((source, index) => `import { useHook as useHook${index} } from '${source}'`)
       .join('\n')

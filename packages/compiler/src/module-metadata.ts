@@ -141,8 +141,12 @@ export function parseModuleReactiveMetadata(raw: string): ModuleReactiveMetadata
   }
 }
 
+const hasHierarchicalUriScheme = (fileName: string): boolean =>
+  /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(fileName)
+
 const isWindowsDrivePath = (fileName: string): boolean =>
-  /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
+  (!hasHierarchicalUriScheme(fileName) && /^[a-zA-Z]:[\\/]/.test(fileName)) ||
+  fileName.startsWith('\\\\')
 
 function isVirtualFileName(fileName: string): boolean {
   const trimmed = fileName.trim()

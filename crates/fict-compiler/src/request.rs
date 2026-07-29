@@ -687,7 +687,8 @@ fn has_uri_scheme(filename: &str) -> bool {
     let Some(separator) = filename.find(':') else {
         return false;
     };
-    !is_windows_path(filename) && is_uri_scheme(&filename[..separator])
+    is_uri_scheme(&filename[..separator])
+        && (!is_windows_path(filename) || filename[separator + 1..].starts_with("//"))
 }
 
 fn is_uri_scheme(candidate: &str) -> bool {
@@ -885,6 +886,7 @@ mod tests {
         for filename in [
             r"C:\src\legacy.cts?lang.tsx",
             "virtual:legacy.cts?lang.tsx",
+            "x://project/src/legacy.cts#lang.tsx",
             "webpack://project/src/legacy.cts#lang.tsx",
         ] {
             for normalized in [

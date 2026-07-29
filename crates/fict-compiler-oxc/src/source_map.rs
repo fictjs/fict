@@ -361,7 +361,10 @@ fn has_uri_scheme(identity: &str) -> bool {
     let Some(separator) = identity.find(':') else {
         return false;
     };
-    if separator == 1 && identity.as_bytes()[0].is_ascii_alphabetic() {
+    if separator == 1
+        && identity.as_bytes()[0].is_ascii_alphabetic()
+        && !identity[separator + 1..].starts_with("//")
+    {
         return false;
     }
     is_uri_scheme(&identity[..separator])
@@ -606,6 +609,20 @@ mod tests {
         assert_eq!(
             composed.get_sources().collect::<Vec<_>>(),
             ["original.tsx", "virtual:helper.js"]
+        );
+    }
+
+    #[test]
+    fn matches_single_character_hierarchical_uri_sources_after_suffix_fallback() {
+        let generated = r#"{"version":3,"file":"out.js","sources":["x://project/intermediate.ts#worker","x://project/helper.js"],"names":[],"mappings":"AAAA;ACAA"}"#;
+        let input = r#"{"version":3,"file":"x://project/intermediate.ts","sources":["original.tsx"],"names":[],"mappings":"AAAA"}"#;
+
+        let composed = compose_source_map_json(generated, input)
+            .expect("single-character hierarchical URI identity should match");
+        let composed = SourceMap::from_json_string(&composed).expect("decoded composed map");
+        assert_eq!(
+            composed.get_sources().collect::<Vec<_>>(),
+            ["original.tsx", "x://project/helper.js"]
         );
     }
 

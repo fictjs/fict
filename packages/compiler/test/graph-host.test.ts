@@ -375,4 +375,26 @@ describe('@fictjs/compiler/graph-host', () => {
       kind: 'invalid',
     })
   })
+
+  it('preserves a one-character hierarchical scheme importer for host resolution', async () => {
+    const { resolvePackageModuleMetadataState } = await import('../src/graph-host')
+    const requests: unknown[] = []
+
+    expect(
+      resolvePackageModuleMetadataState('virtual-hook', 'x://entry', {
+        resolvePackage: request => {
+          requests.push(request)
+          return { kind: 'plain' }
+        },
+      }),
+    ).toEqual({ kind: 'plain' })
+    expect(requests).toEqual([
+      {
+        source: 'virtual-hook',
+        importer: 'x://entry',
+        packageName: 'virtual-hook',
+        publicSubpath: '.',
+      },
+    ])
+  })
 })

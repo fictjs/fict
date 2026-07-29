@@ -4358,7 +4358,8 @@ function resolveOpaqueModuleSource(source: string, aliases: AliasEntry[]): strin
 }
 
 function hasModuleScheme(source: string): boolean {
-  return !path.win32.isAbsolute(source) && /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(source)
+  const scheme = /^[a-zA-Z][a-zA-Z\d+.-]*:/.exec(source)
+  return !!scheme && (source.startsWith('//', scheme[0].length) || !path.win32.isAbsolute(source))
 }
 
 function shouldSkipMetadataForModuleQuery(source: string, options?: SplitModuleIdOptions): boolean {
