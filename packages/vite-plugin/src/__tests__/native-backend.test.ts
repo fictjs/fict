@@ -175,6 +175,17 @@ describe('Vite alias metadata resolution', () => {
       expect(find.lastIndex).toBe(7)
     },
   )
+
+  it.each(['', 'g', 'y'])('does not mutate a frozen /%s RegExp alias', flags => {
+    const find = Object.freeze(new RegExp('^dep', flags))
+
+    expect(
+      __fictVitePluginInternals.applyAlias('dep/subpath', [
+        { find, replacement: 'actual-package' },
+      ]),
+    ).toBe('actual-package/subpath')
+    expect(find.lastIndex).toBe(0)
+  })
 })
 
 describe('Rust compiler backend', () => {

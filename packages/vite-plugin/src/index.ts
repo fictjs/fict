@@ -4166,12 +4166,10 @@ function applyAlias(source: string, aliases: AliasEntry[]): string | null {
       continue
     }
     if (alias.find instanceof RegExp) {
-      const previousLastIndex = alias.find.lastIndex
-      alias.find.lastIndex = 0
-      const matches = alias.find.test(source)
-      alias.find.lastIndex = 0
-      const replacement = matches ? source.replace(alias.find, alias.replacement) : null
-      alias.find.lastIndex = previousLastIndex
+      const find = new RegExp(alias.find.source, alias.find.flags)
+      const matches = find.test(source)
+      find.lastIndex = 0
+      const replacement = matches ? source.replace(find, alias.replacement) : null
       if (replacement !== null) return replacement
     }
   }
