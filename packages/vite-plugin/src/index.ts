@@ -4119,8 +4119,14 @@ function applyAlias(source: string, aliases: AliasEntry[]): string | null {
       }
       continue
     }
-    if (alias.find instanceof RegExp && alias.find.test(source)) {
-      return source.replace(alias.find, alias.replacement)
+    if (alias.find instanceof RegExp) {
+      const previousLastIndex = alias.find.lastIndex
+      alias.find.lastIndex = 0
+      const matches = alias.find.test(source)
+      alias.find.lastIndex = 0
+      const replacement = matches ? source.replace(alias.find, alias.replacement) : null
+      alias.find.lastIndex = previousLastIndex
+      if (replacement !== null) return replacement
     }
   }
   return null
@@ -4573,6 +4579,7 @@ function computePackageMetadataCacheFingerprint(
 }
 
 export const __fictVitePluginInternals = {
+  applyAlias,
   computePackageMetadataCacheFingerprint,
   buildFictPackageMappingResult,
   applyFictPackageMappings,

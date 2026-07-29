@@ -38,7 +38,7 @@ vi.mock('@fictjs/compiler/native', () => ({
   loadNativeCompilerBinding: native.load,
 }))
 
-import fict from '..'
+import fict, { __fictVitePluginInternals } from '..'
 
 function createTestPlugin(options: Parameters<typeof fict>[0] = {}) {
   return fict(options) as any
@@ -159,6 +159,23 @@ function context() {
     },
   }
 }
+
+describe('Vite alias metadata resolution', () => {
+  it.each(['g', 'y', 'gy'])(
+    'applies a stateful /%s RegExp from the same position for matching and replacement',
+    flags => {
+      const find = new RegExp('^dep', flags)
+      find.lastIndex = 7
+
+      expect(
+        __fictVitePluginInternals.applyAlias('dep/subpath', [
+          { find, replacement: 'actual-package' },
+        ]),
+      ).toBe('actual-package/subpath')
+      expect(find.lastIndex).toBe(7)
+    },
+  )
+})
 
 describe('Rust compiler backend', () => {
   beforeEach(() => {
