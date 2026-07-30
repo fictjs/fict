@@ -576,7 +576,7 @@ fn tracks_state_elements_in_array_sort_comparators() {
                     const rows = $state([{{ done: false }}])
                     return rows.toSorted((left, right) => {{
                         {parameter}.done = true
-                        return Number(left.done) - Number(right.done)
+                        return 0
                     }})
                 }}
             "#
@@ -613,7 +613,7 @@ fn tracks_state_elements_in_array_sort_comparators() {
             const rows = $state([{ done: false }])
             return rows.sort((left, right) => {
                 left.done = true
-                return Number(left.done) - Number(right.done)
+                return 0
             })
         }
     "#;
@@ -695,7 +695,7 @@ fn accepts_definitely_undefined_array_sort_comparators() {
                 const rows = $state([{ done: false }])
                 let comparator
                 if (flag) {
-                    comparator = (left, right) => Number(left.done) - Number(right.done)
+                    comparator = () => 0
                 }
                 return rows.toSorted(comparator)
             }
@@ -817,6 +817,107 @@ fn rejects_reassigned_known_safe_callback_globals() {
 }
 
 #[test]
+fn rejects_callback_coercions_that_can_execute_user_code() {
+    for coercion in [
+        "String",
+        "Number",
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "isFinite",
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict'
+                function App() {{
+                    const rows = $state([{{
+                        done: false,
+                        valueOf() {{ this.done = true; return 0 }},
+                        toString() {{ this.done = true; return '0' }},
+                    }}])
+                    rows.forEach(item => {{
+                        {coercion}(item)
+                    }})
+                    return rows
+                }}
+            "#
+        );
+        let fallback = compile_source(&source, CompilerOptions::default());
+        let diagnostic = find_error(&fallback, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+        let strict = compile_source_with_strict(&source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+
+    let spread = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([[{ done: false }]])
+                rows.forEach(item => {
+                    Boolean(...item)
+                })
+                return rows
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    let diagnostic = find_error(&spread, "FICT-R002");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+    assert!(spread.code.is_empty());
+
+    for coercion in [
+        "String",
+        "Number",
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "isFinite",
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict'
+                function App() {{
+                    const rows = $state([{{
+                        child: {{
+                            done: false,
+                            valueOf() {{ this.done = true; return 0 }},
+                            toString() {{ this.done = true; return '0' }},
+                        }},
+                    }}])
+                    rows.forEach(item => {{
+                        {coercion}(item.child)
+                    }})
+                    return rows
+                }}
+            "#
+        );
+        let strict = compile_source_with_strict(&source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+
+    let boolean = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.map(item => `${Boolean(item)}:${Boolean(item.done)}`)
+                    .filter(Boolean)
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(!boolean.has_errors(), "{:#?}", boolean.diagnostics);
+}
+
+#[test]
 fn keeps_shadowed_undefined_array_sort_comparators_unresolved() {
     let result = compile_source(
         r#"
@@ -841,7 +942,7 @@ fn keeps_capture_written_array_sort_comparators_unresolved() {
                 const rows = $state([{ done: false }])
                 let comparator
                 const install = () => {
-                    comparator = (left, right) => Number(left.done) - Number(right.done)
+                    comparator = () => 0
                 }
                 install()
                 return rows.toSorted(comparator)
@@ -1182,7 +1283,7 @@ fn tracks_mutating_optional_array_sort_comparators_without_unresolved_fallback()
             if (flag) {
                 comparator = (left, right) => {
                     left.done = true
-                    return Number(left.done) - Number(right.done)
+                    return 0
                 }
             }
             return rows.toSorted(comparator)

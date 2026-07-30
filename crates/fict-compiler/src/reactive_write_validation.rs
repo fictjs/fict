@@ -1768,7 +1768,7 @@ fn escape_location_is_direct_state_root_write(
         .is_some_and(|binding| state_bindings.contains(&binding))
 }
 
-fn call_is_non_retaining_global(
+fn call_is_non_retaining_boolean(
     hir: &HirFile,
     function: &HirFunction,
     call: &fict_hir::CallInstruction,
@@ -1790,14 +1790,12 @@ fn call_is_non_retaining_global(
     let PlaceBase::Global(global) = place.base else {
         return false;
     };
-    place.projections.is_empty()
-        && !written_globals.contains(&global)
-        && hir.globals.get(global.as_usize()).is_some_and(|global| {
-            matches!(
-                global.name.as_str(),
-                "String" | "Number" | "Boolean" | "parseInt" | "parseFloat" | "isNaN" | "isFinite"
-            )
-        })
+    if !place.projections.is_empty() || written_globals.contains(&global) {
+        return false;
+    }
+    hir.globals
+        .get(global.as_usize())
+        .is_some_and(|global| global.name == "Boolean")
 }
 
 fn callback_receiver_scalar_projection(
@@ -1852,22 +1850,26 @@ fn escape_location_preserves_callback_identity(
     };
     match &instruction.kind {
         HirInstructionKind::Call(call) => {
-            if call_is_non_retaining_global(identity.hir, function, call, &identity.written_globals)
-            {
-                return false;
-            }
+            let known_boolean = call_is_non_retaining_boolean(
+                identity.hir,
+                function,
+                call,
+                &identity.written_globals,
+            );
             call.arguments.iter().enumerate().any(|(index, argument)| {
-                preserves(argument.value)
+                if !preserves(argument.value) {
+                    return false;
+                }
+                let projected =
+                    value_is_projected_callback_identity(analysis, argument.value, callback_names);
+                let known_non_retaining = known_boolean && !argument.spread;
+                !known_non_retaining
                     && !local_call_argument_is_non_retaining(
                         identity.hir,
                         identity.analyses,
                         call,
                         index,
-                        value_is_projected_callback_identity(
-                            analysis,
-                            argument.value,
-                            callback_names,
-                        ),
+                        projected,
                     )
             })
         }
