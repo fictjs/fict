@@ -893,6 +893,135 @@ fn allows_writes_to_fresh_state_callback_rest_containers() {
 }
 
 #[test]
+fn accepts_non_executing_generator_state_callbacks() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(function* (item) {
+                    item.done = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const callback = async function* (item) {
+                    item.done = true
+                }
+                rows.filter(callback)
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                rows.toSorted(function* (item) {
+                    item.done = true
+                })
+                return rows
+            }
+        "#,
+    ] {
+        for strict_guarantee in [false, true] {
+            let result =
+                compile_source_with_strict(source, CompilerOptions::default(), strict_guarantee);
+            assert!(!result.has_errors(), "{source}\n{:#?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-M"),
+                "{source}\n{:#?}",
+                result.diagnostics
+            );
+        }
+    }
+}
+
+#[test]
+fn tracks_generator_callbacks_when_their_iterators_escape() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const iterators = rows.map(function* (item) {
+                    item.done = true
+                })
+                iterators[0].next()
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const task = $state(Promise.resolve({ done: false }))
+                const iterator = task.then(function* (item) {
+                    item.done = true
+                })
+                iterator.then(value => value.next())
+                return task
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                const iterator = rows.reduce(function* (_previous, item) {
+                    item.done = true
+                })
+                iterator.next()
+                return rows
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = fallback
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .unwrap_or_else(|| panic!("missing FICT-M for {source}: {:#?}", fallback.diagnostics));
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        find_error(&strict, "FICT-M");
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
+fn still_rejects_a_possible_executing_callback_alongside_a_generator() {
+    let source = r#"
+        import { $state } from 'fict'
+        function App(flag) {
+            const rows = $state([{ done: false }])
+            const callback = flag
+                ? function* (item) { item.done = true }
+                : function (item) { item.done = true }
+            rows.forEach(callback)
+            return rows
+        }
+    "#;
+
+    let fallback = compile_source(source, CompilerOptions::default());
+    let diagnostic = fallback
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .unwrap_or_else(|| panic!("missing FICT-M: {:#?}", fallback.diagnostics));
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+    let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+    find_error(&strict, "FICT-M");
+    assert!(strict.code.is_empty());
+}
+
+#[test]
 fn accepts_definitely_undefined_array_sort_comparators() {
     for source in [
         r#"

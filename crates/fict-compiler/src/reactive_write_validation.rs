@@ -69,7 +69,17 @@ struct CallbackBindingFacts<'a> {
 }
 
 type CallbackParameterProvenance = (usize, Option<StateReceiverKind>);
-type StateCallbackSignature = (usize, Vec<CallbackParameterProvenance>);
+type StateCallbackSignature = (
+    usize,
+    Vec<CallbackParameterProvenance>,
+    CallbackReturnDisposition,
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallbackReturnDisposition {
+    Discarded,
+    Retained,
+}
 
 #[derive(Debug, Clone, Copy)]
 enum ProvenanceCandidate {
@@ -880,7 +890,8 @@ impl<'a> StateProvenanceSolver<'a> {
             return;
         }
         let mut seeds = Vec::new();
-        for (callback_argument_index, parameter_indices) in callback_signatures {
+        for (callback_argument_index, parameter_indices, return_disposition) in callback_signatures
+        {
             let Some(callback_argument) = call.arguments.get(callback_argument_index) else {
                 continue;
             };
@@ -914,6 +925,13 @@ impl<'a> StateProvenanceSolver<'a> {
                 else {
                     continue;
                 };
+                // Invoking a generator callback only creates its iterator. Hosts that discard or
+                // coerce that value cannot execute the body later; retained iterators still can.
+                if callback_function.flags.is_generator
+                    && return_disposition == CallbackReturnDisposition::Discarded
+                {
+                    continue;
+                }
                 let Some(callback_analysis) = self.identity.analyses.get(callback_index) else {
                     continue;
                 };
@@ -2369,22 +2387,34 @@ fn state_callback_signatures(
 ) -> Option<Vec<StateCallbackSignature>> {
     let name = state_method_name(function, place)?;
     match (call.state_receiver_kind, name.as_str()) {
-        (StateReceiverKind::Array, "sort" | "toSorted") => {
-            Some(vec![(0, vec![(0, None), (1, None)])])
-        }
+        (StateReceiverKind::Array, "sort" | "toSorted") => Some(vec![(
+            0,
+            vec![(0, None), (1, None)],
+            CallbackReturnDisposition::Discarded,
+        )]),
         (
             StateReceiverKind::Array,
-            "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"
-            | "forEach" | "map" | "some",
+            "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "forEach"
+            | "some",
         ) => Some(vec![(
             0,
             vec![(0, None), (2, Some(StateReceiverKind::Array))],
+            CallbackReturnDisposition::Discarded,
+        )]),
+        (StateReceiverKind::Array, "flatMap" | "map") => Some(vec![(
+            0,
+            vec![(0, None), (2, Some(StateReceiverKind::Array))],
+            CallbackReturnDisposition::Retained,
         )]),
         (
             StateReceiverKind::TypedArray,
             "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"
             | "forEach" | "map" | "some",
-        ) => Some(vec![(0, vec![(2, Some(StateReceiverKind::TypedArray))])]),
+        ) => Some(vec![(
+            0,
+            vec![(2, Some(StateReceiverKind::TypedArray))],
+            CallbackReturnDisposition::Discarded,
+        )]),
         (StateReceiverKind::Array, "reduce" | "reduceRight") => {
             let accumulator_depends_on_state = call.arguments.get(1).is_none_or(|argument| {
                 argument.spread
@@ -2400,7 +2430,7 @@ fn state_callback_signatures(
             if accumulator_depends_on_state {
                 indices.insert(0, (0, None));
             }
-            Some(vec![(0, indices)])
+            Some(vec![(0, indices, CallbackReturnDisposition::Retained)])
         }
         (StateReceiverKind::TypedArray, "reduce" | "reduceRight") => {
             let mut indices = vec![(3, Some(StateReceiverKind::TypedArray))];
@@ -2416,15 +2446,22 @@ fn state_callback_signatures(
             }) {
                 indices.insert(0, (0, None));
             }
-            Some(vec![(0, indices)])
+            Some(vec![(0, indices, CallbackReturnDisposition::Retained)])
         }
-        (receiver @ (StateReceiverKind::Map | StateReceiverKind::Set), "forEach") => {
-            Some(vec![(0, vec![(0, None), (1, None), (2, Some(receiver))])])
-        }
-        (StateReceiverKind::Promise, "then") => {
-            Some(vec![(0, vec![(0, None)]), (1, vec![(0, None)])])
-        }
-        (StateReceiverKind::Promise, "catch") => Some(vec![(0, vec![(0, None)])]),
+        (receiver @ (StateReceiverKind::Map | StateReceiverKind::Set), "forEach") => Some(vec![(
+            0,
+            vec![(0, None), (1, None), (2, Some(receiver))],
+            CallbackReturnDisposition::Discarded,
+        )]),
+        (StateReceiverKind::Promise, "then") => Some(vec![
+            (0, vec![(0, None)], CallbackReturnDisposition::Retained),
+            (1, vec![(0, None)], CallbackReturnDisposition::Retained),
+        ]),
+        (StateReceiverKind::Promise, "catch") => Some(vec![(
+            0,
+            vec![(0, None)],
+            CallbackReturnDisposition::Retained,
+        )]),
         _ => None,
     }
 }
