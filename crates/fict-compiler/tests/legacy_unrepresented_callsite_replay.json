@@ -29,8 +29,8 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "7ccb64f106b834324f3228108fc1984241d42ec4",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-a08cf16945bbaa3e30a032865cc56e0bc4ca9f0a203be0210ecebe4481dc6abd"
+    "reviewedRevision": "1bc792aee70d04752ec164817e332a108f8ffdaa",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-3d47d39108e06fd97aa60093efed912abd9f659897b375a9d8807671df612e46"
   },
   "transitionCounts": {
     "ok-to-error": 3,
@@ -17483,10 +17483,15 @@
             "code": "FICT-J001",
             "severity": "info",
             "guaranteeClass": "advisory"
+          },
+          {
+            "code": "FICT-R002",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
           }
         ],
         "codeSha256": "505b77f7264042ad4653f3e56838a1dbd868284862ad212a2e37840e25dcfb54",
-        "deterministicResultSha256": "f39cee4457f349c31d636a8666dde1e9bda83fd1f8fd1f176a717a649fd87582"
+        "deterministicResultSha256": "e534160b33def1dd694b52d90bac02141729e46884966b01987a09737da1895a"
       },
       "statusTransition": null,
       "transitionPolicy": null
