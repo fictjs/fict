@@ -3019,6 +3019,152 @@ test('getterCache controls safe repeated synchronous accessor reads', async () =
   container.remove()
 })
 
+test('getterCache isolates class evaluation and deferred instance fields', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let runDeclaration = () => []
+    let runExpression = () => []
+    let runComplex = () => []
+    let bumpComplex = () => {}
+    const classInputs = {
+      get key() {
+        bumpComplex()
+        return 'value'
+      },
+    }
+
+    function App() {
+      let declarationCount = $state(0)
+      const bumpDeclaration = () => { declarationCount = declarationCount + 1 }
+      runDeclaration = () => {
+        const first = declarationCount
+        const second = declarationCount
+        class Snapshot {
+          value = declarationCount
+          read() { return declarationCount + declarationCount + declarationCount }
+        }
+        bumpDeclaration()
+        const snapshot = new Snapshot()
+        return [first, second, snapshot.value, snapshot.read()]
+      }
+
+      let expressionCount = $state(0)
+      const bumpExpression = () => { expressionCount = expressionCount + 1 }
+      runExpression = () => {
+        const first = expressionCount
+        const second = expressionCount
+        const Snapshot = class { value = expressionCount }
+        bumpExpression()
+        return [first, second, new Snapshot().value]
+      }
+
+      let complexCount = $state(0)
+      bumpComplex = () => { complexCount = complexCount + 1 }
+      runComplex = () => {
+        const first = complexCount
+        const second = complexCount
+        class Complex {
+          [classInputs.key] = complexCount
+          static snapshot = complexCount
+          read() { return complexCount + complexCount + complexCount }
+        }
+        const afterFirst = complexCount
+        const afterSecond = complexCount
+        const instance = new Complex()
+        return [
+          first,
+          second,
+          Complex.snapshot,
+          afterFirst,
+          afterSecond,
+          instance.value,
+          instance.read(),
+        ]
+      }
+
+      return <span />
+    }
+
+    export const mount = container => render(() => <App />, container)
+    export const declaration = () => runDeclaration()
+    export const expression = () => runExpression()
+    export const complex = () => runComplex()
+  `
+  const result = binding.transformSync({
+    code: source,
+    filename: '/fixtures/getter-cache-class.tsx',
+    moduleId: '/fixtures/getter-cache-class.tsx',
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.doesNotMatch(result.code, /value = __cached_(?:declaration|expression|complex)Count_/)
+  assert.match(result.code, /read\(\) \{\s+let __cached_declarationCount_\d+;/)
+  assert.match(result.code, /read\(\) \{\s+let __cached_complexCount_\d+;/)
+
+  const compiled = await importCompiledModule(result.code, 'getter-cache-class')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.deepEqual(compiled.declaration(), [0, 0, 1, 3])
+  assert.deepEqual(compiled.expression(), [0, 0, 1])
+  assert.deepEqual(compiled.complex(), [0, 0, 1, 1, 1, 1, 3])
+
+  dispose()
+  container.remove()
+
+  const heritageResult = binding.transformSync({
+    code: `
+      import { $state, render } from 'fict'
+
+      let runCase = () => []
+      let bump = () => {}
+      const inputs = {
+        get Base() {
+          bump()
+          return class {}
+        },
+      }
+
+      function App() {
+        let count = $state(0)
+        bump = () => { count = count + 1 }
+        runCase = () => {
+          const first = count
+          const second = count
+          class Derived extends inputs.Base {
+            value = count
+            static snapshot = count
+          }
+          return [first, second, Derived.snapshot, new Derived().value]
+        }
+        return <span />
+      }
+
+      export const mount = container => render(() => <App />, container)
+      export const run = () => runCase()
+    `,
+    filename: '/fixtures/getter-cache-class-heritage.tsx',
+    moduleId: '/fixtures/getter-cache-class-heritage.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.deepEqual(
+    heritageResult.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [['FICT-R002', 'warning']],
+  )
+  assert.doesNotMatch(heritageResult.code, /(?:value|snapshot) = __cached_count_/)
+
+  const heritage = await importCompiledModule(heritageResult.code, 'getter-cache-class-heritage')
+  const heritageContainer = document.createElement('div')
+  document.body.append(heritageContainer)
+  const disposeHeritage = heritage.mount(heritageContainer)
+  await flushRuntime()
+  assert.deepEqual(heritage.run(), [0, 0, 1, 1])
+  disposeHeritage()
+  heritageContainer.remove()
+})
+
 test('compiler-generated names do not capture authored free identifiers', async () => {
   const runtime = await compileAndImport(
     `

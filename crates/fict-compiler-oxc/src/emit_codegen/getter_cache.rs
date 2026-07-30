@@ -3,7 +3,7 @@ use oxc::{
     ast::{
         AstBuilder, NONE,
         ast::{
-            ArrowFunctionExpression, AssignmentTarget, BindingPattern, Expression, Function,
+            ArrowFunctionExpression, AssignmentTarget, BindingPattern, Class, Expression, Function,
             FunctionBody, FunctionType, Program, Statement, VariableDeclarationKind,
             VariableDeclarator,
         },
@@ -210,6 +210,15 @@ impl<'plan> CacheSafetyAnalysis<'plan> {
         self.disabled = previous;
         self.reset_segment();
     }
+
+    fn visit_disabled_class(&mut self, class: &Class<'_>) {
+        let previous = self.disabled;
+        self.disabled = true;
+        self.reset_segment();
+        walk::walk_class(self, class);
+        self.disabled = previous;
+        self.reset_segment();
+    }
 }
 
 impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
@@ -292,6 +301,10 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
         walk::walk_arrow_function_expression(self, function);
     }
+
+    fn visit_class(&mut self, class: &Class<'a>) {
+        self.visit_disabled_class(class);
+    }
 }
 
 struct AccessorCacheReplacer<'a, 'plan> {
@@ -321,6 +334,15 @@ impl<'a> AccessorCacheReplacer<'a, '_> {
         self.disabled = true;
         self.reset_segment();
         walk_mut::walk_statement(self, statement);
+        self.disabled = previous;
+        self.reset_segment();
+    }
+
+    fn visit_disabled_class(&mut self, class: &mut Class<'a>) {
+        let previous = self.disabled;
+        self.disabled = true;
+        self.reset_segment();
+        walk_mut::walk_class(self, class);
         self.disabled = previous;
         self.reset_segment();
     }
@@ -394,6 +416,10 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
     fn visit_function(&mut self, _function: &mut Function<'a>, _flags: ScopeFlags) {}
 
     fn visit_arrow_function_expression(&mut self, _function: &mut ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, class: &mut Class<'a>) {
+        self.visit_disabled_class(class);
+    }
 
     fn visit_statement(&mut self, statement: &mut Statement<'a>) {
         if matches!(statement, Statement::BlockStatement(_)) {
