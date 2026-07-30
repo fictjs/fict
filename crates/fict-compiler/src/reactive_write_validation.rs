@@ -57,7 +57,14 @@ struct StateIdentityAnalysis<'a> {
     definition_locations: Vec<BTreeMap<SsaName, SsaDefinitionLocation>>,
     entry_names: Vec<BTreeMap<LocalId, SsaName>>,
     capture_write_bindings: BTreeSet<BindingId>,
+    reassigned_bindings: BTreeSet<BindingId>,
     value_visits: Cell<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CallbackBindingFacts<'a> {
+    capture_writes: &'a BTreeSet<BindingId>,
+    reassignments: &'a BTreeSet<BindingId>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -143,6 +150,7 @@ impl<'a> StateIdentityAnalysis<'a> {
         let mut definition_locations = Vec::with_capacity(hir.functions.len());
         let mut entry_names = Vec::with_capacity(hir.functions.len());
         let mut capture_write_bindings = BTreeSet::new();
+        let mut reassigned_bindings = BTreeSet::new();
         for (function_index, function) in hir.functions.iter().enumerate() {
             let mut locations = vec![None; function.values.len()];
             for block in &function.blocks {
@@ -168,12 +176,14 @@ impl<'a> StateIdentityAnalysis<'a> {
                     ) {
                         continue;
                     }
-                    if let Some(binding) = function
-                        .locals
-                        .get(definition.name.local.as_usize())
-                        .filter(|local| local.kind == LocalKind::Capture)
-                        .and_then(|local| local.binding)
-                    {
+                    let Some(local) = function.locals.get(definition.name.local.as_usize()) else {
+                        continue;
+                    };
+                    let Some(binding) = local.binding else {
+                        continue;
+                    };
+                    reassigned_bindings.insert(binding);
+                    if local.kind == LocalKind::Capture {
                         capture_write_bindings.insert(binding);
                     }
                 }
@@ -206,6 +216,7 @@ impl<'a> StateIdentityAnalysis<'a> {
             definition_locations,
             entry_names,
             capture_write_bindings,
+            reassigned_bindings,
             value_visits: Cell::new(0),
         }
     }
@@ -830,7 +841,10 @@ impl<'a> StateProvenanceSolver<'a> {
                 self.identity.hir,
                 analysis,
                 function,
-                &self.identity.capture_write_bindings,
+                CallbackBindingFacts {
+                    capture_writes: &self.identity.capture_write_bindings,
+                    reassignments: &self.identity.reassigned_bindings,
+                },
                 callback_argument.value,
                 InstructionLocation {
                     block: block.id,
@@ -2327,7 +2341,7 @@ fn resolve_callback_value(
     hir: &HirFile,
     analysis: &FunctionPassAnalysis,
     function: &HirFunction,
-    capture_write_bindings: &BTreeSet<BindingId>,
+    binding_facts: CallbackBindingFacts<'_>,
     value: ValueId,
     use_location: InstructionLocation,
 ) -> CallbackResolution {
@@ -2335,7 +2349,7 @@ fn resolve_callback_value(
         hir,
         analysis,
         function,
-        capture_write_bindings,
+        binding_facts,
         value,
         use_location,
         &mut BTreeSet::new(),
@@ -2354,7 +2368,7 @@ fn resolve_callback_value_inner(
     hir: &HirFile,
     analysis: &FunctionPassAnalysis,
     function: &HirFunction,
-    capture_write_bindings: &BTreeSet<BindingId>,
+    binding_facts: CallbackBindingFacts<'_>,
     value: ValueId,
     use_location: InstructionLocation,
     visiting_values: &mut BTreeSet<ValueId>,
@@ -2373,7 +2387,7 @@ fn resolve_callback_value_inner(
             hir,
             analysis,
             function,
-            capture_write_bindings,
+            binding_facts,
             *name,
             use_location,
             visiting_values,
@@ -2409,7 +2423,7 @@ fn resolve_callback_value_inner(
                                     hir,
                                     analysis,
                                     function,
-                                    capture_write_bindings,
+                                    binding_facts,
                                     name,
                                     definition_location,
                                     visiting_values,
@@ -2421,7 +2435,7 @@ fn resolve_callback_value_inner(
                             hir,
                             analysis,
                             function,
-                            capture_write_bindings,
+                            binding_facts,
                             name,
                             definition_location,
                             visiting_values,
@@ -2431,7 +2445,7 @@ fn resolve_callback_value_inner(
                             hir,
                             analysis,
                             function,
-                            capture_write_bindings,
+                            binding_facts,
                             base,
                             definition_location,
                             visiting_values,
@@ -2452,7 +2466,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
-                        capture_write_bindings,
+                        binding_facts,
                         *value,
                         definition_location,
                         visiting_values,
@@ -2466,7 +2480,7 @@ fn resolve_callback_value_inner(
                             hir,
                             analysis,
                             function,
-                            capture_write_bindings,
+                            binding_facts,
                             *source,
                             definition_location,
                             visiting_values,
@@ -2484,7 +2498,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
-                        capture_write_bindings,
+                        binding_facts,
                         *consequent,
                         definition_location,
                         visiting_values,
@@ -2494,7 +2508,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
-                        capture_write_bindings,
+                        binding_facts,
                         *alternate,
                         definition_location,
                         visiting_values,
@@ -2510,7 +2524,7 @@ fn resolve_callback_value_inner(
                                 hir,
                                 analysis,
                                 function,
-                                capture_write_bindings,
+                                binding_facts,
                                 *value,
                                 definition_location,
                                 visiting_values,
@@ -2530,7 +2544,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
-                        capture_write_bindings,
+                        binding_facts,
                         *left,
                         definition_location,
                         visiting_values,
@@ -2540,7 +2554,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
-                        capture_write_bindings,
+                        binding_facts,
                         *right,
                         definition_location,
                         visiting_values,
@@ -2548,17 +2562,26 @@ fn resolve_callback_value_inner(
                     ));
                     resolution
                 }
-                HirInstructionKind::Call(call) => match call.host {
-                    CallHost::Function(producer) => resolve_direct_callback_producer(hir, producer),
-                    CallHost::Binding(binding) => hir
-                        .functions
-                        .iter()
-                        .find(|candidate| candidate.binding == Some(binding))
-                        .map_or_else(CallbackResolution::default, |producer| {
-                            resolve_direct_callback_producer(hir, producer.id)
-                        }),
-                    CallHost::Unknown | CallHost::ReactiveScope(_) => CallbackResolution::default(),
-                },
+                HirInstructionKind::Call(call) => {
+                    let producers = resolve_callback_value_inner(
+                        hir,
+                        analysis,
+                        function,
+                        binding_facts,
+                        call.callee,
+                        definition_location,
+                        visiting_values,
+                        visiting_names,
+                    );
+                    let mut resolution = CallbackResolution {
+                        functions: BTreeSet::new(),
+                        complete: producers.complete,
+                    };
+                    for producer in producers.functions {
+                        resolution.merge(resolve_direct_callback_producer(hir, producer));
+                    }
+                    resolution
+                }
                 HirInstructionKind::Literal(_)
                 | HirInstructionKind::Array { .. }
                 | HirInstructionKind::Object { .. }
@@ -2578,7 +2601,7 @@ fn resolve_callback_value_inner(
 fn definition_is_uninitialized_local(
     function: &HirFunction,
     definition: &SsaDefinition,
-    capture_write_bindings: &BTreeSet<BindingId>,
+    binding_facts: CallbackBindingFacts<'_>,
 ) -> bool {
     if definition.kind != SsaDefinitionKind::Declare {
         return false;
@@ -2593,7 +2616,25 @@ fn definition_is_uninitialized_local(
         )
         && local
             .binding
-            .is_some_and(|binding| !capture_write_bindings.contains(&binding))
+            .is_some_and(|binding| !binding_facts.capture_writes.contains(&binding))
+}
+
+fn callback_binding_has_untracked_writes(
+    function: &HirFunction,
+    name: SsaName,
+    binding_facts: CallbackBindingFacts<'_>,
+) -> bool {
+    let Some(local) = function.locals.get(name.local.as_usize()) else {
+        return true;
+    };
+    let Some(binding) = local.binding else {
+        return false;
+    };
+    match local.kind {
+        LocalKind::Capture => binding_facts.reassignments.contains(&binding),
+        LocalKind::User | LocalKind::Parameter => binding_facts.capture_writes.contains(&binding),
+        LocalKind::Temporary => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2601,12 +2642,15 @@ fn resolve_callback_ssa(
     hir: &HirFile,
     analysis: &FunctionPassAnalysis,
     function: &HirFunction,
-    capture_write_bindings: &BTreeSet<BindingId>,
+    binding_facts: CallbackBindingFacts<'_>,
     name: SsaName,
     use_location: InstructionLocation,
     visiting_values: &mut BTreeSet<ValueId>,
     visiting_names: &mut BTreeSet<SsaName>,
 ) -> CallbackResolution {
+    if callback_binding_has_untracked_writes(function, name, binding_facts) {
+        return CallbackResolution::default();
+    }
     if !visiting_names.insert(name) {
         return CallbackResolution::default();
     }
@@ -2617,7 +2661,7 @@ fn resolve_callback_ssa(
                 hir,
                 analysis,
                 function,
-                capture_write_bindings,
+                binding_facts,
                 *source,
                 InstructionLocation {
                     block: phi.block,
@@ -2639,15 +2683,17 @@ fn resolve_callback_ssa(
                 hir,
                 analysis,
                 function,
-                capture_write_bindings,
+                binding_facts,
                 value,
                 definition_instruction_location(definition.location).unwrap_or(use_location),
                 visiting_values,
                 visiting_names,
             )
-        } else if let Some(callback) = callback_function_for_local(hir, function, name.local) {
+        } else if let Some(callback) =
+            callback_function_for_local(hir, function, binding_facts, name.local)
+        {
             CallbackResolution::known(callback)
-        } else if definition_is_uninitialized_local(function, definition, capture_write_bindings) {
+        } else if definition_is_uninitialized_local(function, definition, binding_facts) {
             CallbackResolution::safe_non_callback()
         } else {
             CallbackResolution::default()
@@ -2748,13 +2794,17 @@ fn resolve_direct_callback_result(
 fn callback_function_for_local(
     hir: &HirFile,
     function: &HirFunction,
+    binding_facts: CallbackBindingFacts<'_>,
     local: LocalId,
 ) -> Option<FunctionId> {
     let local = function.locals.get(local.as_usize())?;
     let binding = local.binding?;
     let binding_kind = hir.bindings.get(binding.as_usize())?.kind;
-    let stable_binding = binding_kind == BindingKind::Const
-        || (binding_kind == BindingKind::Function && local.kind != LocalKind::Capture);
+    let stable_binding = if local.kind == LocalKind::Capture {
+        !binding_facts.reassignments.contains(&binding)
+    } else {
+        matches!(binding_kind, BindingKind::Const | BindingKind::Function)
+    };
     stable_binding.then(|| {
         hir.functions
             .iter()

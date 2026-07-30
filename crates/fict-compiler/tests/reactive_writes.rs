@@ -718,6 +718,14 @@ fn accepts_definitely_undefined_array_sort_comparators() {
                 return rows.toSorted(noComparator())
             }
         "#,
+        r#"
+            import { $state } from 'fict'
+            let noComparator = () => undefined
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.toSorted(noComparator())
+            }
+        "#,
     ] {
         for optimize in [false, true] {
             let result = compile_source_with_strict(
@@ -775,6 +783,147 @@ fn keeps_capture_written_array_sort_comparators_unresolved() {
     );
     let diagnostic = find_error(&result, "FICT-R002");
     assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+}
+
+#[test]
+fn resolves_reassigned_array_sort_callback_producers_at_call_sites() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                let getComparator = () => undefined
+                getComparator = () => (left, right) => {
+                    left.done = true
+                    return 0
+                }
+                return rows.toSorted(getComparator())
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App(flag) {
+                const rows = $state([{ done: false }])
+                function getComparator() {
+                    return undefined
+                }
+                if (flag) {
+                    getComparator = () => (left, right) => {
+                        left.done = true
+                        return 0
+                    }
+                }
+                return rows.toSorted(getComparator())
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = find_error(&fallback, "FICT-M");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+        assert!(
+            fallback
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002")
+        );
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-M");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(
+            strict
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002")
+        );
+        assert!(strict.code.is_empty());
+    }
+
+    let write_after_call = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                let getComparator = () => undefined
+                const sorted = rows.toSorted(getComparator())
+                getComparator = () => (left, right) => {
+                    left.done = true
+                    return 0
+                }
+                return sorted
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(
+        !write_after_call.has_errors(),
+        "{:#?}",
+        write_after_call.diagnostics
+    );
+    assert!(
+        write_after_call
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-M" | "FICT-R002"))
+    );
+}
+
+#[test]
+fn keeps_cross_function_array_sort_callback_writes_unresolved() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                let comparator = (left, right) => 0
+                const install = () => {
+                    comparator = (left, right) => {
+                        left.done = true
+                        return 0
+                    }
+                }
+                install()
+                return rows.toSorted(comparator)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                let getComparator = () => undefined
+                const install = () => {
+                    getComparator = () => (left, right) => {
+                        left.done = true
+                        return 0
+                    }
+                }
+                install()
+                return rows.toSorted(getComparator())
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            let getComparator = () => undefined
+            getComparator = () => (left, right) => {
+                left.done = true
+                return 0
+            }
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.toSorted(getComparator())
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = find_error(&fallback, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
 }
 
 #[test]
