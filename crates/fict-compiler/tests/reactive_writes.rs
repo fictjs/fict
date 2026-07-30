@@ -994,6 +994,68 @@ fn keeps_extracted_array_sort_callbacks_unresolved() {
 }
 
 #[test]
+fn keeps_ambiguous_array_sort_callback_bindings_unresolved() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                function comparator(left, right) {
+                    return 0
+                }
+                function comparator(left, right) {
+                    left.done = true
+                    return 0
+                }
+                return rows.toSorted(comparator)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                function getComparator() {
+                    return undefined
+                }
+                function getComparator() {
+                    return (left, right) => {
+                        left.done = true
+                        return 0
+                    }
+                }
+                return rows.toSorted(getComparator())
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                function getComparator() {
+                    return undefined
+                }
+                function getComparator() {
+                    return (left, right) => {
+                        left.done = true
+                        return 0
+                    }
+                }
+                const sortRows = () => rows.toSorted(getComparator())
+                return sortRows()
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = find_error(&fallback, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
 fn tracks_mutating_optional_array_sort_comparators_without_unresolved_fallback() {
     let source = r#"
         import { $state } from 'fict'

@@ -2810,12 +2810,15 @@ fn callback_function_for_local(
     } else {
         matches!(binding_kind, BindingKind::Const | BindingKind::Function)
     };
-    stable_binding.then(|| {
-        hir.functions
-            .iter()
-            .find(|candidate| candidate.binding == Some(binding))
-            .map(|candidate| candidate.id)
-    })?
+    if !stable_binding {
+        return None;
+    }
+    let mut candidates = hir
+        .functions
+        .iter()
+        .filter(|candidate| candidate.binding == Some(binding));
+    let callback = candidates.next()?.id;
+    candidates.next().is_none().then_some(callback)
 }
 
 fn instruction_location_for_result(
