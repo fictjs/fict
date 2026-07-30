@@ -1,6 +1,8 @@
 use fict_compiler::{
-    COMPILER_PROTOCOL_VERSION, CompileRequest, CompileResult, CompilerOptions, ModuleKind, compile,
+    COMPILER_PROTOCOL_VERSION, CompileRequest, CompileResult, CompilerOptions, ModuleKind,
+    RawSourceMap, compile,
 };
+use fict_diagnostics::GuaranteeClass;
 use oxc_sourcemap::{SourceMap, SourceViewToken};
 
 struct MappedOutput {
@@ -112,6 +114,53 @@ fn line_column(text: &str, byte_index: usize) -> (u32, u32) {
     let column =
         u32::try_from(prefix[line_start..].encode_utf16().count()).expect("source column fits u32");
     (line, column)
+}
+
+#[test]
+fn rejects_mismatched_input_map_identity_as_public_input() {
+    let source = "import { $state } from 'fict'; export const value = $state(1)";
+    let filename = "/fuzz/compiler-request.tsx";
+    let result = compile(CompileRequest {
+        protocol_version: COMPILER_PROTOCOL_VERSION,
+        code: source.to_owned(),
+        filename: filename.to_owned(),
+        module_id: None,
+        public_module_id: None,
+        language: None,
+        module_kind: None,
+        input_source_map: Some(RawSourceMap {
+            version: 3,
+            file: Some("compiler-request.generated.tsx".to_owned()),
+            source_root: None,
+            sources: vec!["/fuzz/original.tsx".to_owned()],
+            sources_content: Some(vec![Some(source.to_owned())]),
+            names: Vec::new(),
+            mappings: "AAAA".to_owned(),
+            ignore_list: Vec::new(),
+        }),
+        options: CompilerOptions {
+            sourcemap: true,
+            ..CompilerOptions::default()
+        },
+        metadata: Vec::new(),
+        integration_diagnostics: Vec::new(),
+    });
+
+    assert!(result.has_errors());
+    assert!(result.code.is_empty());
+    assert!(result.map.is_none());
+    assert_eq!(result.diagnostics[0].code.as_str(), "FICT-REQUEST");
+    assert_eq!(
+        result.diagnostics[0].guarantee_class,
+        GuaranteeClass::Unsupported
+    );
+    assert!(
+        result.diagnostics[0]
+            .message
+            .contains("does not identify a generated source"),
+        "{:#?}",
+        result.diagnostics
+    );
 }
 
 #[test]

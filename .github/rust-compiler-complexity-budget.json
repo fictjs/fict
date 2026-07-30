@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "totalMaxLines": 107480,
+  "totalMaxLines": 107589,
   "defaultFileMaxLines": 2000,
   "crates": {
-    "fict-compiler": 26744,
+    "fict-compiler": 26853,
     "fict-compiler-napi": 587,
     "fict-compiler-oxc": 45822,
     "fict-compiler-preview": 2400,

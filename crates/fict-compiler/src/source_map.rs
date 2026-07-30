@@ -63,6 +63,32 @@ impl RawSourceMap {
         validate_source_map_json(&json).map_err(SourceMapValidationError::InvalidMappings)?;
         Ok(())
     }
+
+    /// Validate that this upstream map can be composed with output generated from `source`.
+    pub(crate) fn validate_for_generated_source(
+        &self,
+        source: &str,
+    ) -> Result<(), SourceMapValidationError> {
+        self.validate()?;
+        let generated = Self {
+            version: 3,
+            file: None,
+            source_root: None,
+            sources: vec![source.to_owned()],
+            sources_content: None,
+            names: Vec::new(),
+            mappings: "AAAA".to_owned(),
+            ignore_list: Vec::new(),
+        };
+        compose_source_maps(&generated, self)
+            .map(|_| ())
+            .map_err(
+                |message| SourceMapValidationError::IncompatibleGeneratedSource {
+                    source: source.to_owned(),
+                    message,
+                },
+            )
+    }
 }
 
 pub(crate) fn compose_source_maps(
@@ -94,6 +120,13 @@ pub enum SourceMapValidationError {
     InvalidIgnoreIndex(u32),
     /// Base64-VLQ mappings are malformed or refer outside the declared tables.
     InvalidMappings(String),
+    /// The map's generated-file identity cannot be composed with this request source.
+    IncompatibleGeneratedSource {
+        /// Physical source identity supplied to the compiler.
+        source: String,
+        /// Composition failure reported by the source-map engine.
+        message: String,
+    },
 }
 
 impl std::fmt::Display for SourceMapValidationError {
@@ -119,6 +152,10 @@ impl std::fmt::Display for SourceMapValidationError {
                 )
             }
             Self::InvalidMappings(message) => formatter.write_str(message),
+            Self::IncompatibleGeneratedSource { source, message } => write!(
+                formatter,
+                "source map cannot compose with generated source {source:?}: {message}"
+            ),
         }
     }
 }
@@ -168,6 +205,29 @@ mod tests {
             map.validate(),
             Err(SourceMapValidationError::InvalidMappings(_))
         ));
+    }
+
+    #[test]
+    fn validates_the_upstream_generated_file_identity() {
+        assert_eq!(
+            source_map().validate_for_generated_source("output.js"),
+            Ok(())
+        );
+
+        let error = source_map()
+            .validate_for_generated_source("different.js")
+            .expect_err("mismatched generated file must be rejected as request input");
+        assert!(matches!(
+            error,
+            SourceMapValidationError::IncompatibleGeneratedSource { .. }
+        ));
+
+        let mut anonymous = source_map();
+        anonymous.file = None;
+        assert_eq!(
+            anonymous.validate_for_generated_source("different.js"),
+            Ok(())
+        );
     }
 
     #[test]

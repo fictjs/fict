@@ -360,7 +360,7 @@ impl CompileRequest {
 
         if let Some(source_map) = &self.input_source_map {
             source_map
-                .validate()
+                .validate_for_generated_source(&filename)
                 .map_err(CompileRequestError::InvalidSourceMap)?;
         }
 
