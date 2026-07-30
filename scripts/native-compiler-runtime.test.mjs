@@ -588,6 +588,45 @@ test('native template extraction preserves static HTML and live binding paths', 
   container.remove()
 })
 
+test('authored JSX text follows standard tab and Unicode whitespace boundaries', async () => {
+  const result = binding.transformSync({
+    code: `
+      import { render } from 'fict'
+
+      function App() {
+        return (
+          <section>
+            <div data-case="tab">a\tb</div>
+            <div data-case="nbsp">
+              \u00a0keep\u00a0
+              next
+            </div>
+            <div data-case="separator">a\u2028b\u2029c</div>
+          </section>
+        )
+      }
+
+      export const mount = container => render(() => <App />, container)
+    `,
+    filename: '/fixtures/jsx-authored-whitespace.tsx',
+    moduleId: '/fixtures/jsx-authored-whitespace.tsx',
+  })
+  assert.deepEqual(result.diagnostics, [])
+
+  const compiled = await importCompiledModule(result.code, 'jsx-authored-whitespace')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-case="tab"]')?.textContent, 'a b')
+  assert.equal(container.querySelector('[data-case="nbsp"]')?.textContent, '\u00a0keep\u00a0 next')
+  assert.equal(container.querySelector('[data-case="separator"]')?.textContent, 'a\u2028b\u2029c')
+
+  dispose()
+  container.remove()
+})
+
 test('captured reactive alias writes fail closed before runtime', () => {
   const source = `
     import { $state } from 'fict'

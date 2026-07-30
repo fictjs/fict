@@ -34,9 +34,10 @@ Whitespace that is application data MUST be authored as an expression string:
 <pre>{'first\n  second'}</pre>
 ```
 
-Same-line authored spaces, non-breaking spaces, and explicit `{' '}`
-expressions remain data and are preserved. Fict does not provide a
-legacy-whitespace compiler option.
+Authored tabs normalize to ASCII spaces. Only CR and LF create normalization
+boundaries; same-line authored spaces, non-breaking spaces, Unicode line and
+paragraph separators, and explicit `{' '}` expressions remain data and are
+preserved. Fict does not provide a legacy-whitespace compiler option.
 
 The Babel 0.28 result remains a reviewed migration deviation. Runtime
 compatibility gates MUST identify it by this decision rather than silently

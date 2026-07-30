@@ -48,22 +48,23 @@ pub(crate) fn decode_entities(input: &str) -> String {
 
 /// Apply JSX's authored-text whitespace rules, then decode character references.
 pub(crate) fn normalize_text(input: &str) -> Option<String> {
+    let input = input.replace('\t', " ");
     if !input
         .chars()
-        .any(|character| matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+        .any(|character| matches!(character, '\n' | '\r'))
     {
-        return Some(decode_entities(input));
+        return Some(decode_entities(&input));
     }
 
-    let lines: Vec<_> = input.split(['\n', '\r', '\u{2028}', '\u{2029}']).collect();
+    let lines: Vec<_> = input.split(['\n', '\r']).collect();
     let last = lines.len().saturating_sub(1);
     let mut normalized = Vec::new();
     for (index, line) in lines.into_iter().enumerate() {
         let line = match (index == 0, index == last) {
             (true, true) => line,
-            (true, false) => line.trim_end_matches(char::is_whitespace),
-            (false, true) => line.trim_start_matches(char::is_whitespace),
-            (false, false) => line.trim_matches(char::is_whitespace),
+            (true, false) => line.trim_end_matches(' '),
+            (false, true) => line.trim_start_matches(' '),
+            (false, false) => line.trim_matches(' '),
         };
         if !line.is_empty() {
             normalized.push(decode_entities(line));
@@ -89,5 +90,26 @@ mod tests {
         );
         assert_eq!(normalize_text("\n  \n"), None);
         assert_eq!(normalize_text(" "), Some(" ".into()));
+    }
+
+    #[test]
+    fn matches_standard_jsx_tab_and_unicode_whitespace_boundaries() {
+        assert_eq!(normalize_text("a\tb"), Some("a b".into()));
+        assert_eq!(
+            normalize_text("\n\u{a0}keep\u{a0}\nnext\n"),
+            Some("\u{a0}keep\u{a0} next".into())
+        );
+        assert_eq!(
+            normalize_text("a\u{2028}b\u{2029}c"),
+            Some("a\u{2028}b\u{2029}c".into())
+        );
+    }
+
+    #[test]
+    fn treats_crlf_and_lone_cr_as_authored_line_boundaries() {
+        assert_eq!(
+            normalize_text("\r\n  first\r  second\n"),
+            Some("first second".into())
+        );
     }
 }

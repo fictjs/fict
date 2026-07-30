@@ -400,7 +400,9 @@ expression string when exact whitespace matters:
 <pre>{'first\n  second'}</pre>
 ```
 
-Same-line authored spaces and explicit expression strings are preserved.
+Authored tabs normalize to ASCII spaces. Only CR and LF create normalization
+boundaries; non-breaking spaces and Unicode line/paragraph separators remain
+data. Same-line authored spaces and explicit expression strings are preserved.
 
 ---
 
