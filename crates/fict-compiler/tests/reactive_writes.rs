@@ -649,6 +649,69 @@ fn tracks_state_elements_in_array_sort_comparators() {
 }
 
 #[test]
+fn accepts_explicit_undefined_array_sort_comparators() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.toSorted(undefined)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const comparator = undefined
+                return rows.toSorted(comparator)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.toSorted((0, undefined))
+            }
+        "#,
+    ] {
+        for optimize in [false, true] {
+            let result = compile_source_with_strict(
+                source,
+                CompilerOptions {
+                    optimize,
+                    ..CompilerOptions::default()
+                },
+                true,
+            );
+            assert!(!result.has_errors(), "{:#?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002")
+            );
+            assert!(!result.code.is_empty());
+        }
+    }
+}
+
+#[test]
+fn keeps_shadowed_undefined_array_sort_comparators_unresolved() {
+    let result = compile_source(
+        r#"
+            import { $state } from 'fict'
+            function App(undefined) {
+                const rows = $state([{ done: false }])
+                return rows.toSorted(undefined)
+            }
+        "#,
+        CompilerOptions::default(),
+    );
+    let diagnostic = find_error(&result, "FICT-R002");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+}
+
+#[test]
 fn state_provenance_worklist_has_linear_deterministic_work() {
     const ALIASES: usize = 1_200;
     let mut source = String::from(

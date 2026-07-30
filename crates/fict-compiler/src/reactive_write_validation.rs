@@ -2397,11 +2397,9 @@ fn resolve_callback_value_inner(
                             visiting_names,
                         ),
                         PlaceBase::Global(global) => {
-                            if hir
-                                .globals
-                                .get(global.as_usize())
-                                .is_some_and(|global| global.name == "Boolean")
-                            {
+                            if hir.globals.get(global.as_usize()).is_some_and(|global| {
+                                matches!(global.name.as_str(), "Boolean" | "undefined")
+                            }) {
                                 CallbackResolution::safe_non_callback()
                             } else {
                                 CallbackResolution::default()
