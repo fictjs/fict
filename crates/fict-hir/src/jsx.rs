@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::{BindingId, FunctionId, HirFile, Origin, TemplateId, ValueId};
+use crate::{BindingId, FunctionId, HirFile, JavaScriptString, Origin, TemplateId, ValueId};
 
 /// JSX tag identity after semantic binding resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +26,7 @@ pub enum JsxAttributeValue {
     /// Attribute with no explicit value, equivalent to `true`.
     ImplicitTrue,
     /// Static JSX text after entity decoding.
-    Text(String),
+    Text(JavaScriptString),
     /// Dynamic HIR value and whether its source is a function expression.
     Expression {
         /// Evaluated HIR value.
@@ -121,7 +121,7 @@ pub enum JsxChild {
     /// Static JSX text after entity decoding.
     Text {
         /// Text value.
-        value: String,
+        value: JavaScriptString,
         /// Source provenance.
         origin: Origin,
     },

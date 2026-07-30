@@ -36,6 +36,38 @@ impl JavaScriptString {
         Self(code_units)
     }
 
+    /// Append a Unicode scalar value without losing its UTF-16 representation.
+    pub fn push(&mut self, value: char) {
+        let mut buffer = [0_u16; 2];
+        self.0.extend_from_slice(value.encode_utf16(&mut buffer));
+    }
+
+    /// Append a well-formed Rust string as UTF-16 code units.
+    pub fn push_str(&mut self, value: &str) {
+        self.0.extend(value.encode_utf16());
+    }
+
+    /// Append one exact UTF-16 code unit, including a lone surrogate.
+    pub fn push_code_unit(&mut self, value: u16) {
+        self.0.push(value);
+    }
+
+    /// Append another exact JavaScript string.
+    pub fn push_javascript_string(&mut self, value: &Self) {
+        self.0.extend_from_slice(value.as_code_units());
+    }
+
+    /// Return whether this exact string contains a well-formed Unicode substring.
+    #[must_use]
+    pub fn contains(&self, needle: &str) -> bool {
+        let needle: Vec<_> = needle.encode_utf16().collect();
+        needle.is_empty()
+            || self
+                .0
+                .windows(needle.len())
+                .any(|window| window == needle.as_slice())
+    }
+
     /// Decode this value when it is a well-formed Unicode string.
     #[must_use]
     pub fn to_utf8(&self) -> Option<String> {

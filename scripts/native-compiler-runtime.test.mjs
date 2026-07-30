@@ -593,6 +593,10 @@ test('authored JSX text follows standard tab and Unicode whitespace boundaries',
     code: `
       import { render } from 'fict'
 
+      function Child(props) {
+        return <div data-case="component-surrogate" title={props.label}>{props.children}</div>
+      }
+
       function App() {
         return (
           <section>
@@ -607,6 +611,8 @@ test('authored JSX text follows standard tab and Unicode whitespace boundaries',
               next
             </div>
             <div data-case="separator">a\u2028b\u2029c</div>
+            <div data-case="surrogate" title="&#xD800;">&#55296;</div>
+            <Child label="&#55296;">&#xD800;</Child>
           </section>
         )
       }
@@ -630,6 +636,13 @@ test('authored JSX text follows standard tab and Unicode whitespace boundaries',
   assert.equal(container.querySelector('[data-case="entity-line-space"]')?.textContent, 'a b')
   assert.equal(container.querySelector('[data-case="nbsp"]')?.textContent, '\u00a0keep\u00a0 next')
   assert.equal(container.querySelector('[data-case="separator"]')?.textContent, 'a\u2028b\u2029c')
+  for (const selector of ['[data-case="surrogate"]', '[data-case="component-surrogate"]']) {
+    const element = container.querySelector(selector)
+    assert.equal(element?.textContent, '\ud800')
+    assert.equal(element?.getAttribute('title'), '\ud800')
+    assert.equal(element?.textContent?.charCodeAt(0), 0xd800)
+    assert.equal(element?.getAttribute('title')?.charCodeAt(0), 0xd800)
+  }
 
   dispose()
   container.remove()

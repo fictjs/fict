@@ -208,7 +208,7 @@ fn materializes_implicit_table_groups_and_browser_paths() {
     let serialized = serialize_template(&root).expect("table parser serialization");
     assert_eq!(
         serialized.html,
-        "<table><colgroup><col><col></colgroup><tbody><tr><td></td></tr><tr><td></td></tr></tbody></table>"
+        "<table><colgroup><col><col></colgroup><tbody><tr><td></td></tr><tr><td></td></tr></tbody></table>".into()
     );
     let paths: Vec<_> = serialized
         .bindings
@@ -234,7 +234,7 @@ fn slots_static_children_when_annotation_namespace_is_runtime_selected() {
     let serialized = serialize_template(&root).expect("parent-derived child slot");
     assert_eq!(
         serialized.html,
-        "<math><annotation-xml><!----></annotation-xml></math>"
+        "<math><annotation-xml><!----></annotation-xml></math>".into()
     );
     assert!(serialized.bindings.iter().any(|binding| matches!(
         binding,

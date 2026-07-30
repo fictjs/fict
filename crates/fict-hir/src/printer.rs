@@ -1,8 +1,8 @@
 use std::fmt::Write;
 
 use crate::{
-    BindingId, HirFile, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode, Origin,
-    OriginKind, ScopeId, ValueId,
+    BindingId, HirFile, JavaScriptString, JsxAttribute, JsxAttributeValue, JsxChild,
+    JsxElementName, JsxNode, Origin, OriginKind, ScopeId, ValueId,
 };
 
 /// Print deterministic, source-free typed HIR suitable for snapshots and differential tests.
@@ -261,8 +261,9 @@ fn print_jsx(output: &mut String, root: &JsxNode) {
             JsxPrintItem::Child(JsxChild::Text { value, origin }, depth) => {
                 writeln!(
                     output,
-                    "{}child text={value:?} origin={}",
+                    "{}child text={} origin={}",
                     indentation(depth),
+                    print_javascript_string(value),
                     print_origin(*origin)
                 )
                 .expect("writing to String cannot fail");
@@ -326,7 +327,7 @@ fn print_jsx_name(name: &JsxElementName) -> String {
 fn print_jsx_attribute_value(value: &JsxAttributeValue) -> String {
     match value {
         JsxAttributeValue::ImplicitTrue => "true".into(),
-        JsxAttributeValue::Text(value) => format!("text({value:?})"),
+        JsxAttributeValue::Text(value) => format!("text({})", print_javascript_string(value)),
         JsxAttributeValue::Expression {
             value,
             function_like,
@@ -337,6 +338,13 @@ fn print_jsx_attribute_value(value: &JsxAttributeValue) -> String {
         ),
         JsxAttributeValue::Node(_) => "node".into(),
     }
+}
+
+fn print_javascript_string(value: &JavaScriptString) -> String {
+    value.to_utf8().map_or_else(
+        || format!("utf16({:?})", value.as_code_units()),
+        |value| format!("{value:?}"),
+    )
 }
 
 fn print_origin(origin: Origin) -> String {

@@ -14,7 +14,7 @@ use fict_hir::{
     ArrayElement, BindingId, BlockId, CallHost, DeleteTarget, FictMacroKind, FunctionId,
     FunctionKind, HirFile, HirFunction, HirInstruction, HirInstructionKind,
     ImportedHookPropertyMatch, ImportedHookReturn, ImportedName, ImportedReactiveKind,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxExpressionKind,
+    JavaScriptString, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxExpressionKind,
     JsxListExpression, JsxListReceiver, JsxNode, LocalId, LocalKind, ObjectEntry,
     ObjectPropertyKind, Origin, PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId,
     ValueKind,
@@ -2211,13 +2211,13 @@ enum TemplateBinding {
 }
 #[derive(Debug)]
 enum TemplateTextSegment {
-    Literal(String),
+    Literal(JavaScriptString),
     Value(ValueId),
     Node(Origin),
 }
 #[derive(Debug)]
 struct SerializedTemplate {
-    html: String,
+    html: JavaScriptString,
     namespace: DomNamespace,
     force_fragment: bool,
     bindings: Vec<TemplateBinding>,
@@ -2902,7 +2902,7 @@ fn lower_component_operation(
                         false,
                     ),
                     JsxAttributeValue::Text(value) => (
-                        EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone().into())),
+                        EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
                         false,
                         false,
                     ),
@@ -2954,7 +2954,7 @@ fn lower_component_operation(
     for child in &element.children {
         let child = match child {
             JsxChild::Text { value, .. } => ComponentChild::Value {
-                value: EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone().into())),
+                value: EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
                 getter: false,
                 non_reactive: false,
             },
@@ -3169,7 +3169,7 @@ fn serialize_template_with_lists(
         },
         JsxNode::Fragment { .. } => DomNamespace::Html,
     };
-    let mut html = String::new();
+    let mut html = JavaScriptString::default();
     let mut bindings = Vec::new();
     serialize_node(
         root,
@@ -3195,7 +3195,7 @@ fn serialize_node(
     parent_namespace: Option<DomNamespace>,
     allow_standalone: bool,
     path: &mut Vec<u32>,
-    html: &mut String,
+    html: &mut JavaScriptString,
     bindings: &mut Vec<TemplateBinding>,
     trusted_lists: &BTreeSet<ValueId>,
 ) -> Result<u32, DiagnosticBundle> {
@@ -3312,7 +3312,7 @@ fn serialize_node(
                                     bindings.push(TemplateBinding::StaticAttribute {
                                         path: path.clone(),
                                         kind: binding.kind,
-                                        value: fict_hir::LiteralValue::String(value.clone().into()),
+                                        value: fict_hir::LiteralValue::String(value.clone()),
                                         origin: *origin,
                                     });
                                 } else {
@@ -3470,7 +3470,7 @@ fn text_content_segments(children: &[JsxChild]) -> Vec<TemplateTextSegment> {
 fn serialize_children(
     children: &[JsxChild],
     parent_path: &mut Vec<u32>,
-    html: &mut String,
+    html: &mut JavaScriptString,
     bindings: &mut Vec<TemplateBinding>,
     parent_tag: Option<&str>,
     parent_element_namespace: DomNamespace,
@@ -3673,25 +3673,22 @@ fn serialize_children(
 fn push_static_child_text(
     parent_tag: Option<&str>,
     namespace: DomNamespace,
-    value: &str,
-    html: &mut String,
+    value: &JavaScriptString,
+    html: &mut JavaScriptString,
 ) -> Result<(), DiagnosticBundle> {
     let raw_tag = parent_tag.filter(|tag| {
         namespace == DomNamespace::Html
             && matches!(tag.to_ascii_lowercase().as_str(), "script" | "style")
     });
     if let Some(tag) = raw_tag {
-        if value
-            .to_ascii_lowercase()
-            .contains(&format!("</{}", tag.to_ascii_lowercase()))
-        {
+        if exact_string_contains_ascii_case_insensitive(value, &format!("</{tag}")) {
             return Err(DiagnosticBundle::new(vec![lower_error(
                 "FICT-EMIT-RAWTEXT",
                 "static raw-text content cannot contain its closing tag",
                 GuaranteeClass::Unsupported,
             )]));
         }
-        html.push_str(value);
+        html.push_javascript_string(value);
     } else {
         escape_text(value, html);
     }
@@ -3777,10 +3774,11 @@ fn annotation_xml_encoding(attributes: &[JsxAttribute]) -> AnnotationXmlEncoding
             JsxAttribute::Named { name, value, .. } if name.eq_ignore_ascii_case("encoding") => {
                 encoding = match value {
                     JsxAttributeValue::Text(value)
-                        if matches!(
-                            value.to_ascii_lowercase().as_str(),
-                            "text/html" | "application/xhtml+xml"
-                        ) =>
+                        if ["text/html", "application/xhtml+xml"]
+                            .iter()
+                            .any(|candidate| {
+                                exact_string_eq_ascii_case_insensitive(value, candidate)
+                            }) =>
                     {
                         AnnotationXmlEncoding::Html
                     }
@@ -4198,26 +4196,49 @@ fn dom_binding_helper(kind: &DomBindingKind, reactive: bool) -> RuntimeHelper {
         (DomBindingKind::Spread, _) => RuntimeHelper::Spread,
     }
 }
-fn escape_text(value: &str, output: &mut String) {
-    for character in value.chars() {
-        match character {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            _ => output.push(character),
+fn escape_text(value: &JavaScriptString, output: &mut JavaScriptString) {
+    for code_unit in value.as_code_units() {
+        match *code_unit {
+            0x26 => output.push_str("&amp;"),
+            0x3c => output.push_str("&lt;"),
+            0x3e => output.push_str("&gt;"),
+            code_unit => output.push_code_unit(code_unit),
         }
     }
 }
-fn escape_attribute(value: &str, output: &mut String) {
-    for character in value.chars() {
-        match character {
-            '&' => output.push_str("&amp;"),
-            '"' => output.push_str("&quot;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            _ => output.push(character),
+fn escape_attribute(value: &JavaScriptString, output: &mut JavaScriptString) {
+    for code_unit in value.as_code_units() {
+        match *code_unit {
+            0x26 => output.push_str("&amp;"),
+            0x22 => output.push_str("&quot;"),
+            0x3c => output.push_str("&lt;"),
+            0x3e => output.push_str("&gt;"),
+            code_unit => output.push_code_unit(code_unit),
         }
     }
+}
+fn exact_string_eq_ascii_case_insensitive(value: &JavaScriptString, expected: &str) -> bool {
+    value.as_code_units().len() == expected.len()
+        && value
+            .as_code_units()
+            .iter()
+            .copied()
+            .zip(expected.bytes())
+            .all(|(actual, expected)| {
+                u8::try_from(actual).is_ok_and(|actual| actual.eq_ignore_ascii_case(&expected))
+            })
+}
+fn exact_string_contains_ascii_case_insensitive(value: &JavaScriptString, expected: &str) -> bool {
+    let expected = expected.as_bytes();
+    value.as_code_units().windows(expected.len()).any(|window| {
+        window
+            .iter()
+            .copied()
+            .zip(expected)
+            .all(|(actual, expected)| {
+                u8::try_from(actual).is_ok_and(|actual| actual.eq_ignore_ascii_case(expected))
+            })
+    })
 }
 fn valid_markup_name(value: &str) -> bool {
     !value.is_empty()

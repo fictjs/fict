@@ -1961,7 +1961,7 @@ enum FineJsxValue {
 }
 #[derive(Debug, Clone)]
 enum FineTextSegment {
-    Literal(String),
+    Literal(JavaScriptString),
     Source { origin: SourceSpan, node: bool },
 }
 struct TemplateRewrites {
@@ -3245,7 +3245,7 @@ fn resolve_optional_helper(
 }
 fn render_template_call(
     helper: &str,
-    html: &str,
+    html: &JavaScriptString,
     namespace: DomNamespace,
     force_fragment: bool,
 ) -> Option<String> {
@@ -3264,8 +3264,37 @@ fn render_template_call(
     } else {
         suffixes.0
     };
-    let html = quote_javascript_string(html);
+    let html = quote_exact_javascript_string(html);
     Some(format!("{helper}({html}{suffix})"))
+}
+fn quote_exact_javascript_string(value: &JavaScriptString) -> String {
+    use std::fmt::Write;
+    let mut quoted = String::with_capacity(value.as_code_units().len() + 2);
+    quoted.push('"');
+    for character in char::decode_utf16(value.as_code_units().iter().copied()) {
+        match character {
+            Ok('"') => quoted.push_str("\\\""),
+            Ok('\\') => quoted.push_str("\\\\"),
+            Ok('\n') => quoted.push_str("\\n"),
+            Ok('\r') => quoted.push_str("\\r"),
+            Ok('\t') => quoted.push_str("\\t"),
+            Ok('\u{08}') => quoted.push_str("\\b"),
+            Ok('\u{0c}') => quoted.push_str("\\f"),
+            Ok('\u{2028}') => quoted.push_str("\\u2028"),
+            Ok('\u{2029}') => quoted.push_str("\\u2029"),
+            Ok(character) if character <= '\u{1f}' => {
+                write!(quoted, "\\u{:04x}", u32::from(character))
+                    .expect("writing to a String cannot fail");
+            }
+            Ok(character) => quoted.push(character),
+            Err(error) => {
+                write!(quoted, "\\u{:04x}", error.unpaired_surrogate())
+                    .expect("writing to a String cannot fail");
+            }
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 fn quote_javascript_string(value: &str) -> String {
     use std::fmt::Write;
@@ -3733,10 +3762,12 @@ fn clone_direct_jsx_key_expression<'a>(
                     == (key_origin.start(), key_origin.end()) =>
             {
                 let decoded = crate::jsx_text::decode_entities(literal.value.as_str());
-                return Some(Expression::new_string_literal(
+                let (decoded, decoded_lone_surrogates) = encode_javascript_string_for_oxc(&decoded);
+                return Some(Expression::new_string_literal_with_lone_surrogates(
                     literal.span,
                     allocator.alloc_str(&decoded),
                     None,
+                    literal.lone_surrogates || decoded_lone_surrogates,
                     &AstBuilder::new(allocator),
                 ));
             }
@@ -3856,11 +3887,7 @@ fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild
                     Some(ComponentChild::Value {
                         value: EmitValueRef::Literal(LiteralValue::String(planned_value)),
                         ..
-                    }) if planned_value
-                        .as_code_units()
-                        .iter()
-                        .copied()
-                        .eq(value.encode_utf16())
+                    }) if planned_value == &value
                 )
             }
             JSXChild::Element(element) => matches!(
@@ -5663,12 +5690,16 @@ impl<'a> AstRewriter<'a, '_> {
         for segment in segments {
             let dynamic = matches!(&segment, FineTextSegment::Source { .. });
             let mut part = match segment {
-                FineTextSegment::Literal(value) => Expression::new_string_literal(
-                    span,
-                    self.allocator.alloc_str(&value),
-                    None,
-                    &builder,
-                ),
+                FineTextSegment::Literal(value) => {
+                    let (value, lone_surrogates) = encode_javascript_string_for_oxc(&value);
+                    Expression::new_string_literal_with_lone_surrogates(
+                        span,
+                        self.allocator.alloc_str(&value),
+                        None,
+                        lone_surrogates,
+                        &builder,
+                    )
+                }
                 FineTextSegment::Source { origin, .. } => {
                     let location = (origin.start(), origin.end());
                     let Some(value) = values.remove(&location) else {
@@ -6623,11 +6654,12 @@ impl<'a> AstRewriter<'a, '_> {
             Some(JSXAttributeValue::StringLiteral(literal)) => {
                 let literal = literal.unbox();
                 let decoded = crate::jsx_text::decode_entities(literal.value.as_str());
+                let (decoded, decoded_lone_surrogates) = encode_javascript_string_for_oxc(&decoded);
                 Expression::new_string_literal_with_lone_surrogates(
                     literal.span,
                     self.allocator.alloc_str(&decoded),
                     None,
-                    literal.lone_surrogates,
+                    literal.lone_surrogates || decoded_lone_surrogates,
                     &builder,
                 )
             }
@@ -6666,12 +6698,16 @@ impl<'a> AstRewriter<'a, '_> {
                 JSXChild::Text(text) => {
                     if let Some(value) = crate::jsx_text::normalize_text(text.value.as_str()) {
                         let _ = planned.as_mut().and_then(Iterator::next);
-                        lowered.push(VNodeChild::Value(Expression::new_string_literal(
-                            text.span,
-                            self.allocator.alloc_str(&value),
-                            None,
-                            &AstBuilder::new(self.allocator),
-                        )));
+                        let (value, lone_surrogates) = encode_javascript_string_for_oxc(&value);
+                        lowered.push(VNodeChild::Value(
+                            Expression::new_string_literal_with_lone_surrogates(
+                                text.span,
+                                self.allocator.alloc_str(&value),
+                                None,
+                                lone_surrogates,
+                                &AstBuilder::new(self.allocator),
+                            ),
+                        ));
                     }
                 }
                 JSXChild::Element(element) => {

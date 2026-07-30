@@ -1,7 +1,8 @@
 use fict_hir::{
     BindingId, BlockId, CompoundAssignmentOperator, FunctionId, FunctionKind,
-    ImportedHookPropertyMatch, ImportedHookReturn, LiteralValue, LocalId, Origin, Projection,
-    RegionId, SourceSpan, SsaName, SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
+    ImportedHookPropertyMatch, ImportedHookReturn, JavaScriptString, LiteralValue, LocalId, Origin,
+    Projection, RegionId, SourceSpan, SsaName, SyntaxFragmentId, TemplateId, UpdateOperator,
+    ValueId,
 };
 use std::collections::BTreeMap;
 
@@ -165,7 +166,7 @@ pub enum DomBindingKind {
 /// One authored segment in a raw-text/RCDATA `textContent` binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DomTextSegment {
-    Literal(String),
+    Literal(JavaScriptString),
     Source {
         value: Option<ValueId>,
         origin: Origin,
@@ -374,7 +375,7 @@ pub enum EmitOperation {
     DeclareTemplate {
         template: TemplateId,
         local: String,
-        html: String,
+        html: JavaScriptString,
         namespace: DomNamespace,
         force_fragment: bool,
         helper: RuntimeHelper,

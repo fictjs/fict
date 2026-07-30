@@ -6415,7 +6415,7 @@ enum RawJsxSpreadKind {
 #[derive(Debug, Clone)]
 enum RawJsxAttributeValue {
     ImplicitTrue,
-    Text(String),
+    Text(JavaScriptString),
     Expression {
         span: SourceSpan,
         function_like: bool,
@@ -6427,7 +6427,7 @@ enum RawJsxAttributeValue {
 #[derive(Debug, Clone)]
 enum RawJsxChild {
     Text {
-        value: String,
+        value: JavaScriptString,
         span: SourceSpan,
     },
     Expression {
