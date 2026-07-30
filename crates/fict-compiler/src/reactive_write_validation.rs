@@ -11,7 +11,7 @@ use fict_hir::{
     FunctionId, HirFile, HirFunction, HirInstructionKind, HirParameter, LocalId, LocalKind,
     ObjectEntry, Origin, Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics,
     StateReceiverKind, TerminatorKind, ValueId, ValueKind, classify_state_method_call,
-    classify_state_method_result,
+    classify_state_method_result, state_method_returns_scalar,
 };
 use fict_reactivity::{
     DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, SsaDefinition,
@@ -27,6 +27,7 @@ enum ReadonlyKind {
     Alias,
     ProjectedAlias,
     Derived,
+    ScalarDerived,
     FreshContainer,
 }
 
@@ -1456,6 +1457,8 @@ pub(crate) fn validate_reactive_writes(
                         &mut BTreeSet::new(),
                     )
                 });
+            let scalar_derivation =
+                definition_is_scalar_state_method_result(&identity, function_index, fact.location);
             let kind = match fact.kind {
                 ReactiveBindingKind::Derived
                     if !carries_state_identity
@@ -1465,7 +1468,11 @@ pub(crate) fn validate_reactive_writes(
                             fact.name.local,
                         ) =>
                 {
-                    Some(ReadonlyKind::Derived)
+                    Some(if scalar_derivation {
+                        ReadonlyKind::ScalarDerived
+                    } else {
+                        ReadonlyKind::Derived
+                    })
                 }
                 ReactiveBindingKind::Alias | ReactiveBindingKind::Derived
                     if projected_kind == Some(ReadonlyKind::CallbackThisFreshContainer) =>
@@ -1485,7 +1492,11 @@ pub(crate) fn validate_reactive_writes(
                         fact.name.local,
                     ) =>
                 {
-                    Some(ReadonlyKind::Derived)
+                    Some(if scalar_derivation {
+                        ReadonlyKind::ScalarDerived
+                    } else {
+                        ReadonlyKind::Derived
+                    })
                 }
                 ReactiveBindingKind::State
                 | ReactiveBindingKind::Memo
@@ -1782,6 +1793,9 @@ impl WriteValidationContext<'_> {
         {
             return;
         }
+        if site.kind == ReadonlyKind::ScalarDerived && projection_depth > 0 {
+            return;
+        }
         if matches!(
             site.kind,
             ReadonlyKind::FreshContainer | ReadonlyKind::CallbackThisFreshContainer
@@ -1813,7 +1827,7 @@ impl WriteValidationContext<'_> {
                 ReadonlyKind::CallbackParameter | ReadonlyKind::ProjectedAlias => {
                     unreachable!("callback and projected alias roots are mutable snapshots")
                 }
-                ReadonlyKind::Derived => (
+                ReadonlyKind::Derived | ReadonlyKind::ScalarDerived => (
                     validation_error(
                         "FICT-R-DERIVED-WRITE",
                         format!(
@@ -3600,7 +3614,12 @@ fn value_preserves_state_identity_in(
                             visiting.remove(&visit_key);
                             return receiver_preserves;
                         };
-                        if state_method_returns_fresh_container(call.state_receiver_kind, &method) {
+                        if state_method_returns_scalar(call.state_receiver_kind, &method) {
+                            false
+                        } else if state_method_returns_fresh_container(
+                            call.state_receiver_kind,
+                            &method,
+                        ) {
                             receiver_preserves
                         } else {
                             receiver_preserves
@@ -3932,6 +3951,27 @@ fn definition_is_readonly_derived_declaration(
                 } if declared == local
             )
         })
+}
+
+fn definition_is_scalar_state_method_result(
+    identity: &StateIdentityAnalysis<'_>,
+    function_index: usize,
+    location: SsaDefinitionLocation,
+) -> bool {
+    let function = &identity.hir.functions[function_index];
+    let Some(value) = definition_source_value(function, location) else {
+        return false;
+    };
+    let Some(HirInstructionKind::Call(call)) = identity
+        .instruction_for_result(function, value)
+        .map(|instruction| &instruction.kind)
+    else {
+        return false;
+    };
+    call.callee_reference
+        .as_ref()
+        .and_then(|place| state_method_name(function, place))
+        .is_some_and(|method| state_method_returns_scalar(call.state_receiver_kind, &method))
 }
 
 fn analyze_fresh_state_containers(identity: &StateIdentityAnalysis<'_>) -> Vec<BTreeSet<SsaName>> {

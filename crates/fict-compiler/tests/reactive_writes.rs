@@ -367,6 +367,82 @@ fn state_derived_method_calls_fail_closed_unless_the_receiver_operation_is_reado
 }
 
 #[test]
+fn scalar_state_method_results_do_not_retain_reactive_identity() {
+    for optimize in [false, true] {
+        for source in [
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const rows = $state([{ done: false }])
+                    const text = rows.join(',')
+                    return text.toUpperCase()
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const rows = $state([{ done: false }])
+                    const index = rows.findIndex(row => row.done)
+                    return index.toFixed()
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const values = $state(new Map([['key', { done: false }]]))
+                    const present = values.has('key')
+                    return present.valueOf()
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const values = $state(new Uint8Array([1, 2]))
+                    const found = values.find(value => value > 1)
+                    return found?.toFixed()
+                }
+            "#,
+        ] {
+            let output = compile_source_with_strict(
+                source,
+                CompilerOptions {
+                    optimize,
+                    ..CompilerOptions::default()
+                },
+                true,
+            );
+            assert!(!output.has_errors(), "{:#?}", output.diagnostics);
+            assert!(!output.code.is_empty());
+        }
+    }
+}
+
+#[test]
+fn identity_returning_state_methods_remain_reactive_aliases() {
+    for expression in [
+        "rows.at(0)",
+        "rows.find(row => !row.done)",
+        "rows.reduce((_previous, row) => row)",
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict'
+                function App() {{
+                    const rows = $state([{{ done: false }}])
+                    const selected = {expression}
+                    selected.done = true
+                    return selected
+                }}
+            "#,
+        );
+        let output = compile_source_with_strict(&source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&output, "FICT-M");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(output.code.is_empty());
+    }
+}
+
+#[test]
 fn treats_only_direct_builtin_state_type_arguments_as_caller_owned_receiver_proofs() {
     for optimize in [false, true] {
         let accepted = compile_source_with_strict(

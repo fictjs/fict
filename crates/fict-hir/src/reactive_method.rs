@@ -330,11 +330,88 @@ pub fn classify_state_method_result(
     }
 }
 
+/// Whether a proven built-in method always returns a scalar value.
+///
+/// Scalar results cannot preserve the object identity of a shallow `$state` receiver or one of
+/// its nested values. Methods such as `find`, `at`, `get`, and `reduce` are intentionally absent:
+/// depending on their receiver or arguments, they can return a state-derived object. Unknown
+/// receivers and protocol-dispatched string methods also fail closed.
+#[must_use]
+pub fn state_method_returns_scalar(receiver: StateReceiverKind, method: &str) -> bool {
+    if classify_state_method_call(receiver, method) != StateMethodCallSemantics::ReadOnlyReceiver {
+        return false;
+    }
+    match receiver {
+        StateReceiverKind::Unknown => false,
+        StateReceiverKind::Array => !matches!(
+            method,
+            "at" | "concat"
+                | "entries"
+                | "filter"
+                | "find"
+                | "findLast"
+                | "flat"
+                | "flatMap"
+                | "keys"
+                | "map"
+                | "reduce"
+                | "reduceRight"
+                | "slice"
+                | "toReversed"
+                | "toSorted"
+                | "toSpliced"
+                | "valueOf"
+                | "values"
+                | "with"
+        ),
+        StateReceiverKind::DataView => method != "valueOf",
+        StateReceiverKind::Date | StateReceiverKind::Number => true,
+        StateReceiverKind::Function => !matches!(method, "apply" | "bind" | "call" | "valueOf"),
+        StateReceiverKind::Map => {
+            !matches!(method, "entries" | "get" | "keys" | "valueOf" | "values")
+        }
+        StateReceiverKind::Promise => !matches!(method, "catch" | "finally" | "then" | "valueOf"),
+        StateReceiverKind::Set => !matches!(
+            method,
+            "difference"
+                | "entries"
+                | "intersection"
+                | "keys"
+                | "symmetricDifference"
+                | "union"
+                | "valueOf"
+                | "values"
+        ),
+        StateReceiverKind::String => !matches!(
+            method,
+            "match" | "matchAll" | "replace" | "replaceAll" | "search" | "split"
+        ),
+        StateReceiverKind::TypedArray => !matches!(
+            method,
+            "entries"
+                | "filter"
+                | "keys"
+                | "map"
+                | "reduce"
+                | "reduceRight"
+                | "slice"
+                | "subarray"
+                | "toReversed"
+                | "toSorted"
+                | "valueOf"
+                | "values"
+                | "with"
+        ),
+        StateReceiverKind::WeakMap => !matches!(method, "get" | "valueOf"),
+        StateReceiverKind::WeakSet => method != "valueOf",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         StateMethodCallSemantics, StateReceiverKind, classify_state_method_call,
-        classify_state_method_result,
+        classify_state_method_result, state_method_returns_scalar,
     };
 
     #[test]
@@ -396,5 +473,40 @@ mod tests {
             classify_state_method_result(StateReceiverKind::Map, "map"),
             StateReceiverKind::Unknown
         );
+    }
+
+    #[test]
+    fn identifies_only_results_that_cannot_carry_state_identity_as_scalars() {
+        for (receiver, method) in [
+            (StateReceiverKind::Array, "join"),
+            (StateReceiverKind::Array, "findIndex"),
+            (StateReceiverKind::DataView, "getUint8"),
+            (StateReceiverKind::Date, "getTime"),
+            (StateReceiverKind::Map, "has"),
+            (StateReceiverKind::Set, "isSubsetOf"),
+            (StateReceiverKind::String, "toUpperCase"),
+            (StateReceiverKind::TypedArray, "find"),
+            (StateReceiverKind::WeakMap, "has"),
+        ] {
+            assert!(
+                state_method_returns_scalar(receiver, method),
+                "{receiver:?}.{method}"
+            );
+        }
+
+        for (receiver, method) in [
+            (StateReceiverKind::Unknown, "join"),
+            (StateReceiverKind::Array, "at"),
+            (StateReceiverKind::Array, "find"),
+            (StateReceiverKind::Array, "reduce"),
+            (StateReceiverKind::Map, "get"),
+            (StateReceiverKind::String, "match"),
+            (StateReceiverKind::TypedArray, "reduce"),
+        ] {
+            assert!(
+                !state_method_returns_scalar(receiver, method),
+                "{receiver:?}.{method}"
+            );
+        }
     }
 }
