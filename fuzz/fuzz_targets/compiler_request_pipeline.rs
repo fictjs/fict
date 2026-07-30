@@ -127,17 +127,24 @@ fn request_for(source: &str, controls: u64) -> CompileRequest {
         public_module_id: options.preview.as_ref().map(|_| "fuzz/request".into()),
         language: Some(language),
         module_kind: Some(module_kind),
-        input_source_map: enabled(controls, 20).then(|| input_source_map(source)),
+        input_source_map: enabled(controls, 20)
+            .then(|| input_source_map(source, &filename, controls)),
         options,
         metadata: vec![metadata_input(controls)],
         integration_diagnostics: Vec::new(),
     }
 }
 
-fn input_source_map(source: &str) -> RawSourceMap {
+fn input_source_map(source: &str, filename: &str, controls: u64) -> RawSourceMap {
+    let file = match (controls >> 43) & 0b11 {
+        0 => Some(filename.to_owned()),
+        1 => None,
+        2 => Some(format!("{filename}?upstream")),
+        _ => Some("compiler-request.generated.tsx".into()),
+    };
     RawSourceMap {
         version: 3,
-        file: Some("compiler-request.generated.tsx".into()),
+        file,
         source_root: None,
         sources: vec!["/fuzz/original.tsx".into()],
         sources_content: Some(vec![Some(source.into())]),
