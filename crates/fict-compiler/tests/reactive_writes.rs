@@ -749,6 +749,74 @@ fn accepts_definitely_undefined_array_sort_comparators() {
 }
 
 #[test]
+fn rejects_reassigned_known_safe_callback_globals() {
+    let accepted = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.filter(Boolean)
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(!accepted.has_errors(), "{:#?}", accepted.diagnostics);
+
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                Boolean = (left, right) => {
+                    left.done = true
+                    return 0
+                }
+                return rows.toSorted(Boolean)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            String = value => {
+                value.done = true
+                return ''
+            }
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    String(item)
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            Boolean = (left, right) => {
+                left.done = true
+                return 0
+            }
+            function getComparator() {
+                return Boolean
+            }
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(getComparator())
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = find_error(&fallback, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+        assert!(!fallback.code.is_empty());
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
 fn keeps_shadowed_undefined_array_sort_comparators_unresolved() {
     let result = compile_source(
         r#"
