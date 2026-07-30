@@ -2572,6 +2572,13 @@ fn synchronous_builtin_callback_hosts_do_not_escape_reactive_captures() {
             const bytes = $state(new Uint8Array([1, 2]));
             const map = $state(new Map([[1, 2]]));
             const set = $state(new Set([1, 2]));
+            const callbacks = { read: () => count };
+            const readAlias = callbacks.read;
+            class CallbackBox {
+                read = () => count;
+                method() { return count; }
+            }
+            const callbackBox = new CallbackBox();
             const results = [
                 rowAlias.map(() => count),
                 replacedRows.forEach(() => count),
@@ -2581,6 +2588,10 @@ fn synchronous_builtin_callback_hosts_do_not_escape_reactive_captures() {
                 bytes.toSorted(() => count),
                 map.forEach(() => count),
                 set.forEach(() => count),
+                rows.map(readAlias),
+                rows.map(callbackBox.read),
+                rows.map(callbackBox.method),
+                rows.forEach(function* () { yield count; }),
             ];
             return results.length;
         }
@@ -2650,6 +2661,124 @@ fn synchronous_callback_host_proof_rejects_unknown_and_async_boundaries() {
                 matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
             }),
             "{name}: expected an escape diagnostic, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn suspending_callbacks_cross_otherwise_synchronous_hosts() {
+    for (name, source, expected_span) in [
+        (
+            "inline async callback",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    const rows = $state([1]);
+                    rows.map(async () => { await pause(); return count; });
+                    return count;
+                }
+            "#,
+            "async () => { await pause(); return count; }",
+        ),
+        (
+            "bound async callback",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    const rows = $state([1]);
+                    const callback = async () => { await pause(); return count; };
+                    rows.forEach(callback);
+                    return count;
+                }
+            "#,
+            "callback",
+        ),
+        (
+            "retained generator callback",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const count = $state(0);
+                    const rows = $state([1]);
+                    rows.map(function* () { yield count; });
+                    return count;
+                }
+            "#,
+            "function* () { yield count; }",
+        ),
+        (
+            "async callback property",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    const rows = $state([1]);
+                    const callbacks = {
+                        read: async () => { await pause(); return count; },
+                    };
+                    rows.map(callbacks.read);
+                    return count;
+                }
+            "#,
+            "callbacks.read",
+        ),
+        (
+            "async callback alias",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    const rows = $state([1]);
+                    const callback = async () => { await pause(); return count; };
+                    const alias = callback;
+                    rows.forEach(alias);
+                    return count;
+                }
+            "#,
+            "alias",
+        ),
+        (
+            "getter returning async callback",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    const rows = $state([1]);
+                    class CallbackBox {
+                        get read() {
+                            return async () => { await pause(); return count; };
+                        }
+                    }
+                    const callbackBox = new CallbackBox();
+                    rows.map(callbackBox.read);
+                    return count;
+                }
+            "#,
+            "callbackBox.read",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected FICT-R005 on {expected_span:?}, got {:?}",
             output.diagnostics
         );
     }

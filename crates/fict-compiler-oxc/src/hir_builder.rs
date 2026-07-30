@@ -42,7 +42,7 @@ use oxc::{
             JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
             JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
             JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
-            MetaProperty, NewExpression, ObjectAssignmentTarget,
+            MetaProperty, MethodDefinitionKind, NewExpression, ObjectAssignmentTarget,
             ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
             PropertyKind, ReturnStatement, SimpleAssignmentTarget, Statement, Super,
             TSImportEqualsDeclaration, TSLiteral, TSModuleReference, TSType, TSTypeName,
@@ -2144,6 +2144,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &known_arrays.symbols,
             &reactive_symbols,
             &class_bindings,
+            &static_hook_aliases,
         );
         self.validate_component_props_patterns();
         self.apply_call_classification(&calls.calls);
@@ -2768,6 +2769,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         known_arrays: &BTreeSet<SymbolId>,
         reactive: &ReactiveSymbolAnalysis,
         classes: &ClassBindingCollector<'_>,
+        callback_aliases: &StaticHookAliases,
     ) {
         let binding_owners: BTreeMap<_, _> = self
             .frontend
@@ -2929,6 +2931,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 }
             }
         }
+        let mutable_callback_symbols = self
+            .frontend
+            .bindings
+            .iter()
+            .filter(|binding| binding.mutated)
+            .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
+            .collect::<BTreeSet<_>>();
+        let callback_timings = collect_callback_timings(
+            &self.function_facts,
+            &property_facts,
+            &mutable_callback_symbols,
+        );
 
         let imports: BTreeMap<_, _> = self
             .frontend
@@ -2981,6 +2995,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             capturing_functions: &capturing_functions,
             callback_captures: &callback_captures,
             callback_property_captures: &callback_property_captures,
+            callback_timings: &callback_timings,
+            callback_aliases,
             diagnostics: Vec::new(),
         };
         collector.visit_program(program);
@@ -9589,6 +9605,7 @@ struct CallbackClassPropertyFact {
     class: SymbolId,
     property: String,
     source_span: SourceSpan,
+    callback_span: Option<SourceSpan>,
     is_static: bool,
 }
 
@@ -9689,16 +9706,26 @@ impl<'a> Visit<'a> for CallbackPropertyCollector<'_> {
                 let Some(property) = element.static_name().map(|name| name.into_owned()) else {
                     continue;
                 };
-                let is_static = match element {
-                    oxc::ast::ast::ClassElement::MethodDefinition(definition) => {
-                        definition.r#static
-                    }
-                    oxc::ast::ast::ClassElement::PropertyDefinition(definition) => {
-                        definition.r#static
-                    }
-                    oxc::ast::ast::ClassElement::AccessorProperty(definition) => {
-                        definition.r#static
-                    }
+                let (is_static, callback_span) = match element {
+                    oxc::ast::ast::ClassElement::MethodDefinition(definition) => (
+                        definition.r#static,
+                        (definition.kind == MethodDefinitionKind::Method)
+                            .then(|| source_span(definition.value.span)),
+                    ),
+                    oxc::ast::ast::ClassElement::PropertyDefinition(definition) => (
+                        definition.r#static,
+                        definition
+                            .value
+                            .as_ref()
+                            .map(|value| source_span(value.get_inner_expression().span())),
+                    ),
+                    oxc::ast::ast::ClassElement::AccessorProperty(definition) => (
+                        definition.r#static,
+                        definition
+                            .value
+                            .as_ref()
+                            .map(|value| source_span(value.get_inner_expression().span())),
+                    ),
                     oxc::ast::ast::ClassElement::StaticBlock(_)
                     | oxc::ast::ast::ClassElement::TSIndexSignature(_) => continue,
                 };
@@ -9706,12 +9733,133 @@ impl<'a> Visit<'a> for CallbackPropertyCollector<'_> {
                     class: binding,
                     property,
                     source_span: source_span(element.span()),
+                    callback_span,
                     is_static,
                 });
             }
         }
         oxc::ast_visit::walk::walk_class(self, class);
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CallbackTiming {
+    may_suspend: bool,
+    may_return_iterator: bool,
+}
+
+impl CallbackTiming {
+    fn from_flags(flags: FunctionFlags) -> Self {
+        if flags.is_generator {
+            Self {
+                may_suspend: false,
+                may_return_iterator: true,
+            }
+        } else {
+            Self {
+                may_suspend: flags.is_async,
+                may_return_iterator: false,
+            }
+        }
+    }
+
+    fn merge(self, other: Self) -> Self {
+        Self {
+            may_suspend: self.may_suspend || other.may_suspend,
+            may_return_iterator: self.may_return_iterator || other.may_return_iterator,
+        }
+    }
+}
+
+fn record_callback_timing(
+    timings: &mut BTreeMap<StaticAliasPath, Option<CallbackTiming>>,
+    path: StaticAliasPath,
+    timing: Option<CallbackTiming>,
+) {
+    timings
+        .entry(path)
+        .and_modify(|current| {
+            *current = match (*current, timing) {
+                (Some(current), Some(timing)) => Some(current.merge(timing)),
+                (None, _) | (_, None) => None,
+            };
+        })
+        .or_insert(timing);
+}
+
+fn exact_callback_timing(functions: &[FunctionFact], span: SourceSpan) -> Option<CallbackTiming> {
+    functions
+        .iter()
+        .filter(|function| function.span == span)
+        .map(|function| CallbackTiming::from_flags(function.flags))
+        .reduce(CallbackTiming::merge)
+}
+
+fn collect_callback_timings(
+    functions: &[FunctionFact],
+    properties: &CallbackPropertyCollector<'_>,
+    mutable_symbols: &BTreeSet<SymbolId>,
+) -> BTreeMap<StaticAliasPath, Option<CallbackTiming>> {
+    let mut timings = BTreeMap::new();
+    for function in functions {
+        let Some(binding) = function.binding else {
+            continue;
+        };
+        if mutable_symbols.contains(&binding) {
+            continue;
+        }
+        record_callback_timing(
+            &mut timings,
+            StaticAliasPath::root(binding),
+            Some(CallbackTiming::from_flags(function.flags)),
+        );
+    }
+
+    let mut instance_timings = BTreeMap::<(SymbolId, String), Option<CallbackTiming>>::new();
+    for property in &properties.class_properties {
+        let timing = property
+            .callback_span
+            .and_then(|span| exact_callback_timing(functions, span));
+        if property.is_static {
+            record_callback_timing(
+                &mut timings,
+                StaticAliasPath::root(property.class).with_property(property.property.clone()),
+                timing,
+            );
+        } else {
+            instance_timings
+                .entry((property.class, property.property.clone()))
+                .and_modify(|current| {
+                    *current = match (*current, timing) {
+                        (Some(current), Some(timing)) => Some(current.merge(timing)),
+                        (None, _) | (_, None) => None,
+                    };
+                })
+                .or_insert(timing);
+        }
+    }
+    for instance in &properties.class_instances {
+        if mutable_symbols.contains(&instance.instance) {
+            continue;
+        }
+        for ((class, property), timing) in &instance_timings {
+            if *class == instance.class {
+                record_callback_timing(
+                    &mut timings,
+                    StaticAliasPath::root(instance.instance).with_property(property.clone()),
+                    *timing,
+                );
+            }
+        }
+    }
+    for property in &properties.properties {
+        record_callback_timing(
+            &mut timings,
+            StaticAliasPath::root(property.target).with_property(property.property.clone()),
+            exact_callback_timing(functions, property.source_span),
+        );
+    }
+    timings
 }
 
 #[derive(Debug, Clone)]
@@ -9740,6 +9888,12 @@ struct EscapeArgument<'node, 'ast> {
     spread: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallbackResultDisposition {
+    Discarded,
+    Retained,
+}
+
 struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     scoping: &'semantic Scoping,
     call_facts: &'facts BTreeMap<(u32, u32), &'facts CallFact>,
@@ -9754,6 +9908,8 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     capturing_functions: &'facts [(SourceSpan, BTreeSet<SymbolId>)],
     callback_captures: &'facts BTreeMap<SymbolId, BTreeSet<SymbolId>>,
     callback_property_captures: &'facts BTreeMap<(SymbolId, String), BTreeSet<SymbolId>>,
+    callback_timings: &'facts BTreeMap<StaticAliasPath, Option<CallbackTiming>>,
+    callback_aliases: &'facts StaticHookAliases,
     diagnostics: Vec<EscapeDiagnosticFact>,
 }
 
@@ -9834,6 +9990,45 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 .filter(|symbol| self.hook_return_shapes.contains_key(symbol)),
         );
         captured
+    }
+
+    fn callback_timing(&self, expression: &Expression<'_>) -> Option<CallbackTiming> {
+        let expression = expression.get_inner_expression();
+        if let Some(path) = static_alias_source_path(self.scoping, expression) {
+            let resolved = self.callback_aliases.resolve(&path);
+            return self.callback_timings.get(&resolved).copied().flatten();
+        }
+        match expression {
+            Expression::ArrowFunctionExpression(function) => Some(CallbackTiming {
+                may_suspend: function.r#async,
+                may_return_iterator: false,
+            }),
+            Expression::FunctionExpression(function) => Some(if function.generator {
+                CallbackTiming {
+                    may_suspend: false,
+                    may_return_iterator: true,
+                }
+            } else {
+                CallbackTiming {
+                    may_suspend: function.r#async,
+                    may_return_iterator: false,
+                }
+            }),
+            Expression::ConditionalExpression(expression) => self
+                .callback_timing(&expression.consequent)
+                .zip(self.callback_timing(&expression.alternate))
+                .map(|(left, right)| left.merge(right)),
+            Expression::LogicalExpression(expression) => self
+                .callback_timing(&expression.left)
+                .zip(self.callback_timing(&expression.right))
+                .map(|(left, right)| left.merge(right)),
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .and_then(|value| self.callback_timing(value)),
+            Expression::AssignmentExpression(expression) => self.callback_timing(&expression.right),
+            _ => None,
+        }
     }
 
     fn analyze_class_retained_expression(&mut self, expression: &Expression<'_>) {
@@ -9942,7 +10137,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         {
             return;
         }
-        if self.is_non_escaping_callback_host(&call.callee, binding) {
+        if self.is_non_escaping_callback_host(&call.callee, binding, arguments) {
             return;
         }
         if self.is_non_escaping_hook_accumulator(&call.callee, arguments) {
@@ -10005,6 +10200,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         &self,
         callee: &Expression<'_>,
         binding: Option<BindingId>,
+        arguments: &[EscapeArgument<'_, '_>],
     ) -> bool {
         if binding
             .and_then(|binding| self.imports.get(&binding))
@@ -10045,41 +10241,53 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if receiver_kind == StateReceiverKind::Unknown && self.is_known_array_receiver(receiver) {
             receiver_kind = StateReceiverKind::Array;
         }
-        match receiver_kind {
-            StateReceiverKind::Array => matches!(
-                method,
-                "map"
-                    | "forEach"
-                    | "filter"
-                    | "some"
-                    | "every"
-                    | "find"
-                    | "findIndex"
-                    | "findLast"
-                    | "findLastIndex"
-                    | "flatMap"
-                    | "reduce"
-                    | "reduceRight"
-                    | "sort"
-                    | "toSorted"
-            ),
-            StateReceiverKind::TypedArray => matches!(
-                method,
-                "map"
-                    | "forEach"
-                    | "filter"
-                    | "some"
-                    | "every"
-                    | "find"
-                    | "findIndex"
-                    | "findLast"
-                    | "findLastIndex"
-                    | "reduce"
-                    | "reduceRight"
-                    | "sort"
-                    | "toSorted"
-            ),
-            StateReceiverKind::Map | StateReceiverKind::Set => method == "forEach",
+        let disposition = match receiver_kind {
+            StateReceiverKind::Array
+                if matches!(method, "map" | "flatMap" | "reduce" | "reduceRight") =>
+            {
+                CallbackResultDisposition::Retained
+            }
+            StateReceiverKind::Array
+                if matches!(
+                    method,
+                    "forEach"
+                        | "filter"
+                        | "some"
+                        | "every"
+                        | "find"
+                        | "findIndex"
+                        | "findLast"
+                        | "findLastIndex"
+                        | "sort"
+                        | "toSorted"
+                ) =>
+            {
+                CallbackResultDisposition::Discarded
+            }
+            StateReceiverKind::TypedArray if matches!(method, "reduce" | "reduceRight") => {
+                CallbackResultDisposition::Retained
+            }
+            StateReceiverKind::TypedArray
+                if matches!(
+                    method,
+                    "map"
+                        | "forEach"
+                        | "filter"
+                        | "some"
+                        | "every"
+                        | "find"
+                        | "findIndex"
+                        | "findLast"
+                        | "findLastIndex"
+                        | "sort"
+                        | "toSorted"
+                ) =>
+            {
+                CallbackResultDisposition::Discarded
+            }
+            StateReceiverKind::Map | StateReceiverKind::Set if method == "forEach" => {
+                CallbackResultDisposition::Discarded
+            }
             StateReceiverKind::Unknown
             | StateReceiverKind::DataView
             | StateReceiverKind::Date
@@ -10088,8 +10296,26 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             | StateReceiverKind::Promise
             | StateReceiverKind::String
             | StateReceiverKind::WeakMap
-            | StateReceiverKind::WeakSet => false,
+            | StateReceiverKind::WeakSet
+            | StateReceiverKind::Array
+            | StateReceiverKind::TypedArray
+            | StateReceiverKind::Map
+            | StateReceiverKind::Set => return false,
+        };
+        let Some(callback) = arguments.first() else {
+            return true;
+        };
+        if self.callback_captures(*callback).is_empty() {
+            return true;
         }
+        let Some(timing) = (!callback.spread)
+            .then(|| self.callback_timing(callback.expression))
+            .flatten()
+        else {
+            return false;
+        };
+        !timing.may_suspend
+            && (disposition == CallbackResultDisposition::Discarded || !timing.may_return_iterator)
     }
 
     fn is_non_retaining_identity_argument(
