@@ -50,17 +50,17 @@ impl<'a> GetterCacheRewriter<'a, '_> {
     fn rewrite_body(&mut self, body: &mut FunctionBody<'a>) -> Vec<String> {
         let mut analysis = CacheSafetyAnalysis::new(self.cacheable_calls);
         analysis.visit_function_body(body);
+        analysis.finish_segment();
 
         let invalidated_getters = analysis.invalidated_getters;
-        let cache_names: BTreeMap<_, _> = analysis
-            .max_segment_reads
+        let cache_plan: BTreeMap<_, _> = analysis
+            .cache_plan
             .into_iter()
-            .filter_map(|(getter, count)| {
-                (count > 1 && !invalidated_getters.contains(&getter)).then(|| {
-                    let cache = self.allocate_cache_name(&getter);
-                    (getter, cache)
-                })
-            })
+            .filter(|(getter, _)| !invalidated_getters.contains(getter))
+            .collect();
+        let cache_names: BTreeMap<_, _> = cache_plan
+            .keys()
+            .map(|getter| (getter.clone(), self.allocate_cache_name(getter)))
             .collect();
         if cache_names.is_empty() {
             return Vec::new();
@@ -70,7 +70,8 @@ impl<'a> GetterCacheRewriter<'a, '_> {
             allocator: self.allocator,
             cacheable_calls: self.cacheable_calls,
             cache_names: &cache_names,
-            seen: BTreeMap::new(),
+            cache_plan: &cache_plan,
+            read_ordinals: BTreeMap::new(),
             disabled: false,
         };
         replacer.visit_function_body(body);
@@ -157,10 +158,17 @@ impl<'a> VisitMut<'a> for GetterCacheRewriter<'a, '_> {
 
 struct CacheSafetyAnalysis<'plan> {
     cacheable_calls: &'plan BTreeSet<SourceLocation>,
-    segment_reads: BTreeMap<String, usize>,
-    max_segment_reads: BTreeMap<String, usize>,
+    segment_reads: BTreeMap<String, Vec<usize>>,
+    read_ordinals: BTreeMap<String, usize>,
+    cache_plan: BTreeMap<String, BTreeMap<usize, CacheReadAction>>,
     invalidated_getters: BTreeSet<String>,
     disabled: bool,
+}
+
+#[derive(Clone, Copy)]
+enum CacheReadAction {
+    Assign,
+    Reuse,
 }
 
 impl<'plan> CacheSafetyAnalysis<'plan> {
@@ -168,7 +176,8 @@ impl<'plan> CacheSafetyAnalysis<'plan> {
         Self {
             cacheable_calls,
             segment_reads: BTreeMap::new(),
-            max_segment_reads: BTreeMap::new(),
+            read_ordinals: BTreeMap::new(),
+            cache_plan: BTreeMap::new(),
             invalidated_getters: BTreeSet::new(),
             disabled: false,
         }
@@ -178,16 +187,32 @@ impl<'plan> CacheSafetyAnalysis<'plan> {
         if self.disabled {
             return;
         }
-        let count = self.segment_reads.entry(getter.clone()).or_default();
-        *count += 1;
-        self.max_segment_reads
-            .entry(getter)
-            .and_modify(|maximum| *maximum = (*maximum).max(*count))
-            .or_insert(*count);
+        let ordinal = self
+            .read_ordinals
+            .entry(getter.clone())
+            .and_modify(|ordinal| *ordinal += 1)
+            .or_insert(1);
+        self.segment_reads.entry(getter).or_default().push(*ordinal);
+    }
+
+    fn finish_segment(&mut self) {
+        for (getter, reads) in std::mem::take(&mut self.segment_reads) {
+            if reads.len() < 3 {
+                continue;
+            }
+            let actions = self.cache_plan.entry(getter).or_default();
+            actions.insert(reads[1], CacheReadAction::Assign);
+            actions.extend(
+                reads
+                    .into_iter()
+                    .skip(2)
+                    .map(|ordinal| (ordinal, CacheReadAction::Reuse)),
+            );
+        }
     }
 
     fn reset_segment(&mut self) {
-        self.segment_reads.clear();
+        self.finish_segment();
     }
 
     fn visit_disabled_expression(&mut self, expression: &Expression<'_>) {
@@ -303,13 +328,9 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
         walk::walk_statement(self, statement);
     }
 
-    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-        walk::walk_function(self, function, flags);
-    }
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
 
-    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
-        walk::walk_arrow_function_expression(self, function);
-    }
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
 
     fn visit_class(&mut self, class: &Class<'a>) {
         self.visit_disabled_class(class);
@@ -325,40 +346,31 @@ struct AccessorCacheReplacer<'a, 'plan> {
     allocator: &'a Allocator,
     cacheable_calls: &'plan BTreeSet<SourceLocation>,
     cache_names: &'plan BTreeMap<String, String>,
-    seen: BTreeMap<String, usize>,
+    cache_plan: &'plan BTreeMap<String, BTreeMap<usize, CacheReadAction>>,
+    read_ordinals: BTreeMap<String, usize>,
     disabled: bool,
 }
 
 impl<'a> AccessorCacheReplacer<'a, '_> {
-    fn reset_segment(&mut self) {
-        self.seen.clear();
-    }
-
     fn visit_disabled_expression(&mut self, expression: &mut Expression<'a>) {
         let previous = self.disabled;
         self.disabled = true;
-        self.reset_segment();
         walk_mut::walk_expression(self, expression);
         self.disabled = previous;
-        self.reset_segment();
     }
 
     fn visit_disabled_statement(&mut self, statement: &mut Statement<'a>) {
         let previous = self.disabled;
         self.disabled = true;
-        self.reset_segment();
         walk_mut::walk_statement(self, statement);
         self.disabled = previous;
-        self.reset_segment();
     }
 
     fn visit_disabled_class(&mut self, class: &mut Class<'a>) {
         let previous = self.disabled;
         self.disabled = true;
-        self.reset_segment();
         walk_mut::walk_class(self, class);
         self.disabled = previous;
-        self.reset_segment();
     }
 }
 
@@ -376,59 +388,50 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
             return;
         }
         let Some(getter) = cacheable_call_name(expression, self.cacheable_calls) else {
-            let barrier = matches!(
-                expression,
-                Expression::CallExpression(_)
-                    | Expression::AwaitExpression(_)
-                    | Expression::BinaryExpression(_)
-                    | Expression::ComputedMemberExpression(_)
-                    | Expression::ImportExpression(_)
-                    | Expression::NewExpression(_)
-                    | Expression::PrivateFieldExpression(_)
-                    | Expression::StaticMemberExpression(_)
-                    | Expression::TaggedTemplateExpression(_)
-                    | Expression::UnaryExpression(_)
-                    | Expression::UpdateExpression(_)
-                    | Expression::V8IntrinsicExpression(_)
-                    | Expression::YieldExpression(_)
-            );
             walk_mut::walk_expression(self, expression);
-            if barrier {
-                self.reset_segment();
-            }
             return;
         };
         if self.disabled {
             return;
         }
-        let Some(cache) = self.cache_names.get(&getter) else {
+        let Some(actions) = self.cache_plan.get(&getter) else {
             return;
         };
-        let seen = self.seen.entry(getter).or_default();
-        *seen += 1;
-        if *seen == 1 {
+        let ordinal = self
+            .read_ordinals
+            .entry(getter.clone())
+            .and_modify(|ordinal| *ordinal += 1)
+            .or_insert(1);
+        let Some(action) = actions.get(ordinal) else {
             return;
-        }
+        };
+        let cache = self
+            .cache_names
+            .get(&getter)
+            .expect("cache plan has an allocated name");
 
         let span = expression.span();
         let builder = AstBuilder::new(self.allocator);
-        if *seen == 2 {
-            let value = expression.clone_in(self.allocator);
-            let target = AssignmentTarget::new_assignment_target_identifier(
-                span,
-                self.allocator.alloc_str(cache),
-                &builder,
-            );
-            *expression = Expression::new_assignment_expression(
-                span,
-                AssignmentOperator::Assign,
-                target,
-                value,
-                &builder,
-            );
-        } else {
-            *expression =
-                Expression::new_identifier(span, self.allocator.alloc_str(cache), &builder);
+        match action {
+            CacheReadAction::Assign => {
+                let value = expression.clone_in(self.allocator);
+                let target = AssignmentTarget::new_assignment_target_identifier(
+                    span,
+                    self.allocator.alloc_str(cache),
+                    &builder,
+                );
+                *expression = Expression::new_assignment_expression(
+                    span,
+                    AssignmentOperator::Assign,
+                    target,
+                    value,
+                    &builder,
+                );
+            }
+            CacheReadAction::Reuse => {
+                *expression =
+                    Expression::new_identifier(span, self.allocator.alloc_str(cache), &builder);
+            }
         }
     }
 
@@ -451,9 +454,7 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
             return;
         }
         if matches!(statement, Statement::BlockStatement(_)) {
-            self.reset_segment();
             walk_mut::walk_statement(self, statement);
-            self.reset_segment();
             return;
         }
         if matches!(
@@ -477,7 +478,6 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
 
     fn visit_spread_element(&mut self, spread: &mut SpreadElement<'a>) {
         walk_mut::walk_spread_element(self, spread);
-        self.reset_segment();
     }
 }
 

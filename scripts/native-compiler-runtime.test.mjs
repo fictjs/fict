@@ -3066,6 +3066,36 @@ test('getterCache controls safe repeated synchronous accessor reads', async () =
   container.remove()
 })
 
+test('getterCache only materializes cache writes that have a later reuse', () => {
+  const result = binding.transformSync({
+    code: `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        const touch = () => 0
+        const two = () => [count, count]
+        const mixed = () => [count, count, count, touch(), count, count]
+        const nestedDeclaration = () => {
+          function read() { return [count, count, count] }
+          return read
+        }
+        return [two, mixed, nestedDeclaration]
+      }
+    `,
+    filename: '/fixtures/getter-cache-consumed-writes.tsx',
+  })
+
+  assert.deepEqual(result.diagnostics, [])
+  assert.equal(result.code.match(/let __cached_count_/g)?.length, 1)
+  assert.equal(result.code.match(/__cached_count_\d+ = count\(\)/g)?.length, 1)
+  assert.match(result.code, /const two = \(\) => \[count\(\), count\(\)\];/)
+  assert.match(result.code, /touch\(\),\s+count\(\),\s+count\(\)/)
+  assert.match(
+    result.code,
+    /function read\(\) \{\s+return \[\s+count\(\),\s+count\(\),\s+count\(\)\s+\];/,
+  )
+})
+
 test('getterCache isolates class evaluation and deferred instance fields', async () => {
   const source = `
     import { $state, render } from 'fict'
@@ -3145,8 +3175,8 @@ test('getterCache isolates class evaluation and deferred instance fields', async
   })
   assert.deepEqual(result.diagnostics, [])
   assert.doesNotMatch(result.code, /value = __cached_(?:declaration|expression|complex)Count_/)
-  assert.match(result.code, /read\(\) \{\s+let __cached_declarationCount_\d+;/)
-  assert.match(result.code, /read\(\) \{\s+let __cached_complexCount_\d+;/)
+  assert.doesNotMatch(result.code, /__cached_declarationCount_/)
+  assert.doesNotMatch(result.code, /__cached_complexCount_/)
 
   const compiled = await importCompiledModule(result.code, 'getter-cache-class')
   const container = document.createElement('div')
