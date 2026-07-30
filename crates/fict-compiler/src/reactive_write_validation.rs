@@ -69,6 +69,9 @@ struct CallbackBindingFacts<'a> {
     written_globals: &'a BTreeSet<GlobalId>,
 }
 
+type CallbackParameterProvenance = (usize, Option<StateReceiverKind>);
+type StateCallbackSignature = (usize, Vec<CallbackParameterProvenance>);
+
 #[derive(Debug, Clone, Copy)]
 enum ProvenanceCandidate {
     ScopeFact {
@@ -819,7 +822,7 @@ impl<'a> StateProvenanceSolver<'a> {
         let Some(place) = call.callee_reference.as_ref() else {
             return;
         };
-        let Some(parameter_indices) = state_callback_parameter_indices(
+        let Some(callback_signatures) = state_callback_signatures(
             self.identity,
             function,
             analysis,
@@ -845,67 +848,70 @@ impl<'a> StateProvenanceSolver<'a> {
         ) {
             return;
         }
-        let Some(callback_argument) = call.arguments.first() else {
-            return;
-        };
-        let resolution = if callback_argument.spread {
-            CallbackResolution::default()
-        } else {
-            resolve_callback_value(
-                self.identity.hir,
-                analysis,
-                function,
-                CallbackBindingFacts {
-                    capture_writes: &self.identity.capture_write_bindings,
-                    reassignments: &self.identity.reassigned_bindings,
-                    written_globals: &self.identity.written_globals,
-                },
-                callback_argument.value,
-                InstructionLocation {
-                    block: block.id,
-                    instruction: count_u32(instruction_index),
-                },
-            )
-        };
-        if !resolution.complete {
-            self.unresolved_callbacks
-                .entry((function.id, block.id, count_u32(instruction_index)))
-                .or_insert(instruction.origin);
-        }
         let mut seeds = Vec::new();
-        for callback in resolution.functions {
-            let callback_index = callback.as_usize();
-            let Some(callback_function) = self.identity.hir.functions.get(callback_index) else {
+        for (callback_argument_index, parameter_indices) in callback_signatures {
+            let Some(callback_argument) = call.arguments.get(callback_argument_index) else {
                 continue;
             };
-            let Some(callback_analysis) = self.identity.analyses.get(callback_index) else {
-                continue;
+            let resolution = if callback_argument.spread {
+                CallbackResolution::default()
+            } else {
+                resolve_callback_value(
+                    self.identity.hir,
+                    analysis,
+                    function,
+                    CallbackBindingFacts {
+                        capture_writes: &self.identity.capture_write_bindings,
+                        reassignments: &self.identity.reassigned_bindings,
+                        written_globals: &self.identity.written_globals,
+                    },
+                    callback_argument.value,
+                    InstructionLocation {
+                        block: block.id,
+                        instruction: count_u32(instruction_index),
+                    },
+                )
             };
-            for (index, receiver_kind) in &parameter_indices {
-                let Some(parameter) = callback_function.parameters.get(*index) else {
-                    continue;
-                };
-                let Some(definition) =
-                    callback_analysis.ssa.definitions.iter().find(|definition| {
-                        definition.name.local == parameter.local
-                            && definition.location == SsaDefinitionLocation::Entry
-                    })
+            if !resolution.complete {
+                self.unresolved_callbacks
+                    .entry((function.id, block.id, count_u32(instruction_index)))
+                    .or_insert(instruction.origin);
+            }
+            for callback in resolution.functions {
+                let callback_index = callback.as_usize();
+                let Some(callback_function) = self.identity.hir.functions.get(callback_index)
                 else {
                     continue;
                 };
-                let binding = receiver_kind.and_then(|receiver_kind| {
-                    callback_function
-                        .locals
-                        .get(parameter.local.as_usize())
-                        .and_then(|local| local.binding)
-                        .map(|binding| (binding, receiver_kind))
-                });
-                seeds.push((
-                    callback_index,
-                    definition.name,
-                    definition.location,
-                    binding,
-                ));
+                let Some(callback_analysis) = self.identity.analyses.get(callback_index) else {
+                    continue;
+                };
+                for (index, receiver_kind) in &parameter_indices {
+                    let Some(parameter) = callback_function.parameters.get(*index) else {
+                        continue;
+                    };
+                    let Some(definition) =
+                        callback_analysis.ssa.definitions.iter().find(|definition| {
+                            definition.name.local == parameter.local
+                                && definition.location == SsaDefinitionLocation::Entry
+                        })
+                    else {
+                        continue;
+                    };
+                    let binding = receiver_kind.and_then(|receiver_kind| {
+                        callback_function
+                            .locals
+                            .get(parameter.local.as_usize())
+                            .and_then(|local| local.binding)
+                            .map(|binding| (binding, receiver_kind))
+                    });
+                    seeds.push((
+                        callback_index,
+                        definition.name,
+                        definition.location,
+                        binding,
+                    ));
+                }
             }
         }
         for (callback_index, name, location, receiver_binding) in seeds {
@@ -2267,27 +2273,32 @@ fn record_readonly_site(
     });
 }
 
-fn state_callback_parameter_indices(
+fn state_callback_signatures(
     identity: &StateIdentityAnalysis<'_>,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     state_names: &BTreeSet<SsaName>,
     call: &fict_hir::CallInstruction,
     place: &Place,
-) -> Option<Vec<(usize, Option<StateReceiverKind>)>> {
+) -> Option<Vec<StateCallbackSignature>> {
     let name = state_method_name(function, place)?;
     match (call.state_receiver_kind, name.as_str()) {
-        (StateReceiverKind::Array, "sort" | "toSorted") => Some(vec![(0, None), (1, None)]),
+        (StateReceiverKind::Array, "sort" | "toSorted") => {
+            Some(vec![(0, vec![(0, None), (1, None)])])
+        }
         (
             StateReceiverKind::Array,
             "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"
             | "forEach" | "map" | "some",
-        ) => Some(vec![(0, None), (2, Some(StateReceiverKind::Array))]),
+        ) => Some(vec![(
+            0,
+            vec![(0, None), (2, Some(StateReceiverKind::Array))],
+        )]),
         (
             StateReceiverKind::TypedArray,
             "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"
             | "forEach" | "map" | "some",
-        ) => Some(vec![(2, Some(StateReceiverKind::TypedArray))]),
+        ) => Some(vec![(0, vec![(2, Some(StateReceiverKind::TypedArray))])]),
         (StateReceiverKind::Array, "reduce" | "reduceRight") => {
             let accumulator_depends_on_state = call.arguments.get(1).is_none_or(|argument| {
                 argument.spread
@@ -2303,7 +2314,7 @@ fn state_callback_parameter_indices(
             if accumulator_depends_on_state {
                 indices.insert(0, (0, None));
             }
-            Some(indices)
+            Some(vec![(0, indices)])
         }
         (StateReceiverKind::TypedArray, "reduce" | "reduceRight") => {
             let mut indices = vec![(3, Some(StateReceiverKind::TypedArray))];
@@ -2319,12 +2330,15 @@ fn state_callback_parameter_indices(
             }) {
                 indices.insert(0, (0, None));
             }
-            Some(indices)
+            Some(vec![(0, indices)])
         }
         (receiver @ (StateReceiverKind::Map | StateReceiverKind::Set), "forEach") => {
-            Some(vec![(0, None), (1, None), (2, Some(receiver))])
+            Some(vec![(0, vec![(0, None), (1, None), (2, Some(receiver))])])
         }
-        (StateReceiverKind::Promise, "then") => Some(vec![(0, None)]),
+        (StateReceiverKind::Promise, "then") => {
+            Some(vec![(0, vec![(0, None)]), (1, vec![(0, None)])])
+        }
+        (StateReceiverKind::Promise, "catch") => Some(vec![(0, vec![(0, None)])]),
         _ => None,
     }
 }

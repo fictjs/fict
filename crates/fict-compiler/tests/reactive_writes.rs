@@ -649,6 +649,90 @@ fn tracks_state_elements_in_array_sort_comparators() {
 }
 
 #[test]
+fn tracks_state_promise_callback_values() {
+    for (source, expected_findings) in [
+        (
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const task = $state(Promise.reject({ done: false }))
+                    task.then(undefined, reason => {
+                        reason.done = true
+                    })
+                    return task
+                }
+            "#,
+            1,
+        ),
+        (
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const task = $state(Promise.reject({ done: false }))
+                    task.catch(reason => {
+                        reason.done = true
+                    })
+                    return task
+                }
+            "#,
+            1,
+        ),
+        (
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const task = $state(Promise.resolve({ done: false }))
+                    task.then(value => {
+                        value.done = true
+                    }, reason => {
+                        reason.done = true
+                    })
+                    return task
+                }
+            "#,
+            2,
+        ),
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let findings = fallback
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            findings.len(),
+            expected_findings,
+            "{:#?}",
+            fallback.diagnostics
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
+        );
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let findings = strict
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            findings.len(),
+            expected_findings,
+            "{:#?}",
+            strict.diagnostics
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+        );
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
 fn accepts_definitely_undefined_array_sort_comparators() {
     for source in [
         r#"
