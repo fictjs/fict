@@ -5,11 +5,13 @@ use fict_diagnostics::{
 };
 use oxc::{
     allocator::Allocator,
+    ast::ast::{JSXAttribute, JSXAttributeValue, JSXText},
+    ast_visit::{Visit, walk::walk_jsx_attribute},
     codegen::{Codegen, CodegenOptions},
     diagnostics::{OxcDiagnostic, Severity},
     parser::{ParseOptions, Parser, ParserReturn},
     semantic::SemanticBuilder,
-    span::SourceType,
+    span::{GetSpan, SourceType, Span},
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
 
@@ -284,7 +286,7 @@ pub(crate) fn parse_source<'a>(
     let parsed = Parser::new(allocator, source, requested_source_type)
         .with_options(parse_options)
         .parse();
-    if options.module_kind == OxcModuleKind::CommonJs
+    let mut parsed = if options.module_kind == OxcModuleKind::CommonJs
         && !parsed.diagnostics.is_empty()
         && parsed
             .diagnostics
@@ -296,6 +298,60 @@ pub(crate) fn parse_source<'a>(
             .parse()
     } else {
         parsed
+    };
+    if requested_source_type.is_jsx() && parsed.diagnostics.is_empty() {
+        let mut collector = InvalidJsxEntityCollector {
+            source,
+            diagnostics: Vec::new(),
+        };
+        collector.visit_program(&parsed.program);
+        parsed.diagnostics.extend(collector.diagnostics);
+    }
+    parsed
+}
+
+struct InvalidJsxEntityCollector<'s> {
+    source: &'s str,
+    diagnostics: Vec<OxcDiagnostic>,
+}
+
+impl InvalidJsxEntityCollector<'_> {
+    fn collect(&mut self, span: Span) {
+        let Some(value) = self.source.get(span.start as usize..span.end as usize) else {
+            return;
+        };
+        for range in crate::jsx_text::invalid_numeric_entity_ranges(value) {
+            let Ok(start) = u32::try_from(range.start) else {
+                continue;
+            };
+            let Ok(end) = u32::try_from(range.end) else {
+                continue;
+            };
+            let Some(start) = span.start.checked_add(start) else {
+                continue;
+            };
+            let Some(end) = span.start.checked_add(end) else {
+                continue;
+            };
+            self.diagnostics.push(
+                OxcDiagnostic::error("Invalid JSX numeric character reference")
+                    .with_help("use a Unicode code point at or below 0x10FFFF")
+                    .with_label(Span::new(start, end)),
+            );
+        }
+    }
+}
+
+impl<'a> Visit<'a> for InvalidJsxEntityCollector<'_> {
+    fn visit_jsx_attribute(&mut self, attribute: &JSXAttribute<'a>) {
+        if let Some(JSXAttributeValue::StringLiteral(literal)) = &attribute.value {
+            self.collect(literal.span());
+        }
+        walk_jsx_attribute(self, attribute);
+    }
+
+    fn visit_jsx_text(&mut self, text: &JSXText<'a>) {
+        self.collect(text.span());
     }
 }
 
@@ -374,7 +430,9 @@ fn static_code(value: &'static str) -> DiagnosticCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, compile_passthrough};
+    use super::{
+        OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, compile_disabled, compile_passthrough,
+    };
 
     fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
         OxcCompileOptions {
@@ -415,6 +473,28 @@ mod tests {
         assert!(output.code.is_empty());
         assert_eq!(output.diagnostics[0].code.as_str(), "FICT-PARSE");
         assert!(output.diagnostics[0].primary_span.is_some());
+    }
+
+    #[test]
+    fn rejects_out_of_range_jsx_entities_at_the_shared_parse_boundary() {
+        let source = "export const view = <div title=\"&#1114112;\">&#x110000;</div>;";
+        let output = compile_disabled(
+            source,
+            "invalid-entity.tsx",
+            options(OxcSourceLanguage::TypeScriptJsx),
+        );
+        assert!(output.code.is_empty());
+        assert_eq!(output.diagnostics.len(), 2, "{:#?}", output.diagnostics);
+        let rejected: Vec<_> = output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                assert_eq!(diagnostic.code.as_str(), "FICT-PARSE");
+                let span = diagnostic.primary_span.expect("entity span");
+                &source[span.start() as usize..span.end() as usize]
+            })
+            .collect();
+        assert_eq!(rejected, ["&#1114112;", "&#x110000;"]);
     }
 
     #[test]

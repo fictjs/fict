@@ -1,5 +1,61 @@
 use fict_hir::JavaScriptString;
 use oxc::syntax::xml_entities::XML_ENTITIES;
+use std::ops::Range;
+
+/// Locate numeric JSX character references that exceed Unicode's maximum code point.
+pub(crate) fn invalid_numeric_entity_ranges(input: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut chars = input.char_indices();
+    while let Some((index, character)) = chars.next() {
+        if character != '&' {
+            continue;
+        }
+        let mut start = index;
+        let mut end = None;
+        for (candidate, character) in chars.by_ref() {
+            if character == ';' {
+                end = Some(candidate);
+                break;
+            }
+            if character == '&' {
+                start = candidate;
+            }
+        }
+        let Some(end) = end else {
+            break;
+        };
+        let entity = &input[start + 1..end];
+        if numeric_entity_exceeds_unicode(entity) {
+            ranges.push(start..end + 1);
+        }
+    }
+    ranges
+}
+
+fn numeric_entity_exceeds_unicode(entity: &str) -> bool {
+    let (digits, maximum, radix) = if let Some(digits) = entity.strip_prefix("#x") {
+        (digits, "10ffff", 16)
+    } else if let Some(digits) = entity.strip_prefix('#') {
+        (digits, "1114111", 10)
+    } else {
+        return false;
+    };
+    if digits.is_empty()
+        || !digits.bytes().all(|digit| match radix {
+            16 => digit.is_ascii_hexdigit(),
+            _ => digit.is_ascii_digit(),
+        })
+    {
+        return false;
+    }
+    let digits = digits.trim_start_matches('0');
+    digits.len() > maximum.len()
+        || digits.len() == maximum.len()
+            && digits
+                .bytes()
+                .map(|digit| digit.to_ascii_lowercase())
+                .gt(maximum.bytes())
+}
 
 /// Decode the XML/HTML character references accepted inside JSX text and string attributes.
 pub(crate) fn decode_entities(input: &str) -> JavaScriptString {
@@ -126,7 +182,7 @@ impl TrimAsciiSpace for [u16] {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_entities, normalize_text};
+    use super::{decode_entities, invalid_numeric_entity_ranges, normalize_text};
     use fict_hir::JavaScriptString;
 
     #[test]
@@ -147,6 +203,33 @@ mod tests {
             decode_entities("&#xD800;&#55296;&#x1F600;"),
             JavaScriptString::from_code_units(vec![0xd800, 0xd800, 0xd83d, 0xde00])
         );
+    }
+
+    #[test]
+    fn identifies_only_complete_out_of_range_numeric_entities() {
+        assert_eq!(
+            invalid_numeric_entity_ranges("a&#1114112;b&#x10FFFF;c&#x110000;d"),
+            vec![1..11, 23..33]
+        );
+        assert_eq!(
+            invalid_numeric_entity_ranges(
+                "&#0001114112;&#x00110000;&#9999999999999999999999999999999999999999;"
+            ),
+            vec![0..13, 13..25, 25..68]
+        );
+        for valid in [
+            "&#1114111;",
+            "&#x10FFFF;",
+            "&#xD800;",
+            "&#x;",
+            "&#;",
+            "&#-1;",
+            "&#X110000;",
+            "&#1114112x;",
+            "&#x110000z;",
+        ] {
+            assert!(invalid_numeric_entity_ranges(valid).is_empty(), "{valid}");
+        }
     }
 
     #[test]

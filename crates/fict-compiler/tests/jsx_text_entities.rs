@@ -41,3 +41,22 @@ fn preserves_lone_surrogate_entities_across_dom_and_component_lowering() {
         result.code
     );
 }
+
+#[test]
+fn rejects_numeric_entities_above_the_unicode_range() {
+    let source = "export const App = () => <div title=\"&#1114112;\">&#x110000;</div>";
+    let result = compile_source(source);
+
+    assert!(result.code.is_empty());
+    assert_eq!(result.diagnostics.len(), 2, "{:#?}", result.diagnostics);
+    let rejected: Vec<_> = result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.code.as_str(), "FICT-PARSE");
+            let span = diagnostic.primary_span.expect("entity span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect();
+    assert_eq!(rejected, ["&#1114112;", "&#x110000;"]);
+}
