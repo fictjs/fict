@@ -248,6 +248,7 @@ pub fn build_hir(
 struct ParameterFact {
     span: SourceSpan,
     bindings: Vec<SymbolId>,
+    rest_bindings: Vec<SymbolId>,
     direct_binding: Option<SymbolId>,
     default_value: Option<SourceSpan>,
     object: Option<ObjectParameterFact>,
@@ -472,6 +473,7 @@ impl<'a> Visit<'a> for FunctionCollector {
 #[derive(Default)]
 struct PatternBindingCollector {
     symbols: Vec<SymbolId>,
+    rest_symbols: Vec<SymbolId>,
     has_defaults: bool,
     has_rest: bool,
     contains_await: bool,
@@ -502,6 +504,11 @@ impl<'a> Visit<'a> for PatternBindingCollector {
 
     fn visit_binding_rest_element(&mut self, rest: &BindingRestElement<'a>) {
         self.has_rest = true;
+        if let BindingPattern::BindingIdentifier(identifier) = &rest.argument
+            && let Some(symbol) = identifier.symbol_id.get()
+        {
+            self.rest_symbols.push(symbol);
+        }
         walk_binding_rest_element(self, rest);
     }
 
@@ -1306,6 +1313,7 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
         collector.visit_binding_pattern(&parameter.pattern);
         facts.push(ParameterFact {
             span: source_span(parameter.span),
+            rest_bindings: collector.rest_symbols,
             bindings: collector.symbols,
             direct_binding: match &parameter.pattern {
                 BindingPattern::BindingIdentifier(identifier) => identifier.symbol_id.get(),
@@ -1326,9 +1334,16 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
     if let Some(rest) = &parameters.rest {
         let mut collector = PatternBindingCollector::default();
         collector.visit_binding_pattern(&rest.rest.argument);
+        let mut rest_bindings = collector.rest_symbols;
+        if let BindingPattern::BindingIdentifier(identifier) = &rest.rest.argument
+            && let Some(symbol) = identifier.symbol_id.get()
+        {
+            rest_bindings.push(symbol);
+        }
         facts.push(ParameterFact {
             span: source_span(rest.span),
             bindings: collector.symbols,
+            rest_bindings,
             direct_binding: None,
             default_value: None,
             object: None,
@@ -3074,6 +3089,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .iter()
                     .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
                     .collect();
+                let rest_bindings: Vec<_> = parameter
+                    .rest_bindings
+                    .iter()
+                    .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
+                    .collect();
                 let direct_binding = parameter
                     .direct_binding
                     .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
@@ -3120,6 +3140,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     local,
                     binding: direct_binding,
                     pattern: fragment,
+                    rest_bindings,
                     default_value: parameter.default_value.map(Origin::source),
                     object_properties,
                     object_rest,

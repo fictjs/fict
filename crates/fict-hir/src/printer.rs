@@ -95,10 +95,11 @@ pub fn print_hir(file: &HirFile) -> String {
         for parameter in &function.parameters {
             writeln!(
                 output,
-                "  parameter local{} binding={} pattern=fragment{} default={} object_properties={:?} object_rest={:?} origin={}",
+                "  parameter local{} binding={} pattern=fragment{} rest_bindings={:?} default={} object_properties={:?} object_rest={:?} origin={}",
                 parameter.local.index(),
                 optional_binding(parameter.binding),
                 parameter.pattern.index(),
+                parameter.rest_bindings,
                 parameter
                     .default_value
                     .map_or_else(|| "none".to_owned(), print_origin),

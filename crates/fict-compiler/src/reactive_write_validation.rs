@@ -940,6 +940,7 @@ impl<'a> StateProvenanceSolver<'a> {
                         callback_index,
                         definition.name,
                         definition.location,
+                        ReadonlyKind::CallbackParameter,
                         binding,
                     ));
 
@@ -975,18 +976,29 @@ impl<'a> StateProvenanceSolver<'a> {
                         else {
                             continue;
                         };
-                        seeds.push((callback_index, definition.name, definition.location, None));
+                        let kind = if parameter.rest_bindings.contains(binding) {
+                            ReadonlyKind::FreshContainer
+                        } else {
+                            ReadonlyKind::CallbackParameter
+                        };
+                        seeds.push((
+                            callback_index,
+                            definition.name,
+                            definition.location,
+                            kind,
+                            None,
+                        ));
                     }
                 }
             }
         }
-        for (callback_index, name, location, receiver_binding) in seeds {
+        for (callback_index, name, location, kind, receiver_binding) in seeds {
             let callback_function = &self.identity.hir.functions[callback_index];
             record_readonly_site(
                 callback_function,
                 name,
                 location,
-                ReadonlyKind::CallbackParameter,
+                kind,
                 self.state_bindings,
                 &mut self.readonly_sites[callback_index],
             );

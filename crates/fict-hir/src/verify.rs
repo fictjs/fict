@@ -599,18 +599,38 @@ impl Verifier<'_> {
                     Some(parameter.origin),
                 );
             }
-            if let Some(fragment) = self.file.syntax_fragments.get(parameter.pattern.as_usize())
-                && fragment.kind != SyntaxFragmentKind::Pattern
-            {
-                self.error(
-                    "FICT-HIR-FUNCTION",
-                    format!(
-                        "fn{} parameter local{} does not reference a pattern fragment",
-                        function.id.index(),
-                        parameter.local.index()
-                    ),
-                    Some(parameter.origin),
+            if let Some(fragment) = self.file.syntax_fragments.get(parameter.pattern.as_usize()) {
+                if fragment.kind != SyntaxFragmentKind::Pattern {
+                    self.error(
+                        "FICT-HIR-FUNCTION",
+                        format!(
+                            "fn{} parameter local{} does not reference a pattern fragment",
+                            function.id.index(),
+                            parameter.local.index()
+                        ),
+                        Some(parameter.origin),
+                    );
+                }
+                self.verify_binding_list(
+                    &parameter.rest_bindings,
+                    "parameter rest",
+                    parameter.origin,
                 );
+                if parameter.rest_bindings.iter().any(|binding| {
+                    fragment.summary.pattern.as_ref().is_none_or(|pattern| {
+                        !pattern.has_rest || !pattern.declared_bindings.contains(binding)
+                    })
+                }) {
+                    self.error(
+                        "FICT-HIR-FUNCTION",
+                        format!(
+                            "fn{} parameter local{} has a rest binding outside its rest-bearing pattern",
+                            function.id.index(),
+                            parameter.local.index()
+                        ),
+                        Some(parameter.origin),
+                    );
+                }
             }
         }
 

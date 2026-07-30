@@ -778,6 +778,26 @@ fn tracks_destructured_state_callback_parameters() {
         r#"
             import { $state } from 'fict'
             function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach((...args) => {
+                    args[0].done = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([[{ done: false }, { done: false }]])
+                rows.forEach(([_first, ...tail]) => {
+                    tail[0].done = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
                 const task = $state(Promise.resolve({ child: { done: false } }))
                 task.then(({ child }) => {
                     child.done = true
@@ -819,6 +839,57 @@ fn tracks_destructured_state_callback_parameters() {
         "{:#?}",
         root_assignment.diagnostics
     );
+}
+
+#[test]
+fn allows_writes_to_fresh_state_callback_rest_containers() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach((...args) => {
+                    args.extra = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ child: { done: false } }])
+                rows.forEach(({ ...rest }) => {
+                    rest.extra = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([[{ done: false }, { done: false }]])
+                rows.forEach(([_first, ...tail]) => {
+                    tail[0] = { done: true }
+                })
+                return rows
+            }
+        "#,
+    ] {
+        for strict_guarantee in [false, true] {
+            for optimize in [false, true] {
+                let result = compile_source_with_strict(
+                    source,
+                    CompilerOptions {
+                        optimize,
+                        ..CompilerOptions::default()
+                    },
+                    strict_guarantee,
+                );
+                assert!(!result.has_errors(), "{source}\n{:#?}", result.diagnostics);
+                assert!(result.code.contains("extra") || result.code.contains("done"));
+            }
+        }
+    }
 }
 
 #[test]
