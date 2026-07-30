@@ -1056,6 +1056,55 @@ fn keeps_ambiguous_array_sort_callback_bindings_unresolved() {
 }
 
 #[test]
+fn keeps_ambiguous_callback_helper_bindings_unresolved() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    function consume(value) {
+                        return value.done
+                    }
+                    function consume(value) {
+                        value.done = true
+                    }
+                    consume(item)
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            let retained
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    function consume(value) {
+                        return value.done
+                    }
+                    function consume(value) {
+                        retained = value
+                    }
+                    consume(item)
+                })
+                return rows
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = find_error(&fallback, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+        assert!(!fallback.code.is_empty());
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
 fn tracks_mutating_optional_array_sort_comparators_without_unresolved_fallback() {
     let source = r#"
         import { $state } from 'fict'

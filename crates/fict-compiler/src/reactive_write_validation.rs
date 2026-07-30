@@ -3211,10 +3211,14 @@ fn resolved_local_callee<'a>(
 ) -> Option<&'a HirFunction> {
     match call.host {
         CallHost::Function(function) => hir.functions.get(function.as_usize()),
-        CallHost::Binding(binding) => hir
-            .functions
-            .iter()
-            .find(|function| function.binding == Some(binding)),
+        CallHost::Binding(binding) => {
+            let mut candidates = hir
+                .functions
+                .iter()
+                .filter(|function| function.binding == Some(binding));
+            let callee = candidates.next()?;
+            candidates.next().is_none().then_some(callee)
+        }
         CallHost::Unknown | CallHost::ReactiveScope(_) => None,
     }
 }
