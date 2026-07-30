@@ -4574,6 +4574,11 @@
           "code": "FICT-J001",
           "severity": "info",
           "guaranteeClass": "advisory"
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "guaranteeClass": "fallback"
         }
       ],
       "policy": "rust-warning-set-change"
