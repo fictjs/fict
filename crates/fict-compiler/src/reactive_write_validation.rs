@@ -22,6 +22,7 @@ use crate::pass_manager::FunctionPassAnalysis;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ReadonlyKind {
     CallbackParameter,
+    CallbackThisFreshContainer,
     Alias,
     ProjectedAlias,
     Derived,
@@ -131,6 +132,7 @@ struct StateProvenanceOutput {
     readonly_sites: Vec<BTreeMap<SsaName, ReadonlySite>>,
     callback_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
     state_this_functions: BTreeSet<FunctionId>,
+    fresh_state_this_functions: BTreeSet<FunctionId>,
     unresolved_callbacks: BTreeMap<(FunctionId, BlockId, u32), Origin>,
     stats: ProvenanceWorkStats,
 }
@@ -145,6 +147,7 @@ struct StateProvenanceSolver<'a> {
     active_bindings: BTreeSet<BindingId>,
     callback_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
     state_this_functions: BTreeSet<FunctionId>,
+    fresh_state_this_functions: BTreeSet<FunctionId>,
     unresolved_callbacks: BTreeMap<(FunctionId, BlockId, u32), Origin>,
     candidates: Vec<ProvenanceCandidate>,
     function_candidates: Vec<Vec<usize>>,
@@ -512,6 +515,7 @@ impl<'a> StateProvenanceSolver<'a> {
             active_bindings,
             callback_receiver_bindings: BTreeMap::new(),
             state_this_functions: BTreeSet::new(),
+            fresh_state_this_functions: BTreeSet::new(),
             unresolved_callbacks: BTreeMap::new(),
             candidates: Vec::new(),
             function_candidates: vec![Vec::new(); function_count],
@@ -690,11 +694,27 @@ impl<'a> StateProvenanceSolver<'a> {
         }
     }
 
-    fn activate_state_this(&mut self, function: FunctionId) {
-        let mut pending = vec![function];
-        while let Some(function) = pending.pop() {
-            if !self.state_this_functions.insert(function) {
+    fn activate_state_this(&mut self, function: FunctionId, fresh_container: bool) {
+        let mut pending = vec![(function, fresh_container)];
+        while let Some((function, fresh_container)) = pending.pop() {
+            let newly_state_derived = self.state_this_functions.insert(function);
+            let tightened = if fresh_container {
+                if newly_state_derived {
+                    self.fresh_state_this_functions.insert(function);
+                }
+                false
+            } else {
+                self.fresh_state_this_functions.remove(&function)
+            };
+            if !newly_state_derived && !tightened {
                 continue;
+            }
+            if tightened && let Some(sites) = self.readonly_sites.get_mut(function.as_usize()) {
+                for site in sites.values_mut() {
+                    if site.kind == ReadonlyKind::CallbackThisFreshContainer {
+                        site.kind = ReadonlyKind::Alias;
+                    }
+                }
             }
             if let Some(candidates) = self.function_candidates.get(function.as_usize()).cloned() {
                 for candidate in candidates {
@@ -711,7 +731,7 @@ impl<'a> StateProvenanceSolver<'a> {
                             && candidate.id != function
                             && candidate.flags.is_arrow
                     })
-                    .map(|candidate| candidate.id),
+                    .map(|candidate| (candidate.id, fresh_container && !tightened)),
             );
         }
     }
@@ -760,6 +780,7 @@ impl<'a> StateProvenanceSolver<'a> {
             readonly_sites: self.readonly_sites,
             callback_receiver_bindings: self.callback_receiver_bindings,
             state_this_functions: self.state_this_functions,
+            fresh_state_this_functions: self.fresh_state_this_functions,
             unresolved_callbacks: self.unresolved_callbacks,
             stats: self.stats,
         })
@@ -841,6 +862,7 @@ impl<'a> StateProvenanceSolver<'a> {
                             function,
                             value,
                             &self.readonly_sites[function_index],
+                            &self.fresh_state_this_functions,
                             &mut BTreeSet::new(),
                         )
                     })
@@ -975,9 +997,9 @@ impl<'a> StateProvenanceSolver<'a> {
                     continue;
                 }
                 if !callback_function.flags.is_arrow
-                    && this_argument_index
+                    && let Some(argument) = this_argument_index
                         .and_then(|index| call.arguments.get(index))
-                        .is_some_and(|argument| {
+                        .filter(|argument| {
                             value_preserves_state_identity(
                                 self.identity,
                                 function,
@@ -988,7 +1010,16 @@ impl<'a> StateProvenanceSolver<'a> {
                             )
                         })
                 {
-                    self.activate_state_this(callback);
+                    let fresh_container = value_is_fresh_state_container(
+                        self.identity,
+                        function_index,
+                        argument.value,
+                        &mut BTreeMap::new(),
+                        &mut BTreeMap::new(),
+                        &mut BTreeSet::new(),
+                        &mut BTreeSet::new(),
+                    );
+                    self.activate_state_this(callback, fresh_container);
                 }
                 let Some(callback_analysis) = self.identity.analyses.get(callback_index) else {
                     continue;
@@ -1219,6 +1250,7 @@ struct WriteValidationContext<'a> {
     analyses: &'a [FunctionPassAnalysis],
     state_provenance_names: &'a [BTreeSet<SsaName>],
     state_this_functions: &'a BTreeSet<FunctionId>,
+    fresh_state_this_functions: &'a BTreeSet<FunctionId>,
     readonly_sites: &'a [BTreeMap<SsaName, ReadonlySite>],
     readonly_names: &'a [BTreeSet<SsaName>],
     readonly_bindings: &'a BTreeMap<BindingId, ReadonlySite>,
@@ -1275,6 +1307,7 @@ pub(crate) fn validate_reactive_writes(
     let mut readonly_sites = propagation.readonly_sites;
     let state_callback_receiver_bindings = propagation.callback_receiver_bindings;
     let state_this_functions = propagation.state_this_functions;
+    let fresh_state_this_functions = propagation.fresh_state_this_functions;
     let unresolved_state_callbacks = propagation.unresolved_callbacks;
     let mut provenance_stats = propagation.stats;
 
@@ -1301,6 +1334,16 @@ pub(crate) fn validate_reactive_writes(
             {
                 continue;
             }
+            let projected_kind =
+                definition_source_value(function, fact.location).and_then(|value| {
+                    projected_alias_kind(
+                        function,
+                        value,
+                        &readonly_sites[function_index],
+                        &fresh_state_this_functions,
+                        &mut BTreeSet::new(),
+                    )
+                });
             let kind = match fact.kind {
                 ReactiveBindingKind::Derived
                     if !carries_state_identity
@@ -1311,6 +1354,11 @@ pub(crate) fn validate_reactive_writes(
                         ) =>
                 {
                     Some(ReadonlyKind::Derived)
+                }
+                ReactiveBindingKind::Alias | ReactiveBindingKind::Derived
+                    if projected_kind == Some(ReadonlyKind::CallbackThisFreshContainer) =>
+                {
+                    projected_kind
                 }
                 ReactiveBindingKind::Alias | ReactiveBindingKind::Derived
                     if fresh_state_containers[function_index].contains(&fact.name) =>
@@ -1403,6 +1451,7 @@ pub(crate) fn validate_reactive_writes(
         analyses,
         state_provenance_names: &state_provenance_names,
         state_this_functions: &state_this_functions,
+        fresh_state_this_functions: &fresh_state_this_functions,
         readonly_sites: &readonly_sites,
         readonly_names: &readonly_names,
         readonly_bindings: &readonly_bindings,
@@ -1556,6 +1605,18 @@ impl WriteValidationContext<'_> {
         let Some(analysis) = self.analyses.get(function.id.as_usize()) else {
             return;
         };
+        if place.projections.len() <= 1
+            && self.fresh_state_this_functions.contains(&function.id)
+            && projected_alias_kind(
+                function,
+                value,
+                &BTreeMap::new(),
+                self.fresh_state_this_functions,
+                &mut BTreeSet::new(),
+            ) == Some(ReadonlyKind::CallbackThisFreshContainer)
+        {
+            return;
+        }
         if !value_preserves_state_identity(
             self.identity,
             function,
@@ -1609,7 +1670,11 @@ impl WriteValidationContext<'_> {
         {
             return;
         }
-        if site.kind == ReadonlyKind::FreshContainer && projection_depth <= 1 {
+        if matches!(
+            site.kind,
+            ReadonlyKind::FreshContainer | ReadonlyKind::CallbackThisFreshContainer
+        ) && projection_depth <= 1
+        {
             return;
         }
 
@@ -1648,7 +1713,9 @@ impl WriteValidationContext<'_> {
                     ),
                     "derived value is established here",
                 ),
-                ReadonlyKind::FreshContainer => unreachable!("fresh container roots are mutable"),
+                ReadonlyKind::FreshContainer | ReadonlyKind::CallbackThisFreshContainer => {
+                    unreachable!("fresh container roots are mutable")
+                }
             }
         } else {
             (
@@ -1665,7 +1732,10 @@ impl WriteValidationContext<'_> {
                 )
                 .with_help("replace the whole source state value or use $store for nested mutation")
                 .with_guarantee_class(GuaranteeClass::Fallback),
-                if site.kind == ReadonlyKind::FreshContainer {
+                if matches!(
+                    site.kind,
+                    ReadonlyKind::FreshContainer | ReadonlyKind::CallbackThisFreshContainer
+                ) {
                     "state-derived values are contained here"
                 } else {
                     "reactive alias is established here"
@@ -2321,6 +2391,7 @@ fn projected_alias_kind(
     function: &HirFunction,
     value: ValueId,
     sites: &BTreeMap<SsaName, ReadonlySite>,
+    fresh_state_this_functions: &BTreeSet<FunctionId>,
     visiting: &mut BTreeSet<ValueId>,
 ) -> Option<ReadonlyKind> {
     if !visiting.insert(value) {
@@ -2334,7 +2405,9 @@ fn projected_alias_kind(
         Some(ValueKind::Ssa(name)) => sites.get(name).and_then(|site| {
             matches!(
                 site.kind,
-                ReadonlyKind::ProjectedAlias | ReadonlyKind::FreshContainer
+                ReadonlyKind::ProjectedAlias
+                    | ReadonlyKind::FreshContainer
+                    | ReadonlyKind::CallbackThisFreshContainer
             )
             .then_some(site.kind)
         }),
@@ -2342,6 +2415,11 @@ fn projected_alias_kind(
             function
                 .instruction_for_result(value)
                 .and_then(|instruction| match &instruction.kind {
+                    HirInstructionKind::Context {
+                        kind: ContextValueKind::This,
+                    } if fresh_state_this_functions.contains(&function.id) => {
+                        Some(ReadonlyKind::CallbackThisFreshContainer)
+                    }
                     HirInstructionKind::Read { place } if !place.projections.is_empty() => {
                         Some(ReadonlyKind::ProjectedAlias)
                     }
@@ -2354,7 +2432,9 @@ fn projected_alias_kind(
                     } => sites.get(name).and_then(|site| {
                         matches!(
                             site.kind,
-                            ReadonlyKind::ProjectedAlias | ReadonlyKind::FreshContainer
+                            ReadonlyKind::ProjectedAlias
+                                | ReadonlyKind::FreshContainer
+                                | ReadonlyKind::CallbackThisFreshContainer
                         )
                         .then_some(site.kind)
                     }),
@@ -2364,7 +2444,13 @@ fn projected_alias_kind(
                                 base: PlaceBase::Value(base),
                                 ..
                             },
-                    } => projected_alias_kind(function, *base, sites, visiting),
+                    } => projected_alias_kind(
+                        function,
+                        *base,
+                        sites,
+                        fresh_state_this_functions,
+                        visiting,
+                    ),
                     HirInstructionKind::Declare {
                         initializer: Some(initializer),
                         ..
@@ -2379,25 +2465,54 @@ fn projected_alias_kind(
                     | HirInstructionKind::Yield {
                         value: Some(initializer),
                         ..
-                    } => projected_alias_kind(function, *initializer, sites, visiting),
+                    } => projected_alias_kind(
+                        function,
+                        *initializer,
+                        sites,
+                        fresh_state_this_functions,
+                        visiting,
+                    ),
                     HirInstructionKind::Call(call) if call.callee_reference.is_some() => {
                         Some(ReadonlyKind::ProjectedAlias)
                     }
-                    HirInstructionKind::Sequence { values } => values
-                        .last()
-                        .and_then(|value| projected_alias_kind(function, *value, sites, visiting)),
+                    HirInstructionKind::Sequence { values } => values.last().and_then(|value| {
+                        projected_alias_kind(
+                            function,
+                            *value,
+                            sites,
+                            fresh_state_this_functions,
+                            visiting,
+                        )
+                    }),
                     HirInstructionKind::Conditional {
                         consequent,
                         alternate,
                         ..
                     } => {
-                        let consequent =
-                            projected_alias_kind(function, *consequent, sites, visiting);
-                        let alternate = projected_alias_kind(function, *alternate, sites, visiting);
+                        let consequent = projected_alias_kind(
+                            function,
+                            *consequent,
+                            sites,
+                            fresh_state_this_functions,
+                            visiting,
+                        );
+                        let alternate = projected_alias_kind(
+                            function,
+                            *alternate,
+                            sites,
+                            fresh_state_this_functions,
+                            visiting,
+                        );
                         (consequent == alternate).then_some(consequent).flatten()
                     }
                     HirInstructionKind::SyntaxFragment { inputs, .. } if inputs.len() == 1 => {
-                        projected_alias_kind(function, inputs[0], sites, visiting)
+                        projected_alias_kind(
+                            function,
+                            inputs[0],
+                            sites,
+                            fresh_state_this_functions,
+                            visiting,
+                        )
                     }
                     _ => None,
                 })
@@ -3740,35 +3855,69 @@ fn value_is_fresh_state_container(
         .get(value.as_usize())
         .map(|value| &value.kind)
     {
-        Some(ValueKind::Ssa(name)) => {
-            if let Some(result) = name_memo.get(name) {
-                *result
-            } else if !visiting_names.insert(*name) {
-                false
-            } else {
-                let result = identity.definition_locations[function_index]
-                    .get(name)
-                    .and_then(|location| definition_source_value(function, *location))
-                    .is_some_and(|source| {
-                        value_is_fresh_state_container(
-                            identity,
-                            function_index,
-                            source,
-                            value_memo,
-                            name_memo,
-                            visiting_values,
-                            visiting_names,
-                        )
-                    });
-                visiting_names.remove(name);
-                name_memo.insert(*name, result);
-                result
-            }
-        }
+        Some(ValueKind::Ssa(name)) => name_is_fresh_state_container(
+            identity,
+            function_index,
+            *name,
+            value_memo,
+            name_memo,
+            visiting_values,
+            visiting_names,
+        ),
         Some(ValueKind::InstructionResult) => identity
             .instruction_for_result(function, value)
             .is_some_and(|instruction| match &instruction.kind {
                 HirInstructionKind::Array { .. } | HirInstructionKind::Object { .. } => true,
+                HirInstructionKind::Read { place } if place.projections.is_empty() => {
+                    match place.base {
+                        PlaceBase::Ssa(name) => name_is_fresh_state_container(
+                            identity,
+                            function_index,
+                            name,
+                            value_memo,
+                            name_memo,
+                            visiting_values,
+                            visiting_names,
+                        ),
+                        PlaceBase::Local(local) => identity.analyses[function_index]
+                            .dependencies
+                            .value_dependencies
+                            .get(value.as_usize())
+                            .into_iter()
+                            .flatten()
+                            .find_map(|path| match path.base {
+                                DependencyBase::Ssa(name)
+                                    if name.local == local && path.segments.is_empty() =>
+                                {
+                                    Some(name)
+                                }
+                                DependencyBase::Ssa(_)
+                                | DependencyBase::Global(_)
+                                | DependencyBase::Value(_) => None,
+                            })
+                            .is_some_and(|name| {
+                                name_is_fresh_state_container(
+                                    identity,
+                                    function_index,
+                                    name,
+                                    value_memo,
+                                    name_memo,
+                                    visiting_values,
+                                    visiting_names,
+                                )
+                            }),
+                        PlaceBase::Value(base) => value_is_fresh_state_container(
+                            identity,
+                            function_index,
+                            base,
+                            value_memo,
+                            name_memo,
+                            visiting_values,
+                            visiting_names,
+                        ),
+                        PlaceBase::Global(_) => false,
+                    }
+                }
                 HirInstructionKind::Declare {
                     initializer: Some(initializer),
                     ..
@@ -3794,6 +3943,42 @@ fn value_is_fresh_state_container(
     };
     visiting_values.remove(&value);
     value_memo.insert(value, result);
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn name_is_fresh_state_container(
+    identity: &StateIdentityAnalysis<'_>,
+    function_index: usize,
+    name: SsaName,
+    value_memo: &mut BTreeMap<ValueId, bool>,
+    name_memo: &mut BTreeMap<SsaName, bool>,
+    visiting_values: &mut BTreeSet<ValueId>,
+    visiting_names: &mut BTreeSet<SsaName>,
+) -> bool {
+    if let Some(result) = name_memo.get(&name) {
+        return *result;
+    }
+    if !visiting_names.insert(name) {
+        return false;
+    }
+    let function = &identity.hir.functions[function_index];
+    let result = identity.definition_locations[function_index]
+        .get(&name)
+        .and_then(|location| definition_source_value(function, *location))
+        .is_some_and(|source| {
+            value_is_fresh_state_container(
+                identity,
+                function_index,
+                source,
+                value_memo,
+                name_memo,
+                visiting_values,
+                visiting_names,
+            )
+        });
+    visiting_names.remove(&name);
+    name_memo.insert(name, result);
     result
 }
 

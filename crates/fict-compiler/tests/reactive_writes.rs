@@ -1011,6 +1011,42 @@ fn tracks_state_callback_this_arguments() {
             import { $state } from 'fict'
             function App() {
                 const rows = $state([{ done: false }])
+                const box = [rows[0]]
+                rows.forEach(function () {
+                    this[0].done = true
+                }, box)
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const box = [rows[0]]
+                rows.forEach(function () {
+                    const self = this
+                    self[0].done = true
+                }, box)
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const box = [rows[0]]
+                function mutate() {
+                    this.extra = true
+                }
+                rows.forEach(mutate, box)
+                rows.forEach(mutate, rows[0])
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
                 function mutate() {
                     const target = this
                     target.done = true
@@ -1069,6 +1105,29 @@ fn ignores_callback_this_arguments_that_cannot_execute_state_writes() {
                 rows.forEach(() => {
                     this.done = true
                 }, rows[0])
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const box = [rows[0]]
+                rows.forEach(function () {
+                    this.push({ done: true })
+                }, box)
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const box = [rows[0]]
+                rows.forEach(function () {
+                    const self = this
+                    self.push({ done: true })
+                }, box)
                 return rows
             }
         "#,
