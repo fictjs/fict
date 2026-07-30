@@ -46,14 +46,14 @@ pub(crate) fn decode_entities(input: &str) -> String {
     output
 }
 
-/// Apply JSX's authored-text whitespace rules, then decode character references.
+/// Decode character references, then apply JSX's authored-text whitespace rules.
 pub(crate) fn normalize_text(input: &str) -> Option<String> {
-    let input = input.replace('\t', " ");
+    let input = decode_entities(input).replace('\t', " ");
     if !input
         .chars()
         .any(|character| matches!(character, '\n' | '\r'))
     {
-        return Some(decode_entities(&input));
+        return Some(input);
     }
 
     let lines: Vec<_> = input.split(['\n', '\r']).collect();
@@ -67,7 +67,7 @@ pub(crate) fn normalize_text(input: &str) -> Option<String> {
             (false, false) => line.trim_matches(' '),
         };
         if !line.is_empty() {
-            normalized.push(decode_entities(line));
+            normalized.push(line);
         }
     }
     (!normalized.is_empty()).then(|| normalized.join(" "))
@@ -103,6 +103,14 @@ mod tests {
             normalize_text("a\u{2028}b\u{2029}c"),
             Some("a\u{2028}b\u{2029}c".into())
         );
+    }
+
+    #[test]
+    fn decodes_entities_before_applying_whitespace_rules() {
+        assert_eq!(normalize_text("a&#9;b"), Some("a b".into()));
+        assert_eq!(normalize_text("a&#10;  b"), Some("a b".into()));
+        assert_eq!(normalize_text("a&#13;  b"), Some("a b".into()));
+        assert_eq!(normalize_text("a\n&#32;&#32;b\n"), Some("a b".into()));
     }
 
     #[test]

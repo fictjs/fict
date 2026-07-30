@@ -597,6 +597,11 @@ test('authored JSX text follows standard tab and Unicode whitespace boundaries',
         return (
           <section>
             <div data-case="tab">a\tb</div>
+            <div data-case="entity-tab">a&#9;b</div>
+            <div data-case="entity-newline">a&#10;  b</div>
+            <div data-case="entity-line-space">a
+              &#32;&#32;b
+            </div>
             <div data-case="nbsp">
               \u00a0keep\u00a0
               next
@@ -620,6 +625,9 @@ test('authored JSX text follows standard tab and Unicode whitespace boundaries',
   await flushRuntime()
 
   assert.equal(container.querySelector('[data-case="tab"]')?.textContent, 'a b')
+  assert.equal(container.querySelector('[data-case="entity-tab"]')?.textContent, 'a b')
+  assert.equal(container.querySelector('[data-case="entity-newline"]')?.textContent, 'a b')
+  assert.equal(container.querySelector('[data-case="entity-line-space"]')?.textContent, 'a b')
   assert.equal(container.querySelector('[data-case="nbsp"]')?.textContent, '\u00a0keep\u00a0 next')
   assert.equal(container.querySelector('[data-case="separator"]')?.textContent, 'a\u2028b\u2029c')
 
