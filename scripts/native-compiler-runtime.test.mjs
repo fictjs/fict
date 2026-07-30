@@ -3006,10 +3006,10 @@ test('getterCache controls safe repeated synchronous accessor reads', async () =
     export function useGetterCache() {
       const count = $state(1)
       const doubled = $memo(() => count * 2)
-      const repeated = (__cached_count_0) => count + count + count + __cached_count_0
-      const functionRepeated = function () { return count + count + count }
-      const memoRepeated = () => doubled + doubled + doubled
-      const segmented = () => count + count + count + touch() + count + count + count
+      const repeated = (__cached_count_0) => [count, count, count, __cached_count_0]
+      const functionRepeated = function () { return [count, count, count] }
+      const memoRepeated = () => [doubled, doubled, doubled]
+      const segmented = () => [count, count, count, touch(), count, count, count]
       const branch = (ok) => ok ? count + count : 0
       const asynchronous = async () => count + count
       const generated = function* () { return count + count }
@@ -3210,6 +3210,107 @@ test('getterCache isolates class evaluation and deferred instance fields', async
   assert.deepEqual(heritage.run(), [0, 0, 1, 1])
   disposeHeritage()
   heritageContainer.remove()
+})
+
+test('getterCache stops at implicit user-code execution boundaries', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let runAll = () => []
+    let bump = () => {}
+    const propertySource = { get value() { bump(); return 0 } }
+    const coercer = { [Symbol.toPrimitive]() { bump(); return 0 } }
+    const iterable = {
+      [Symbol.iterator]() {
+        bump()
+        return [0][Symbol.iterator]()
+      },
+    }
+    const spreadSource = { get value() { bump(); return 0 } }
+    const defaultSource = { get value() { bump(); return undefined } }
+
+    function App() {
+      let count = $state(0)
+      bump = () => { count = count + 1 }
+
+      const propertyCase = () => {
+        const first = count
+        const second = count
+        const touched = propertySource.value
+        const third = count
+        return [first, second, touched, third]
+      }
+      const binaryCase = () => {
+        const first = count
+        const second = count
+        const converted = coercer + 0
+        const third = count
+        return [first, second, converted, third]
+      }
+      const templateCase = () => {
+        const first = count
+        const second = count
+        const text = \`\${coercer}\${count}\`
+        return [first, second, text]
+      }
+      const arraySpreadCase = () => {
+        const first = count
+        const second = count
+        const values = [...iterable, count]
+        return [first, second, values]
+      }
+      const objectSpreadCase = () => {
+        const first = count
+        const second = count
+        const values = { ...spreadSource, count }
+        return [first, second, values.count]
+      }
+      const destructureCase = () => {
+        const first = count
+        const second = count
+        const { value = count } = defaultSource
+        return [first, second, value]
+      }
+
+      runAll = () => [
+        propertyCase(),
+        binaryCase(),
+        templateCase(),
+        arraySpreadCase(),
+        objectSpreadCase(),
+        destructureCase(),
+      ]
+      return <span />
+    }
+
+    export const mount = container => render(() => <App />, container)
+    export const run = () => runAll()
+  `
+  const result = binding.transformSync({
+    code: source,
+    filename: '/fixtures/getter-cache-implicit-effects.tsx',
+    moduleId: '/fixtures/getter-cache-implicit-effects.tsx',
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.doesNotMatch(result.code, /const third = __cached_count_\d+;/)
+
+  const compiled = await importCompiledModule(result.code, 'getter-cache-implicit-effects')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.deepEqual(compiled.run(), [
+    [0, 0, 0, 1],
+    [1, 1, 0, 2],
+    [2, 2, '03'],
+    [3, 3, [0, 4]],
+    [4, 4, 5],
+    [5, 5, 6],
+  ])
+
+  dispose()
+  container.remove()
 })
 
 test('compiler-generated names do not capture authored free identifiers', async () => {

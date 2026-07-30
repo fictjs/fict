@@ -4,16 +4,13 @@ use oxc::{
         AstBuilder, NONE,
         ast::{
             ArrowFunctionExpression, AssignmentTarget, BindingPattern, Class, Expression, Function,
-            FunctionBody, FunctionType, Program, Statement, VariableDeclarationKind,
+            FunctionBody, FunctionType, Program, SpreadElement, Statement, VariableDeclarationKind,
             VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
     span::{GetSpan, Span},
-    syntax::{
-        operator::{AssignmentOperator, UnaryOperator},
-        scope::ScopeFlags,
-    },
+    syntax::{operator::AssignmentOperator, scope::ScopeFlags},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -228,7 +225,11 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
             return;
         }
         match expression {
-            Expression::ConditionalExpression(_) | Expression::LogicalExpression(_) => {
+            Expression::AssignmentExpression(_)
+            | Expression::ConditionalExpression(_)
+            | Expression::LogicalExpression(_)
+            | Expression::ObjectExpression(_)
+            | Expression::TemplateLiteral(_) => {
                 self.visit_disabled_expression(expression);
                 return;
             }
@@ -242,19 +243,18 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
                 self.reset_segment();
                 return;
             }
-            Expression::AssignmentExpression(_)
-            | Expression::AwaitExpression(_)
+            Expression::AwaitExpression(_)
+            | Expression::BinaryExpression(_)
+            | Expression::ComputedMemberExpression(_)
             | Expression::ImportExpression(_)
             | Expression::NewExpression(_)
+            | Expression::PrivateFieldExpression(_)
+            | Expression::StaticMemberExpression(_)
             | Expression::TaggedTemplateExpression(_)
+            | Expression::UnaryExpression(_)
             | Expression::UpdateExpression(_)
             | Expression::V8IntrinsicExpression(_)
             | Expression::YieldExpression(_) => {
-                walk::walk_expression(self, expression);
-                self.reset_segment();
-                return;
-            }
-            Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::Delete => {
                 walk::walk_expression(self, expression);
                 self.reset_segment();
                 return;
@@ -269,6 +269,15 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
     }
 
     fn visit_statement(&mut self, statement: &Statement<'a>) {
+        if let Statement::VariableDeclaration(declaration) = statement
+            && declaration
+                .declarations
+                .iter()
+                .any(|declarator| !matches!(&declarator.id, BindingPattern::BindingIdentifier(_)))
+        {
+            self.visit_disabled_statement(statement);
+            return;
+        }
         if matches!(statement, Statement::BlockStatement(_)) {
             self.reset_segment();
             walk::walk_statement(self, statement);
@@ -304,6 +313,11 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
 
     fn visit_class(&mut self, class: &Class<'a>) {
         self.visit_disabled_class(class);
+    }
+
+    fn visit_spread_element(&mut self, spread: &SpreadElement<'a>) {
+        walk::walk_spread_element(self, spread);
+        self.reset_segment();
     }
 }
 
@@ -352,7 +366,11 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         if matches!(
             expression,
-            Expression::ConditionalExpression(_) | Expression::LogicalExpression(_)
+            Expression::AssignmentExpression(_)
+                | Expression::ConditionalExpression(_)
+                | Expression::LogicalExpression(_)
+                | Expression::ObjectExpression(_)
+                | Expression::TemplateLiteral(_)
         ) {
             self.visit_disabled_expression(expression);
             return;
@@ -361,17 +379,18 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
             let barrier = matches!(
                 expression,
                 Expression::CallExpression(_)
-                    | Expression::AssignmentExpression(_)
                     | Expression::AwaitExpression(_)
+                    | Expression::BinaryExpression(_)
+                    | Expression::ComputedMemberExpression(_)
                     | Expression::ImportExpression(_)
                     | Expression::NewExpression(_)
+                    | Expression::PrivateFieldExpression(_)
+                    | Expression::StaticMemberExpression(_)
                     | Expression::TaggedTemplateExpression(_)
+                    | Expression::UnaryExpression(_)
                     | Expression::UpdateExpression(_)
                     | Expression::V8IntrinsicExpression(_)
                     | Expression::YieldExpression(_)
-            ) || matches!(
-                expression,
-                Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::Delete
             );
             walk_mut::walk_expression(self, expression);
             if barrier {
@@ -422,6 +441,15 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
     }
 
     fn visit_statement(&mut self, statement: &mut Statement<'a>) {
+        if let Statement::VariableDeclaration(declaration) = statement
+            && declaration
+                .declarations
+                .iter()
+                .any(|declarator| !matches!(&declarator.id, BindingPattern::BindingIdentifier(_)))
+        {
+            self.visit_disabled_statement(statement);
+            return;
+        }
         if matches!(statement, Statement::BlockStatement(_)) {
             self.reset_segment();
             walk_mut::walk_statement(self, statement);
@@ -445,6 +473,11 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
             return;
         }
         walk_mut::walk_statement(self, statement);
+    }
+
+    fn visit_spread_element(&mut self, spread: &mut SpreadElement<'a>) {
+        walk_mut::walk_spread_element(self, spread);
+        self.reset_segment();
     }
 }
 
