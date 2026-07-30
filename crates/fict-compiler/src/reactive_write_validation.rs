@@ -1599,6 +1599,7 @@ fn state_callback_parameter_indices(
 ) -> Option<Vec<(usize, Option<StateReceiverKind>)>> {
     let name = state_method_name(function, place)?;
     match (call.state_receiver_kind, name.as_str()) {
+        (StateReceiverKind::Array, "sort" | "toSorted") => Some(vec![(0, None), (1, None)]),
         (
             StateReceiverKind::Array,
             "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"

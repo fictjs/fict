@@ -567,6 +567,88 @@ fn forgets_projected_provenance_after_safe_snapshot_reassignment() {
 }
 
 #[test]
+fn tracks_state_elements_in_array_sort_comparators() {
+    for parameter in ["left", "right"] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict'
+                function App() {{
+                    const rows = $state([{{ done: false }}])
+                    return rows.toSorted((left, right) => {{
+                        {parameter}.done = true
+                        return Number(left.done) - Number(right.done)
+                    }})
+                }}
+            "#
+        );
+        let fallback = compile_source(&source, CompilerOptions::default());
+        let findings = fallback
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .collect::<Vec<_>>();
+        assert_eq!(findings.len(), 1, "{:#?}", fallback.diagnostics);
+        assert_eq!(findings[0].severity, DiagnosticSeverity::Warning);
+        assert_eq!(findings[0].guarantee_class, GuaranteeClass::Fallback);
+        let mutation = format!("{parameter}.done = true");
+        let start = source.find(&mutation).expect("comparator mutation");
+        assert_eq!(
+            findings[0].primary_span,
+            SourceSpan::new(
+                u32::try_from(start).expect("source offset"),
+                u32::try_from(start + mutation.len()).expect("source offset"),
+            )
+        );
+        assert!(!fallback.code.is_empty(), "{:#?}", fallback.diagnostics);
+
+        let strict = compile_source_with_strict(&source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-M");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+
+    let sort_source = r#"
+        import { $state } from 'fict'
+        function App() {
+            const rows = $state([{ done: false }])
+            return rows.sort((left, right) => {
+                left.done = true
+                return Number(left.done) - Number(right.done)
+            })
+        }
+    "#;
+    let fallback = compile_source(sort_source, CompilerOptions::default());
+    let mut spans = fallback
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .map(|diagnostic| diagnostic.primary_span)
+        .collect::<Vec<_>>();
+    spans.sort();
+    let call_start = sort_source.find("rows.sort").expect("sort call");
+    let call_end = call_start
+        + sort_source[call_start..]
+            .find("\n            })")
+            .expect("sort call end")
+        + "\n            })".len();
+    let mutation_start = sort_source
+        .find("left.done = true")
+        .expect("comparator mutation");
+    let mut expected = vec![
+        SourceSpan::new(
+            u32::try_from(call_start).expect("source offset"),
+            u32::try_from(call_end).expect("source offset"),
+        ),
+        SourceSpan::new(
+            u32::try_from(mutation_start).expect("source offset"),
+            u32::try_from(mutation_start + "left.done = true".len()).expect("source offset"),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(spans, expected, "{:#?}", fallback.diagnostics);
+}
+
+#[test]
 fn permits_structural_mutation_of_fresh_state_derived_containers() {
     let result = compile_source_with_strict(
         r#"
