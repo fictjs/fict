@@ -942,6 +942,41 @@ impl<'a> StateProvenanceSolver<'a> {
                         definition.location,
                         binding,
                     ));
+
+                    let Some(pattern) = self
+                        .identity
+                        .hir
+                        .syntax_fragments
+                        .get(parameter.pattern.as_usize())
+                        .and_then(|fragment| fragment.summary.pattern.as_ref())
+                    else {
+                        continue;
+                    };
+                    for binding in &pattern.declared_bindings {
+                        if parameter.binding == Some(*binding) {
+                            continue;
+                        }
+                        let Some(local) = callback_function.locals.iter().find(|local| {
+                            local.binding == Some(*binding)
+                                && local.declaration_kind == DeclarationKind::Parameter
+                        }) else {
+                            continue;
+                        };
+                        let definition_kind = if local.kind == LocalKind::Parameter {
+                            SsaDefinitionKind::Parameter
+                        } else {
+                            SsaDefinitionKind::Declare
+                        };
+                        let Some(definition) =
+                            callback_analysis.ssa.definitions.iter().find(|definition| {
+                                definition.name.local == local.id
+                                    && definition.kind == definition_kind
+                            })
+                        else {
+                            continue;
+                        };
+                        seeds.push((callback_index, definition.name, definition.location, None));
+                    }
                 }
             }
         }

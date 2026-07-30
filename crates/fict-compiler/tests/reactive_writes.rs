@@ -733,6 +733,95 @@ fn tracks_state_promise_callback_values() {
 }
 
 #[test]
+fn tracks_destructured_state_callback_parameters() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ child: { done: false } }])
+                rows.forEach(({ child }) => {
+                    child.done = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([[{ done: false }]])
+                rows.forEach(([child]) => {
+                    child.done = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach((_item, _index, [first]) => {
+                    first.done = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ child: { done: false } }])
+                rows.forEach(({ ...rest }) => {
+                    rest.child.done = true
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const task = $state(Promise.resolve({ child: { done: false } }))
+                task.then(({ child }) => {
+                    child.done = true
+                })
+                return task
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = fallback
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .unwrap_or_else(|| panic!("missing FICT-M for {source}: {:#?}", fallback.diagnostics));
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-M");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+
+    let root_assignment = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ child: { done: false } }])
+                return rows.map(({ child }) => {
+                    child = { done: true }
+                    return child
+                })
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(
+        !root_assignment.has_errors(),
+        "{:#?}",
+        root_assignment.diagnostics
+    );
+}
+
+#[test]
 fn accepts_definitely_undefined_array_sort_comparators() {
     for source in [
         r#"
