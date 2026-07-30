@@ -995,6 +995,118 @@ fn tracks_generator_callbacks_when_their_iterators_escape() {
 }
 
 #[test]
+fn tracks_state_callback_this_arguments() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(function () {
+                    this.done = true
+                }, rows[0])
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                function mutate() {
+                    const target = this
+                    target.done = true
+                }
+                rows.forEach(mutate, rows[0])
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const mutate = function () {
+                    const nested = () => {
+                        this.done = true
+                    }
+                    nested()
+                }
+                rows.forEach(mutate, rows[0])
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                const iterators = rows.map(function* () {
+                    this.done = true
+                }, rows[0])
+                iterators[0].next()
+                return rows
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = fallback
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .unwrap_or_else(|| panic!("missing FICT-M for {source}: {:#?}", fallback.diagnostics));
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        find_error(&strict, "FICT-M");
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
+fn ignores_callback_this_arguments_that_cannot_execute_state_writes() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(() => {
+                    this.done = true
+                }, rows[0])
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(function () {
+                    return this.done
+                }, rows[0])
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(function* () {
+                    this.done = true
+                }, rows[0])
+                return rows
+            }
+        "#,
+    ] {
+        let result = compile_source_with_strict(source, CompilerOptions::default(), true);
+        assert!(!result.has_errors(), "{source}\n{:#?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-M" | "FICT-R002")),
+            "{source}\n{:#?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn still_rejects_a_possible_executing_callback_alongside_a_generator() {
     let source = r#"
         import { $state } from 'fict'

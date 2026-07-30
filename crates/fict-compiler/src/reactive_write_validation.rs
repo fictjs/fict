@@ -7,10 +7,10 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
-    ArrayElement, BindingId, BindingKind, BlockId, DeclarationKind, DeleteTarget, FunctionId,
-    HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind, ObjectEntry, Origin, Place,
-    PlaceBase, Projection, SsaName, StateMethodCallSemantics, StateReceiverKind, TerminatorKind,
-    ValueId, ValueKind, classify_state_method_call, classify_state_method_result,
+    ArrayElement, BindingId, BindingKind, BlockId, ContextValueKind, DeclarationKind, DeleteTarget,
+    FunctionId, HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind, ObjectEntry, Origin,
+    Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics, StateReceiverKind,
+    TerminatorKind, ValueId, ValueKind, classify_state_method_call, classify_state_method_result,
 };
 use fict_reactivity::{
     DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, SsaDefinition,
@@ -69,11 +69,14 @@ struct CallbackBindingFacts<'a> {
 }
 
 type CallbackParameterProvenance = (usize, Option<StateReceiverKind>);
-type StateCallbackSignature = (
-    usize,
-    Vec<CallbackParameterProvenance>,
-    CallbackReturnDisposition,
-);
+
+#[derive(Debug)]
+struct StateCallbackSignature {
+    callback_argument_index: usize,
+    parameter_provenance: Vec<CallbackParameterProvenance>,
+    this_argument_index: Option<usize>,
+    return_disposition: CallbackReturnDisposition,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CallbackReturnDisposition {
@@ -127,6 +130,7 @@ struct StateProvenanceOutput {
     names: Vec<BTreeSet<SsaName>>,
     readonly_sites: Vec<BTreeMap<SsaName, ReadonlySite>>,
     callback_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
+    state_this_functions: BTreeSet<FunctionId>,
     unresolved_callbacks: BTreeMap<(FunctionId, BlockId, u32), Origin>,
     stats: ProvenanceWorkStats,
 }
@@ -140,8 +144,10 @@ struct StateProvenanceSolver<'a> {
     readonly_sites: Vec<BTreeMap<SsaName, ReadonlySite>>,
     active_bindings: BTreeSet<BindingId>,
     callback_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
+    state_this_functions: BTreeSet<FunctionId>,
     unresolved_callbacks: BTreeMap<(FunctionId, BlockId, u32), Origin>,
     candidates: Vec<ProvenanceCandidate>,
+    function_candidates: Vec<Vec<usize>>,
     reverse_dependencies: Vec<BTreeMap<SsaName, Vec<usize>>>,
     capture_dependencies: BTreeMap<BindingId, Vec<usize>>,
     pending: VecDeque<usize>,
@@ -505,8 +511,10 @@ impl<'a> StateProvenanceSolver<'a> {
             readonly_sites: vec![BTreeMap::new(); function_count],
             active_bindings,
             callback_receiver_bindings: BTreeMap::new(),
+            state_this_functions: BTreeSet::new(),
             unresolved_callbacks: BTreeMap::new(),
             candidates: Vec::new(),
+            function_candidates: vec![Vec::new(); function_count],
             reverse_dependencies: vec![BTreeMap::new(); function_count],
             capture_dependencies: BTreeMap::new(),
             pending: VecDeque::new(),
@@ -626,6 +634,7 @@ impl<'a> StateProvenanceSolver<'a> {
     ) {
         let candidate_index = self.candidates.len();
         self.candidates.push(candidate);
+        self.function_candidates[function_index].push(candidate_index);
         for dependency in dependencies {
             self.reverse_dependencies[function_index]
                 .entry(dependency)
@@ -681,10 +690,37 @@ impl<'a> StateProvenanceSolver<'a> {
         }
     }
 
+    fn activate_state_this(&mut self, function: FunctionId) {
+        let mut pending = vec![function];
+        while let Some(function) = pending.pop() {
+            if !self.state_this_functions.insert(function) {
+                continue;
+            }
+            if let Some(candidates) = self.function_candidates.get(function.as_usize()).cloned() {
+                for candidate in candidates {
+                    self.enqueue(candidate);
+                }
+            }
+            pending.extend(
+                self.identity
+                    .hir
+                    .functions
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.parent == function
+                            && candidate.id != function
+                            && candidate.flags.is_arrow
+                    })
+                    .map(|candidate| candidate.id),
+            );
+        }
+    }
+
     fn run(mut self) -> Result<StateProvenanceOutput, DiagnosticBundle> {
         let maximum_work_items = self
             .candidates
             .len()
+            .saturating_mul(2)
             .saturating_add(self.stats.dependency_edges)
             .saturating_add(1);
         while let Some(candidate_index) = self.pending.pop_front() {
@@ -723,6 +759,7 @@ impl<'a> StateProvenanceSolver<'a> {
             names: self.names,
             readonly_sites: self.readonly_sites,
             callback_receiver_bindings: self.callback_receiver_bindings,
+            state_this_functions: self.state_this_functions,
             unresolved_callbacks: self.unresolved_callbacks,
             stats: self.stats,
         })
@@ -743,6 +780,7 @@ impl<'a> StateProvenanceSolver<'a> {
                     analysis,
                     value,
                     &self.names[function_index],
+                    &self.state_this_functions,
                 )
             }) || analysis
                 .ssa
@@ -787,6 +825,7 @@ impl<'a> StateProvenanceSolver<'a> {
                     analysis,
                     value,
                     &self.names[function_index],
+                    &self.state_this_functions,
                 )
             });
         if !state_binding_definition && !capture_from_outer_scope && !depends_on_state {
@@ -864,6 +903,7 @@ impl<'a> StateProvenanceSolver<'a> {
             function,
             analysis,
             &self.names[function_index],
+            &self.state_this_functions,
             call,
             place,
         ) else {
@@ -882,11 +922,17 @@ impl<'a> StateProvenanceSolver<'a> {
             place,
             location,
             &self.names[function_index],
+            &self.state_this_functions,
         ) {
             return;
         }
         let mut seeds = Vec::new();
-        for (callback_argument_index, parameter_indices, return_disposition) in callback_signatures
+        for StateCallbackSignature {
+            callback_argument_index,
+            parameter_provenance,
+            this_argument_index,
+            return_disposition,
+        } in callback_signatures
         {
             let Some(callback_argument) = call.arguments.get(callback_argument_index) else {
                 continue;
@@ -928,10 +974,26 @@ impl<'a> StateProvenanceSolver<'a> {
                 {
                     continue;
                 }
+                if !callback_function.flags.is_arrow
+                    && this_argument_index
+                        .and_then(|index| call.arguments.get(index))
+                        .is_some_and(|argument| {
+                            value_preserves_state_identity(
+                                self.identity,
+                                function,
+                                analysis,
+                                argument.value,
+                                &self.names[function_index],
+                                &self.state_this_functions,
+                            )
+                        })
+                {
+                    self.activate_state_this(callback);
+                }
                 let Some(callback_analysis) = self.identity.analyses.get(callback_index) else {
                     continue;
                 };
-                for (index, receiver_kind) in &parameter_indices {
+                for (index, receiver_kind) in &parameter_provenance {
                     let Some(parameter) = callback_function.parameters.get(*index) else {
                         continue;
                     };
@@ -1156,6 +1218,7 @@ struct WriteValidationContext<'a> {
     identity: &'a StateIdentityAnalysis<'a>,
     analyses: &'a [FunctionPassAnalysis],
     state_provenance_names: &'a [BTreeSet<SsaName>],
+    state_this_functions: &'a BTreeSet<FunctionId>,
     readonly_sites: &'a [BTreeMap<SsaName, ReadonlySite>],
     readonly_names: &'a [BTreeSet<SsaName>],
     readonly_bindings: &'a BTreeMap<BindingId, ReadonlySite>,
@@ -1211,6 +1274,7 @@ pub(crate) fn validate_reactive_writes(
     let mut state_provenance_names = propagation.names;
     let mut readonly_sites = propagation.readonly_sites;
     let state_callback_receiver_bindings = propagation.callback_receiver_bindings;
+    let state_this_functions = propagation.state_this_functions;
     let unresolved_state_callbacks = propagation.unresolved_callbacks;
     let mut provenance_stats = propagation.stats;
 
@@ -1338,6 +1402,7 @@ pub(crate) fn validate_reactive_writes(
         identity: &identity,
         analyses,
         state_provenance_names: &state_provenance_names,
+        state_this_functions: &state_this_functions,
         readonly_sites: &readonly_sites,
         readonly_names: &readonly_names,
         readonly_bindings: &readonly_bindings,
@@ -1497,6 +1562,7 @@ impl WriteValidationContext<'_> {
             analysis,
             value,
             &self.state_provenance_names[function.id.as_usize()],
+            self.state_this_functions,
         ) {
             return;
         }
@@ -2371,39 +2437,44 @@ fn state_callback_signatures(
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     state_names: &BTreeSet<SsaName>,
+    state_this_functions: &BTreeSet<FunctionId>,
     call: &fict_hir::CallInstruction,
     place: &Place,
 ) -> Option<Vec<StateCallbackSignature>> {
     let name = state_method_name(function, place)?;
     match (call.state_receiver_kind, name.as_str()) {
-        (StateReceiverKind::Array, "sort" | "toSorted") => Some(vec![(
-            0,
-            vec![(0, None), (1, None)],
-            CallbackReturnDisposition::Discarded,
-        )]),
+        (StateReceiverKind::Array, "sort" | "toSorted") => Some(vec![StateCallbackSignature {
+            callback_argument_index: 0,
+            parameter_provenance: vec![(0, None), (1, None)],
+            this_argument_index: None,
+            return_disposition: CallbackReturnDisposition::Discarded,
+        }]),
         (
             StateReceiverKind::Array,
             "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "forEach"
             | "some",
-        ) => Some(vec![(
-            0,
-            vec![(0, None), (2, Some(StateReceiverKind::Array))],
-            CallbackReturnDisposition::Discarded,
-        )]),
-        (StateReceiverKind::Array, "flatMap" | "map") => Some(vec![(
-            0,
-            vec![(0, None), (2, Some(StateReceiverKind::Array))],
-            CallbackReturnDisposition::Retained,
-        )]),
+        ) => Some(vec![StateCallbackSignature {
+            callback_argument_index: 0,
+            parameter_provenance: vec![(0, None), (2, Some(StateReceiverKind::Array))],
+            this_argument_index: Some(1),
+            return_disposition: CallbackReturnDisposition::Discarded,
+        }]),
+        (StateReceiverKind::Array, "flatMap" | "map") => Some(vec![StateCallbackSignature {
+            callback_argument_index: 0,
+            parameter_provenance: vec![(0, None), (2, Some(StateReceiverKind::Array))],
+            this_argument_index: Some(1),
+            return_disposition: CallbackReturnDisposition::Retained,
+        }]),
         (
             StateReceiverKind::TypedArray,
             "every" | "filter" | "find" | "findIndex" | "findLast" | "findLastIndex" | "flatMap"
             | "forEach" | "map" | "some",
-        ) => Some(vec![(
-            0,
-            vec![(2, Some(StateReceiverKind::TypedArray))],
-            CallbackReturnDisposition::Discarded,
-        )]),
+        ) => Some(vec![StateCallbackSignature {
+            callback_argument_index: 0,
+            parameter_provenance: vec![(2, Some(StateReceiverKind::TypedArray))],
+            this_argument_index: Some(1),
+            return_disposition: CallbackReturnDisposition::Discarded,
+        }]),
         (StateReceiverKind::Array, "reduce" | "reduceRight") => {
             let accumulator_depends_on_state = call.arguments.get(1).is_none_or(|argument| {
                 argument.spread
@@ -2413,13 +2484,19 @@ fn state_callback_signatures(
                         analysis,
                         argument.value,
                         state_names,
+                        state_this_functions,
                     )
             });
             let mut indices = vec![(1, None), (3, Some(StateReceiverKind::Array))];
             if accumulator_depends_on_state {
                 indices.insert(0, (0, None));
             }
-            Some(vec![(0, indices, CallbackReturnDisposition::Retained)])
+            Some(vec![StateCallbackSignature {
+                callback_argument_index: 0,
+                parameter_provenance: indices,
+                this_argument_index: None,
+                return_disposition: CallbackReturnDisposition::Retained,
+            }])
         }
         (StateReceiverKind::TypedArray, "reduce" | "reduceRight") => {
             let mut indices = vec![(3, Some(StateReceiverKind::TypedArray))];
@@ -2431,26 +2508,46 @@ fn state_callback_signatures(
                         analysis,
                         argument.value,
                         state_names,
+                        state_this_functions,
                     )
             }) {
                 indices.insert(0, (0, None));
             }
-            Some(vec![(0, indices, CallbackReturnDisposition::Retained)])
+            Some(vec![StateCallbackSignature {
+                callback_argument_index: 0,
+                parameter_provenance: indices,
+                this_argument_index: None,
+                return_disposition: CallbackReturnDisposition::Retained,
+            }])
         }
-        (receiver @ (StateReceiverKind::Map | StateReceiverKind::Set), "forEach") => Some(vec![(
-            0,
-            vec![(0, None), (1, None), (2, Some(receiver))],
-            CallbackReturnDisposition::Discarded,
-        )]),
+        (receiver @ (StateReceiverKind::Map | StateReceiverKind::Set), "forEach") => {
+            Some(vec![StateCallbackSignature {
+                callback_argument_index: 0,
+                parameter_provenance: vec![(0, None), (1, None), (2, Some(receiver))],
+                this_argument_index: Some(1),
+                return_disposition: CallbackReturnDisposition::Discarded,
+            }])
+        }
         (StateReceiverKind::Promise, "then") => Some(vec![
-            (0, vec![(0, None)], CallbackReturnDisposition::Retained),
-            (1, vec![(0, None)], CallbackReturnDisposition::Retained),
+            StateCallbackSignature {
+                callback_argument_index: 0,
+                parameter_provenance: vec![(0, None)],
+                this_argument_index: None,
+                return_disposition: CallbackReturnDisposition::Retained,
+            },
+            StateCallbackSignature {
+                callback_argument_index: 1,
+                parameter_provenance: vec![(0, None)],
+                this_argument_index: None,
+                return_disposition: CallbackReturnDisposition::Retained,
+            },
         ]),
-        (StateReceiverKind::Promise, "catch") => Some(vec![(
-            0,
-            vec![(0, None)],
-            CallbackReturnDisposition::Retained,
-        )]),
+        (StateReceiverKind::Promise, "catch") => Some(vec![StateCallbackSignature {
+            callback_argument_index: 0,
+            parameter_provenance: vec![(0, None)],
+            this_argument_index: None,
+            return_disposition: CallbackReturnDisposition::Retained,
+        }]),
         _ => None,
     }
 }
@@ -2462,6 +2559,7 @@ fn place_depends_on_state(
     place: &Place,
     location: WriteLocation,
     state_names: &BTreeSet<SsaName>,
+    state_this_functions: &BTreeSet<FunctionId>,
 ) -> bool {
     match place.base {
         PlaceBase::Local(local) => ssa_name_before(analysis, WriteLocation { local, ..location })
@@ -2473,6 +2571,7 @@ fn place_depends_on_state(
             analysis,
             value,
             state_names,
+            state_this_functions,
             &mut BTreeSet::new(),
         ),
         PlaceBase::Global(_) => false,
@@ -3083,6 +3182,7 @@ fn value_preserves_state_identity(
     analysis: &FunctionPassAnalysis,
     value: ValueId,
     state_names: &BTreeSet<SsaName>,
+    state_this_functions: &BTreeSet<FunctionId>,
 ) -> bool {
     value_preserves_state_identity_in(
         identity,
@@ -3090,6 +3190,7 @@ fn value_preserves_state_identity(
         analysis,
         value,
         state_names,
+        state_this_functions,
         &mut BTreeSet::new(),
     )
 }
@@ -3100,6 +3201,7 @@ fn value_preserves_state_identity_in(
     analysis: &FunctionPassAnalysis,
     value: ValueId,
     state_names: &BTreeSet<SsaName>,
+    state_this_functions: &BTreeSet<FunctionId>,
     visiting: &mut BTreeSet<(FunctionId, ValueId)>,
 ) -> bool {
     identity
@@ -3129,6 +3231,9 @@ fn value_preserves_state_identity_in(
             };
             let location = identity.instruction_location(function.id, value);
             match &instruction.kind {
+                HirInstructionKind::Context {
+                    kind: ContextValueKind::This,
+                } => state_this_functions.contains(&function.id),
                 HirInstructionKind::Declare {
                     initializer: Some(initializer),
                     ..
@@ -3138,6 +3243,7 @@ fn value_preserves_state_identity_in(
                     analysis,
                     *initializer,
                     state_names,
+                    state_this_functions,
                     visiting,
                 ),
                 HirInstructionKind::Read { place } => {
@@ -3148,6 +3254,7 @@ fn value_preserves_state_identity_in(
                         place,
                         location,
                         state_names,
+                        state_this_functions,
                         visiting,
                     );
                     base_preserves
@@ -3165,6 +3272,7 @@ fn value_preserves_state_identity_in(
                     analysis,
                     *value,
                     state_names,
+                    state_this_functions,
                     visiting,
                 ),
                 HirInstructionKind::Conditional {
@@ -3178,6 +3286,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         *consequent,
                         state_names,
+                        state_this_functions,
                         visiting,
                     ) || value_preserves_state_identity_in(
                         identity,
@@ -3185,6 +3294,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         *alternate,
                         state_names,
+                        state_this_functions,
                         visiting,
                     )
                 }
@@ -3195,6 +3305,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         *value,
                         state_names,
+                        state_this_functions,
                         visiting,
                     )
                 }),
@@ -3212,6 +3323,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         *left,
                         state_names,
+                        state_this_functions,
                         visiting,
                     ) || value_preserves_state_identity_in(
                         identity,
@@ -3219,6 +3331,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         *right,
                         state_names,
+                        state_this_functions,
                         visiting,
                     )
                 }
@@ -3231,6 +3344,7 @@ fn value_preserves_state_identity_in(
                             place,
                             location,
                             state_names,
+                            state_this_functions,
                             visiting,
                         );
                         let Some(method) = state_method_name(function, place) else {
@@ -3251,6 +3365,7 @@ fn value_preserves_state_identity_in(
                             call,
                             location,
                             state_names,
+                            state_this_functions,
                             visiting,
                         )
                     }
@@ -3265,6 +3380,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         inputs[0],
                         state_names,
+                        state_this_functions,
                         visiting,
                     )
                 }
@@ -3279,6 +3395,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         value,
                         state_names,
+                        state_this_functions,
                         visiting,
                     )
                 }),
@@ -3294,6 +3411,7 @@ fn value_preserves_state_identity_in(
                         analysis,
                         value,
                         state_names,
+                        state_this_functions,
                         visiting,
                     )
                 }),
@@ -3333,6 +3451,7 @@ fn place_preserves_state_identity(
     place: &Place,
     location: Option<InstructionLocation>,
     state_names: &BTreeSet<SsaName>,
+    state_this_functions: &BTreeSet<FunctionId>,
     visiting: &mut BTreeSet<(FunctionId, ValueId)>,
 ) -> bool {
     match place.base {
@@ -3356,12 +3475,14 @@ fn place_preserves_state_identity(
             analysis,
             value,
             state_names,
+            state_this_functions,
             visiting,
         ),
         PlaceBase::Global(_) => false,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn local_call_returns_state_identity(
     identity: &StateIdentityAnalysis<'_>,
     caller: &HirFunction,
@@ -3369,6 +3490,7 @@ fn local_call_returns_state_identity(
     call: &fict_hir::CallInstruction,
     call_location: Option<InstructionLocation>,
     caller_state_names: &BTreeSet<SsaName>,
+    state_this_functions: &BTreeSet<FunctionId>,
     visiting: &mut BTreeSet<(FunctionId, ValueId)>,
 ) -> bool {
     let Some(call_location) = call_location else {
@@ -3394,6 +3516,7 @@ fn local_call_returns_state_identity(
             caller_analysis,
             argument.value,
             caller_state_names,
+            state_this_functions,
             visiting,
         ) {
             continue;
@@ -3416,6 +3539,7 @@ fn local_call_returns_state_identity(
             callee_analysis,
             value,
             &callee_state_names,
+            state_this_functions,
             visiting,
         )
     })
