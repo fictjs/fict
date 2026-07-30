@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cell::Cell,
+    collections::{BTreeMap, BTreeSet, VecDeque},
+};
 
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
@@ -42,6 +45,170 @@ struct InstructionLocation {
     instruction: u32,
 }
 
+#[derive(Debug)]
+struct StateIdentityAnalysis<'a> {
+    hir: &'a HirFile,
+    analyses: &'a [FunctionPassAnalysis],
+    instruction_locations: Vec<Vec<Option<InstructionLocation>>>,
+    definition_locations: Vec<BTreeMap<SsaName, SsaDefinitionLocation>>,
+    entry_names: Vec<BTreeMap<LocalId, SsaName>>,
+    value_visits: Cell<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ProvenanceCandidate {
+    ScopeFact {
+        function: usize,
+        fact: usize,
+    },
+    Definition {
+        function: usize,
+        definition: usize,
+    },
+    Phi {
+        function: usize,
+        phi: usize,
+    },
+    Callback {
+        function: usize,
+        block: usize,
+        instruction: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct NameTarget {
+    function: usize,
+    name: SsaName,
+}
+
+#[derive(Debug)]
+struct NameGraphOutput {
+    names: Vec<BTreeSet<SsaName>>,
+    reached_targets: BTreeSet<NameTarget>,
+    stats: ProvenanceWorkStats,
+}
+
+#[derive(Debug, Default)]
+struct ProvenanceWorkStats {
+    work_items: usize,
+    dependency_edges: usize,
+    activated_names: usize,
+}
+
+#[derive(Debug)]
+struct StateProvenanceOutput {
+    names: Vec<BTreeSet<SsaName>>,
+    readonly_sites: Vec<BTreeMap<SsaName, ReadonlySite>>,
+    callback_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
+    unresolved_callbacks: BTreeMap<(FunctionId, BlockId, u32), Origin>,
+    stats: ProvenanceWorkStats,
+}
+
+struct StateProvenanceSolver<'a> {
+    identity: &'a StateIdentityAnalysis<'a>,
+    state_bindings: &'a BTreeSet<BindingId>,
+    fresh_state_containers: &'a [BTreeSet<SsaName>],
+    scope_fact_names: Vec<BTreeSet<SsaName>>,
+    names: Vec<BTreeSet<SsaName>>,
+    readonly_sites: Vec<BTreeMap<SsaName, ReadonlySite>>,
+    active_bindings: BTreeSet<BindingId>,
+    callback_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
+    unresolved_callbacks: BTreeMap<(FunctionId, BlockId, u32), Origin>,
+    candidates: Vec<ProvenanceCandidate>,
+    reverse_dependencies: Vec<BTreeMap<SsaName, Vec<usize>>>,
+    capture_dependencies: BTreeMap<BindingId, Vec<usize>>,
+    pending: VecDeque<usize>,
+    queued: Vec<bool>,
+    resolved: Vec<bool>,
+    stats: ProvenanceWorkStats,
+}
+
+#[derive(Debug)]
+pub(crate) struct ReactiveWriteValidationOutput {
+    pub(crate) diagnostics: DiagnosticBundle,
+    pub(crate) provenance_work_items: usize,
+    pub(crate) provenance_dependency_edges: usize,
+    pub(crate) provenance_value_visits: usize,
+}
+
+impl<'a> StateIdentityAnalysis<'a> {
+    fn new(hir: &'a HirFile, analyses: &'a [FunctionPassAnalysis]) -> Self {
+        let mut instruction_locations = Vec::with_capacity(hir.functions.len());
+        let mut definition_locations = Vec::with_capacity(hir.functions.len());
+        let mut entry_names = Vec::with_capacity(hir.functions.len());
+        for (function_index, function) in hir.functions.iter().enumerate() {
+            let mut locations = vec![None; function.values.len()];
+            for block in &function.blocks {
+                for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+                    if let Some(result) = instruction.result
+                        && let Some(location) = locations.get_mut(result.as_usize())
+                    {
+                        *location = Some(InstructionLocation {
+                            block: block.id,
+                            instruction: count_u32(instruction_index),
+                        });
+                    }
+                }
+            }
+            instruction_locations.push(locations);
+            let definitions = analyses
+                .get(function_index)
+                .map(|analysis| {
+                    analysis
+                        .ssa
+                        .definitions
+                        .iter()
+                        .map(|definition| (definition.name, definition.location))
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .unwrap_or_default();
+            entry_names.push(
+                definitions
+                    .iter()
+                    .filter_map(|(name, location)| {
+                        (*location == SsaDefinitionLocation::Entry).then_some((name.local, *name))
+                    })
+                    .collect(),
+            );
+            definition_locations.push(definitions);
+        }
+        Self {
+            hir,
+            analyses,
+            instruction_locations,
+            definition_locations,
+            entry_names,
+            value_visits: Cell::new(0),
+        }
+    }
+
+    fn instruction_location(
+        &self,
+        function: FunctionId,
+        value: ValueId,
+    ) -> Option<InstructionLocation> {
+        self.instruction_locations
+            .get(function.as_usize())?
+            .get(value.as_usize())
+            .copied()
+            .flatten()
+    }
+
+    fn instruction_for_result(
+        &self,
+        function: &'a HirFunction,
+        value: ValueId,
+    ) -> Option<&'a fict_hir::HirInstruction> {
+        let location = self.instruction_location(function.id, value)?;
+        function
+            .blocks
+            .get(location.block.as_usize())?
+            .instructions
+            .get(location.instruction as usize)
+    }
+}
+
 #[derive(Debug, Default)]
 struct CallbackResolution {
     functions: BTreeSet<FunctionId>,
@@ -69,8 +236,769 @@ impl CallbackResolution {
     }
 }
 
+fn value_provenance_dependencies(
+    identity: &StateIdentityAnalysis<'_>,
+    function_index: usize,
+    value: ValueId,
+) -> BTreeSet<SsaName> {
+    let mut names = identity
+        .analyses
+        .get(function_index)
+        .and_then(|analysis| {
+            analysis
+                .dependencies
+                .value_dependencies
+                .get(value.as_usize())
+        })
+        .into_iter()
+        .flatten()
+        .filter_map(|path| match path.base {
+            DependencyBase::Ssa(name) => Some(name),
+            DependencyBase::Global(_) | DependencyBase::Value(_) => None,
+        })
+        .collect::<BTreeSet<_>>();
+    match identity
+        .hir
+        .functions
+        .get(function_index)
+        .and_then(|function| function.values.get(value.as_usize()))
+        .map(|value| &value.kind)
+    {
+        Some(ValueKind::Ssa(name)) => {
+            names.insert(*name);
+        }
+        Some(ValueKind::Parameter(local)) => {
+            if let Some(name) = identity.entry_names[function_index].get(local) {
+                names.insert(*name);
+            }
+        }
+        _ => {}
+    }
+    names
+}
+
+fn place_provenance_dependencies(
+    identity: &StateIdentityAnalysis<'_>,
+    function_index: usize,
+    place: &Place,
+    location: InstructionLocation,
+) -> BTreeSet<SsaName> {
+    let analysis = &identity.analyses[function_index];
+    let function = &identity.hir.functions[function_index];
+    match place.base {
+        PlaceBase::Local(local) => ssa_name_before(
+            analysis,
+            WriteLocation {
+                function: function.id,
+                block: location.block,
+                instruction: location.instruction,
+                local,
+            },
+        )
+        .into_iter()
+        .collect(),
+        PlaceBase::Ssa(name) => BTreeSet::from([name]),
+        PlaceBase::Value(value) => value_provenance_dependencies(identity, function_index, value),
+        PlaceBase::Global(_) => BTreeSet::new(),
+    }
+}
+
+fn propagate_name_graph(
+    hir: &HirFile,
+    mut names: Vec<BTreeSet<SsaName>>,
+    reverse_dependencies: &[BTreeMap<SsaName, Vec<NameTarget>>],
+    capture_dependencies: &BTreeMap<BindingId, Vec<NameTarget>>,
+) -> NameGraphOutput {
+    let mut stats = ProvenanceWorkStats {
+        dependency_edges: reverse_dependencies
+            .iter()
+            .flat_map(BTreeMap::values)
+            .map(Vec::len)
+            .chain(capture_dependencies.values().map(Vec::len))
+            .sum(),
+        ..ProvenanceWorkStats::default()
+    };
+    let mut active_bindings = provenance_bindings(hir, &names);
+    let mut pending = VecDeque::new();
+    let mut queued = BTreeSet::new();
+    for (function_index, dependencies) in reverse_dependencies.iter().enumerate() {
+        for (source, targets) in dependencies {
+            if !names[function_index].contains(source) {
+                continue;
+            }
+            for target in targets {
+                if queued.insert(*target) {
+                    pending.push_back(*target);
+                }
+            }
+        }
+    }
+    for binding in &active_bindings {
+        if let Some(targets) = capture_dependencies.get(binding) {
+            for target in targets {
+                if queued.insert(*target) {
+                    pending.push_back(*target);
+                }
+            }
+        }
+    }
+
+    let mut reached_targets = BTreeSet::new();
+    while let Some(target) = pending.pop_front() {
+        queued.remove(&target);
+        stats.work_items = stats.work_items.saturating_add(1);
+        reached_targets.insert(target);
+        if !names[target.function].insert(target.name) {
+            continue;
+        }
+        stats.activated_names = stats.activated_names.saturating_add(1);
+        if let Some(targets) = reverse_dependencies[target.function].get(&target.name) {
+            for dependent in targets {
+                if queued.insert(*dependent) {
+                    pending.push_back(*dependent);
+                }
+            }
+        }
+        let Some(binding) = hir.functions[target.function]
+            .locals
+            .get(target.name.local.as_usize())
+            .and_then(|local| local.binding)
+        else {
+            continue;
+        };
+        if active_bindings.insert(binding)
+            && let Some(targets) = capture_dependencies.get(&binding)
+        {
+            for dependent in targets {
+                if queued.insert(*dependent) {
+                    pending.push_back(*dependent);
+                }
+            }
+        }
+    }
+    NameGraphOutput {
+        names,
+        reached_targets,
+        stats,
+    }
+}
+
+impl<'a> StateProvenanceSolver<'a> {
+    fn new(
+        identity: &'a StateIdentityAnalysis<'a>,
+        initial_names: Vec<BTreeSet<SsaName>>,
+        state_bindings: &'a BTreeSet<BindingId>,
+        fresh_state_containers: &'a [BTreeSet<SsaName>],
+    ) -> Self {
+        let scope_fact_names = identity
+            .analyses
+            .iter()
+            .map(|analysis| {
+                analysis
+                    .scopes
+                    .bindings
+                    .iter()
+                    .map(|fact| fact.name)
+                    .collect()
+            })
+            .collect::<Vec<_>>();
+        let active_bindings = provenance_bindings(identity.hir, &initial_names);
+        let function_count = identity.hir.functions.len();
+        let mut solver = Self {
+            identity,
+            state_bindings,
+            fresh_state_containers,
+            scope_fact_names,
+            names: initial_names,
+            readonly_sites: vec![BTreeMap::new(); function_count],
+            active_bindings,
+            callback_receiver_bindings: BTreeMap::new(),
+            unresolved_callbacks: BTreeMap::new(),
+            candidates: Vec::new(),
+            reverse_dependencies: vec![BTreeMap::new(); function_count],
+            capture_dependencies: BTreeMap::new(),
+            pending: VecDeque::new(),
+            queued: Vec::new(),
+            resolved: Vec::new(),
+            stats: ProvenanceWorkStats::default(),
+        };
+        solver.build_candidates();
+        solver
+    }
+
+    fn build_candidates(&mut self) {
+        for (function_index, analysis) in self.identity.analyses.iter().enumerate() {
+            let function = &self.identity.hir.functions[function_index];
+            for (fact_index, fact) in analysis.scopes.bindings.iter().enumerate() {
+                let mut dependencies = definition_source_value(function, fact.location)
+                    .map(|value| {
+                        value_provenance_dependencies(self.identity, function_index, value)
+                    })
+                    .unwrap_or_default();
+                if let Some(phi) = analysis.ssa.phis.iter().find(|phi| phi.target == fact.name) {
+                    dependencies.extend(phi.sources.iter().map(|(_, source)| *source));
+                }
+                self.register_candidate(
+                    ProvenanceCandidate::ScopeFact {
+                        function: function_index,
+                        fact: fact_index,
+                    },
+                    function_index,
+                    dependencies,
+                    None,
+                );
+            }
+            for (definition_index, definition) in analysis.ssa.definitions.iter().enumerate() {
+                let dependencies = definition_source_value(function, definition.location)
+                    .map(|value| {
+                        value_provenance_dependencies(self.identity, function_index, value)
+                    })
+                    .unwrap_or_default();
+                let capture_binding = function
+                    .locals
+                    .get(definition.name.local.as_usize())
+                    .filter(|local| local.kind == LocalKind::Capture)
+                    .and_then(|local| local.binding);
+                self.register_candidate(
+                    ProvenanceCandidate::Definition {
+                        function: function_index,
+                        definition: definition_index,
+                    },
+                    function_index,
+                    dependencies,
+                    capture_binding,
+                );
+            }
+            for (phi_index, phi) in analysis.ssa.phis.iter().enumerate() {
+                self.register_candidate(
+                    ProvenanceCandidate::Phi {
+                        function: function_index,
+                        phi: phi_index,
+                    },
+                    function_index,
+                    phi.sources.iter().map(|(_, source)| *source).collect(),
+                    None,
+                );
+            }
+            for (block_index, block) in function.blocks.iter().enumerate() {
+                for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+                    let HirInstructionKind::Call(call) = &instruction.kind else {
+                        continue;
+                    };
+                    let Some(place) = call.callee_reference.as_ref() else {
+                        continue;
+                    };
+                    let location = InstructionLocation {
+                        block: block.id,
+                        instruction: count_u32(instruction_index),
+                    };
+                    let mut dependencies = place_provenance_dependencies(
+                        self.identity,
+                        function_index,
+                        place,
+                        location,
+                    );
+                    for argument in &call.arguments {
+                        dependencies.extend(value_provenance_dependencies(
+                            self.identity,
+                            function_index,
+                            argument.value,
+                        ));
+                    }
+                    self.register_candidate(
+                        ProvenanceCandidate::Callback {
+                            function: function_index,
+                            block: block_index,
+                            instruction: instruction_index,
+                        },
+                        function_index,
+                        dependencies,
+                        None,
+                    );
+                }
+            }
+        }
+        self.queued.resize(self.candidates.len(), false);
+        self.resolved.resize(self.candidates.len(), false);
+        for candidate in 0..self.candidates.len() {
+            self.enqueue(candidate);
+        }
+    }
+
+    fn register_candidate(
+        &mut self,
+        candidate: ProvenanceCandidate,
+        function_index: usize,
+        dependencies: BTreeSet<SsaName>,
+        capture_binding: Option<BindingId>,
+    ) {
+        let candidate_index = self.candidates.len();
+        self.candidates.push(candidate);
+        for dependency in dependencies {
+            self.reverse_dependencies[function_index]
+                .entry(dependency)
+                .or_default()
+                .push(candidate_index);
+            self.stats.dependency_edges = self.stats.dependency_edges.saturating_add(1);
+        }
+        if let Some(binding) = capture_binding {
+            self.capture_dependencies
+                .entry(binding)
+                .or_default()
+                .push(candidate_index);
+            self.stats.dependency_edges = self.stats.dependency_edges.saturating_add(1);
+        }
+    }
+
+    fn enqueue(&mut self, candidate: usize) {
+        if self.resolved.get(candidate).copied().unwrap_or(false)
+            || self.queued.get(candidate).copied().unwrap_or(false)
+        {
+            return;
+        }
+        self.queued[candidate] = true;
+        self.pending.push_back(candidate);
+    }
+
+    fn activate(&mut self, function_index: usize, name: SsaName) {
+        if !self.names[function_index].insert(name) {
+            return;
+        }
+        self.stats.activated_names = self.stats.activated_names.saturating_add(1);
+        if let Some(dependents) = self.reverse_dependencies[function_index]
+            .get(&name)
+            .cloned()
+        {
+            for dependent in dependents {
+                self.enqueue(dependent);
+            }
+        }
+        let Some(binding) = self.identity.hir.functions[function_index]
+            .locals
+            .get(name.local.as_usize())
+            .and_then(|local| local.binding)
+        else {
+            return;
+        };
+        if self.active_bindings.insert(binding)
+            && let Some(dependents) = self.capture_dependencies.get(&binding).cloned()
+        {
+            for dependent in dependents {
+                self.enqueue(dependent);
+            }
+        }
+    }
+
+    fn run(mut self) -> Result<StateProvenanceOutput, DiagnosticBundle> {
+        let maximum_work_items = self
+            .candidates
+            .len()
+            .saturating_add(self.stats.dependency_edges)
+            .saturating_add(1);
+        while let Some(candidate_index) = self.pending.pop_front() {
+            self.queued[candidate_index] = false;
+            if self.resolved[candidate_index] {
+                continue;
+            }
+            self.stats.work_items = self.stats.work_items.saturating_add(1);
+            if self.stats.work_items > maximum_work_items {
+                return Err(DiagnosticBundle::new(vec![internal_error(
+                    "FICT-ANALYSIS-FIXED-POINT",
+                    "state provenance propagation exceeded its deterministic work limit",
+                )]));
+            }
+            let resolved = match self.candidates[candidate_index] {
+                ProvenanceCandidate::ScopeFact { function, fact } => {
+                    self.process_scope_fact(function, fact)
+                }
+                ProvenanceCandidate::Definition {
+                    function,
+                    definition,
+                } => self.process_definition(function, definition),
+                ProvenanceCandidate::Phi { function, phi } => self.process_phi(function, phi),
+                ProvenanceCandidate::Callback {
+                    function,
+                    block,
+                    instruction,
+                } => {
+                    self.process_callback(function, block, instruction);
+                    false
+                }
+            };
+            self.resolved[candidate_index] = resolved;
+        }
+        Ok(StateProvenanceOutput {
+            names: self.names,
+            readonly_sites: self.readonly_sites,
+            callback_receiver_bindings: self.callback_receiver_bindings,
+            unresolved_callbacks: self.unresolved_callbacks,
+            stats: self.stats,
+        })
+    }
+
+    fn process_scope_fact(&mut self, function_index: usize, fact_index: usize) -> bool {
+        let analysis = &self.identity.analyses[function_index];
+        let function = &self.identity.hir.functions[function_index];
+        let fact = &analysis.scopes.bindings[fact_index];
+        if self.names[function_index].contains(&fact.name) {
+            return true;
+        }
+        let depends_on_state =
+            definition_source_value(function, fact.location).is_some_and(|value| {
+                value_preserves_state_identity(
+                    self.identity,
+                    function,
+                    analysis,
+                    value,
+                    &self.names[function_index],
+                )
+            }) || analysis
+                .ssa
+                .phis
+                .iter()
+                .find(|phi| phi.target == fact.name)
+                .is_some_and(|phi| {
+                    phi.sources.iter().any(|(_, source)| {
+                        name_resolves_to_set(*source, &self.names[function_index])
+                    })
+                });
+        if depends_on_state {
+            self.activate(function_index, fact.name);
+        }
+        depends_on_state
+    }
+
+    fn process_definition(&mut self, function_index: usize, definition_index: usize) -> bool {
+        let analysis = &self.identity.analyses[function_index];
+        let function = &self.identity.hir.functions[function_index];
+        let definition = &analysis.ssa.definitions[definition_index];
+        let local_binding = function
+            .locals
+            .get(definition.name.local.as_usize())
+            .and_then(|local| local.binding);
+        let state_binding_definition =
+            local_binding.is_some_and(|binding| self.state_bindings.contains(&binding));
+        let capture_from_outer_scope = function
+            .locals
+            .get(definition.name.local.as_usize())
+            .is_some_and(|local| {
+                local.kind == LocalKind::Capture
+                    && local
+                        .binding
+                        .is_some_and(|binding| self.active_bindings.contains(&binding))
+            });
+        let depends_on_state =
+            definition_source_value(function, definition.location).is_some_and(|value| {
+                value_preserves_state_identity(
+                    self.identity,
+                    function,
+                    analysis,
+                    value,
+                    &self.names[function_index],
+                )
+            });
+        if !state_binding_definition && !capture_from_outer_scope && !depends_on_state {
+            return false;
+        }
+        if !self.scope_fact_names[function_index].contains(&definition.name) {
+            let kind = if self.fresh_state_containers[function_index].contains(&definition.name) {
+                ReadonlyKind::FreshContainer
+            } else {
+                definition_source_value(function, definition.location)
+                    .and_then(|value| {
+                        projected_alias_kind(
+                            function,
+                            value,
+                            &self.readonly_sites[function_index],
+                            &mut BTreeSet::new(),
+                        )
+                    })
+                    .unwrap_or(ReadonlyKind::Alias)
+            };
+            record_readonly_site(
+                function,
+                definition.name,
+                definition.location,
+                kind,
+                self.state_bindings,
+                &mut self.readonly_sites[function_index],
+            );
+        }
+        self.activate(function_index, definition.name);
+        true
+    }
+
+    fn process_phi(&mut self, function_index: usize, phi_index: usize) -> bool {
+        let analysis = &self.identity.analyses[function_index];
+        let function = &self.identity.hir.functions[function_index];
+        let phi = &analysis.ssa.phis[phi_index];
+        if !phi
+            .sources
+            .iter()
+            .any(|(_, source)| name_resolves_to_set(*source, &self.names[function_index]))
+        {
+            return false;
+        }
+        record_readonly_site(
+            function,
+            phi.target,
+            SsaDefinitionLocation::Phi(phi.block),
+            ReadonlyKind::Alias,
+            self.state_bindings,
+            &mut self.readonly_sites[function_index],
+        );
+        self.activate(function_index, phi.target);
+        true
+    }
+
+    fn process_callback(
+        &mut self,
+        function_index: usize,
+        block_index: usize,
+        instruction_index: usize,
+    ) {
+        let analysis = &self.identity.analyses[function_index];
+        let function = &self.identity.hir.functions[function_index];
+        let block = &function.blocks[block_index];
+        let instruction = &block.instructions[instruction_index];
+        let HirInstructionKind::Call(call) = &instruction.kind else {
+            return;
+        };
+        let Some(place) = call.callee_reference.as_ref() else {
+            return;
+        };
+        let Some(parameter_indices) = state_callback_parameter_indices(
+            self.identity,
+            function,
+            analysis,
+            &self.names[function_index],
+            call,
+            place,
+        ) else {
+            return;
+        };
+        let location = WriteLocation {
+            function: function.id,
+            block: block.id,
+            instruction: count_u32(instruction_index),
+            local: LocalId::new(0),
+        };
+        if !place_depends_on_state(
+            self.identity,
+            function,
+            analysis,
+            place,
+            location,
+            &self.names[function_index],
+        ) {
+            return;
+        }
+        let Some(callback_argument) = call.arguments.first() else {
+            return;
+        };
+        let resolution = if callback_argument.spread {
+            CallbackResolution::default()
+        } else {
+            resolve_callback_value(
+                self.identity.hir,
+                analysis,
+                function,
+                callback_argument.value,
+                InstructionLocation {
+                    block: block.id,
+                    instruction: count_u32(instruction_index),
+                },
+            )
+        };
+        if !resolution.complete {
+            self.unresolved_callbacks
+                .entry((function.id, block.id, count_u32(instruction_index)))
+                .or_insert(instruction.origin);
+        }
+        let mut seeds = Vec::new();
+        for callback in resolution.functions {
+            let callback_index = callback.as_usize();
+            let Some(callback_function) = self.identity.hir.functions.get(callback_index) else {
+                continue;
+            };
+            let Some(callback_analysis) = self.identity.analyses.get(callback_index) else {
+                continue;
+            };
+            for (index, receiver_kind) in &parameter_indices {
+                let Some(parameter) = callback_function.parameters.get(*index) else {
+                    continue;
+                };
+                let Some(definition) =
+                    callback_analysis.ssa.definitions.iter().find(|definition| {
+                        definition.name.local == parameter.local
+                            && definition.location == SsaDefinitionLocation::Entry
+                    })
+                else {
+                    continue;
+                };
+                let binding = receiver_kind.and_then(|receiver_kind| {
+                    callback_function
+                        .locals
+                        .get(parameter.local.as_usize())
+                        .and_then(|local| local.binding)
+                        .map(|binding| (binding, receiver_kind))
+                });
+                seeds.push((
+                    callback_index,
+                    definition.name,
+                    definition.location,
+                    binding,
+                ));
+            }
+        }
+        for (callback_index, name, location, receiver_binding) in seeds {
+            let callback_function = &self.identity.hir.functions[callback_index];
+            record_readonly_site(
+                callback_function,
+                name,
+                location,
+                ReadonlyKind::CallbackParameter,
+                self.state_bindings,
+                &mut self.readonly_sites[callback_index],
+            );
+            if let Some((binding, receiver_kind)) = receiver_binding {
+                self.callback_receiver_bindings
+                    .entry(binding)
+                    .and_modify(|existing| {
+                        if *existing != receiver_kind {
+                            *existing = StateReceiverKind::Unknown;
+                        }
+                    })
+                    .or_insert(receiver_kind);
+            }
+            self.activate(callback_index, name);
+        }
+    }
+}
+
+fn propagate_state_provenance(
+    identity: &StateIdentityAnalysis<'_>,
+    initial_names: Vec<BTreeSet<SsaName>>,
+    state_bindings: &BTreeSet<BindingId>,
+    fresh_state_containers: &[BTreeSet<SsaName>],
+) -> Result<StateProvenanceOutput, DiagnosticBundle> {
+    StateProvenanceSolver::new(
+        identity,
+        initial_names,
+        state_bindings,
+        fresh_state_containers,
+    )
+    .run()
+}
+
+fn propagate_pattern_provenance(
+    identity: &StateIdentityAnalysis<'_>,
+    names: Vec<BTreeSet<SsaName>>,
+    readonly_sites: &mut [BTreeMap<SsaName, ReadonlySite>],
+) -> (Vec<BTreeSet<SsaName>>, ProvenanceWorkStats) {
+    let mut reverse_dependencies = vec![BTreeMap::new(); identity.hir.functions.len()];
+    let mut sites = BTreeMap::new();
+    for (function_index, analysis) in identity.analyses.iter().enumerate() {
+        let function = &identity.hir.functions[function_index];
+        for block in &function.blocks {
+            for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+                let instruction_index = count_u32(instruction_index);
+                let mut add_target = |value, target: NameTarget, site: ReadonlySite| {
+                    for source in value_provenance_dependencies(identity, function_index, value) {
+                        reverse_dependencies[function_index]
+                            .entry(source)
+                            .or_insert_with(Vec::new)
+                            .push(target);
+                    }
+                    sites.entry(target).or_insert(site);
+                };
+                match &instruction.kind {
+                    HirInstructionKind::Declare {
+                        local,
+                        initializer: Some(initializer),
+                        ..
+                    } if is_pattern_binding_declaration(
+                        identity.hir,
+                        function,
+                        *local,
+                        *initializer,
+                    ) =>
+                    {
+                        if let Some(name) =
+                            definition_at(analysis, block.id, instruction_index, *local)
+                        {
+                            add_target(
+                                *initializer,
+                                NameTarget {
+                                    function: function_index,
+                                    name,
+                                },
+                                ReadonlySite {
+                                    kind: ReadonlyKind::Alias,
+                                    origin: function.locals[local.as_usize()].origin,
+                                },
+                            );
+                        }
+                    }
+                    HirInstructionKind::PatternAssignment { value, writes, .. } => {
+                        for write in writes {
+                            if let Some(name) =
+                                definition_at(analysis, block.id, instruction_index, write.local)
+                            {
+                                add_target(
+                                    *value,
+                                    NameTarget {
+                                        function: function_index,
+                                        name,
+                                    },
+                                    ReadonlySite {
+                                        kind: ReadonlyKind::Alias,
+                                        origin: write.origin,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let output = propagate_name_graph(identity.hir, names, &reverse_dependencies, &BTreeMap::new());
+    for target in &output.reached_targets {
+        if let Some(site) = sites.get(target) {
+            readonly_sites[target.function].insert(target.name, *site);
+        }
+    }
+    (output.names, output.stats)
+}
+
+fn propagate_phi_names(
+    hir: &HirFile,
+    analyses: &[FunctionPassAnalysis],
+    names: Vec<BTreeSet<SsaName>>,
+) -> (Vec<BTreeSet<SsaName>>, ProvenanceWorkStats) {
+    let mut reverse_dependencies = vec![BTreeMap::new(); hir.functions.len()];
+    for (function_index, analysis) in analyses.iter().enumerate() {
+        for phi in &analysis.ssa.phis {
+            let target = NameTarget {
+                function: function_index,
+                name: phi.target,
+            };
+            for (_, source) in &phi.sources {
+                reverse_dependencies[function_index]
+                    .entry(*source)
+                    .or_insert_with(Vec::new)
+                    .push(target);
+            }
+        }
+    }
+    let output = propagate_name_graph(hir, names, &reverse_dependencies, &BTreeMap::new());
+    (output.names, output.stats)
+}
+
 struct WriteValidationContext<'a> {
-    hir: &'a HirFile,
+    identity: &'a StateIdentityAnalysis<'a>,
     analyses: &'a [FunctionPassAnalysis],
     state_provenance_names: &'a [BTreeSet<SsaName>],
     readonly_sites: &'a [BTreeMap<SsaName, ReadonlySite>],
@@ -83,7 +1011,7 @@ pub(crate) fn validate_reactive_writes(
     hir: &HirFile,
     analyses: &[FunctionPassAnalysis],
     strict_guarantee: bool,
-) -> Result<DiagnosticBundle, DiagnosticBundle> {
+) -> Result<ReactiveWriteValidationOutput, DiagnosticBundle> {
     if analyses.len() != hir.functions.len()
         || analyses
             .iter()
@@ -96,11 +1024,9 @@ pub(crate) fn validate_reactive_writes(
         )]));
     }
 
-    let mut state_provenance_names = vec![BTreeSet::new(); hir.functions.len()];
-    let mut readonly_sites = vec![BTreeMap::new(); hir.functions.len()];
+    let identity = StateIdentityAnalysis::new(hir, analyses);
+    let mut initial_state_names = vec![BTreeSet::new(); hir.functions.len()];
     let mut state_bindings = BTreeSet::new();
-    let mut state_callback_receiver_bindings = BTreeMap::new();
-    let mut unresolved_state_callbacks = BTreeMap::new();
 
     for analysis in analyses {
         let function_index = analysis.function.as_usize();
@@ -109,7 +1035,7 @@ pub(crate) fn validate_reactive_writes(
         };
         for fact in &analysis.scopes.bindings {
             if fact.kind == ReactiveBindingKind::State {
-                state_provenance_names[function_index].insert(fact.name);
+                initial_state_names[function_index].insert(fact.name);
                 if let Some(binding) = function
                     .locals
                     .get(fact.name.local.as_usize())
@@ -120,151 +1046,18 @@ pub(crate) fn validate_reactive_writes(
             }
         }
     }
-
-    // Component parameters and other reactive inputs remain mutable snapshots when copied into
-    // a local. Only definitions transitively rooted in state carry this read-only contract.
-    loop {
-        let previous = state_provenance_names.clone();
-        let provenance_bindings = provenance_bindings(hir, &previous);
-        let mut changed = false;
-        for analysis in analyses {
-            let function_index = analysis.function.as_usize();
-            let function = &hir.functions[function_index];
-            for fact in &analysis.scopes.bindings {
-                let depends_on_state =
-                    definition_source_value(function, fact.location).is_some_and(|value| {
-                        value_preserves_state_identity(
-                            hir,
-                            analyses,
-                            function,
-                            analysis,
-                            value,
-                            &previous[function_index],
-                        )
-                    }) || analysis
-                        .ssa
-                        .phis
-                        .iter()
-                        .find(|phi| phi.target == fact.name)
-                        .is_some_and(|phi| {
-                            phi.sources.iter().any(|(_, source)| {
-                                name_resolves_to_set(*source, &previous[function_index])
-                            })
-                        });
-                if depends_on_state {
-                    changed |= state_provenance_names[function_index].insert(fact.name);
-                }
-            }
-
-            // Reactive-scope facts intentionally focus on declarations. Sound provenance also
-            // has to follow ordinary assignment definitions and every CFG merge. This keeps a
-            // value state-derived across if/switch/loop/try joins without making the whole
-            // binding flow-insensitively reactive after a later plain replacement.
-            for definition in &analysis.ssa.definitions {
-                let local_binding = function
-                    .locals
-                    .get(definition.name.local.as_usize())
-                    .and_then(|local| local.binding);
-                let state_binding_definition =
-                    local_binding.is_some_and(|binding| state_bindings.contains(&binding));
-                let capture_from_outer_scope = function
-                    .locals
-                    .get(definition.name.local.as_usize())
-                    .is_some_and(|local| {
-                        local.kind == LocalKind::Capture
-                            && local
-                                .binding
-                                .is_some_and(|binding| provenance_bindings.contains(&binding))
-                    });
-                let depends_on_state = definition_source_value(function, definition.location)
-                    .is_some_and(|value| {
-                        value_preserves_state_identity(
-                            hir,
-                            analyses,
-                            function,
-                            analysis,
-                            value,
-                            &previous[function_index],
-                        )
-                    });
-                if !state_binding_definition && !capture_from_outer_scope && !depends_on_state {
-                    continue;
-                }
-                changed |= state_provenance_names[function_index].insert(definition.name);
-                // Scope-owned reactive declarations have a more precise contract below. In
-                // particular, a derived class/function creates a fresh value rather than an
-                // alias of the source state, so recording its SSA definition as `Alias` would
-                // incorrectly reject ordinary static calls and self references.
-                if !analysis
-                    .scopes
-                    .bindings
-                    .iter()
-                    .any(|fact| fact.name == definition.name)
-                {
-                    let kind = if definition_is_fresh_state_container(
-                        function,
-                        analysis,
-                        definition.location,
-                    ) {
-                        ReadonlyKind::FreshContainer
-                    } else {
-                        definition_source_value(function, definition.location)
-                            .and_then(|value| {
-                                projected_alias_kind(
-                                    function,
-                                    value,
-                                    &readonly_sites[function_index],
-                                    &mut BTreeSet::new(),
-                                )
-                            })
-                            .unwrap_or(ReadonlyKind::Alias)
-                    };
-                    record_readonly_site(
-                        function,
-                        definition.name,
-                        definition.location,
-                        kind,
-                        &state_bindings,
-                        &mut readonly_sites[function_index],
-                    );
-                }
-            }
-            for phi in &analysis.ssa.phis {
-                if !phi
-                    .sources
-                    .iter()
-                    .any(|(_, source)| name_resolves_to_set(*source, &previous[function_index]))
-                {
-                    continue;
-                }
-                changed |= state_provenance_names[function_index].insert(phi.target);
-                record_readonly_site(
-                    function,
-                    phi.target,
-                    SsaDefinitionLocation::Phi(phi.block),
-                    ReadonlyKind::Alias,
-                    &state_bindings,
-                    &mut readonly_sites[function_index],
-                );
-            }
-
-            seed_state_callback_parameters(
-                hir,
-                analyses,
-                analysis,
-                &previous[function_index],
-                &state_bindings,
-                &mut state_provenance_names,
-                &mut readonly_sites,
-                &mut state_callback_receiver_bindings,
-                &mut unresolved_state_callbacks,
-                &mut changed,
-            );
-        }
-        if !changed {
-            break;
-        }
-    }
+    let fresh_state_containers = analyze_fresh_state_containers(&identity);
+    let propagation = propagate_state_provenance(
+        &identity,
+        initial_state_names,
+        &state_bindings,
+        &fresh_state_containers,
+    )?;
+    let mut state_provenance_names = propagation.names;
+    let mut readonly_sites = propagation.readonly_sites;
+    let state_callback_receiver_bindings = propagation.callback_receiver_bindings;
+    let unresolved_state_callbacks = propagation.unresolved_callbacks;
+    let mut provenance_stats = propagation.stats;
 
     for analysis in analyses {
         let function_index = analysis.function.as_usize();
@@ -301,7 +1094,7 @@ pub(crate) fn validate_reactive_writes(
                     Some(ReadonlyKind::Derived)
                 }
                 ReactiveBindingKind::Alias | ReactiveBindingKind::Derived
-                    if definition_is_fresh_state_container(function, analysis, fact.location) =>
+                    if fresh_state_containers[function_index].contains(&fact.name) =>
                 {
                     Some(ReadonlyKind::FreshContainer)
                 }
@@ -336,99 +1129,36 @@ pub(crate) fn validate_reactive_writes(
 
     // Binding patterns are retained as adapter-owned syntax values. Recover read-only
     // provenance from their structural dependencies after the regular scope fixed point, then
-    // iterate so nested and multi-hop destructuring remains binding-aware.
-    loop {
-        let previous = state_provenance_names.clone();
-        let mut changed = false;
-        for analysis in analyses {
-            let function_index = analysis.function.as_usize();
-            let function = &hir.functions[function_index];
-            for block in &function.blocks {
-                for (instruction_index, instruction) in block.instructions.iter().enumerate() {
-                    let instruction_index = count_u32(instruction_index);
-                    match &instruction.kind {
-                        HirInstructionKind::Declare {
-                            local,
-                            initializer: Some(initializer),
-                            ..
-                        } if is_pattern_binding_declaration(
-                            hir,
-                            function,
-                            *local,
-                            *initializer,
-                        ) && value_depends_on_reactive(
-                            analysis,
-                            *initializer,
-                            &previous[function_index],
-                        ) =>
-                        {
-                            if let Some(name) =
-                                definition_at(analysis, block.id, instruction_index, *local)
-                            {
-                                changed |= state_provenance_names[function_index].insert(name);
-                                readonly_sites[function_index].insert(
-                                    name,
-                                    ReadonlySite {
-                                        kind: ReadonlyKind::Alias,
-                                        origin: function.locals[local.as_usize()].origin,
-                                    },
-                                );
-                            }
-                        }
-                        HirInstructionKind::PatternAssignment { value, writes, .. }
-                            if value_depends_on_reactive(
-                                analysis,
-                                *value,
-                                &previous[function_index],
-                            ) =>
-                        {
-                            for write in writes {
-                                if let Some(name) = definition_at(
-                                    analysis,
-                                    block.id,
-                                    instruction_index,
-                                    write.local,
-                                ) {
-                                    changed |= state_provenance_names[function_index].insert(name);
-                                    readonly_sites[function_index].insert(
-                                        name,
-                                        ReadonlySite {
-                                            kind: ReadonlyKind::Alias,
-                                            origin: write.origin,
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    // propagate only newly reached SSA names so nested and multi-hop destructuring stays linear.
+    let (pattern_names, pattern_stats) =
+        propagate_pattern_provenance(&identity, state_provenance_names, &mut readonly_sites);
+    state_provenance_names = pattern_names;
+    provenance_stats.work_items = provenance_stats
+        .work_items
+        .saturating_add(pattern_stats.work_items);
+    provenance_stats.dependency_edges = provenance_stats
+        .dependency_edges
+        .saturating_add(pattern_stats.dependency_edges);
 
-    let mut readonly_names = readonly_sites
+    let readonly_names = readonly_sites
         .iter()
         .map(|sites| sites.keys().copied().collect::<BTreeSet<_>>())
         .collect::<Vec<_>>();
-    loop {
-        let mut changed = false;
-        for analysis in analyses {
-            let names = &mut readonly_names[analysis.function.as_usize()];
-            for phi in &analysis.ssa.phis {
-                if phi.sources.iter().any(|(_, source)| names.contains(source)) {
-                    changed |= names.insert(phi.target);
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let callback_provenance_names = propagate_callback_provenance(hir, analyses, &readonly_sites);
+    let (readonly_names, readonly_phi_stats) = propagate_phi_names(hir, analyses, readonly_names);
+    provenance_stats.work_items = provenance_stats
+        .work_items
+        .saturating_add(readonly_phi_stats.work_items);
+    provenance_stats.dependency_edges = provenance_stats
+        .dependency_edges
+        .saturating_add(readonly_phi_stats.dependency_edges);
+    let (callback_provenance_names, callback_stats) =
+        propagate_callback_provenance(&identity, &readonly_sites);
+    provenance_stats.work_items = provenance_stats
+        .work_items
+        .saturating_add(callback_stats.work_items);
+    provenance_stats.dependency_edges = provenance_stats
+        .dependency_edges
+        .saturating_add(callback_stats.dependency_edges);
     let mut readonly_bindings = BTreeMap::new();
     for analysis in analyses {
         let function_index = analysis.function.as_usize();
@@ -450,7 +1180,7 @@ pub(crate) fn validate_reactive_writes(
         }
     }
     let validation = WriteValidationContext {
-        hir,
+        identity: &identity,
         analyses,
         state_provenance_names: &state_provenance_names,
         readonly_sites: &readonly_sites,
@@ -568,7 +1298,12 @@ pub(crate) fn validate_reactive_writes(
     if diagnostics.has_errors() {
         Err(diagnostics)
     } else {
-        Ok(diagnostics)
+        Ok(ReactiveWriteValidationOutput {
+            diagnostics,
+            provenance_work_items: provenance_stats.work_items,
+            provenance_dependency_edges: provenance_stats.dependency_edges,
+            provenance_value_visits: identity.value_visits.get(),
+        })
     }
 }
 
@@ -603,8 +1338,7 @@ impl WriteValidationContext<'_> {
             return;
         };
         if !value_preserves_state_identity(
-            self.hir,
-            self.analyses,
+            self.identity,
             function,
             analysis,
             value,
@@ -816,11 +1550,10 @@ fn provenance_bindings(hir: &HirFile, names: &[BTreeSet<SsaName>]) -> BTreeSet<B
 }
 
 fn propagate_callback_provenance(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
     readonly_sites: &[BTreeMap<SsaName, ReadonlySite>],
-) -> Vec<BTreeSet<SsaName>> {
-    let mut names = readonly_sites
+) -> (Vec<BTreeSet<SsaName>>, ProvenanceWorkStats) {
+    let names = readonly_sites
         .iter()
         .map(|sites| {
             sites
@@ -831,45 +1564,55 @@ fn propagate_callback_provenance(
                 .collect::<BTreeSet<_>>()
         })
         .collect::<Vec<_>>();
-    loop {
-        let previous = names.clone();
-        let bindings = provenance_bindings(hir, &previous);
-        let mut changed = false;
-        for analysis in analyses {
-            let function_index = analysis.function.as_usize();
-            let function = &hir.functions[function_index];
-            for definition in &analysis.ssa.definitions {
-                let capture_from_outer_scope = function
-                    .locals
-                    .get(definition.name.local.as_usize())
-                    .is_some_and(|local| {
-                        local.kind == LocalKind::Capture
-                            && local
-                                .binding
-                                .is_some_and(|binding| bindings.contains(&binding))
-                    });
-                let depends_on_callback = definition_source_value(function, definition.location)
-                    .is_some_and(|value| {
-                        value_depends_on_reactive(analysis, value, &previous[function_index])
-                    });
-                if capture_from_outer_scope || depends_on_callback {
-                    changed |= names[function_index].insert(definition.name);
+    let mut reverse_dependencies = vec![BTreeMap::new(); identity.hir.functions.len()];
+    let mut capture_dependencies = BTreeMap::new();
+    for (function_index, analysis) in identity.analyses.iter().enumerate() {
+        let function = &identity.hir.functions[function_index];
+        for definition in &analysis.ssa.definitions {
+            let target = NameTarget {
+                function: function_index,
+                name: definition.name,
+            };
+            if let Some(value) = definition_source_value(function, definition.location) {
+                for source in value_provenance_dependencies(identity, function_index, value) {
+                    reverse_dependencies[function_index]
+                        .entry(source)
+                        .or_insert_with(Vec::new)
+                        .push(target);
                 }
             }
-            for phi in &analysis.ssa.phis {
-                if phi
-                    .sources
-                    .iter()
-                    .any(|(_, source)| name_resolves_to_set(*source, &previous[function_index]))
-                {
-                    changed |= names[function_index].insert(phi.target);
-                }
+            if let Some(binding) = function
+                .locals
+                .get(definition.name.local.as_usize())
+                .filter(|local| local.kind == LocalKind::Capture)
+                .and_then(|local| local.binding)
+            {
+                capture_dependencies
+                    .entry(binding)
+                    .or_insert_with(Vec::new)
+                    .push(target);
             }
         }
-        if !changed {
-            return names;
+        for phi in &analysis.ssa.phis {
+            let target = NameTarget {
+                function: function_index,
+                name: phi.target,
+            };
+            for (_, source) in &phi.sources {
+                reverse_dependencies[function_index]
+                    .entry(*source)
+                    .or_insert_with(Vec::new)
+                    .push(target);
+            }
         }
     }
+    let output = propagate_name_graph(
+        identity.hir,
+        names,
+        &reverse_dependencies,
+        &capture_dependencies,
+    );
+    (output.names, output.stats)
 }
 
 fn validate_callback_provenance_escapes(
@@ -1466,131 +2209,8 @@ fn record_readonly_site(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
-fn seed_state_callback_parameters(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
-    analysis: &FunctionPassAnalysis,
-    state_names: &BTreeSet<SsaName>,
-    state_bindings: &BTreeSet<BindingId>,
-    all_state_names: &mut [BTreeSet<SsaName>],
-    all_readonly_sites: &mut [BTreeMap<SsaName, ReadonlySite>],
-    callback_receiver_bindings: &mut BTreeMap<BindingId, StateReceiverKind>,
-    unresolved_callbacks: &mut BTreeMap<(FunctionId, BlockId, u32), Origin>,
-    changed: &mut bool,
-) {
-    let function = &hir.functions[analysis.function.as_usize()];
-    for block in &function.blocks {
-        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
-            let HirInstructionKind::Call(call) = &instruction.kind else {
-                continue;
-            };
-            let Some(place) = call.callee_reference.as_ref() else {
-                continue;
-            };
-            let Some(parameter_indices) = state_callback_parameter_indices(
-                hir,
-                analyses,
-                function,
-                analysis,
-                state_names,
-                call,
-                place,
-            ) else {
-                continue;
-            };
-            let location = WriteLocation {
-                function: function.id,
-                block: block.id,
-                instruction: count_u32(instruction_index),
-                local: LocalId::new(0),
-            };
-            if !place_depends_on_state(
-                hir,
-                analyses,
-                function,
-                analysis,
-                place,
-                location,
-                state_names,
-            ) {
-                continue;
-            }
-            let Some(callback_argument) = call.arguments.first() else {
-                continue;
-            };
-            let resolution = if callback_argument.spread {
-                CallbackResolution::default()
-            } else {
-                resolve_callback_value(
-                    hir,
-                    analysis,
-                    function,
-                    callback_argument.value,
-                    InstructionLocation {
-                        block: block.id,
-                        instruction: count_u32(instruction_index),
-                    },
-                )
-            };
-            if !resolution.complete {
-                unresolved_callbacks
-                    .entry((function.id, block.id, count_u32(instruction_index)))
-                    .or_insert(instruction.origin);
-            }
-            for callback in resolution.functions {
-                let callback_index = callback.as_usize();
-                let Some(callback_function) = hir.functions.get(callback_index) else {
-                    continue;
-                };
-                let Some(callback_analysis) = analyses.get(callback_index) else {
-                    continue;
-                };
-                for (index, receiver_kind) in &parameter_indices {
-                    let Some(parameter) = callback_function.parameters.get(*index) else {
-                        continue;
-                    };
-                    let Some(definition) =
-                        callback_analysis.ssa.definitions.iter().find(|definition| {
-                            definition.name.local == parameter.local
-                                && definition.location == SsaDefinitionLocation::Entry
-                        })
-                    else {
-                        continue;
-                    };
-                    *changed |= all_state_names[callback_index].insert(definition.name);
-                    record_readonly_site(
-                        callback_function,
-                        definition.name,
-                        definition.location,
-                        ReadonlyKind::CallbackParameter,
-                        state_bindings,
-                        &mut all_readonly_sites[callback_index],
-                    );
-                    if let Some(receiver_kind) = receiver_kind
-                        && let Some(binding) = callback_function
-                            .locals
-                            .get(parameter.local.as_usize())
-                            .and_then(|local| local.binding)
-                    {
-                        callback_receiver_bindings
-                            .entry(binding)
-                            .and_modify(|existing| {
-                                if *existing != *receiver_kind {
-                                    *existing = StateReceiverKind::Unknown;
-                                }
-                            })
-                            .or_insert(*receiver_kind);
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn state_callback_parameter_indices(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     state_names: &BTreeSet<SsaName>,
@@ -1614,8 +2234,7 @@ fn state_callback_parameter_indices(
             let accumulator_depends_on_state = call.arguments.get(1).is_none_or(|argument| {
                 argument.spread
                     || value_preserves_state_identity(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         argument.value,
@@ -1633,8 +2252,7 @@ fn state_callback_parameter_indices(
             if call.arguments.get(1).is_some_and(|argument| {
                 argument.spread
                     || value_preserves_state_identity(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         argument.value,
@@ -1654,8 +2272,7 @@ fn state_callback_parameter_indices(
 }
 
 fn place_depends_on_state(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     place: &Place,
@@ -1667,8 +2284,7 @@ fn place_depends_on_state(
             .is_some_and(|name| name_resolves_to_set(name, state_names)),
         PlaceBase::Ssa(name) => name_resolves_to_set(name, state_names),
         PlaceBase::Value(value) => value_preserves_state_identity_in(
-            hir,
-            analyses,
+            identity,
             function,
             analysis,
             value,
@@ -2113,16 +2729,14 @@ fn diagnose_unresolved_state_callbacks(
 }
 
 fn value_preserves_state_identity(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     value: ValueId,
     state_names: &BTreeSet<SsaName>,
 ) -> bool {
     value_preserves_state_identity_in(
-        hir,
-        analyses,
+        identity,
         function,
         analysis,
         value,
@@ -2132,14 +2746,16 @@ fn value_preserves_state_identity(
 }
 
 fn value_preserves_state_identity_in(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     value: ValueId,
     state_names: &BTreeSet<SsaName>,
     visiting: &mut BTreeSet<(FunctionId, ValueId)>,
 ) -> bool {
+    identity
+        .value_visits
+        .set(identity.value_visits.get().saturating_add(1));
     let visit_key = (function.id, value);
     if !visiting.insert(visit_key) {
         return false;
@@ -2158,18 +2774,17 @@ fn value_preserves_state_identity_in(
             value_depends_on_reactive(analysis, value, state_names)
         }
         Some(ValueKind::InstructionResult) => {
-            let Some(instruction) = function.instruction_for_result(value) else {
+            let Some(instruction) = identity.instruction_for_result(function, value) else {
                 visiting.remove(&visit_key);
                 return false;
             };
-            let location = instruction_location_for_result(function, value);
+            let location = identity.instruction_location(function.id, value);
             match &instruction.kind {
                 HirInstructionKind::Declare {
                     initializer: Some(initializer),
                     ..
                 } => value_preserves_state_identity_in(
-                    hir,
-                    analyses,
+                    identity,
                     function,
                     analysis,
                     *initializer,
@@ -2178,8 +2793,7 @@ fn value_preserves_state_identity_in(
                 ),
                 HirInstructionKind::Read { place } => {
                     let base_preserves = place_preserves_state_identity(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         place,
@@ -2197,8 +2811,7 @@ fn value_preserves_state_identity_in(
                 | HirInstructionKind::Yield {
                     value: Some(value), ..
                 } => value_preserves_state_identity_in(
-                    hir,
-                    analyses,
+                    identity,
                     function,
                     analysis,
                     *value,
@@ -2211,16 +2824,14 @@ fn value_preserves_state_identity_in(
                     ..
                 } => {
                     value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         *consequent,
                         state_names,
                         visiting,
                     ) || value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         *alternate,
@@ -2230,8 +2841,7 @@ fn value_preserves_state_identity_in(
                 }
                 HirInstructionKind::Sequence { values } => values.last().is_some_and(|value| {
                     value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         *value,
@@ -2248,16 +2858,14 @@ fn value_preserves_state_identity_in(
                     right,
                 } => {
                     value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         *left,
                         state_names,
                         visiting,
                     ) || value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         *right,
@@ -2268,8 +2876,7 @@ fn value_preserves_state_identity_in(
                 HirInstructionKind::Call(call) => {
                     if let Some(place) = call.callee_reference.as_ref() {
                         let receiver_preserves = place_preserves_state_identity(
-                            hir,
-                            analyses,
+                            identity,
                             function,
                             analysis,
                             place,
@@ -2289,8 +2896,7 @@ fn value_preserves_state_identity_in(
                         }
                     } else {
                         local_call_returns_state_identity(
-                            hir,
-                            analyses,
+                            identity,
                             function,
                             analysis,
                             call,
@@ -2304,8 +2910,7 @@ fn value_preserves_state_identity_in(
                     .any(|(_, source)| name_resolves_to_set(*source, state_names)),
                 HirInstructionKind::SyntaxFragment { inputs, .. } if inputs.len() == 1 => {
                     value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         inputs[0],
@@ -2319,8 +2924,7 @@ fn value_preserves_state_identity_in(
                         ArrayElement::Hole(_) => return false,
                     };
                     value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         value,
@@ -2335,8 +2939,7 @@ fn value_preserves_state_identity_in(
                         }
                     };
                     value_preserves_state_identity_in(
-                        hir,
-                        analyses,
+                        identity,
                         function,
                         analysis,
                         value,
@@ -2374,8 +2977,7 @@ fn value_preserves_state_identity_in(
 
 #[allow(clippy::too_many_arguments)]
 fn place_preserves_state_identity(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     place: &Place,
@@ -2399,8 +3001,7 @@ fn place_preserves_state_identity(
             .is_some_and(|name| name_resolves_to_set(name, state_names)),
         PlaceBase::Ssa(name) => name_resolves_to_set(name, state_names),
         PlaceBase::Value(value) => value_preserves_state_identity_in(
-            hir,
-            analyses,
+            identity,
             function,
             analysis,
             value,
@@ -2412,18 +3013,17 @@ fn place_preserves_state_identity(
 }
 
 fn local_call_returns_state_identity(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
     caller: &HirFunction,
     caller_analysis: &FunctionPassAnalysis,
     call: &fict_hir::CallInstruction,
     caller_state_names: &BTreeSet<SsaName>,
     visiting: &mut BTreeSet<(FunctionId, ValueId)>,
 ) -> bool {
-    let Some(callee) = resolved_local_callee(hir, call) else {
+    let Some(callee) = resolved_local_callee(identity.hir, call) else {
         return false;
     };
-    let Some(callee_analysis) = analyses.get(callee.id.as_usize()) else {
+    let Some(callee_analysis) = identity.analyses.get(callee.id.as_usize()) else {
         return false;
     };
     if call.arguments.iter().any(|argument| argument.spread) {
@@ -2433,8 +3033,7 @@ fn local_call_returns_state_identity(
     let mut callee_state_names = BTreeSet::new();
     for (parameter, argument) in callee.parameters.iter().zip(&call.arguments) {
         if !value_preserves_state_identity_in(
-            hir,
-            analyses,
+            identity,
             caller,
             caller_analysis,
             argument.value,
@@ -2443,17 +3042,8 @@ fn local_call_returns_state_identity(
         ) {
             continue;
         }
-        if let Some(entry) = callee_analysis
-            .ssa
-            .definitions
-            .iter()
-            .find_map(|definition| {
-                (definition.name.local == parameter.local
-                    && definition.location == SsaDefinitionLocation::Entry)
-                    .then_some(definition.name)
-            })
-        {
-            callee_state_names.insert(entry);
+        if let Some(entry) = identity.entry_names[callee.id.as_usize()].get(&parameter.local) {
+            callee_state_names.insert(*entry);
         }
     }
     if callee_state_names.is_empty() {
@@ -2465,8 +3055,7 @@ fn local_call_returns_state_identity(
             return false;
         };
         value_preserves_state_identity_in(
-            hir,
-            analyses,
+            identity,
             callee,
             callee_analysis,
             value,
@@ -2602,70 +3191,99 @@ fn definition_is_readonly_derived_declaration(
         })
 }
 
-fn definition_is_fresh_state_container(
-    function: &HirFunction,
-    analysis: &FunctionPassAnalysis,
-    location: SsaDefinitionLocation,
-) -> bool {
-    let Some(value) = definition_source_value(function, location) else {
-        return false;
-    };
-    value_is_fresh_state_container(
-        function,
-        analysis,
-        value,
-        &mut BTreeSet::new(),
-        &mut BTreeSet::new(),
-    )
+fn analyze_fresh_state_containers(identity: &StateIdentityAnalysis<'_>) -> Vec<BTreeSet<SsaName>> {
+    identity
+        .analyses
+        .iter()
+        .enumerate()
+        .map(|(function_index, analysis)| {
+            let mut value_memo = BTreeMap::new();
+            let mut name_memo = BTreeMap::new();
+            let mut fresh = BTreeSet::new();
+            for definition in &analysis.ssa.definitions {
+                let Some(value) = definition_source_value(
+                    &identity.hir.functions[function_index],
+                    definition.location,
+                ) else {
+                    continue;
+                };
+                if value_is_fresh_state_container(
+                    identity,
+                    function_index,
+                    value,
+                    &mut value_memo,
+                    &mut name_memo,
+                    &mut BTreeSet::new(),
+                    &mut BTreeSet::new(),
+                ) {
+                    fresh.insert(definition.name);
+                }
+            }
+            fresh
+        })
+        .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn value_is_fresh_state_container(
-    function: &HirFunction,
-    analysis: &FunctionPassAnalysis,
+    identity: &StateIdentityAnalysis<'_>,
+    function_index: usize,
     value: ValueId,
+    value_memo: &mut BTreeMap<ValueId, bool>,
+    name_memo: &mut BTreeMap<SsaName, bool>,
     visiting_values: &mut BTreeSet<ValueId>,
     visiting_names: &mut BTreeSet<SsaName>,
 ) -> bool {
+    if let Some(result) = value_memo.get(&value) {
+        return *result;
+    }
     if !visiting_values.insert(value) {
         return false;
     }
-    match function
+    let function = &identity.hir.functions[function_index];
+    let result = match function
         .values
         .get(value.as_usize())
         .map(|value| &value.kind)
     {
-        Some(ValueKind::Ssa(name)) if visiting_names.insert(*name) => {
-            let result = analysis
-                .ssa
-                .definitions
-                .iter()
-                .find(|definition| definition.name == *name)
-                .and_then(|definition| definition_source_value(function, definition.location))
-                .is_some_and(|source| {
-                    value_is_fresh_state_container(
-                        function,
-                        analysis,
-                        source,
-                        visiting_values,
-                        visiting_names,
-                    )
-                });
-            visiting_names.remove(name);
-            result
+        Some(ValueKind::Ssa(name)) => {
+            if let Some(result) = name_memo.get(name) {
+                *result
+            } else if !visiting_names.insert(*name) {
+                false
+            } else {
+                let result = identity.definition_locations[function_index]
+                    .get(name)
+                    .and_then(|location| definition_source_value(function, *location))
+                    .is_some_and(|source| {
+                        value_is_fresh_state_container(
+                            identity,
+                            function_index,
+                            source,
+                            value_memo,
+                            name_memo,
+                            visiting_values,
+                            visiting_names,
+                        )
+                    });
+                visiting_names.remove(name);
+                name_memo.insert(*name, result);
+                result
+            }
         }
-        Some(ValueKind::InstructionResult) => {
-            let Some(instruction) = function.instruction_for_result(value) else {
-                return false;
-            };
-            match &instruction.kind {
+        Some(ValueKind::InstructionResult) => identity
+            .instruction_for_result(function, value)
+            .is_some_and(|instruction| match &instruction.kind {
                 HirInstructionKind::Array { .. } | HirInstructionKind::Object { .. } => true,
                 HirInstructionKind::Declare {
                     initializer: Some(initializer),
                     ..
                 } => value_is_fresh_state_container(
-                    function,
-                    analysis,
+                    identity,
+                    function_index,
                     *initializer,
+                    value_memo,
+                    name_memo,
                     visiting_values,
                     visiting_names,
                 ),
@@ -2677,10 +3295,12 @@ fn value_is_fresh_state_container(
                         state_method_returns_fresh_container(call.state_receiver_kind, &method)
                     }),
                 _ => false,
-            }
-        }
+            }),
         _ => false,
-    }
+    };
+    visiting_values.remove(&value);
+    value_memo.insert(value, result);
+    result
 }
 
 fn select_earlier_site(current: &mut ReadonlySite, candidate: ReadonlySite) {

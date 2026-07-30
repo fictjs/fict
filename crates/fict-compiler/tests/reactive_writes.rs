@@ -649,6 +649,91 @@ fn tracks_state_elements_in_array_sort_comparators() {
 }
 
 #[test]
+fn state_provenance_worklist_has_linear_deterministic_work() {
+    const ALIASES: usize = 1_200;
+    let mut source = String::from(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const state = $state({ done: false })
+                const alias0 = state
+        "#,
+    );
+    for index in 1..ALIASES {
+        source.push_str(&format!(
+            "        const alias{index} = alias{}\n",
+            index - 1
+        ));
+    }
+    source.push_str(&format!(
+        "        alias{}.done = true\n        return alias{}.done\n    }}",
+        ALIASES - 1,
+        ALIASES - 1,
+    ));
+
+    let result = compile_source(
+        &source,
+        CompilerOptions {
+            optimize: false,
+            ..CompilerOptions::default()
+        },
+    );
+    let diagnostic = find_error(&result, "FICT-M");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+    let stats = result.stats.expect("successful compile stats");
+    let work_items = stats.counters["stateProvenanceWorkItems"];
+    let dependency_edges = stats.counters["stateProvenanceDependencyEdges"];
+    let value_visits = stats.counters["stateProvenanceValueVisits"];
+    assert!(
+        work_items <= u64::try_from(ALIASES * 4).expect("work budget"),
+        "work items {work_items} exceeded the linear alias-chain budget"
+    );
+    assert!(
+        dependency_edges <= u64::try_from(ALIASES * 4).expect("edge budget"),
+        "dependency edges {dependency_edges} exceeded the linear alias-chain budget"
+    );
+    assert!(
+        value_visits <= u64::try_from(ALIASES * 6).expect("visit budget"),
+        "value visits {value_visits} exceeded the linear alias-chain budget"
+    );
+}
+
+#[test]
+fn state_provenance_deep_value_graph_has_bounded_visits() {
+    const DEPTH: usize = 128;
+    let mut expression = "state".to_owned();
+    for _ in 0..DEPTH {
+        expression = format!("null ?? ({expression})");
+    }
+    let source = format!(
+        r#"
+            import {{ $state }} from 'fict'
+            function App() {{
+                const state = $state({{ done: false }})
+                const alias = {expression}
+                alias.done = true
+                return alias.done
+            }}
+        "#
+    );
+    let result = compile_source(
+        &source,
+        CompilerOptions {
+            optimize: false,
+            ..CompilerOptions::default()
+        },
+    );
+    let diagnostic = find_error(&result, "FICT-M");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+    let stats = result.stats.expect("successful compile stats");
+    let value_visits = stats.counters["stateProvenanceValueVisits"];
+    assert!(
+        value_visits <= u64::try_from(DEPTH * 4 + 64).expect("visit budget"),
+        "value visits {value_visits} exceeded the deep-value-graph budget"
+    );
+}
+
+#[test]
 fn permits_structural_mutation_of_fresh_state_derived_containers() {
     let result = compile_source_with_strict(
         r#"

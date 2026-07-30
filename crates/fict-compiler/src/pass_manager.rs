@@ -310,9 +310,22 @@ pub fn run_core_passes(
             structurize,
         });
     }
-    let reactive_write_diagnostics = timed(&mut context, "reactive-write-validation", || {
+    let reactive_write_validation = timed(&mut context, "reactive-write-validation", || {
         validate_reactive_writes(&hir, &functions, options.strict_guarantee)
     })?;
+    context.set_counter(
+        "stateProvenanceWorkItems",
+        reactive_write_validation.provenance_work_items,
+    );
+    context.set_counter(
+        "stateProvenanceDependencyEdges",
+        reactive_write_validation.provenance_dependency_edges,
+    );
+    context.set_counter(
+        "stateProvenanceValueVisits",
+        reactive_write_validation.provenance_value_visits,
+    );
+    let reactive_write_diagnostics = reactive_write_validation.diagnostics;
     if reactive_write_diagnostics.has_errors() {
         return Err(reactive_write_diagnostics);
     }
