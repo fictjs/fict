@@ -887,6 +887,42 @@ fn rejects_reassigned_known_safe_callback_globals() {
                 return rows.toSorted(getComparator())
             }
         "#,
+        r#"
+            import { $state } from 'fict'
+            globalThis.Boolean = (left, right) => {
+                left.done = true
+                return 0
+            }
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(Boolean)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            globalThis.Boolean = value => {
+                value.done = true
+                return true
+            }
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    Boolean(item)
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            globalThis['Boolean'] = (left, right) => {
+                right.done = true
+                return 0
+            }
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(Boolean)
+            }
+        "#,
     ] {
         let fallback = compile_source(source, CompilerOptions::default());
         let diagnostic = find_error(&fallback, "FICT-R002");

@@ -13,8 +13,8 @@ use fict_hir::{
     TerminatorKind, ValueId, ValueKind, classify_state_method_call, classify_state_method_result,
 };
 use fict_reactivity::{
-    DependencyBase, EscapeKind, ReactiveBindingKind, SsaDefinition, SsaDefinitionKind,
-    SsaDefinitionLocation,
+    DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, SsaDefinition,
+    SsaDefinitionKind, SsaDefinitionLocation,
 };
 
 use crate::pass_manager::FunctionPassAnalysis;
@@ -172,16 +172,48 @@ impl<'a> StateIdentityAnalysis<'a> {
             }
             instruction_locations.push(locations);
             if let Some(analysis) = analyses.get(function_index) {
-                written_globals.extend(analysis.dependencies.writes.iter().filter_map(|write| {
-                    match write.path.base {
-                        DependencyBase::Global(global) if write.path.segments.is_empty() => {
-                            Some(global)
-                        }
-                        DependencyBase::Global(_)
-                        | DependencyBase::Ssa(_)
-                        | DependencyBase::Value(_) => None,
+                for write in &analysis.dependencies.writes {
+                    let DependencyBase::Global(global) = write.path.base else {
+                        continue;
+                    };
+                    if write.path.segments.is_empty() {
+                        written_globals.insert(global);
+                        continue;
                     }
-                }));
+                    let Some(base_name) = hir
+                        .globals
+                        .get(global.as_usize())
+                        .map(|global| global.name.as_str())
+                    else {
+                        continue;
+                    };
+                    if !matches!(base_name, "globalThis" | "global" | "self" | "window") {
+                        continue;
+                    }
+                    let [segment] = write.path.segments.as_slice() else {
+                        continue;
+                    };
+                    let target_name = match segment {
+                        DependencySegment::Static { name, .. } => Some(name.clone()),
+                        DependencySegment::Dynamic { key, .. } => {
+                            let Some(ValueKind::Literal(fict_hir::LiteralValue::String(name))) =
+                                function.values.get(key.as_usize()).map(|value| &value.kind)
+                            else {
+                                continue;
+                            };
+                            name.to_utf8()
+                        }
+                        DependencySegment::Index { .. } => None,
+                    };
+                    let Some(target_name) = target_name else {
+                        continue;
+                    };
+                    if let Some(target) =
+                        hir.globals.iter().find(|target| target.name == target_name)
+                    {
+                        written_globals.insert(target.id);
+                    }
+                }
                 for definition in &analysis.ssa.definitions {
                     if matches!(
                         definition.kind,
