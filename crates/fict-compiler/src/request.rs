@@ -514,7 +514,7 @@ pub struct NormalizedScanRequest {
     pub protocol_version: u32,
     /// Source text.
     pub code: String,
-    /// Physical diagnostic identity with query/fragment removed.
+    /// Physical diagnostic identity preserved verbatim, including query/fragment delimiters.
     pub filename: String,
     /// Complete graph identity with query/fragment preserved.
     pub module_id: String,
@@ -531,7 +531,7 @@ pub struct NormalizedAnalyzeRequest {
     pub protocol_version: u32,
     /// Source text.
     pub code: String,
-    /// Physical diagnostic identity with query and fragment removed.
+    /// Physical diagnostic identity preserved verbatim, including query/fragment delimiters.
     pub filename: String,
     /// Complete graph identity with query and fragment preserved.
     pub module_id: String,
