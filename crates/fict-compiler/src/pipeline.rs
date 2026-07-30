@@ -7071,7 +7071,7 @@ mod tests {
                 .iter()
                 .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R002")
                 .count(),
-            4,
+            3,
             "{:?}",
             result.diagnostics
         );
@@ -7081,7 +7081,7 @@ mod tests {
                 .iter()
                 .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R005")
                 .count(),
-            2,
+            1,
             "{:?}",
             result.diagnostics
         );

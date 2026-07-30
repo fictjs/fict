@@ -2558,6 +2558,104 @@ fn identity_lookup_escape_exemptions_fail_closed() {
 }
 
 #[test]
+fn synchronous_builtin_callback_hosts_do_not_escape_reactive_captures() {
+    let source = r#"
+        import { $state, $store } from 'fict';
+        function App() {
+            const count = $state(0);
+            const rows = $state([1, 2]);
+            let replacedRows = $state([1, 2]);
+            replacedRows = [3, 4];
+            const storedRows = $store([1, 2]);
+            const rowAlias = rows;
+            const storedAlias = storedRows;
+            const bytes = $state(new Uint8Array([1, 2]));
+            const map = $state(new Map([[1, 2]]));
+            const set = $state(new Set([1, 2]));
+            const results = [
+                rowAlias.map(() => count),
+                replacedRows.forEach(() => count),
+                storedAlias.filter(() => count),
+                bytes.map(() => count),
+                bytes.reduce(() => count, 0),
+                bytes.toSorted(() => count),
+                map.forEach(() => count),
+                set.forEach(() => count),
+            ];
+            return results.length;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "proven synchronous built-in callback hosts must not be treated as escapes: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn synchronous_callback_host_proof_rejects_unknown_and_async_boundaries() {
+    for (name, source) in [
+        (
+            "unknown forEach",
+            r#"
+                import { $state } from 'fict';
+                function App(custom) {
+                    const count = $state(0);
+                    custom.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "async promise host",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const count = $state(0);
+                    Promise.resolve().then(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "shadowed typed array",
+            r#"
+                import { $state } from 'fict';
+                function App(Uint8Array) {
+                    const count = $state(0);
+                    const bytes = $state(new Uint8Array([1]));
+                    bytes.map(() => count);
+                    return count;
+                }
+            "#,
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected an escape diagnostic, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn propagates_reactive_dependencies_through_pattern_defaults() {
     let source = r#"
         import { $state } from 'fict';

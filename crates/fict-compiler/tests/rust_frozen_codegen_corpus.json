@@ -32230,16 +32230,6 @@
         "status": "ok",
         "diagnostics": [
           {
-            "code": "FICT-R002",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          },
-          {
-            "code": "FICT-R005",
-            "severity": "warning",
-            "guaranteeClass": "fallback"
-          },
-          {
             "code": "FICT-M",
             "severity": "warning",
             "guaranteeClass": "fallback"

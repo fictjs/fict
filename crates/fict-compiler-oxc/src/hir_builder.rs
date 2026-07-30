@@ -2959,11 +2959,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .iter()
             .map(|call| ((call.span.start(), call.span.end()), call))
             .collect();
-        let proven_receivers = collect_proven_receiver_kinds(
-            program,
-            self.semantic.scoping(),
-            &reactive.state_receivers,
+        let mut receiver_seeds = reactive.state_receivers.clone();
+        receiver_seeds.extend(
+            known_arrays
+                .iter()
+                .map(|symbol| (*symbol, StateReceiverKind::Array)),
         );
+        let proven_receivers =
+            collect_proven_receiver_kinds(program, self.semantic.scoping(), &receiver_seeds);
         let mut collector = ReactiveEscapeCollector {
             scoping: self.semantic.scoping(),
             call_facts: &call_facts,
@@ -10037,26 +10040,56 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             }
             _ => return false,
         };
-        if !matches!(
-            method,
-            "map"
-                | "forEach"
-                | "filter"
-                | "some"
-                | "every"
-                | "find"
-                | "findIndex"
-                | "findLast"
-                | "findLastIndex"
-                | "flatMap"
-                | "reduce"
-                | "reduceRight"
-                | "sort"
-                | "toSorted"
-        ) {
-            return false;
+        let mut receiver_kind =
+            classify_state_receiver_assignment(self.scoping, receiver, self.proven_receivers);
+        if receiver_kind == StateReceiverKind::Unknown && self.is_known_array_receiver(receiver) {
+            receiver_kind = StateReceiverKind::Array;
         }
-        self.is_known_array_receiver(receiver)
+        match receiver_kind {
+            StateReceiverKind::Array => matches!(
+                method,
+                "map"
+                    | "forEach"
+                    | "filter"
+                    | "some"
+                    | "every"
+                    | "find"
+                    | "findIndex"
+                    | "findLast"
+                    | "findLastIndex"
+                    | "flatMap"
+                    | "reduce"
+                    | "reduceRight"
+                    | "sort"
+                    | "toSorted"
+            ),
+            StateReceiverKind::TypedArray => matches!(
+                method,
+                "map"
+                    | "forEach"
+                    | "filter"
+                    | "some"
+                    | "every"
+                    | "find"
+                    | "findIndex"
+                    | "findLast"
+                    | "findLastIndex"
+                    | "reduce"
+                    | "reduceRight"
+                    | "sort"
+                    | "toSorted"
+            ),
+            StateReceiverKind::Map | StateReceiverKind::Set => method == "forEach",
+            StateReceiverKind::Unknown
+            | StateReceiverKind::DataView
+            | StateReceiverKind::Date
+            | StateReceiverKind::Function
+            | StateReceiverKind::Number
+            | StateReceiverKind::Promise
+            | StateReceiverKind::String
+            | StateReceiverKind::WeakMap
+            | StateReceiverKind::WeakSet => false,
+        }
     }
 
     fn is_non_retaining_identity_argument(

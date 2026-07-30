@@ -12,9 +12,9 @@
   "policyCounts": {
     "rust-structured-rejection-diagnostics": 183,
     "diagnostic-severity-reclassification": 22,
-    "rust-warning-addition": 39,
+    "rust-warning-addition": 38,
     "rust-warning-removal": 44,
-    "rust-warning-set-change": 6
+    "rust-warning-set-change": 7
   },
   "deviationCount": 294,
   "deviations": [
@@ -2822,22 +2822,12 @@
       ],
       "rustDiagnostics": [
         {
-          "code": "FICT-R002",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
-        {
-          "code": "FICT-R005",
-          "severity": "warning",
-          "guaranteeClass": "fallback"
-        },
-        {
           "code": "FICT-M",
           "severity": "warning",
           "guaranteeClass": "fallback"
         }
       ],
-      "policy": "rust-warning-addition"
+      "policy": "rust-warning-set-change"
     },
     {
       "id": "packages/compiler/test/sourcemap.test.ts:1762:compileWithSourcemap",
