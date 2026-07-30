@@ -2678,7 +2678,12 @@ fn resolve_callback_ssa(
         .iter()
         .find(|definition| definition.name == name)
     {
-        if let Some(value) = definition_source_value(function, definition.location) {
+        if matches!(
+            definition.kind,
+            SsaDefinitionKind::PatternAssignment | SsaDefinitionKind::Iteration
+        ) {
+            CallbackResolution::default()
+        } else if let Some(value) = definition_source_value(function, definition.location) {
             resolve_callback_value_inner(
                 hir,
                 analysis,
