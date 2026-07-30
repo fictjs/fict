@@ -2404,6 +2404,159 @@ fn plain_assignment_results_do_not_escape_reactive_pattern_targets() {
         output.diagnostics
     );
 }
+
+#[test]
+fn identity_lookup_arguments_do_not_escape_proven_builtin_receivers() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const rows = $state([{ done: false }]);
+            const map = $state(new Map());
+            const set = $state(new Set());
+            const weakMap = $state(new WeakMap());
+            const weakSet = $state(new WeakSet());
+            const bytes = $state(new Uint8Array([1]));
+            const plain = [];
+            const rowAlias = rows;
+            const mapAlias = map;
+            const plainMap = new Map();
+            const results = [
+                rows.includes(rows[0]),
+                rows["indexOf"](rows[0]),
+                rows.lastIndexOf(rows[0]),
+                map.get(rows[0]),
+                map.has(rows[0]),
+                set.has(rows[0]),
+                weakMap.get(rows[0]),
+                weakMap.has(rows[0]),
+                weakSet.has(rows[0]),
+                bytes.includes(rows[0]),
+                bytes.indexOf(rows[0]),
+                bytes.lastIndexOf(rows[0]),
+                plain.includes(rows[0]),
+                new Map().get(rows[0]),
+                rowAlias.includes(rows[0]),
+                mapAlias.has(rows[0]),
+                plainMap.get(rows[0]),
+                rows.includes(() => rows[0]),
+            ];
+            return results.length;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "identity comparisons and key lookups do not retain or execute their first argument: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn identity_lookup_escape_exemptions_fail_closed() {
+    let cases = [
+        (
+            "unknown receiver",
+            r#"
+                import { $state } from 'fict';
+                function App(custom) {
+                    const rows = $state([{ done: false }]);
+                    return custom.includes(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "string coercion",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    const text = $state("ready");
+                    return text.includes(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "fromIndex coercion",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    return rows.includes(null, rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "retaining array method",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    return rows.concat(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "spread argument",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    return rows.includes(...[rows[0]]);
+                }
+            "#,
+            "...[rows[0]]",
+            "FICT-R002",
+        ),
+        (
+            "direct state snapshot",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    const map = $state(new Map());
+                    return map.has(rows);
+                }
+            "#,
+            "rows",
+            "FICT-S002",
+        ),
+    ];
+    for (name, source, expected_span, expected_code) in cases {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == expected_code
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected {expected_code} on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
 #[test]
 fn propagates_reactive_dependencies_through_pattern_defaults() {
     let source = r#"

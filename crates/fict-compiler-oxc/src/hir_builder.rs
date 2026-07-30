@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
@@ -2959,6 +2959,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .iter()
             .map(|call| ((call.span.start(), call.span.end()), call))
             .collect();
+        let proven_receivers = collect_proven_receiver_kinds(
+            program,
+            self.semantic.scoping(),
+            &reactive.state_receivers,
+        );
         let mut collector = ReactiveEscapeCollector {
             scoping: self.semantic.scoping(),
             call_facts: &call_facts,
@@ -2967,6 +2972,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             imports: &imports,
             known_arrays,
             state_symbols: &reactive.state,
+            proven_receivers: &proven_receivers,
             reactive_symbols: &reactive.escape_reactive,
             hook_return_shapes: &reactive.hook_return_shapes,
             capturing_functions: &capturing_functions,
@@ -6625,6 +6631,106 @@ impl<'a> Visit<'a> for KnownArrayCollector {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ReceiverDeclarationFact {
+    symbol: SymbolId,
+    source: ReceiverDeclarationSource,
+}
+
+#[derive(Clone, Copy)]
+enum ReceiverDeclarationSource {
+    Known(StateReceiverKind),
+    Alias(SymbolId),
+}
+
+struct ReceiverDeclarationCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    facts: Vec<ReceiverDeclarationFact>,
+}
+
+impl<'a> Visit<'a> for ReceiverDeclarationCollector<'_> {
+    fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+        if declaration.kind == VariableDeclarationKind::Const {
+            for declarator in &declaration.declarations {
+                let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
+                    (&declarator.id, &declarator.init)
+                else {
+                    continue;
+                };
+                if let Some(symbol) = binding.symbol_id.get() {
+                    let direct = classify_state_receiver_assignment(
+                        self.scoping,
+                        initializer,
+                        &BTreeMap::new(),
+                    );
+                    let source = if direct != StateReceiverKind::Unknown {
+                        Some(ReceiverDeclarationSource::Known(direct))
+                    } else {
+                        let Expression::Identifier(identifier) = initializer.get_inner_expression()
+                        else {
+                            continue;
+                        };
+                        identifier_symbol(self.scoping, identifier)
+                            .map(ReceiverDeclarationSource::Alias)
+                    };
+                    if let Some(source) = source {
+                        self.facts.push(ReceiverDeclarationFact { symbol, source });
+                    }
+                }
+            }
+        }
+        walk_variable_declaration(self, declaration);
+    }
+}
+
+fn collect_proven_receiver_kinds<'ast>(
+    program: &Program<'ast>,
+    scoping: &Scoping,
+    seeds: &BTreeMap<SymbolId, StateReceiverKind>,
+) -> BTreeMap<SymbolId, StateReceiverKind> {
+    let mut collector = ReceiverDeclarationCollector {
+        scoping,
+        facts: Vec::new(),
+    };
+    collector.visit_program(program);
+    let mut receivers = seeds.clone();
+    let mut dependents = BTreeMap::<SymbolId, Vec<SymbolId>>::new();
+    for fact in collector.facts {
+        match fact.source {
+            ReceiverDeclarationSource::Known(receiver) => {
+                if receivers
+                    .get(&fact.symbol)
+                    .is_none_or(|current| *current == StateReceiverKind::Unknown)
+                {
+                    receivers.insert(fact.symbol, receiver);
+                }
+            }
+            ReceiverDeclarationSource::Alias(source) => {
+                dependents.entry(source).or_default().push(fact.symbol);
+            }
+        }
+    }
+    let mut pending = receivers
+        .iter()
+        .filter_map(|(symbol, receiver)| {
+            (*receiver != StateReceiverKind::Unknown).then_some((*symbol, *receiver))
+        })
+        .collect::<VecDeque<_>>();
+    while let Some((source, receiver)) = pending.pop_front() {
+        for target in dependents.get(&source).into_iter().flatten() {
+            if receivers
+                .get(target)
+                .is_some_and(|current| *current != StateReceiverKind::Unknown)
+            {
+                continue;
+            }
+            receivers.insert(*target, receiver);
+            pending.push_back((*target, receiver));
+        }
+    }
+    receivers
+}
+
 impl JsxCollector<'_> {
     fn scan_jsx_element(&mut self, element: &JSXElement<'_>) {
         self.tags.push((
@@ -9639,6 +9745,7 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     imports: &'facts BTreeMap<BindingId, EscapeImportIdentity>,
     known_arrays: &'facts BTreeSet<SymbolId>,
     state_symbols: &'reactive BTreeSet<SymbolId>,
+    proven_receivers: &'reactive BTreeMap<SymbolId, StateReceiverKind>,
     reactive_symbols: &'reactive BTreeSet<SymbolId>,
     hook_return_shapes: &'reactive BTreeMap<SymbolId, LocalHookReturnShape>,
     capturing_functions: &'facts [(SourceSpan, BTreeSet<SymbolId>)],
@@ -9842,7 +9949,10 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let configured = fact.configured_reactive_scope;
         if !local_hook {
             for (index, argument) in arguments.iter().enumerate() {
-                if (configured && index == 0) || self.direct_state_symbol(*argument).is_some() {
+                if (configured && index == 0)
+                    || self.direct_state_symbol(*argument).is_some()
+                    || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
+                {
                     continue;
                 }
                 if !self.reactive_references(*argument).is_empty() {
@@ -9855,7 +9965,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             }
         }
         for (index, argument) in arguments.iter().enumerate() {
-            if configured && index == 0 {
+            if (configured && index == 0)
+                || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
+            {
                 continue;
             }
             let captured = self.callback_captures(*argument);
@@ -9945,6 +10057,45 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             return false;
         }
         self.is_known_array_receiver(receiver)
+    }
+
+    fn is_non_retaining_identity_argument(
+        &self,
+        callee: &Expression<'_>,
+        index: usize,
+        argument: EscapeArgument<'_, '_>,
+    ) -> bool {
+        if index != 0 || argument.spread {
+            return false;
+        }
+        let (receiver, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.as_str())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Expression::StringLiteral(property) = member.expression.get_inner_expression()
+                else {
+                    return false;
+                };
+                (&member.object, property.value.as_str())
+            }
+            _ => return false,
+        };
+        let mut receiver_kind =
+            classify_state_receiver_assignment(self.scoping, receiver, self.proven_receivers);
+        if receiver_kind == StateReceiverKind::Unknown && self.is_known_array_receiver(receiver) {
+            receiver_kind = StateReceiverKind::Array;
+        }
+        matches!(
+            (receiver_kind, method),
+            (
+                StateReceiverKind::Array | StateReceiverKind::TypedArray,
+                "includes" | "indexOf" | "lastIndexOf"
+            ) | (
+                StateReceiverKind::Map | StateReceiverKind::WeakMap,
+                "get" | "has"
+            ) | (StateReceiverKind::Set | StateReceiverKind::WeakSet, "has")
+        )
     }
 
     fn is_non_escaping_hook_accumulator(
