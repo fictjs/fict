@@ -484,7 +484,7 @@ impl Verifier<'_> {
         }
 
         let mut parameter_locals = BTreeSet::new();
-        for parameter in &function.parameters {
+        for (parameter_index, parameter) in function.parameters.iter().enumerate() {
             self.local(function, parameter.local, parameter.origin);
             self.fragment(parameter.pattern, parameter.origin);
             if let Some(binding) = parameter.binding {
@@ -625,6 +625,26 @@ impl Verifier<'_> {
                         "FICT-HIR-FUNCTION",
                         format!(
                             "fn{} parameter local{} has a rest binding outside its rest-bearing pattern",
+                            function.id.index(),
+                            parameter.local.index()
+                        ),
+                        Some(parameter.origin),
+                    );
+                }
+                if parameter.is_rest
+                    && (parameter_index + 1 != function.parameters.len()
+                        || parameter.binding.is_some()
+                        || parameter.default_value.is_some()
+                        || fragment
+                            .summary
+                            .pattern
+                            .as_ref()
+                            .is_none_or(|pattern| !pattern.has_rest))
+                {
+                    self.error(
+                        "FICT-HIR-FUNCTION",
+                        format!(
+                            "fn{} parameter local{} has an invalid formal rest shape",
                             function.id.index(),
                             parameter.local.index()
                         ),

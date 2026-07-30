@@ -483,6 +483,35 @@ fn retains_simple_explicit_and_arrow_return_values_in_terminators() {
 }
 
 #[test]
+fn distinguishes_formal_rest_parameters_from_nested_rest_patterns() {
+    let output = build_hir(
+        r#"
+            function nested([first, ...tail]) { return [first, tail]; }
+            function formal(...args) { return args; }
+            function destructured(...[first, second]) { return [first, second]; }
+        "#,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let named = |name: &str| {
+        hir.functions
+            .iter()
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .unwrap_or_else(|| panic!("missing function {name}"))
+    };
+
+    assert!(!named("nested").parameters[0].is_rest);
+    assert!(named("formal").parameters[0].is_rest);
+    assert!(named("destructured").parameters[0].is_rest);
+}
+
+#[test]
 fn distinguishes_source_bare_returns_from_implicit_control_flow_returns() {
     let output = build_hir(
         r#"

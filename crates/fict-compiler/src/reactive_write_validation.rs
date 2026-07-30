@@ -8,9 +8,10 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, BindingId, BindingKind, BlockId, ContextValueKind, DeclarationKind, DeleteTarget,
-    FunctionId, HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind, ObjectEntry, Origin,
-    Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics, StateReceiverKind,
-    TerminatorKind, ValueId, ValueKind, classify_state_method_call, classify_state_method_result,
+    FunctionId, HirFile, HirFunction, HirInstructionKind, HirParameter, LocalId, LocalKind,
+    ObjectEntry, Origin, Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics,
+    StateReceiverKind, TerminatorKind, ValueId, ValueKind, classify_state_method_call,
+    classify_state_method_result,
 };
 use fict_reactivity::{
     DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, SsaDefinition,
@@ -751,7 +752,7 @@ impl<'a> StateProvenanceSolver<'a> {
                 resolved.push((function_index, parameter_index));
                 continue;
             };
-            let Some(parameter) = function.parameters.get(parameter_index) else {
+            let Some(parameter) = callback_parameter_for_argument(function, parameter_index) else {
                 resolved.push((function_index, parameter_index));
                 continue;
             };
@@ -801,7 +802,7 @@ impl<'a> StateProvenanceSolver<'a> {
                     function_index,
                     definition.name,
                     definition.location,
-                    if all_state_returns_are_fresh {
+                    if parameter.is_rest || all_state_returns_are_fresh {
                         ReadonlyKind::FreshContainer
                     } else {
                         ReadonlyKind::CallbackParameter
@@ -1130,7 +1131,9 @@ impl<'a> StateProvenanceSolver<'a> {
                     continue;
                 };
                 for (index, receiver_kind) in &parameter_provenance {
-                    let Some(parameter) = callback_function.parameters.get(*index) else {
+                    let Some(parameter) =
+                        callback_parameter_for_argument(callback_function, *index)
+                    else {
                         continue;
                     };
                     let Some(definition) =
@@ -1152,7 +1155,11 @@ impl<'a> StateProvenanceSolver<'a> {
                         callback_index,
                         definition.name,
                         definition.location,
-                        ReadonlyKind::CallbackParameter,
+                        if parameter.is_rest {
+                            ReadonlyKind::FreshContainer
+                        } else {
+                            ReadonlyKind::CallbackParameter
+                        },
                         binding,
                     ));
 
@@ -2650,6 +2657,18 @@ fn record_readonly_site(
         kind,
         origin: definition_origin(function, location, name.local),
     });
+}
+
+fn callback_parameter_for_argument(
+    function: &HirFunction,
+    argument_index: usize,
+) -> Option<&HirParameter> {
+    function.parameters.get(argument_index).or_else(|| {
+        function
+            .parameters
+            .last()
+            .filter(|parameter| parameter.is_rest)
+    })
 }
 
 fn state_callback_signatures(

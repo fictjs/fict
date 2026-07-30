@@ -357,6 +357,8 @@ pub struct HirParameter {
     pub pattern: SyntaxFragmentId,
     /// Bindings that directly receive fresh containers created by rest syntax.
     pub rest_bindings: Vec<BindingId>,
+    /// Whether this is the function's trailing formal rest parameter.
+    pub is_rest: bool,
     /// Optional whole-parameter default expression.
     pub default_value: Option<Origin>,
     /// Statically modeled top-level object properties for safe component-prop lowering.

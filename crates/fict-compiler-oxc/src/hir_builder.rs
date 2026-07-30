@@ -249,6 +249,7 @@ struct ParameterFact {
     span: SourceSpan,
     bindings: Vec<SymbolId>,
     rest_bindings: Vec<SymbolId>,
+    is_rest: bool,
     direct_binding: Option<SymbolId>,
     default_value: Option<SourceSpan>,
     object: Option<ObjectParameterFact>,
@@ -1314,6 +1315,7 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
         facts.push(ParameterFact {
             span: source_span(parameter.span),
             rest_bindings: collector.rest_symbols,
+            is_rest: false,
             bindings: collector.symbols,
             direct_binding: match &parameter.pattern {
                 BindingPattern::BindingIdentifier(identifier) => identifier.symbol_id.get(),
@@ -1344,6 +1346,7 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
             span: source_span(rest.span),
             bindings: collector.symbols,
             rest_bindings,
+            is_rest: true,
             direct_binding: None,
             default_value: None,
             object: None,
@@ -3141,6 +3144,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     binding: direct_binding,
                     pattern: fragment,
                     rest_bindings,
+                    is_rest: parameter.is_rest,
                     default_value: parameter.default_value.map(Origin::source),
                     object_properties,
                     object_rest,

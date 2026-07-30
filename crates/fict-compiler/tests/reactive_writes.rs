@@ -1029,6 +1029,105 @@ fn allows_writes_to_fresh_state_callback_rest_containers() {
 }
 
 #[test]
+fn tracks_reduce_arguments_collected_by_callback_rest_parameters() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.reduce((...args) => {
+                    args[1].done = true
+                    return args[0]
+                }, {})
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                function reducer(...args) {
+                    args[3][0].done = true
+                    return args[0]
+                }
+                return rows.reduce(reducer, {})
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.reduce((...[_accumulator, item]) => {
+                    item.done = true
+                    return {}
+                }, {})
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const values = $state(new Uint8Array([1, 2]))
+                return values.reduce((...args) => {
+                    args[3][0] = 9
+                    return args[0]
+                }, 0)
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = fallback
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .unwrap_or_else(|| panic!("missing FICT-M for {source}: {:#?}", fallback.diagnostics));
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        find_error(&strict, "FICT-M");
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
+fn allows_structural_writes_to_reduce_callback_rest_containers() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.reduce((...args) => {
+                    args.extra = true
+                    return args[0]
+                }, {})
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.reduce((...args) => {
+                    args[0] = {}
+                    return args[0]
+                }, {})
+            }
+        "#,
+    ] {
+        for strict_guarantee in [false, true] {
+            let result =
+                compile_source_with_strict(source, CompilerOptions::default(), strict_guarantee);
+            assert!(!result.has_errors(), "{source}\n{:#?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-M"),
+                "{source}\n{:#?}",
+                result.diagnostics
+            );
+        }
+    }
+}
+
+#[test]
 fn accepts_non_executing_generator_state_callbacks() {
     for source in [
         r#"
