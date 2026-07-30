@@ -1212,6 +1212,31 @@ fn rejects_reassigned_known_safe_callback_globals() {
                 return rows.toSorted(Boolean)
             }
         "#,
+        r#"
+            import { $state } from 'fict'
+            window.Boolean = (left, right) => {
+                left.done = true
+                return 0
+            }
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(globalThis.Boolean)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            globalThis.Boolean = value => {
+                value.done = true
+                return true
+            }
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    globalThis.Boolean(item)
+                })
+                return rows
+            }
+        "#,
     ] {
         let fallback = compile_source(source, CompilerOptions::default());
         let diagnostic = find_error(&fallback, "FICT-R002");
@@ -1222,6 +1247,93 @@ fn rejects_reassigned_known_safe_callback_globals() {
         let diagnostic = find_error(&strict, "FICT-R002");
         assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
         assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
+fn accepts_unmodified_safe_callback_globals_through_global_objects() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(globalThis.Boolean)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(globalThis['Boolean'])
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(window.Boolean)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(self.Boolean)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(global.Boolean)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(globalThis.undefined)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    globalThis.Boolean(item)
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function getComparator() {
+                return globalThis.Boolean
+            }
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.toSorted(getComparator())
+            }
+        "#,
+    ] {
+        for optimize in [false, true] {
+            let result = compile_source_with_strict(
+                source,
+                CompilerOptions {
+                    optimize,
+                    ..CompilerOptions::default()
+                },
+                true,
+            );
+            assert!(!result.has_errors(), "{source}\n{:#?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002")
+            );
+            assert!(!result.code.is_empty());
+        }
     }
 }
 
