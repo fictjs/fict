@@ -649,7 +649,7 @@ fn tracks_state_elements_in_array_sort_comparators() {
 }
 
 #[test]
-fn accepts_explicit_undefined_array_sort_comparators() {
+fn accepts_definitely_undefined_array_sort_comparators() {
     for source in [
         r#"
             import { $state } from 'fict'
@@ -671,6 +671,51 @@ fn accepts_explicit_undefined_array_sort_comparators() {
             function App() {
                 const rows = $state([{ done: false }])
                 return rows.toSorted((0, undefined))
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                let comparator
+                return rows.toSorted(comparator)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                var comparator
+                return rows.toSorted(comparator)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App(flag) {
+                const rows = $state([{ done: false }])
+                let comparator
+                if (flag) {
+                    comparator = (left, right) => Number(left.done) - Number(right.done)
+                }
+                return rows.toSorted(comparator)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function noComparator() {
+                return undefined
+            }
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.toSorted(noComparator())
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            const noComparator = () => undefined
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.toSorted(noComparator())
             }
         "#,
     ] {
@@ -709,6 +754,65 @@ fn keeps_shadowed_undefined_array_sort_comparators_unresolved() {
     );
     let diagnostic = find_error(&result, "FICT-R002");
     assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+}
+
+#[test]
+fn keeps_capture_written_array_sort_comparators_unresolved() {
+    let result = compile_source(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                let comparator
+                const install = () => {
+                    comparator = (left, right) => Number(left.done) - Number(right.done)
+                }
+                install()
+                return rows.toSorted(comparator)
+            }
+        "#,
+        CompilerOptions::default(),
+    );
+    let diagnostic = find_error(&result, "FICT-R002");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+}
+
+#[test]
+fn tracks_mutating_optional_array_sort_comparators_without_unresolved_fallback() {
+    let source = r#"
+        import { $state } from 'fict'
+        function App(flag) {
+            const rows = $state([{ done: false }])
+            let comparator
+            if (flag) {
+                comparator = (left, right) => {
+                    left.done = true
+                    return Number(left.done) - Number(right.done)
+                }
+            }
+            return rows.toSorted(comparator)
+        }
+    "#;
+    let fallback = compile_source(source, CompilerOptions::default());
+    let diagnostic = find_error(&fallback, "FICT-M");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+    assert!(
+        fallback
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002")
+    );
+
+    let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+    let diagnostic = find_error(&strict, "FICT-M");
+    assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+    assert!(
+        strict
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002")
+    );
+    assert!(strict.code.is_empty());
 }
 
 #[test]

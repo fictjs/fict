@@ -8,11 +8,15 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, BindingId, BindingKind, BlockId, CallHost, DeclarationKind, DeleteTarget,
-    FunctionId, HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind, ObjectEntry, Origin,
-    Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics, StateReceiverKind,
-    TerminatorKind, ValueId, ValueKind, classify_state_method_call, classify_state_method_result,
+    FunctionId, GlobalId, HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind,
+    ObjectEntry, Origin, Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics,
+    StateReceiverKind, TerminatorKind, ValueId, ValueKind, classify_state_method_call,
+    classify_state_method_result,
 };
-use fict_reactivity::{DependencyBase, EscapeKind, ReactiveBindingKind, SsaDefinitionLocation};
+use fict_reactivity::{
+    DependencyBase, EscapeKind, ReactiveBindingKind, SsaDefinition, SsaDefinitionKind,
+    SsaDefinitionLocation,
+};
 
 use crate::pass_manager::FunctionPassAnalysis;
 
@@ -52,6 +56,7 @@ struct StateIdentityAnalysis<'a> {
     instruction_locations: Vec<Vec<Option<InstructionLocation>>>,
     definition_locations: Vec<BTreeMap<SsaName, SsaDefinitionLocation>>,
     entry_names: Vec<BTreeMap<LocalId, SsaName>>,
+    capture_write_bindings: BTreeSet<BindingId>,
     value_visits: Cell<usize>,
 }
 
@@ -137,6 +142,7 @@ impl<'a> StateIdentityAnalysis<'a> {
         let mut instruction_locations = Vec::with_capacity(hir.functions.len());
         let mut definition_locations = Vec::with_capacity(hir.functions.len());
         let mut entry_names = Vec::with_capacity(hir.functions.len());
+        let mut capture_write_bindings = BTreeSet::new();
         for (function_index, function) in hir.functions.iter().enumerate() {
             let mut locations = vec![None; function.values.len()];
             for block in &function.blocks {
@@ -152,6 +158,26 @@ impl<'a> StateIdentityAnalysis<'a> {
                 }
             }
             instruction_locations.push(locations);
+            if let Some(analysis) = analyses.get(function_index) {
+                for definition in &analysis.ssa.definitions {
+                    if matches!(
+                        definition.kind,
+                        SsaDefinitionKind::Entry
+                            | SsaDefinitionKind::Parameter
+                            | SsaDefinitionKind::Declare
+                    ) {
+                        continue;
+                    }
+                    if let Some(binding) = function
+                        .locals
+                        .get(definition.name.local.as_usize())
+                        .filter(|local| local.kind == LocalKind::Capture)
+                        .and_then(|local| local.binding)
+                    {
+                        capture_write_bindings.insert(binding);
+                    }
+                }
+            }
             let definitions = analyses
                 .get(function_index)
                 .map(|analysis| {
@@ -179,6 +205,7 @@ impl<'a> StateIdentityAnalysis<'a> {
             instruction_locations,
             definition_locations,
             entry_names,
+            capture_write_bindings,
             value_visits: Cell::new(0),
         }
     }
@@ -803,6 +830,7 @@ impl<'a> StateProvenanceSolver<'a> {
                 self.identity.hir,
                 analysis,
                 function,
+                &self.identity.capture_write_bindings,
                 callback_argument.value,
                 InstructionLocation {
                     block: block.id,
@@ -2299,6 +2327,7 @@ fn resolve_callback_value(
     hir: &HirFile,
     analysis: &FunctionPassAnalysis,
     function: &HirFunction,
+    capture_write_bindings: &BTreeSet<BindingId>,
     value: ValueId,
     use_location: InstructionLocation,
 ) -> CallbackResolution {
@@ -2306,6 +2335,7 @@ fn resolve_callback_value(
         hir,
         analysis,
         function,
+        capture_write_bindings,
         value,
         use_location,
         &mut BTreeSet::new(),
@@ -2313,11 +2343,18 @@ fn resolve_callback_value(
     )
 }
 
+fn global_is_known_safe_callback_value(hir: &HirFile, global: GlobalId) -> bool {
+    hir.globals
+        .get(global.as_usize())
+        .is_some_and(|global| matches!(global.name.as_str(), "Boolean" | "undefined"))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_callback_value_inner(
     hir: &HirFile,
     analysis: &FunctionPassAnalysis,
     function: &HirFunction,
+    capture_write_bindings: &BTreeSet<BindingId>,
     value: ValueId,
     use_location: InstructionLocation,
     visiting_values: &mut BTreeSet<ValueId>,
@@ -2336,6 +2373,7 @@ fn resolve_callback_value_inner(
             hir,
             analysis,
             function,
+            capture_write_bindings,
             *name,
             use_location,
             visiting_values,
@@ -2371,6 +2409,7 @@ fn resolve_callback_value_inner(
                                     hir,
                                     analysis,
                                     function,
+                                    capture_write_bindings,
                                     name,
                                     definition_location,
                                     visiting_values,
@@ -2382,6 +2421,7 @@ fn resolve_callback_value_inner(
                             hir,
                             analysis,
                             function,
+                            capture_write_bindings,
                             name,
                             definition_location,
                             visiting_values,
@@ -2391,15 +2431,14 @@ fn resolve_callback_value_inner(
                             hir,
                             analysis,
                             function,
+                            capture_write_bindings,
                             base,
                             definition_location,
                             visiting_values,
                             visiting_names,
                         ),
                         PlaceBase::Global(global) => {
-                            if hir.globals.get(global.as_usize()).is_some_and(|global| {
-                                matches!(global.name.as_str(), "Boolean" | "undefined")
-                            }) {
+                            if global_is_known_safe_callback_value(hir, global) {
                                 CallbackResolution::safe_non_callback()
                             } else {
                                 CallbackResolution::default()
@@ -2413,6 +2452,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
+                        capture_write_bindings,
                         *value,
                         definition_location,
                         visiting_values,
@@ -2426,6 +2466,7 @@ fn resolve_callback_value_inner(
                             hir,
                             analysis,
                             function,
+                            capture_write_bindings,
                             *source,
                             definition_location,
                             visiting_values,
@@ -2443,6 +2484,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
+                        capture_write_bindings,
                         *consequent,
                         definition_location,
                         visiting_values,
@@ -2452,6 +2494,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
+                        capture_write_bindings,
                         *alternate,
                         definition_location,
                         visiting_values,
@@ -2467,6 +2510,7 @@ fn resolve_callback_value_inner(
                                 hir,
                                 analysis,
                                 function,
+                                capture_write_bindings,
                                 *value,
                                 definition_location,
                                 visiting_values,
@@ -2486,6 +2530,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
+                        capture_write_bindings,
                         *left,
                         definition_location,
                         visiting_values,
@@ -2495,6 +2540,7 @@ fn resolve_callback_value_inner(
                         hir,
                         analysis,
                         function,
+                        capture_write_bindings,
                         *right,
                         definition_location,
                         visiting_values,
@@ -2529,11 +2575,33 @@ fn resolve_callback_value_inner(
     resolution
 }
 
+fn definition_is_uninitialized_local(
+    function: &HirFunction,
+    definition: &SsaDefinition,
+    capture_write_bindings: &BTreeSet<BindingId>,
+) -> bool {
+    if definition.kind != SsaDefinitionKind::Declare {
+        return false;
+    }
+    let Some(local) = function.locals.get(definition.name.local.as_usize()) else {
+        return false;
+    };
+    local.kind == LocalKind::User
+        && matches!(
+            local.declaration_kind,
+            DeclarationKind::Var | DeclarationKind::Let
+        )
+        && local
+            .binding
+            .is_some_and(|binding| !capture_write_bindings.contains(&binding))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_callback_ssa(
     hir: &HirFile,
     analysis: &FunctionPassAnalysis,
     function: &HirFunction,
+    capture_write_bindings: &BTreeSet<BindingId>,
     name: SsaName,
     use_location: InstructionLocation,
     visiting_values: &mut BTreeSet<ValueId>,
@@ -2549,6 +2617,7 @@ fn resolve_callback_ssa(
                 hir,
                 analysis,
                 function,
+                capture_write_bindings,
                 *source,
                 InstructionLocation {
                     block: phi.block,
@@ -2570,14 +2639,18 @@ fn resolve_callback_ssa(
                 hir,
                 analysis,
                 function,
+                capture_write_bindings,
                 value,
                 definition_instruction_location(definition.location).unwrap_or(use_location),
                 visiting_values,
                 visiting_names,
             )
+        } else if let Some(callback) = callback_function_for_local(hir, function, name.local) {
+            CallbackResolution::known(callback)
+        } else if definition_is_uninitialized_local(function, definition, capture_write_bindings) {
+            CallbackResolution::safe_non_callback()
         } else {
-            callback_function_for_local(hir, function, name.local)
-                .map_or_else(CallbackResolution::default, CallbackResolution::known)
+            CallbackResolution::default()
         }
     } else {
         CallbackResolution::default()
@@ -2599,7 +2672,7 @@ fn resolve_direct_callback_producer(hir: &HirFile, producer: FunctionId) -> Call
         saw_return = true;
         resolution.merge(
             value.map_or_else(CallbackResolution::safe_non_callback, |value| {
-                resolve_direct_callback_result(function, value, &mut BTreeSet::new())
+                resolve_direct_callback_result(hir, function, value, &mut BTreeSet::new())
             }),
         );
     }
@@ -2611,6 +2684,7 @@ fn resolve_direct_callback_producer(hir: &HirFile, producer: FunctionId) -> Call
 }
 
 fn resolve_direct_callback_result(
+    hir: &HirFile,
     function: &HirFunction,
     value: ValueId,
     visiting: &mut BTreeSet<ValueId>,
@@ -2638,17 +2712,27 @@ fn resolve_direct_callback_result(
                     ..
                 } => {
                     let mut resolution =
-                        resolve_direct_callback_result(function, *consequent, visiting);
+                        resolve_direct_callback_result(hir, function, *consequent, visiting);
                     resolution.merge(resolve_direct_callback_result(
-                        function, *alternate, visiting,
+                        hir, function, *alternate, visiting,
                     ));
                     resolution
                 }
                 HirInstructionKind::Sequence { values } => values
                     .last()
                     .map_or_else(CallbackResolution::safe_non_callback, |value| {
-                        resolve_direct_callback_result(function, *value, visiting)
+                        resolve_direct_callback_result(hir, function, *value, visiting)
                     }),
+                HirInstructionKind::Read { place } if place.projections.is_empty() => {
+                    match place.base {
+                        PlaceBase::Global(global)
+                            if global_is_known_safe_callback_value(hir, global) =>
+                        {
+                            CallbackResolution::safe_non_callback()
+                        }
+                        _ => CallbackResolution::default(),
+                    }
+                }
                 HirInstructionKind::Literal(_) => CallbackResolution::safe_non_callback(),
                 _ => CallbackResolution::default(),
             }
