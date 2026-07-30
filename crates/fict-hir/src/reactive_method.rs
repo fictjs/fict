@@ -330,6 +330,24 @@ pub fn classify_state_method_result(
     }
 }
 
+/// Classify scalar properties exposed by a proven shallow-state built-in receiver.
+///
+/// Unknown and custom receivers fail closed even when they use a familiar property spelling.
+#[must_use]
+pub fn classify_state_property_result(
+    receiver: StateReceiverKind,
+    property: &str,
+) -> StateReceiverKind {
+    match (receiver, property) {
+        (
+            StateReceiverKind::Array | StateReceiverKind::String | StateReceiverKind::TypedArray,
+            "length",
+        )
+        | (StateReceiverKind::Map | StateReceiverKind::Set, "size") => StateReceiverKind::Number,
+        _ => StateReceiverKind::Unknown,
+    }
+}
+
 /// Whether a proven built-in method always returns a scalar value.
 ///
 /// Scalar results cannot preserve the object identity of a shallow `$state` receiver or one of
@@ -411,7 +429,7 @@ pub fn state_method_returns_scalar(receiver: StateReceiverKind, method: &str) ->
 mod tests {
     use super::{
         StateMethodCallSemantics, StateReceiverKind, classify_state_method_call,
-        classify_state_method_result, state_method_returns_scalar,
+        classify_state_method_result, classify_state_property_result, state_method_returns_scalar,
     };
 
     #[test]
@@ -508,5 +526,30 @@ mod tests {
                 "{receiver:?}.{method}"
             );
         }
+    }
+
+    #[test]
+    fn classifies_scalar_properties_only_for_matching_builtin_receivers() {
+        for (receiver, property) in [
+            (StateReceiverKind::Array, "length"),
+            (StateReceiverKind::String, "length"),
+            (StateReceiverKind::TypedArray, "length"),
+            (StateReceiverKind::Map, "size"),
+            (StateReceiverKind::Set, "size"),
+        ] {
+            assert_eq!(
+                classify_state_property_result(receiver, property),
+                StateReceiverKind::Number,
+                "{receiver:?}.{property}"
+            );
+        }
+        assert_eq!(
+            classify_state_property_result(StateReceiverKind::Unknown, "length"),
+            StateReceiverKind::Unknown
+        );
+        assert_eq!(
+            classify_state_property_result(StateReceiverKind::Array, "size"),
+            StateReceiverKind::Unknown
+        );
     }
 }

@@ -4960,7 +4960,19 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
     fn materialize_call(&mut self, owner: FunctionId, call: &CallFact) -> Option<ValueId> {
         let block = self.planned_block_for_span(owner, call.span);
-        let state_receiver_kind = if self
+        let macro_kind = call
+            .binding
+            .and_then(|binding| self.macro_bindings.get(&binding).copied());
+        let state_receiver_kind = if macro_kind == Some(FictMacroKind::State) {
+            call.direct_variable_binding
+                .and_then(|binding| {
+                    self.symbol_to_binding
+                        .iter()
+                        .find_map(|(symbol, candidate)| (*candidate == binding).then_some(*symbol))
+                })
+                .and_then(|symbol| self.state_receivers.get(&symbol).copied())
+                .unwrap_or(StateReceiverKind::Unknown)
+        } else if self
             .transformed_list_calls
             .contains(&(call.span.start(), call.span.end()))
         {
@@ -5040,9 +5052,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 state_receiver_kind,
                 arguments,
                 host,
-                macro_kind: call
-                    .binding
-                    .and_then(|binding| self.macro_bindings.get(&binding).copied()),
+                macro_kind,
                 reactive_kind: call.reactive_kind,
                 optional: call.optional,
             }),

@@ -947,7 +947,8 @@ pub struct CallInstruction {
     /// absent.
     pub callee_reference: Option<Place>,
     /// Proven built-in family of the method receiver when the call is directly rooted in a
-    /// shallow `$state` binding. Unknown and indirect receivers remain fail-closed.
+    /// shallow `$state` binding, or of the value wrapped by a direct `$state` call. Unknown and
+    /// indirect receivers remain fail-closed.
     pub state_receiver_kind: StateReceiverKind,
     /// Arguments in evaluation order.
     pub arguments: Vec<CallArgument>,

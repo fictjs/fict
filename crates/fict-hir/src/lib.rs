@@ -43,7 +43,7 @@ pub use origin::{DesugaringKind, GeneratedOrigin, Origin, OriginKind};
 pub use printer::print_hir;
 pub use reactive_method::{
     StateMethodCallSemantics, StateReceiverKind, classify_state_method_call,
-    classify_state_method_result, state_method_returns_scalar,
+    classify_state_method_result, classify_state_property_result, state_method_returns_scalar,
 };
 pub use syntax::{
     JavaScriptString, LiteralValue, NumberLiteral, PatternSummary, SyntaxFragment,

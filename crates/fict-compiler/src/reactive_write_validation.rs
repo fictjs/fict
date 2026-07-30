@@ -11,7 +11,7 @@ use fict_hir::{
     FunctionId, HirFile, HirFunction, HirInstructionKind, HirParameter, LocalId, LocalKind,
     ObjectEntry, Origin, Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics,
     StateReceiverKind, TerminatorKind, ValueId, ValueKind, classify_state_method_call,
-    classify_state_method_result, state_method_returns_scalar,
+    classify_state_method_result, classify_state_property_result, state_method_returns_scalar,
 };
 use fict_reactivity::{
     DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, SsaDefinition,
@@ -60,6 +60,7 @@ struct StateIdentityAnalysis<'a> {
     entry_names: Vec<BTreeMap<LocalId, SsaName>>,
     capture_write_bindings: BTreeSet<BindingId>,
     reassigned_bindings: BTreeSet<BindingId>,
+    state_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
     written_globals: BTreeSet<String>,
     value_visits: Cell<usize>,
 }
@@ -275,6 +276,106 @@ impl<'a> StateIdentityAnalysis<'a> {
             );
             definition_locations.push(definitions);
         }
+        let mut state_receiver_bindings = BTreeMap::new();
+        for (function_index, analysis) in analyses.iter().enumerate() {
+            let Some(function) = hir.functions.get(function_index) else {
+                continue;
+            };
+            for fact in &analysis.scopes.bindings {
+                if fact.kind != ReactiveBindingKind::State {
+                    continue;
+                }
+                let Some(binding) = function
+                    .locals
+                    .get(fact.name.local.as_usize())
+                    .and_then(|local| local.binding)
+                else {
+                    continue;
+                };
+                let receiver = definition_source_value(function, fact.location)
+                    .and_then(|value| function.instruction_for_result(value))
+                    .and_then(|instruction| match &instruction.kind {
+                        HirInstructionKind::Call(call)
+                            if call.macro_kind == Some(fict_hir::FictMacroKind::State) =>
+                        {
+                            Some(call.state_receiver_kind)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(StateReceiverKind::Unknown);
+                state_receiver_bindings
+                    .entry(binding)
+                    .and_modify(|current| {
+                        if *current != receiver {
+                            *current = StateReceiverKind::Unknown;
+                        }
+                    })
+                    .or_insert(receiver);
+            }
+        }
+        let mut alias_sources = BTreeMap::<BindingId, Option<BindingId>>::new();
+        for (function_index, analysis) in analyses.iter().enumerate() {
+            let function = &hir.functions[function_index];
+            for definition in &analysis.ssa.definitions {
+                let Some(target) = function
+                    .locals
+                    .get(definition.name.local.as_usize())
+                    .and_then(|local| local.binding)
+                else {
+                    continue;
+                };
+                if reassigned_bindings.contains(&target)
+                    || state_receiver_bindings.contains_key(&target)
+                {
+                    continue;
+                }
+                let Some(HirInstructionKind::Read { place }) =
+                    definition_source_value(function, definition.location)
+                        .and_then(|value| function.instruction_for_result(value))
+                        .map(|instruction| &instruction.kind)
+                else {
+                    continue;
+                };
+                if !place.projections.is_empty() {
+                    continue;
+                }
+                let Some(source) = place_root_local(place)
+                    .and_then(|local| function.locals.get(local.as_usize()))
+                    .and_then(|local| local.binding)
+                else {
+                    continue;
+                };
+                alias_sources
+                    .entry(target)
+                    .and_modify(|current| {
+                        if *current != Some(source) {
+                            *current = None;
+                        }
+                    })
+                    .or_insert(Some(source));
+            }
+        }
+        let mut receiver_dependents = BTreeMap::<BindingId, Vec<BindingId>>::new();
+        for (target, source) in alias_sources {
+            if let Some(source) = source {
+                receiver_dependents.entry(source).or_default().push(target);
+            }
+        }
+        let mut pending = state_receiver_bindings
+            .iter()
+            .filter_map(|(binding, receiver)| {
+                (*receiver != StateReceiverKind::Unknown).then_some((*binding, *receiver))
+            })
+            .collect::<VecDeque<_>>();
+        while let Some((source, receiver)) = pending.pop_front() {
+            for target in receiver_dependents.get(&source).into_iter().flatten() {
+                if state_receiver_bindings.contains_key(target) {
+                    continue;
+                }
+                state_receiver_bindings.insert(*target, receiver);
+                pending.push_back((*target, receiver));
+            }
+        }
         Self {
             hir,
             analyses,
@@ -283,6 +384,7 @@ impl<'a> StateIdentityAnalysis<'a> {
             entry_names,
             capture_write_bindings,
             reassigned_bindings,
+            state_receiver_bindings,
             written_globals,
             value_visits: Cell::new(0),
         }
@@ -1457,8 +1559,12 @@ pub(crate) fn validate_reactive_writes(
                         &mut BTreeSet::new(),
                     )
                 });
-            let scalar_derivation =
-                definition_is_scalar_state_method_result(&identity, function_index, fact.location);
+            let scalar_derivation = definition_is_scalar_state_derivation(
+                &identity,
+                function_index,
+                fact.location,
+                &state_provenance_names[function_index],
+            );
             let kind = match fact.kind {
                 ReactiveBindingKind::Derived
                     if !carries_state_identity
@@ -3510,6 +3616,17 @@ fn value_preserves_state_identity_in(
                     visiting,
                 ),
                 HirInstructionKind::Read { place } => {
+                    if state_property_read_returns_scalar(
+                        identity,
+                        function,
+                        analysis,
+                        value,
+                        place,
+                        state_names,
+                    ) {
+                        visiting.remove(&visit_key);
+                        return false;
+                    }
                     let base_preserves = place_preserves_state_identity(
                         identity,
                         function,
@@ -3953,25 +4070,141 @@ fn definition_is_readonly_derived_declaration(
         })
 }
 
-fn definition_is_scalar_state_method_result(
+fn definition_is_scalar_state_derivation(
     identity: &StateIdentityAnalysis<'_>,
     function_index: usize,
     location: SsaDefinitionLocation,
+    state_names: &BTreeSet<SsaName>,
 ) -> bool {
     let function = &identity.hir.functions[function_index];
     let Some(value) = definition_source_value(function, location) else {
         return false;
     };
-    let Some(HirInstructionKind::Call(call)) = identity
-        .instruction_for_result(function, value)
-        .map(|instruction| &instruction.kind)
-    else {
+    let Some(instruction) = identity.instruction_for_result(function, value) else {
         return false;
     };
-    call.callee_reference
-        .as_ref()
-        .and_then(|place| state_method_name(function, place))
-        .is_some_and(|method| state_method_returns_scalar(call.state_receiver_kind, &method))
+    match &instruction.kind {
+        HirInstructionKind::Call(call) => call
+            .callee_reference
+            .as_ref()
+            .and_then(|place| state_method_name(function, place))
+            .is_some_and(|method| state_method_returns_scalar(call.state_receiver_kind, &method)),
+        HirInstructionKind::Read { place } => state_property_read_returns_scalar(
+            identity,
+            function,
+            &identity.analyses[function_index],
+            value,
+            place,
+            state_names,
+        ),
+        _ => false,
+    }
+}
+
+fn state_property_read_returns_scalar(
+    identity: &StateIdentityAnalysis<'_>,
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    value: ValueId,
+    place: &Place,
+    state_names: &BTreeSet<SsaName>,
+) -> bool {
+    if place.projections.len() != 1 {
+        return false;
+    }
+    let Some(property) = state_method_name(function, place) else {
+        return false;
+    };
+    let Some(location) = identity.instruction_location(function.id, value) else {
+        return false;
+    };
+    let receiver = state_receiver_kind_for_place_base(
+        identity,
+        function,
+        analysis,
+        place,
+        location,
+        state_names,
+        &mut BTreeSet::new(),
+    );
+    classify_state_property_result(receiver, &property) != StateReceiverKind::Unknown
+}
+
+#[allow(clippy::too_many_arguments)]
+fn state_receiver_kind_for_place_base(
+    identity: &StateIdentityAnalysis<'_>,
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    place: &Place,
+    location: InstructionLocation,
+    state_names: &BTreeSet<SsaName>,
+    visiting: &mut BTreeSet<SsaName>,
+) -> StateReceiverKind {
+    let name = match place.base {
+        PlaceBase::Local(local) => ssa_name_before(
+            analysis,
+            WriteLocation {
+                function: function.id,
+                block: location.block,
+                instruction: location.instruction,
+                local,
+            },
+        ),
+        PlaceBase::Ssa(name) => Some(name),
+        PlaceBase::Value(_) | PlaceBase::Global(_) => None,
+    };
+    name.map_or(StateReceiverKind::Unknown, |name| {
+        state_receiver_kind_for_name(identity, function, analysis, name, state_names, visiting)
+    })
+}
+
+fn state_receiver_kind_for_name(
+    identity: &StateIdentityAnalysis<'_>,
+    function: &HirFunction,
+    analysis: &FunctionPassAnalysis,
+    name: SsaName,
+    state_names: &BTreeSet<SsaName>,
+    visiting: &mut BTreeSet<SsaName>,
+) -> StateReceiverKind {
+    if !name_resolves_to_set(name, state_names) || !visiting.insert(name) {
+        return StateReceiverKind::Unknown;
+    }
+    let direct = function
+        .locals
+        .get(name.local.as_usize())
+        .and_then(|local| local.binding)
+        .and_then(|binding| identity.state_receiver_bindings.get(&binding))
+        .copied()
+        .unwrap_or(StateReceiverKind::Unknown);
+    let receiver = if direct != StateReceiverKind::Unknown {
+        direct
+    } else {
+        identity.definition_locations[function.id.as_usize()]
+            .get(&name)
+            .and_then(|location| definition_source_value(function, *location))
+            .and_then(|value| {
+                let instruction = identity.instruction_for_result(function, value)?;
+                let HirInstructionKind::Read { place } = &instruction.kind else {
+                    return None;
+                };
+                if !place.projections.is_empty() {
+                    return None;
+                }
+                let location = identity.instruction_location(function.id, value)?;
+                Some(state_receiver_kind_for_place_base(
+                    identity,
+                    function,
+                    analysis,
+                    place,
+                    location,
+                    state_names,
+                    visiting,
+                ))
+            })
+            .unwrap_or(StateReceiverKind::Unknown)
+    };
+    visiting.remove(&name);
+    receiver
 }
 
 fn analyze_fresh_state_containers(identity: &StateIdentityAnalysis<'_>) -> Vec<BTreeSet<SsaName>> {

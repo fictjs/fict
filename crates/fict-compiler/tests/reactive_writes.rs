@@ -443,6 +443,101 @@ fn identity_returning_state_methods_remain_reactive_aliases() {
 }
 
 #[test]
+fn scalar_builtin_state_properties_do_not_retain_reactive_identity() {
+    for optimize in [false, true] {
+        for source in [
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const rows = $state([{ done: false }])
+                    const length = rows.length
+                    length.metadata = true
+                    return length.toFixed()
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const values = $state(new Map([['key', { done: false }]]))
+                    const size = values.size
+                    return size.toFixed()
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const values = $state(new Set([{ done: false }]))
+                    const size = values['size']
+                    return size.valueOf()
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const rows = $state(new Uint8Array([1, 2]))
+                    const alias = rows
+                    const length = alias.length
+                    return length.toFixed()
+                }
+            "#,
+            r#"
+                import { $state } from 'fict'
+                function App() {
+                    const rows = $state([1, 2])
+                    const alias = rows
+                    const read = () => {
+                        const length = alias.length
+                        return length.toFixed()
+                    }
+                    return read()
+                }
+            "#,
+        ] {
+            let output = compile_source_with_strict(
+                source,
+                CompilerOptions {
+                    optimize,
+                    ..CompilerOptions::default()
+                },
+                true,
+            );
+            assert!(!output.has_errors(), "{:#?}", output.diagnostics);
+            assert!(!output.code.is_empty());
+        }
+    }
+}
+
+#[test]
+fn scalar_property_spellings_on_unproven_state_receivers_remain_aliases() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const box = $state({ length: { done: false } })
+                const length = box.length
+                length.done = true
+                return length
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                let rows = $state([1])
+                rows = { length: { done: false } }
+                const length = rows.length
+                length.done = true
+                return length
+            }
+        "#,
+    ] {
+        let output = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&output, "FICT-M");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(output.code.is_empty());
+    }
+}
+
+#[test]
 fn treats_only_direct_builtin_state_type_arguments_as_caller_owned_receiver_proofs() {
     for optimize in [false, true] {
         let accepted = compile_source_with_strict(
