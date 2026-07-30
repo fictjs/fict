@@ -649,6 +649,142 @@ fn tracks_state_elements_in_array_sort_comparators() {
 }
 
 #[test]
+fn tracks_state_return_feedback_in_reduce_accumulators() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                rows.reduce((accumulator, item, index) => {
+                    if (index === 0) return item
+                    accumulator.done = true
+                    return accumulator
+                }, null)
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                rows.reduce((accumulator, item, index) => {
+                    if (index === 0) {
+                        const next = item
+                        return next
+                    }
+                    const previous = accumulator
+                    previous.done = true
+                    return previous
+                }, null)
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const values = $state(new Uint8Array([1, 2]))
+                values.reduce((accumulator, _value, index, array) => {
+                    if (index === 0) return array
+                    accumulator[0] = 9
+                    return accumulator
+                }, 0)
+                return values
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                rows.reduce((accumulator, item, index) => {
+                    if (index === 0) return { item }
+                    accumulator.item.done = true
+                    return accumulator
+                }, null)
+                return rows
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = fallback
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+            .unwrap_or_else(|| panic!("missing FICT-M for {source}: {:#?}", fallback.diagnostics));
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+        assert!(!fallback.code.is_empty(), "{:#?}", fallback.diagnostics);
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-M");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+}
+
+#[test]
+fn preserves_non_state_reduce_accumulator_writes() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ value: 1 }, { value: 2 }])
+                return rows.reduce((accumulator, item) => {
+                    accumulator.total += item.value
+                    return accumulator
+                }, { total: 0 })
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.reduce((accumulator, item, index) => {
+                    if (index === 0) return { item }
+                    accumulator.extra = true
+                    return accumulator
+                }, null)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                return rows.reduce(async (accumulator, item, index) => {
+                    if (index === 0) return item
+                    accumulator.done = true
+                    return accumulator
+                }, null)
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }, { done: false }])
+                const iterator = rows.reduce(function* (accumulator, item, index) {
+                    if (index === 0) return item
+                    accumulator.done = true
+                    return accumulator
+                }, null)
+                return iterator
+            }
+        "#,
+    ] {
+        for strict_guarantee in [false, true] {
+            let result =
+                compile_source_with_strict(source, CompilerOptions::default(), strict_guarantee);
+            assert!(!result.has_errors(), "{source}\n{:#?}", result.diagnostics);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code.as_str() != "FICT-M"),
+                "{source}\n{:#?}",
+                result.diagnostics
+            );
+        }
+    }
+}
+
+#[test]
 fn tracks_state_promise_callback_values() {
     for (source, expected_findings) in [
         (

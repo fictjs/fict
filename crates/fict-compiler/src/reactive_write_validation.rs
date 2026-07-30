@@ -76,6 +76,7 @@ struct StateCallbackSignature {
     callback_argument_index: usize,
     parameter_provenance: Vec<CallbackParameterProvenance>,
     this_argument_index: Option<usize>,
+    return_feedback_parameter_index: Option<usize>,
     return_disposition: CallbackReturnDisposition,
 }
 
@@ -148,6 +149,7 @@ struct StateProvenanceSolver<'a> {
     callback_receiver_bindings: BTreeMap<BindingId, StateReceiverKind>,
     state_this_functions: BTreeSet<FunctionId>,
     fresh_state_this_functions: BTreeSet<FunctionId>,
+    callback_return_feedbacks: BTreeSet<(usize, usize)>,
     unresolved_callbacks: BTreeMap<(FunctionId, BlockId, u32), Origin>,
     candidates: Vec<ProvenanceCandidate>,
     function_candidates: Vec<Vec<usize>>,
@@ -516,6 +518,7 @@ impl<'a> StateProvenanceSolver<'a> {
             callback_receiver_bindings: BTreeMap::new(),
             state_this_functions: BTreeSet::new(),
             fresh_state_this_functions: BTreeSet::new(),
+            callback_return_feedbacks: BTreeSet::new(),
             unresolved_callbacks: BTreeMap::new(),
             candidates: Vec::new(),
             function_candidates: vec![Vec::new(); function_count],
@@ -736,6 +739,95 @@ impl<'a> StateProvenanceSolver<'a> {
         }
     }
 
+    fn process_callback_return_feedbacks(&mut self) -> bool {
+        let mut resolved = Vec::new();
+        let mut seeds = Vec::new();
+        for &(function_index, parameter_index) in &self.callback_return_feedbacks {
+            let Some(function) = self.identity.hir.functions.get(function_index) else {
+                resolved.push((function_index, parameter_index));
+                continue;
+            };
+            let Some(analysis) = self.identity.analyses.get(function_index) else {
+                resolved.push((function_index, parameter_index));
+                continue;
+            };
+            let Some(parameter) = function.parameters.get(parameter_index) else {
+                resolved.push((function_index, parameter_index));
+                continue;
+            };
+            let Some(definition) = analysis.ssa.definitions.iter().find(|definition| {
+                definition.name.local == parameter.local
+                    && definition.location == SsaDefinitionLocation::Entry
+            }) else {
+                resolved.push((function_index, parameter_index));
+                continue;
+            };
+            if self.names[function_index].contains(&definition.name) {
+                resolved.push((function_index, parameter_index));
+                continue;
+            }
+
+            let mut carries_state = false;
+            let mut all_state_returns_are_fresh = true;
+            let mut value_memo = BTreeMap::new();
+            let mut name_memo = BTreeMap::new();
+            for block in &function.blocks {
+                let TerminatorKind::Return { value: Some(value) } = block.terminator.kind else {
+                    continue;
+                };
+                if !value_preserves_state_identity(
+                    self.identity,
+                    function,
+                    analysis,
+                    value,
+                    &self.names[function_index],
+                    &self.state_this_functions,
+                ) {
+                    continue;
+                }
+                carries_state = true;
+                all_state_returns_are_fresh &= value_is_fresh_state_container(
+                    self.identity,
+                    function_index,
+                    value,
+                    &mut value_memo,
+                    &mut name_memo,
+                    &mut BTreeSet::new(),
+                    &mut BTreeSet::new(),
+                );
+            }
+            if carries_state {
+                seeds.push((
+                    function_index,
+                    definition.name,
+                    definition.location,
+                    if all_state_returns_are_fresh {
+                        ReadonlyKind::FreshContainer
+                    } else {
+                        ReadonlyKind::CallbackParameter
+                    },
+                ));
+                resolved.push((function_index, parameter_index));
+            }
+        }
+        for feedback in resolved {
+            self.callback_return_feedbacks.remove(&feedback);
+        }
+        for (function_index, name, location, kind) in seeds {
+            let function = &self.identity.hir.functions[function_index];
+            record_readonly_site(
+                function,
+                name,
+                location,
+                kind,
+                self.state_bindings,
+                &mut self.readonly_sites[function_index],
+            );
+            self.activate(function_index, name);
+        }
+        !self.pending.is_empty()
+    }
+
     fn run(mut self) -> Result<StateProvenanceOutput, DiagnosticBundle> {
         let maximum_work_items = self
             .candidates
@@ -743,37 +835,42 @@ impl<'a> StateProvenanceSolver<'a> {
             .saturating_mul(2)
             .saturating_add(self.stats.dependency_edges)
             .saturating_add(1);
-        while let Some(candidate_index) = self.pending.pop_front() {
-            self.queued[candidate_index] = false;
-            if self.resolved[candidate_index] {
-                continue;
-            }
-            self.stats.work_items = self.stats.work_items.saturating_add(1);
-            if self.stats.work_items > maximum_work_items {
-                return Err(DiagnosticBundle::new(vec![internal_error(
-                    "FICT-ANALYSIS-FIXED-POINT",
-                    "state provenance propagation exceeded its deterministic work limit",
-                )]));
-            }
-            let resolved = match self.candidates[candidate_index] {
-                ProvenanceCandidate::ScopeFact { function, fact } => {
-                    self.process_scope_fact(function, fact)
+        loop {
+            while let Some(candidate_index) = self.pending.pop_front() {
+                self.queued[candidate_index] = false;
+                if self.resolved[candidate_index] {
+                    continue;
                 }
-                ProvenanceCandidate::Definition {
-                    function,
-                    definition,
-                } => self.process_definition(function, definition),
-                ProvenanceCandidate::Phi { function, phi } => self.process_phi(function, phi),
-                ProvenanceCandidate::Callback {
-                    function,
-                    block,
-                    instruction,
-                } => {
-                    self.process_callback(function, block, instruction);
-                    false
+                self.stats.work_items = self.stats.work_items.saturating_add(1);
+                if self.stats.work_items > maximum_work_items {
+                    return Err(DiagnosticBundle::new(vec![internal_error(
+                        "FICT-ANALYSIS-FIXED-POINT",
+                        "state provenance propagation exceeded its deterministic work limit",
+                    )]));
                 }
-            };
-            self.resolved[candidate_index] = resolved;
+                let resolved = match self.candidates[candidate_index] {
+                    ProvenanceCandidate::ScopeFact { function, fact } => {
+                        self.process_scope_fact(function, fact)
+                    }
+                    ProvenanceCandidate::Definition {
+                        function,
+                        definition,
+                    } => self.process_definition(function, definition),
+                    ProvenanceCandidate::Phi { function, phi } => self.process_phi(function, phi),
+                    ProvenanceCandidate::Callback {
+                        function,
+                        block,
+                        instruction,
+                    } => {
+                        self.process_callback(function, block, instruction);
+                        false
+                    }
+                };
+                self.resolved[candidate_index] = resolved;
+            }
+            if !self.process_callback_return_feedbacks() {
+                break;
+            }
         }
         Ok(StateProvenanceOutput {
             names: self.names,
@@ -953,6 +1050,7 @@ impl<'a> StateProvenanceSolver<'a> {
             callback_argument_index,
             parameter_provenance,
             this_argument_index,
+            return_feedback_parameter_index,
             return_disposition,
         } in callback_signatures
         {
@@ -995,6 +1093,13 @@ impl<'a> StateProvenanceSolver<'a> {
                     && return_disposition == CallbackReturnDisposition::Discarded
                 {
                     continue;
+                }
+                if !callback_function.flags.is_async
+                    && !callback_function.flags.is_generator
+                    && let Some(parameter_index) = return_feedback_parameter_index
+                {
+                    self.callback_return_feedbacks
+                        .insert((callback_index, parameter_index));
                 }
                 if !callback_function.flags.is_arrow
                     && let Some(argument) = this_argument_index
@@ -2562,6 +2667,7 @@ fn state_callback_signatures(
             callback_argument_index: 0,
             parameter_provenance: vec![(0, None), (1, None)],
             this_argument_index: None,
+            return_feedback_parameter_index: None,
             return_disposition: CallbackReturnDisposition::Discarded,
         }]),
         (
@@ -2572,12 +2678,14 @@ fn state_callback_signatures(
             callback_argument_index: 0,
             parameter_provenance: vec![(0, None), (2, Some(StateReceiverKind::Array))],
             this_argument_index: Some(1),
+            return_feedback_parameter_index: None,
             return_disposition: CallbackReturnDisposition::Discarded,
         }]),
         (StateReceiverKind::Array, "flatMap" | "map") => Some(vec![StateCallbackSignature {
             callback_argument_index: 0,
             parameter_provenance: vec![(0, None), (2, Some(StateReceiverKind::Array))],
             this_argument_index: Some(1),
+            return_feedback_parameter_index: None,
             return_disposition: CallbackReturnDisposition::Retained,
         }]),
         (
@@ -2588,6 +2696,7 @@ fn state_callback_signatures(
             callback_argument_index: 0,
             parameter_provenance: vec![(2, Some(StateReceiverKind::TypedArray))],
             this_argument_index: Some(1),
+            return_feedback_parameter_index: None,
             return_disposition: CallbackReturnDisposition::Discarded,
         }]),
         (StateReceiverKind::Array, "reduce" | "reduceRight") => {
@@ -2610,6 +2719,7 @@ fn state_callback_signatures(
                 callback_argument_index: 0,
                 parameter_provenance: indices,
                 this_argument_index: None,
+                return_feedback_parameter_index: Some(0),
                 return_disposition: CallbackReturnDisposition::Retained,
             }])
         }
@@ -2632,6 +2742,7 @@ fn state_callback_signatures(
                 callback_argument_index: 0,
                 parameter_provenance: indices,
                 this_argument_index: None,
+                return_feedback_parameter_index: Some(0),
                 return_disposition: CallbackReturnDisposition::Retained,
             }])
         }
@@ -2640,6 +2751,7 @@ fn state_callback_signatures(
                 callback_argument_index: 0,
                 parameter_provenance: vec![(0, None), (1, None), (2, Some(receiver))],
                 this_argument_index: Some(1),
+                return_feedback_parameter_index: None,
                 return_disposition: CallbackReturnDisposition::Discarded,
             }])
         }
@@ -2648,12 +2760,14 @@ fn state_callback_signatures(
                 callback_argument_index: 0,
                 parameter_provenance: vec![(0, None)],
                 this_argument_index: None,
+                return_feedback_parameter_index: None,
                 return_disposition: CallbackReturnDisposition::Retained,
             },
             StateCallbackSignature {
                 callback_argument_index: 1,
                 parameter_provenance: vec![(0, None)],
                 this_argument_index: None,
+                return_feedback_parameter_index: None,
                 return_disposition: CallbackReturnDisposition::Retained,
             },
         ]),
@@ -2661,6 +2775,7 @@ fn state_callback_signatures(
             callback_argument_index: 0,
             parameter_provenance: vec![(0, None)],
             this_argument_index: None,
+            return_feedback_parameter_index: None,
             return_disposition: CallbackReturnDisposition::Retained,
         }]),
         _ => None,
