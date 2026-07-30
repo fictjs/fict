@@ -7,11 +7,10 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
-    ArrayElement, BindingId, BindingKind, BlockId, CallHost, DeclarationKind, DeleteTarget,
-    FunctionId, GlobalId, HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind,
-    ObjectEntry, Origin, Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics,
-    StateReceiverKind, TerminatorKind, ValueId, ValueKind, classify_state_method_call,
-    classify_state_method_result,
+    ArrayElement, BindingId, BindingKind, BlockId, DeclarationKind, DeleteTarget, FunctionId,
+    GlobalId, HirFile, HirFunction, HirInstructionKind, LocalId, LocalKind, ObjectEntry, Origin,
+    Place, PlaceBase, Projection, SsaName, StateMethodCallSemantics, StateReceiverKind,
+    TerminatorKind, ValueId, ValueKind, classify_state_method_call, classify_state_method_result,
 };
 use fict_reactivity::{
     DependencyBase, EscapeKind, ReactiveBindingKind, SsaDefinition, SsaDefinitionKind,
@@ -1871,9 +1870,14 @@ fn escape_location_preserves_callback_identity(
                 let known_non_retaining = known_boolean && !argument.spread;
                 !known_non_retaining
                     && !local_call_argument_is_non_retaining(
-                        identity.hir,
-                        identity.analyses,
+                        identity,
+                        function,
+                        analysis,
                         call,
+                        InstructionLocation {
+                            block: location.block,
+                            instruction: location.instruction,
+                        },
                         index,
                         projected,
                     )
@@ -1889,9 +1893,11 @@ fn escape_location_preserves_callback_identity(
 }
 
 fn local_call_argument_is_non_retaining(
-    hir: &HirFile,
-    analyses: &[FunctionPassAnalysis],
+    identity: &StateIdentityAnalysis<'_>,
+    caller: &HirFunction,
+    caller_analysis: &FunctionPassAnalysis,
     call: &fict_hir::CallInstruction,
+    use_location: InstructionLocation,
     argument_index: usize,
     allow_identity_return: bool,
 ) -> bool {
@@ -1903,13 +1909,14 @@ fn local_call_argument_is_non_retaining(
     {
         return false;
     }
-    let Some(callee) = resolved_local_callee(hir, call) else {
+    let Some(callee) = resolved_local_callee(identity, caller, caller_analysis, call, use_location)
+    else {
         return false;
     };
     let Some(parameter) = callee.parameters.get(argument_index) else {
         return false;
     };
-    let Some(analysis) = analyses.get(callee.id.as_usize()) else {
+    let Some(analysis) = identity.analyses.get(callee.id.as_usize()) else {
         return false;
     };
     let Some(entry) = analysis.ssa.definitions.iter().find_map(|definition| {
@@ -1934,7 +1941,7 @@ fn local_call_argument_is_non_retaining(
             // whole callback parameters conservative for accumulator-style callback flows.
             EscapeKind::Return => escape.path.segments.is_empty() && !allow_identity_return,
             EscapeKind::SyntaxFragment => !escape.location.is_some_and(|location| {
-                syntax_fragment_escape_is_non_retaining(hir, callee, location)
+                syntax_fragment_escape_is_non_retaining(identity.hir, callee, location)
             }),
             _ => true,
         }
@@ -3116,6 +3123,7 @@ fn value_preserves_state_identity_in(
                             function,
                             analysis,
                             call,
+                            location,
                             state_names,
                             visiting,
                         )
@@ -3233,10 +3241,16 @@ fn local_call_returns_state_identity(
     caller: &HirFunction,
     caller_analysis: &FunctionPassAnalysis,
     call: &fict_hir::CallInstruction,
+    call_location: Option<InstructionLocation>,
     caller_state_names: &BTreeSet<SsaName>,
     visiting: &mut BTreeSet<(FunctionId, ValueId)>,
 ) -> bool {
-    let Some(callee) = resolved_local_callee(identity.hir, call) else {
+    let Some(call_location) = call_location else {
+        return false;
+    };
+    let Some(callee) =
+        resolved_local_callee(identity, caller, caller_analysis, call, call_location)
+    else {
         return false;
     };
     let Some(callee_analysis) = identity.analyses.get(callee.id.as_usize()) else {
@@ -3282,21 +3296,31 @@ fn local_call_returns_state_identity(
 }
 
 fn resolved_local_callee<'a>(
-    hir: &'a HirFile,
+    identity: &'a StateIdentityAnalysis<'a>,
+    caller: &HirFunction,
+    caller_analysis: &FunctionPassAnalysis,
     call: &fict_hir::CallInstruction,
+    use_location: InstructionLocation,
 ) -> Option<&'a HirFunction> {
-    match call.host {
-        CallHost::Function(function) => hir.functions.get(function.as_usize()),
-        CallHost::Binding(binding) => {
-            let mut candidates = hir
-                .functions
-                .iter()
-                .filter(|function| function.binding == Some(binding));
-            let callee = candidates.next()?;
-            candidates.next().is_none().then_some(callee)
-        }
-        CallHost::Unknown | CallHost::ReactiveScope(_) => None,
+    let resolution = resolve_callback_value(
+        identity.hir,
+        caller_analysis,
+        caller,
+        CallbackBindingFacts {
+            capture_writes: &identity.capture_write_bindings,
+            reassignments: &identity.reassigned_bindings,
+            written_globals: &identity.written_globals,
+        },
+        call.callee,
+        use_location,
+    );
+    if !resolution.complete || resolution.functions.len() != 1 {
+        return None;
     }
+    identity
+        .hir
+        .functions
+        .get(resolution.functions.into_iter().next()?.as_usize())
 }
 
 fn value_depends_on_reactive(

@@ -1358,6 +1358,88 @@ fn keeps_ambiguous_callback_helper_bindings_unresolved() {
 }
 
 #[test]
+fn keeps_reassigned_callback_helpers_unresolved() {
+    for source in [
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    let consume = value => value.done
+                    consume = value => { value.done = true }
+                    consume(item)
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            let retained
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    function consume(value) { return value.done }
+                    consume = value => { retained = value }
+                    consume(item)
+                })
+                return rows
+            }
+        "#,
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                rows.forEach(item => {
+                    let select = value => ({ done: false })
+                    select = value => value
+                    const alias = select(item)
+                    alias.done = true
+                })
+                return rows
+            }
+        "#,
+    ] {
+        let fallback = compile_source(source, CompilerOptions::default());
+        let diagnostic = find_error(&fallback, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Warning);
+        assert!(!fallback.code.is_empty());
+
+        let strict = compile_source_with_strict(source, CompilerOptions::default(), true);
+        let diagnostic = find_error(&strict, "FICT-R002");
+        assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+        assert!(strict.code.is_empty());
+    }
+
+    let write_after_call = compile_source_with_strict(
+        r#"
+            import { $state } from 'fict'
+            function App() {
+                const rows = $state([{ done: false }])
+                return rows.map(item => {
+                    let read = value => value.done
+                    const result = read(item)
+                    read = value => { value.done = true }
+                    return result
+                })
+            }
+        "#,
+        CompilerOptions::default(),
+        true,
+    );
+    assert!(
+        !write_after_call.has_errors(),
+        "{:#?}",
+        write_after_call.diagnostics
+    );
+    assert!(
+        write_after_call
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-M" | "FICT-R002"))
+    );
+}
+
+#[test]
 fn tracks_mutating_optional_array_sort_comparators_without_unresolved_fallback() {
     let source = r#"
         import { $state } from 'fict'
