@@ -9899,6 +9899,9 @@ struct ForwardedCallableRead {
     target: StaticAliasPath,
 }
 
+type GeneratorBodySpan = (u32, u32);
+type InstanceGeneratorBodies = BTreeMap<String, BTreeSet<GeneratorBodySpan>>;
+
 struct GeneratorExecutionCollector<'semantic> {
     scoping: &'semantic Scoping,
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
@@ -9906,9 +9909,9 @@ struct GeneratorExecutionCollector<'semantic> {
     discarded_invocation_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
-    generator_body_targets: Vec<((u32, u32), StaticAliasPath)>,
-    class_instance_generator_bodies: BTreeMap<StaticAliasPath, BTreeMap<String, (u32, u32)>>,
-    instance_generator_bodies: BTreeMap<StaticAliasPath, BTreeMap<String, (u32, u32)>>,
+    generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
+    class_instance_generator_bodies: BTreeMap<StaticAliasPath, InstanceGeneratorBodies>,
+    instance_generator_bodies: BTreeMap<StaticAliasPath, InstanceGeneratorBodies>,
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
 }
@@ -9998,6 +10001,37 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .then_some(function.body.as_ref())
             .flatten()
             .map(|body| (body.span.start, body.span.end))
+    }
+
+    fn generator_body_spans_for_target(
+        &self,
+        target: &StaticAliasPath,
+    ) -> BTreeSet<GeneratorBodySpan> {
+        fn collect(
+            collector: &GeneratorExecutionCollector<'_>,
+            target: &StaticAliasPath,
+            visited: &mut BTreeSet<StaticAliasPath>,
+            bodies: &mut BTreeSet<GeneratorBodySpan>,
+        ) {
+            if !visited.insert(target.clone()) {
+                return;
+            }
+            bodies.extend(
+                collector
+                    .generator_body_targets
+                    .iter()
+                    .filter_map(|(span, candidate)| (candidate == target).then_some(*span)),
+            );
+            for forwarding in &collector.forwarded_callable_reads {
+                if forwarding.target == *target {
+                    collect(collector, &forwarding.source, visited, bodies);
+                }
+            }
+        }
+
+        let mut bodies = BTreeSet::new();
+        collect(self, target, &mut BTreeSet::new(), &mut bodies);
+        bodies
     }
 
     fn constructed_instance_callable_reference(
@@ -10096,6 +10130,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .as_ref()
             .map(|(_, _, bodies)| bodies.clone())
             .unwrap_or_default();
+        let mut replacement_forwardings = BTreeMap::new();
         if let Some(object) = replacement_object {
             for property in &object.properties {
                 let OxcObjectPropertyKind::ObjectProperty(property) = property else {
@@ -10105,14 +10140,24 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     continue;
                 };
                 let name = name.into_owned();
-                let body = match property.value.get_inner_expression() {
-                    Expression::FunctionExpression(function) => Self::generator_body_span(function),
-                    _ => None,
+                let bodies = match property.value.get_inner_expression() {
+                    Expression::FunctionExpression(function) => Self::generator_body_span(function)
+                        .map(|span| BTreeSet::from([span]))
+                        .unwrap_or_default(),
+                    _ => self
+                        .callable_reference(&property.value)
+                        .map(|(source, source_span)| {
+                            replacement_forwardings
+                                .insert(name.clone(), (source.clone(), source_span));
+                            self.generator_body_spans_for_target(&source)
+                        })
+                        .unwrap_or_default(),
                 };
-                if let Some(body) = body {
-                    instance_bodies.insert(name, body);
-                } else {
+                if bodies.is_empty() {
                     instance_bodies.remove(&name);
+                    replacement_forwardings.remove(&name);
+                } else {
+                    instance_bodies.insert(name, bodies);
                 }
             }
         } else {
@@ -10131,7 +10176,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                             && method.decorators.is_empty()
                             && let Some(span) = Self::generator_body_span(&method.value)
                         {
-                            instance_bodies.insert(name, span);
+                            instance_bodies.insert(name, BTreeSet::from([span]));
                         } else {
                             instance_bodies.remove(&name);
                         }
@@ -10156,7 +10201,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         if property.decorators.is_empty()
                             && let Some(body) = body
                         {
-                            instance_bodies.insert(name, body);
+                            instance_bodies.insert(name, BTreeSet::from([body]));
                         } else {
                             instance_bodies.remove(&name);
                         }
@@ -10165,21 +10210,27 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 }
             }
         }
-        for (name, body) in &instance_bodies {
+        for (name, bodies) in &instance_bodies {
             let target_method = target
                 .clone()
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
             self.generator_body_targets
-                .push((*body, target_method.clone()));
+                .extend(bodies.iter().map(|body| (*body, target_method.clone())));
             if let Some((source, source_span, inherited)) = &inherited_bodies
-                && inherited.get(name) == Some(body)
+                && inherited.get(name) == Some(bodies)
             {
                 self.forwarded_callable_reads.push(ForwardedCallableRead {
                     source: source
                         .clone()
                         .with_property("prototype".to_string())
                         .with_property(name.clone()),
+                    source_span: *source_span,
+                    target: target_method,
+                });
+            } else if let Some((source, source_span)) = replacement_forwardings.get(name) {
+                self.forwarded_callable_reads.push(ForwardedCallableRead {
+                    source: source.clone(),
                     source_span: *source_span,
                     target: target_method,
                 });
@@ -10202,14 +10253,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .get(&class)
             .cloned()
             .unwrap_or_default();
-        for (name, span) in &bodies {
+        for (name, spans) in &bodies {
             let source = class
                 .clone()
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
             let instance_method = target.clone().with_property(name.clone());
             self.generator_body_targets
-                .push((*span, instance_method.clone()));
+                .extend(spans.iter().map(|span| (*span, instance_method.clone())));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
                 source,
                 source_span,
@@ -10232,11 +10283,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .get(&source)
             .cloned()
             .unwrap_or_default();
-        for (name, span) in &bodies {
+        for (name, spans) in &bodies {
             let source_method = source.clone().with_property(name.clone());
             let target_method = target.clone().with_property(name.clone());
             self.generator_body_targets
-                .push((*span, target_method.clone()));
+                .extend(spans.iter().map(|span| (*span, target_method.clone())));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
                 source: source_method,
                 source_span,
@@ -10259,7 +10310,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .get(&source)
             .cloned()
             .unwrap_or_default();
-        for (name, span) in &bodies {
+        for (name, spans) in &bodies {
             let source_method = source
                 .clone()
                 .with_property("prototype".to_string())
@@ -10269,7 +10320,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
             self.generator_body_targets
-                .push((*span, target_method.clone()));
+                .extend(spans.iter().map(|span| (*span, target_method.clone())));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
                 source: source_method,
                 source_span,

@@ -3847,6 +3847,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect();",
         ),
         (
+            "unadvanced replacement constructor generator alias capture",
+            "function* inspect() { values.forEach = null; } class Helper { constructor() { return { inspect }; } } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced replacement constructor chained generator alias capture",
+            "function* inspect() { values.forEach = null; } const run = inspect; class Helper { constructor() { return { inspect: run }; } } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
             "read-only class instance field",
             "class Helper { inspect = target => target.length; } const helper = new Helper();",
             "helper.inspect(values);",
@@ -4128,6 +4138,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "mixed replacement constructor generator instances",
             "class Helper { constructor() { return { mutate: function* () { values.forEach = null; } }; } } const first = new Helper(); const second = new Helper(); first.mutate();",
             "second.mutate().next();",
+        ),
+        (
+            "replacement constructor generator alias capture advance",
+            "function* mutate() { values.forEach = null; } class Helper { constructor() { return { mutate }; } } const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "replacement constructor generator alias parameter default",
+            "function* mutate(unused = (values.forEach = null)) {} class Helper { constructor() { return { mutate }; } } const helper = new Helper();",
+            "helper.mutate();",
         ),
         (
             "aliased class instance generator capture advance",
