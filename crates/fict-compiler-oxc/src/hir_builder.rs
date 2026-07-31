@@ -9788,7 +9788,61 @@ struct LocalCallableParameter {
     index: usize,
     symbol: SymbolId,
     properties: Vec<String>,
-    rest: bool,
+    source: LocalCallableParameterSource,
+}
+
+#[derive(Clone)]
+enum LocalCallableParameterSource {
+    Direct,
+    FormalRest,
+    ArrayRest { offset: usize },
+    ObjectRest { excluded: BTreeSet<String> },
+}
+
+impl LocalCallableParameter {
+    fn map_invalidation(&self, invalidated: &StaticAliasPath) -> Option<(usize, Vec<String>)> {
+        match &self.source {
+            LocalCallableParameterSource::Direct => {
+                let mut properties = self.properties.clone();
+                properties.extend(invalidated.properties.clone());
+                Some((self.index, properties))
+            }
+            LocalCallableParameterSource::FormalRest => {
+                let (offset, properties) = indexed_rest_invalidation(&invalidated.properties)?;
+                Some((self.index.checked_add(offset)?, properties.to_vec()))
+            }
+            LocalCallableParameterSource::ArrayRest { offset } => {
+                let (element, remaining) = indexed_rest_invalidation(&invalidated.properties)?;
+                let mut properties = self.properties.clone();
+                properties.push(offset.checked_add(element)?.to_string());
+                properties.extend_from_slice(remaining);
+                Some((self.index, properties))
+            }
+            LocalCallableParameterSource::ObjectRest { excluded } => {
+                let [property, remaining @ ..] = invalidated.properties.as_slice() else {
+                    return None;
+                };
+                if remaining.is_empty() || excluded.contains(property) {
+                    return None;
+                }
+                let mut properties = self.properties.clone();
+                properties.push(property.clone());
+                properties.extend_from_slice(remaining);
+                Some((self.index, properties))
+            }
+        }
+    }
+}
+
+fn indexed_rest_invalidation(properties: &[String]) -> Option<(usize, &[String])> {
+    let [index, remaining @ ..] = properties else {
+        return None;
+    };
+    if remaining.is_empty() {
+        return None;
+    }
+    let parsed = index.parse::<usize>().ok()?;
+    (parsed.to_string() == *index).then_some((parsed, remaining))
 }
 
 #[derive(Clone)]
@@ -9855,7 +9909,7 @@ impl StaticHookAliasCollector<'_> {
                         index,
                         symbol,
                         properties: properties.to_vec(),
-                        rest: false,
+                        source: LocalCallableParameterSource::Direct,
                     });
                 }
             }
@@ -9873,6 +9927,21 @@ impl StaticHookAliasCollector<'_> {
                         bindings,
                     );
                 }
+                if let Some(rest) = &object.rest {
+                    let excluded = object
+                        .properties
+                        .iter()
+                        .filter_map(|property| property.key.static_name())
+                        .map(|property| property.into_owned())
+                        .collect();
+                    Self::collect_local_callable_object_rest_bindings(
+                        &rest.argument,
+                        index,
+                        properties,
+                        excluded,
+                        bindings,
+                    );
+                }
             }
             BindingPattern::ArrayPattern(array) => {
                 for (element_index, element) in array.elements.iter().enumerate() {
@@ -9885,12 +9954,164 @@ impl StaticHookAliasCollector<'_> {
                         element, index, &nested, bindings,
                     );
                 }
+                if let Some(rest) = &array.rest {
+                    Self::collect_local_callable_array_rest_bindings(
+                        &rest.argument,
+                        index,
+                        properties,
+                        array.elements.len(),
+                        bindings,
+                    );
+                }
             }
             BindingPattern::AssignmentPattern(default) => {
                 Self::collect_local_callable_parameter_bindings(
                     &default.left,
                     index,
                     properties,
+                    bindings,
+                );
+            }
+        }
+    }
+
+    fn collect_local_callable_array_rest_bindings(
+        pattern: &BindingPattern<'_>,
+        index: usize,
+        properties: &[String],
+        offset: usize,
+        bindings: &mut Vec<LocalCallableParameter>,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                if let Some(symbol) = binding.symbol_id.get() {
+                    bindings.push(LocalCallableParameter {
+                        index,
+                        symbol,
+                        properties: properties.to_vec(),
+                        source: LocalCallableParameterSource::ArrayRest { offset },
+                    });
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for (element_offset, element) in array.elements.iter().enumerate() {
+                    let (Some(element), Some(element_index)) =
+                        (element, offset.checked_add(element_offset))
+                    else {
+                        continue;
+                    };
+                    let mut nested = properties.to_vec();
+                    nested.push(element_index.to_string());
+                    Self::collect_local_callable_parameter_bindings(
+                        element, index, &nested, bindings,
+                    );
+                }
+                if let Some(rest) = &array.rest
+                    && let Some(offset) = offset.checked_add(array.elements.len())
+                {
+                    Self::collect_local_callable_array_rest_bindings(
+                        &rest.argument,
+                        index,
+                        properties,
+                        offset,
+                        bindings,
+                    );
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    let Some(name) = property.key.static_name() else {
+                        continue;
+                    };
+                    let Ok(element_offset) = name.parse::<usize>() else {
+                        continue;
+                    };
+                    if element_offset.to_string() != name {
+                        continue;
+                    }
+                    let Some(element_index) = offset.checked_add(element_offset) else {
+                        continue;
+                    };
+                    let mut nested = properties.to_vec();
+                    nested.push(element_index.to_string());
+                    Self::collect_local_callable_parameter_bindings(
+                        &property.value,
+                        index,
+                        &nested,
+                        bindings,
+                    );
+                }
+            }
+            BindingPattern::AssignmentPattern(default) => {
+                Self::collect_local_callable_array_rest_bindings(
+                    &default.left,
+                    index,
+                    properties,
+                    offset,
+                    bindings,
+                );
+            }
+        }
+    }
+
+    fn collect_local_callable_object_rest_bindings(
+        pattern: &BindingPattern<'_>,
+        index: usize,
+        properties: &[String],
+        excluded: BTreeSet<String>,
+        bindings: &mut Vec<LocalCallableParameter>,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                if let Some(symbol) = binding.symbol_id.get() {
+                    bindings.push(LocalCallableParameter {
+                        index,
+                        symbol,
+                        properties: properties.to_vec(),
+                        source: LocalCallableParameterSource::ObjectRest { excluded },
+                    });
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    let Some(name) = property.key.static_name() else {
+                        continue;
+                    };
+                    if excluded.contains(name.as_ref()) {
+                        continue;
+                    }
+                    let mut nested = properties.to_vec();
+                    nested.push(name.into_owned());
+                    Self::collect_local_callable_parameter_bindings(
+                        &property.value,
+                        index,
+                        &nested,
+                        bindings,
+                    );
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for (element_index, element) in array.elements.iter().enumerate() {
+                    let Some(element) = element else {
+                        continue;
+                    };
+                    let property = element_index.to_string();
+                    if excluded.contains(&property) {
+                        continue;
+                    }
+                    let mut nested = properties.to_vec();
+                    nested.push(property);
+                    Self::collect_local_callable_parameter_bindings(
+                        element, index, &nested, bindings,
+                    );
+                }
+            }
+            BindingPattern::AssignmentPattern(default) => {
+                Self::collect_local_callable_object_rest_bindings(
+                    &default.left,
+                    index,
+                    properties,
+                    excluded,
                     bindings,
                 );
             }
@@ -9909,7 +10130,7 @@ impl StaticHookAliasCollector<'_> {
                         index: start,
                         symbol,
                         properties: Vec::new(),
-                        rest: true,
+                        source: LocalCallableParameterSource::FormalRest,
                     });
                 }
             }
@@ -10651,29 +10872,10 @@ impl StaticHookAliasCollector<'_> {
                             if invalidated.root != StaticAliasRoot::Binding(parameter.symbol) {
                                 continue;
                             }
-                            let (argument_index, properties) = if parameter.rest {
-                                let [offset_property, properties @ ..] =
-                                    invalidated.properties.as_slice()
-                                else {
-                                    continue;
-                                };
-                                if properties.is_empty() {
-                                    continue;
-                                }
-                                let Ok(offset) = offset_property.parse::<usize>() else {
-                                    continue;
-                                };
-                                if offset.to_string() != *offset_property {
-                                    continue;
-                                }
-                                let Some(index) = parameter.index.checked_add(offset) else {
-                                    continue;
-                                };
-                                (index, properties.to_vec())
-                            } else {
-                                let mut properties = parameter.properties.clone();
-                                properties.extend(invalidated.properties.clone());
-                                (parameter.index, properties)
+                            let Some((argument_index, properties)) =
+                                parameter.map_invalidation(invalidated)
+                            else {
+                                continue;
                             };
                             let Some(Some(invocation_argument)) =
                                 invocation.arguments.get(argument_index)

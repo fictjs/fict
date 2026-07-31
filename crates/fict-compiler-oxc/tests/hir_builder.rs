@@ -3684,6 +3684,127 @@ fn formal_rest_container_mutations_preserve_arguments() {
 }
 
 #[test]
+fn local_calls_propagate_nested_rest_value_invalidations() {
+    for (name, setup, helper) in [
+        (
+            "array pattern rest",
+            "const box = [null, values];",
+            "function mutate([head, ...tail]) { tail[0].forEach = null; }",
+        ),
+        (
+            "nested array pattern rest",
+            "const box = { items: [null, values] };",
+            "function mutate({ items: [head, ...tail] }) { tail[0].forEach = null; }",
+        ),
+        (
+            "object pattern rest",
+            "const box = { skip: null, target: values };",
+            "function mutate({ skip, ...rest }) { rest.target.forEach = null; }",
+        ),
+        (
+            "delegated object rest value",
+            "const box = { target: values };",
+            "function inner(target) { target.forEach = null; } function mutate({ ...rest }) { inner(rest.target); }",
+        ),
+        (
+            "reflective array rest value",
+            "const box = [values];",
+            "function mutate([...tail]) { Object.defineProperty(tail[0], 'forEach', { value: null }); }",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    mutate(box);
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn nested_rest_container_mutations_preserve_source_values() {
+    for (name, setup, helper) in [
+        (
+            "array rest slot replacement",
+            "const box = [values];",
+            "function mutate([...tail]) { tail[0] = []; }",
+        ),
+        (
+            "array rest container property",
+            "const box = [values];",
+            "function mutate([...tail]) { tail.forEach = null; }",
+        ),
+        (
+            "object rest property replacement",
+            "const box = { target: values };",
+            "function mutate({ ...rest }) { rest.target = []; }",
+        ),
+        (
+            "excluded object rest property",
+            "const box = { target: values };",
+            "function mutate({ target, ...rest }) { if (rest.target) rest.target.forEach = null; }",
+        ),
+        (
+            "sibling object rest value",
+            "const box = { other: [], safe: values };",
+            "function mutate({ ...rest }) { rest.other.forEach = null; }",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    mutate(box);
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
