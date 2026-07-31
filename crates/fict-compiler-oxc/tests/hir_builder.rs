@@ -5406,6 +5406,299 @@ fn pure_reflect_construct_invocations_preserve_receivers() {
 }
 
 #[test]
+fn bound_local_invocations_propagate_parameter_invalidations() {
+    for (name, setup, helper, invocation) in [
+        (
+            "unbound argument",
+            "",
+            "function mutate(target) { target.forEach = null; } const run = mutate.bind(null);",
+            "run(values);",
+        ),
+        (
+            "missing bound receiver",
+            "",
+            "function mutate(target) { target.forEach = null; } const run = mutate.bind();",
+            "run(values);",
+        ),
+        (
+            "prebound argument",
+            "",
+            "function mutate(target) { target.forEach = null; } const run = mutate.bind(null, values);",
+            "run();",
+        ),
+        (
+            "partially bound arguments",
+            "",
+            "function mutate(_prefix, target) { target.forEach = null; } const run = mutate.bind(null, 0);",
+            "run(values);",
+        ),
+        (
+            "spread bound arguments",
+            "const prefix = [0];",
+            "function mutate(_prefix, target) { target.forEach = null; } const run = mutate.bind(null, ...prefix);",
+            "run(values);",
+        ),
+        (
+            "bound Function.call",
+            "",
+            "function mutate(_prefix, target) { target.forEach = null; } const run = mutate.bind(null, 0);",
+            "run.call(null, values);",
+        ),
+        (
+            "bound Function.apply",
+            "",
+            "function mutate(_prefix, target) { target.forEach = null; } const run = mutate.bind(null, 0);",
+            "run.apply(null, [values]);",
+        ),
+        (
+            "bound Reflect.apply",
+            "",
+            "function mutate(_prefix, target) { target.forEach = null; } const run = mutate.bind(null, 0);",
+            "Reflect.apply(run, null, [values]);",
+        ),
+        (
+            "bound constructor",
+            "",
+            "class Mutate { constructor(_prefix, target) { target.forEach = null; } } const Bound = Mutate.bind(null, 0);",
+            "new Bound(values);",
+        ),
+        (
+            "inline bound function",
+            "",
+            "const run = (function (_prefix, target) { target.forEach = null; }).bind(null, 0);",
+            "run(values);",
+        ),
+        (
+            "aliased target",
+            "",
+            "function mutate(target) { target.forEach = null; } const alias = mutate; const run = alias.bind(null);",
+            "run(values);",
+        ),
+        (
+            "chained bind",
+            "",
+            "function mutate(_first, _second, target) { target.forEach = null; } const partial = mutate.bind(null, 0); const run = partial.bind(null, 1);",
+            "run(values);",
+        ),
+        (
+            "conditional bound callable",
+            "",
+            "function mutate(target) { target.forEach = null; } function inspect(target) { return target.length; } const run = choose ? mutate.bind(null, values) : inspect.bind(null, values);",
+            "run();",
+        ),
+        (
+            "conditional bound assignment",
+            "",
+            "function mutate(target) { target.forEach = null; } function inspect(target) { return target.length; } let run; if (choose) { run = mutate.bind(null, values); } else { run = inspect.bind(null, values); }",
+            "run();",
+        ),
+        (
+            "external bound target",
+            "",
+            "const run = External.bind(null);",
+            "run(values);",
+        ),
+        (
+            "external bound Function.call",
+            "",
+            "const run = External.bind(null);",
+            "run.call(null, values);",
+        ),
+        (
+            "external bound Function.apply",
+            "",
+            "const run = External.bind(null);",
+            "run.apply(null, [values]);",
+        ),
+        (
+            "external bound Reflect.apply",
+            "",
+            "const run = External.bind(null);",
+            "Reflect.apply(run, null, [values]);",
+        ),
+        (
+            "external bound constructor argument",
+            "",
+            "const Bound = External.bind(null);",
+            "new Bound(values);",
+        ),
+        (
+            "external bound Reflect.construct argument",
+            "",
+            "const Bound = External.bind(null);",
+            "Reflect.construct(Bound, [values]);",
+        ),
+        (
+            "external missing bound receiver",
+            "",
+            "const run = External.bind();",
+            "run(values);",
+        ),
+        (
+            "external prebound argument",
+            "",
+            "const run = External.bind(null, values);",
+            "run();",
+        ),
+        (
+            "external bound receiver",
+            "",
+            "const run = External.bind(values);",
+            "run();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(External, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn pure_bound_local_invocations_preserve_receivers() {
+    for (name, setup, helper, invocation) in [
+        (
+            "read-only target",
+            "",
+            "function inspect(target) { return target.length; } const run = inspect.bind(null);",
+            "run(values);",
+        ),
+        (
+            "detached target",
+            "",
+            "function inspect(target) { target = {}; target.forEach = null; } const run = inspect.bind(null);",
+            "run(values);",
+        ),
+        (
+            "uninvoked prebound argument",
+            "",
+            "function mutate(target) { target.forEach = null; } const run = mutate.bind(null, values);",
+            "void run;",
+        ),
+        (
+            "unrelated prebound argument",
+            "const other = [];",
+            "function mutate(target) { target.forEach = null; } const run = mutate.bind(null, other);",
+            "run();",
+        ),
+        (
+            "overridden bind property",
+            "",
+            "function mutate(target) { target.forEach = null; } mutate.bind = function (_this, target) { return () => target.length; }; const run = mutate.bind(null, values);",
+            "run();",
+        ),
+        (
+            "correlated conditional alternatives",
+            "const other = [];",
+            "function mutate(target) { target.forEach = null; } function inspect(target) { return target.length; } const run = choose ? mutate.bind(null, other) : inspect.bind(null, values);",
+            "run();",
+        ),
+        (
+            "uninvoked deferred replacement",
+            "",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run = inspect.bind(null); function replace() { run = mutate.bind(null); }",
+            "run(values);",
+        ),
+        (
+            "safe builtin target",
+            "",
+            "const run = Array.isArray.bind(null);",
+            "run(values);",
+        ),
+        (
+            "uninvoked external prebound argument",
+            "",
+            "const run = External.bind(null, values);",
+            "void run;",
+        ),
+        (
+            "external bound receiver ignored by construction",
+            "",
+            "const Bound = External.bind(values);",
+            "new Bound();",
+        ),
+        (
+            "call receiver ignored by external bound target",
+            "const other = [];",
+            "const run = External.bind(other);",
+            "run.call(values);",
+        ),
+        (
+            "apply receiver ignored by external bound target",
+            "const other = [];",
+            "const run = External.bind(other);",
+            "run.apply(values, []);",
+        ),
+        (
+            "Reflect.apply receiver ignored by external bound target",
+            "const other = [];",
+            "const run = External.bind(other);",
+            "Reflect.apply(run, values, []);",
+        ),
+        (
+            "Reflect.construct ignores external bound receiver",
+            "",
+            "const Bound = External.bind(values);",
+            "Reflect.construct(Bound, []);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(External, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_spread_invocations_propagate_parameter_invalidations() {
     for (name, setup, helper, invocation) in [
         (
