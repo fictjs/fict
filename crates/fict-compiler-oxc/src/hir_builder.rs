@@ -11303,6 +11303,33 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn inline_function_indirection_exposures(
+        &self,
+        callee: &Expression<'_>,
+        expected_method: &str,
+    ) -> Option<BTreeSet<StaticAliasPath>> {
+        if !self.path_is_currently_intact(
+            &StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string())
+                .with_property(expected_method.to_string()),
+        ) {
+            return None;
+        }
+        let (object, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        if method != expected_method {
+            return None;
+        }
+        self.returned_function_paths(object)
+    }
+
     fn intact_function_call_target(
         &self,
         raw_callee: &StaticAliasPath,
@@ -11970,6 +11997,7 @@ impl StaticHookAliasCollector<'_> {
             .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
             .unwrap_or_default();
         let mut alternatives = Vec::new();
+        let mut exposures = BTreeSet::new();
         let mut historical = false;
         if let Some(raw_callee) = static_alias_source_path(self.scoping, &call.callee) {
             let resolved_callee = resolve_static_alias_path(&self.aliases, &raw_callee);
@@ -11991,6 +12019,14 @@ impl StaticHookAliasCollector<'_> {
                 BTreeSet::from([source])
             };
             for source in sources {
+                let source_exposures = if historical {
+                    self.callable_exposure_history.get(&source)
+                } else {
+                    self.callable_exposures.get(&source)
+                };
+                if let Some(source_exposures) = source_exposures {
+                    exposures.extend(source_exposures.iter().cloned());
+                }
                 if historical {
                     if let Some(bound) = self.local_bound_callable_history.get(&source) {
                         alternatives.extend(bound.iter().cloned());
@@ -12028,9 +12064,13 @@ impl StaticHookAliasCollector<'_> {
                     });
                 }
             }
-        } else if let Some(parameters) =
-            self.inline_function_indirection_parameters(&call.callee, "bind")
+        } else if let Some(inline_exposures) =
+            self.inline_function_indirection_exposures(&call.callee, "bind")
         {
+            let parameters = self
+                .inline_function_indirection_parameters(&call.callee, "bind")
+                .unwrap_or_default();
+            exposures.extend(inline_exposures);
             alternatives.push(LocalBoundCallable {
                 parameters,
                 arguments: Vec::new(),
@@ -12046,6 +12086,13 @@ impl StaticHookAliasCollector<'_> {
         for mut alternative in alternatives {
             alternative.arguments.extend(added_arguments.clone());
             self.record_local_bound_callable(target.clone(), alternative);
+        }
+        if !exposures.is_empty() {
+            self.callable_exposure_history
+                .entry(target.clone())
+                .or_default()
+                .extend(exposures.iter().cloned());
+            self.callable_exposures.insert(target.clone(), exposures);
         }
         if historical {
             self.mark_alias_target_ambiguous(target);

@@ -5699,6 +5699,140 @@ fn pure_bound_local_invocations_preserve_receivers() {
 }
 
 #[test]
+fn bound_callable_exposures_invalidate_returned_values() {
+    for (name, setup, exposure) in [
+        (
+            "direct bound callable",
+            "const expose = () => values; const bound = expose.bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "inline bound callable",
+            "const bound = (() => values).bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "inline bound generator",
+            "const bound = (function* () { yield values; }).bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "aliased bound target",
+            "const expose = () => values; const alias = expose; const bound = alias.bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "chained bound callable",
+            "const expose = () => values; const partial = expose.bind(null); const bound = partial.bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "conditional bound callable",
+            "const expose = () => values; const hidden = () => []; const bound = choose ? expose.bind(null) : hidden.bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "conditional bound target",
+            "const expose = () => values; const hidden = () => []; const target = choose ? expose : hidden; const bound = target.bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "bound callable object spread",
+            "const expose = () => values; const source = { bound: expose.bind(null) }; const wrapper = { ...source };",
+            "configure(wrapper.bound);",
+        ),
+        (
+            "bound callable array spread",
+            "const expose = () => values; const source = [expose.bind(null)]; const wrapper = [...source];",
+            "configure(wrapper[0]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {exposure}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn hidden_bound_callable_exposures_preserve_values() {
+    for (name, setup, exposure) in [
+        (
+            "unexposed bound callable",
+            "const expose = () => values; const bound = expose.bind(null);",
+            "void bound;",
+        ),
+        (
+            "unrelated returned value",
+            "const other = []; const expose = () => other; const bound = expose.bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "overridden bind property",
+            "const expose = () => values; expose.bind = () => () => []; const bound = expose.bind(null);",
+            "configure(bound);",
+        ),
+        (
+            "later hidden bound callable",
+            "const expose = () => values; const hidden = () => []; let bound = expose.bind(null); bound = hidden.bind(null);",
+            "configure(bound);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {exposure}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_spread_invocations_propagate_parameter_invalidations() {
     for (name, setup, helper, invocation) in [
         (
