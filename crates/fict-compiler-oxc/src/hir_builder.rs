@@ -9937,11 +9937,25 @@ struct LocalInvocationArgument {
     resolved: StaticAliasPath,
     parameter_attached: bool,
     coarse: bool,
+    source_prefix: Vec<String>,
+}
+
+impl LocalInvocationArgument {
+    fn map_properties(&self, properties: &[String], slot: bool) -> Option<Vec<String>> {
+        if self.coarse {
+            return Some(Vec::new());
+        }
+        let remaining = properties.strip_prefix(self.source_prefix.as_slice())?;
+        if slot && !self.source_prefix.is_empty() && remaining.is_empty() {
+            return None;
+        }
+        Some(remaining.to_vec())
+    }
 }
 
 #[derive(Clone)]
 enum LocalInvocationArgumentSegment {
-    Fixed(Option<LocalInvocationArgument>),
+    Fixed(Vec<LocalInvocationArgument>),
     Spread {
         indexed: BTreeMap<usize, LocalInvocationArgument>,
         ambiguous: Vec<LocalInvocationArgument>,
@@ -9969,11 +9983,9 @@ impl LocalInvocationFact {
         let mut matches = Vec::new();
         for segment in &self.arguments {
             match segment {
-                LocalInvocationArgumentSegment::Fixed(argument) => {
-                    if ((!uncertain && target == position) || (uncertain && target >= position))
-                        && let Some(argument) = argument
-                    {
-                        matches.push(argument);
+                LocalInvocationArgumentSegment::Fixed(arguments) => {
+                    if (!uncertain && target == position) || (uncertain && target >= position) {
+                        matches.extend(arguments);
                     }
                     position = position.saturating_add(1);
                 }
@@ -10004,8 +10016,7 @@ impl LocalInvocationFact {
         let mut arguments = Vec::new();
         for segment in &self.arguments {
             match segment {
-                LocalInvocationArgumentSegment::Fixed(Some(argument)) => arguments.push(argument),
-                LocalInvocationArgumentSegment::Fixed(None) => {}
+                LocalInvocationArgumentSegment::Fixed(fixed) => arguments.extend(fixed),
                 LocalInvocationArgumentSegment::Spread {
                     indexed, ambiguous, ..
                 } => {
@@ -10103,7 +10114,7 @@ impl StaticHookAliasCollector<'_> {
         for argument in arguments {
             if let Some(argument) = argument.as_expression() {
                 collected.push(LocalInvocationArgumentSegment::Fixed(
-                    self.collect_local_invocation_argument(argument),
+                    self.collect_local_invocation_value_arguments(argument),
                 ));
             } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
                 if let Some(arguments) =
@@ -10118,22 +10129,23 @@ impl StaticHookAliasCollector<'_> {
         collected
     }
 
-    fn collect_local_invocation_argument(
-        &self,
-        argument: &Expression<'_>,
-    ) -> Option<LocalInvocationArgument> {
-        let raw = self.alias_source_path(argument)?;
-        Some(self.collect_local_invocation_path(raw))
-    }
-
     fn collect_local_invocation_path(&self, raw: StaticAliasPath) -> LocalInvocationArgument {
-        self.collect_local_invocation_path_with_precision(raw, false)
+        self.collect_local_invocation_path_with_source(raw, false, Vec::new())
     }
 
     fn collect_local_invocation_path_with_precision(
         &self,
+        raw: StaticAliasPath,
+        coarse: bool,
+    ) -> LocalInvocationArgument {
+        self.collect_local_invocation_path_with_source(raw, coarse, Vec::new())
+    }
+
+    fn collect_local_invocation_path_with_source(
+        &self,
         mut raw: StaticAliasPath,
         coarse: bool,
+        source_prefix: Vec<String>,
     ) -> LocalInvocationArgument {
         if coarse {
             raw = raw.with_element_wildcard();
@@ -10144,6 +10156,119 @@ impl StaticHookAliasCollector<'_> {
             resolved,
             raw,
             coarse,
+            source_prefix,
+        }
+    }
+
+    fn collect_local_invocation_value_arguments(
+        &self,
+        argument: &Expression<'_>,
+    ) -> Vec<LocalInvocationArgument> {
+        let mut arguments = Vec::new();
+        self.collect_local_invocation_value_sources(argument, &[], &mut arguments);
+        arguments
+    }
+
+    fn collect_local_invocation_value_sources(
+        &self,
+        value: &Expression<'_>,
+        prefix: &[String],
+        arguments: &mut Vec<LocalInvocationArgument>,
+    ) {
+        if let Some(raw) = self.alias_source_path(value) {
+            arguments.push(self.collect_local_invocation_path_with_source(
+                raw,
+                false,
+                prefix.to_vec(),
+            ));
+            return;
+        }
+        match value.get_inner_expression() {
+            Expression::ObjectExpression(object) => {
+                let mut object_arguments = Vec::new();
+                for property in &object.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        object_arguments.retain(|argument: &LocalInvocationArgument| {
+                            !argument.source_prefix.starts_with(prefix)
+                        });
+                        continue;
+                    };
+                    let Some(name) = property.key.static_name() else {
+                        object_arguments.retain(|argument: &LocalInvocationArgument| {
+                            !argument.source_prefix.starts_with(prefix)
+                        });
+                        continue;
+                    };
+                    let mut property_prefix = prefix.to_vec();
+                    property_prefix.push(name.into_owned());
+                    object_arguments
+                        .retain(|argument| !argument.source_prefix.starts_with(&property_prefix));
+                    if property.kind == PropertyKind::Init && !property.method {
+                        self.collect_local_invocation_value_sources(
+                            &property.value,
+                            &property_prefix,
+                            &mut object_arguments,
+                        );
+                    }
+                }
+                arguments.extend(object_arguments);
+            }
+            Expression::ArrayExpression(array) => {
+                let mut array_arguments = Vec::new();
+                for (index, element) in array.elements.iter().enumerate() {
+                    if matches!(element, ArrayExpressionElement::SpreadElement(_)) {
+                        break;
+                    }
+                    let mut element_prefix = prefix.to_vec();
+                    element_prefix.push(index.to_string());
+                    array_arguments.retain(|argument: &LocalInvocationArgument| {
+                        !argument.source_prefix.starts_with(&element_prefix)
+                    });
+                    if !matches!(element, ArrayExpressionElement::Elision(_)) {
+                        self.collect_local_invocation_value_sources(
+                            element.to_expression(),
+                            &element_prefix,
+                            &mut array_arguments,
+                        );
+                    }
+                }
+                arguments.extend(array_arguments);
+            }
+            Expression::ConditionalExpression(expression) => {
+                let mut consequent = Vec::new();
+                self.collect_local_invocation_value_sources(
+                    &expression.consequent,
+                    prefix,
+                    &mut consequent,
+                );
+                let mut alternate = Vec::new();
+                self.collect_local_invocation_value_sources(
+                    &expression.alternate,
+                    prefix,
+                    &mut alternate,
+                );
+                arguments.extend(consequent);
+                arguments.extend(alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut left = Vec::new();
+                self.collect_local_invocation_value_sources(&expression.left, prefix, &mut left);
+                let mut right = Vec::new();
+                self.collect_local_invocation_value_sources(&expression.right, prefix, &mut right);
+                arguments.extend(left);
+                arguments.extend(right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_local_invocation_value_sources(value, prefix, arguments);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_local_invocation_value_sources(&expression.right, prefix, arguments);
+            }
+            _ => {}
         }
     }
 
@@ -10155,14 +10280,14 @@ impl StaticHookAliasCollector<'_> {
         for element in &array.elements {
             match element {
                 ArrayExpressionElement::Elision(_) => {
-                    arguments.push(LocalInvocationArgumentSegment::Fixed(None));
+                    arguments.push(LocalInvocationArgumentSegment::Fixed(Vec::new()));
                 }
                 ArrayExpressionElement::SpreadElement(spread) => {
                     arguments
                         .extend(self.collect_exact_spread_invocation_arguments(&spread.argument)?);
                 }
                 element => arguments.push(LocalInvocationArgumentSegment::Fixed(
-                    self.collect_local_invocation_argument(element.to_expression()),
+                    self.collect_local_invocation_value_arguments(element.to_expression()),
                 )),
             }
         }
@@ -11462,6 +11587,11 @@ impl StaticHookAliasCollector<'_> {
                             for invocation_argument in
                                 invocation.arguments_for_parameter(argument_index)
                             {
+                                let Some(mapped_properties) =
+                                    invocation_argument.map_properties(&properties, *slot)
+                                else {
+                                    continue;
+                                };
                                 let arguments = if self.path_requires_historical_aliases(
                                     &invocation_argument.raw,
                                     invocation.function_depth,
@@ -11475,9 +11605,7 @@ impl StaticHookAliasCollector<'_> {
                                 };
                                 for argument_path in &arguments {
                                     let mut mapped = argument_path.clone();
-                                    if !invocation_argument.coarse {
-                                        mapped.properties.extend(properties.clone());
-                                    }
+                                    mapped.properties.extend(mapped_properties.clone());
                                     additions
                                         .entry(mapped.canonicalized())
                                         .and_modify(|(attached, slot_only)| {
@@ -11948,9 +12076,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
         let mut local_arguments = Vec::with_capacity(expression.quasi.expressions.len() + 1);
-        local_arguments.push(LocalInvocationArgumentSegment::Fixed(None));
+        local_arguments.push(LocalInvocationArgumentSegment::Fixed(Vec::new()));
         local_arguments.extend(expression.quasi.expressions.iter().map(|argument| {
-            LocalInvocationArgumentSegment::Fixed(self.collect_local_invocation_argument(argument))
+            LocalInvocationArgumentSegment::Fixed(
+                self.collect_local_invocation_value_arguments(argument),
+            )
         }));
         let local_invocation =
             self.local_invocation_fact_from_arguments(&expression.tag, local_arguments);

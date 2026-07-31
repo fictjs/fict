@@ -3563,6 +3563,155 @@ fn alias_slot_nested_mutations_still_invalidate_receivers() {
 }
 
 #[test]
+fn inline_structured_invocations_propagate_nested_invalidations() {
+    for (name, helper, invocation) in [
+        (
+            "object destructuring",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ target: values });",
+        ),
+        (
+            "array destructuring",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate([values]);",
+        ),
+        (
+            "nested destructuring",
+            "function mutate({ payload: [target] }) { target.forEach = null; }",
+            "mutate({ payload: [values] });",
+        ),
+        (
+            "direct wrapper access",
+            "function mutate(wrapper) { wrapper.target.forEach = null; }",
+            "mutate({ target: values });",
+        ),
+        (
+            "nested external exposure",
+            "function expose(wrapper) { external(wrapper.target); }",
+            "expose({ target: values });",
+        ),
+        (
+            "nested reflective mutation",
+            "function mutate(wrapper) { Object.assign(wrapper.target, { forEach: null }); }",
+            "mutate({ target: values });",
+        ),
+        (
+            "conditional object",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate(true ? { target: values } : { target: [] });",
+        ),
+        (
+            "inline function",
+            "",
+            "(({ target }) => { target.forEach = null; })({ target: values });",
+        ),
+        (
+            "constructor",
+            "class Mutate { constructor({ target }) { target.forEach = null; } }",
+            "new Mutate({ target: values });",
+        ),
+        (
+            "Function.call",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate.call(null, { target: values });",
+        ),
+        (
+            "Function.apply",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate.apply(null, [{ target: values }]);",
+        ),
+        (
+            "template tag",
+            "function mutate(_strings, { target }) { target.forEach = null; }",
+            "mutate`${{ target: values }}`;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn inline_structured_invocations_preserve_detached_and_sibling_values() {
+    for (name, helper, invocation) in [
+        (
+            "property replacement",
+            "function replace(wrapper) { wrapper.target = []; }",
+            "replace({ target: values });",
+        ),
+        (
+            "sibling mutation",
+            "function mutate(wrapper) { wrapper.other.forEach = null; }",
+            "mutate({ target: values, other: [] });",
+        ),
+        (
+            "later duplicate property",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ target: values, target: [] });",
+        ),
+        (
+            "fresh array container",
+            "function mutate(wrapper) { wrapper.forEach = null; }",
+            "mutate([values]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_calls_propagate_destructured_parameter_invalidations() {
     for (name, setup, helper) in [
         (
