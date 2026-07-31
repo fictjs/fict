@@ -9957,11 +9957,92 @@ impl StaticHookAliasCollector<'_> {
         argument: &Expression<'_>,
     ) -> Option<LocalInvocationArgument> {
         let raw = self.alias_source_path(argument)?;
+        Some(self.collect_local_invocation_path(raw))
+    }
+
+    fn collect_local_invocation_path(&self, raw: StaticAliasPath) -> LocalInvocationArgument {
         let resolved = resolve_static_alias_path(&self.aliases, &raw);
-        Some(LocalInvocationArgument {
+        LocalInvocationArgument {
             parameter_attached: self.attached_parameter_path(&raw, &resolved).is_some(),
             resolved,
             raw,
+        }
+    }
+
+    fn collect_apply_invocation_arguments(
+        &self,
+        argument_list: &Expression<'_>,
+    ) -> Option<Vec<Option<LocalInvocationArgument>>> {
+        if let Expression::ArrayExpression(array) = argument_list.get_inner_expression() {
+            return array
+                .elements
+                .iter()
+                .map(|element| match element {
+                    ArrayExpressionElement::Elision(_) => Some(None),
+                    ArrayExpressionElement::SpreadElement(_) => None,
+                    element => {
+                        Some(self.collect_local_invocation_argument(element.to_expression()))
+                    }
+                })
+                .collect();
+        }
+        let raw = self.alias_source_path(argument_list)?;
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        let mut indices = BTreeSet::new();
+        for target in self.aliases.keys() {
+            for base in [&raw, &resolved] {
+                if !target.starts_with(base) || target.properties.len() <= base.properties.len() {
+                    continue;
+                }
+                let property = &target.properties[base.properties.len()];
+                let Ok(index) = property.parse::<usize>() else {
+                    continue;
+                };
+                if index.to_string() == *property {
+                    indices.insert(index);
+                }
+            }
+        }
+        let length = indices.last().copied()?.checked_add(1)?;
+        if length > 4096 {
+            return None;
+        }
+        Some(
+            (0..length)
+                .map(|index| {
+                    indices.contains(&index).then(|| {
+                        self.collect_local_invocation_path(raw.with_property(index.to_string()))
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn local_apply_invocation_fact(
+        &self,
+        callee: &Expression<'_>,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) -> Option<LocalInvocationFact> {
+        let argument_list = arguments.get(1)?.as_expression()?;
+        let arguments = self.collect_apply_invocation_arguments(argument_list)?;
+        if let Some(raw_callee) = static_alias_source_path(self.scoping, callee) {
+            let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
+            let (raw_target, target) = self.intact_function_apply_target(&raw_callee, &callee)?;
+            return Some(LocalInvocationFact {
+                parameters: self.local_callable_parameters.get(&target).cloned(),
+                arguments,
+                raw_callee: Some(raw_target),
+                callee: Some(target),
+                function_depth: self.function_depth,
+            });
+        }
+        let parameters = self.inline_function_indirection_parameters(callee, "apply")?;
+        Some(LocalInvocationFact {
+            parameters: Some(parameters),
+            arguments,
+            raw_callee: None,
+            callee: None,
+            function_depth: self.function_depth,
         })
     }
 
@@ -9970,7 +10051,7 @@ impl StaticHookAliasCollector<'_> {
         callee: &Expression<'_>,
         arguments: Vec<Option<LocalInvocationArgument>>,
     ) -> Option<LocalInvocationFact> {
-        if let Some(parameters) = self.inline_function_call_parameters(callee) {
+        if let Some(parameters) = self.inline_function_indirection_parameters(callee, "call") {
             return Some(LocalInvocationFact {
                 parameters: Some(parameters),
                 arguments: arguments.into_iter().skip(1).collect(),
@@ -10012,14 +10093,15 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
-    fn inline_function_call_parameters(
+    fn inline_function_indirection_parameters(
         &self,
         callee: &Expression<'_>,
+        expected_method: &str,
     ) -> Option<Vec<LocalCallableParameter>> {
         if !self.path_is_currently_intact(
             &StaticAliasPath::unresolved_global("Function".to_string())
                 .with_property("prototype".to_string())
-                .with_property("call".to_string()),
+                .with_property(expected_method.to_string()),
         ) {
             return None;
         }
@@ -10032,7 +10114,7 @@ impl StaticHookAliasCollector<'_> {
             }
             _ => return None,
         };
-        if method != "call" {
+        if method != expected_method {
             return None;
         }
         match unwrap_transparent_call_expression(object) {
@@ -10075,11 +10157,43 @@ impl StaticHookAliasCollector<'_> {
         Some((raw_target, target))
     }
 
+    fn intact_function_apply_target(
+        &self,
+        raw_callee: &StaticAliasPath,
+        callee: &StaticAliasPath,
+    ) -> Option<(StaticAliasPath, StaticAliasPath)> {
+        if raw_callee
+            .properties
+            .last()
+            .is_none_or(|method| method != "apply")
+            || callee
+                .properties
+                .last()
+                .is_none_or(|method| method != "apply")
+            || !self.path_is_currently_intact(raw_callee)
+            || !self.path_is_currently_intact(
+                &StaticAliasPath::unresolved_global("Function".to_string())
+                    .with_property("prototype".to_string())
+                    .with_property("apply".to_string()),
+            )
+        {
+            return None;
+        }
+        let mut raw_target = raw_callee.clone();
+        raw_target.properties.pop();
+        let mut target = callee.clone();
+        target.properties.pop();
+        Some((raw_target, target))
+    }
+
     fn local_invocation_fact(
         &self,
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
     ) -> Option<LocalInvocationFact> {
+        if let Some(invocation) = self.local_apply_invocation_fact(callee, arguments) {
+            return Some(invocation);
+        }
         self.local_invocation_fact_from_arguments(
             callee,
             self.collect_local_invocation_arguments(arguments),
