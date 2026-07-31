@@ -3637,6 +3637,26 @@ fn pure_local_calls_preserve_receiver_methods() {
             "run();",
         ),
         (
+            "unadvanced assigned generator capture",
+            "function* inspect() { values.forEach = null; } let run; run = inspect;",
+            "run();",
+        ),
+        (
+            "unadvanced assigned generator expression capture",
+            "let run; run = function* () { values.forEach = null; };",
+            "run();",
+        ),
+        (
+            "unadvanced assigned generator member capture",
+            "function* inspect() { values.forEach = null; } const holder = {}; holder.run = inspect;",
+            "holder.run();",
+        ),
+        (
+            "unadvanced directly invoked generator assignment",
+            "function* inspect() { values.forEach = null; } let run;",
+            "(run = inspect)();",
+        ),
+        (
             "unadvanced conditional generator capture",
             "function* inspectA() { values.forEach = null; } function* inspectB() { values.forEach = null; } const run = choose ? inspectA : inspectB;",
             "run();",
@@ -3902,6 +3922,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect();",
         ),
         (
+            "unadvanced assigned generator instance alias capture",
+            "class Helper { *inspect() { values.forEach = null; } } const helper = new Helper(); let alias; alias = helper;",
+            "alias.inspect();",
+        ),
+        (
+            "unadvanced assigned class constructor generator capture",
+            "class Helper { *inspect() { values.forEach = null; } } let Alias; Alias = Helper; const helper = new Alias();",
+            "helper.inspect();",
+        ),
+        (
             "unadvanced chained class constructor alias capture",
             "class Helper { *inspect() { values.forEach = null; } } const First = Helper; const Second = First;",
             "new Second().inspect();",
@@ -4005,6 +4035,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "(iterator = mutate(), 0); iterator.next();",
         ),
         (
+            "assigned generator alias advance",
+            "function* mutate() { values.forEach = null; } let run; run = mutate;",
+            "run().next();",
+        ),
+        (
+            "directly invoked generator assignment advance",
+            "function* mutate() { values.forEach = null; } let run;",
+            "(run = mutate)().next();",
+        ),
+        (
+            "assigned generator member advance",
+            "function* mutate() { values.forEach = null; } const holder = {}; holder.run = mutate;",
+            "holder.run().next();",
+        ),
+        (
             "generator parameter default",
             "function* mutate(unused = (values.forEach = null)) {}",
             "mutate();",
@@ -4078,6 +4123,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "mixed original and aliased class constructors",
             "class Helper { *mutate() { values.forEach = null; } } const Alias = Helper; const first = new Helper(); const second = new Alias(); first.mutate();",
             "second.mutate().next();",
+        ),
+        (
+            "assigned generator instance alias advance",
+            "class Helper { *mutate() { values.forEach = null; } } const helper = new Helper(); let alias; alias = helper;",
+            "alias.mutate().next();",
+        ),
+        (
+            "assigned class constructor generator advance",
+            "class Helper { *mutate() { values.forEach = null; } } let Alias; Alias = Helper; const helper = new Alias();",
+            "helper.mutate().next();",
         ),
     ] {
         let source = format!(

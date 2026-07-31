@@ -9902,6 +9902,7 @@ struct ForwardedCallableRead {
 struct GeneratorExecutionCollector<'semantic> {
     scoping: &'semantic Scoping,
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    direct_callable_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     discarded_invocation_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
@@ -9917,6 +9918,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         Self {
             scoping,
             binding_reads: BTreeMap::new(),
+            direct_callable_reads: BTreeMap::new(),
             discarded_invocation_reads: BTreeMap::new(),
             forwarded_callable_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
@@ -9951,6 +9953,42 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 Self::root_identifier_span(&member.object)
             }
             _ => None,
+        }
+    }
+
+    fn assignment_target_path(
+        &self,
+        assignment: &AssignmentExpression<'_>,
+    ) -> Option<StaticAliasPath> {
+        if assignment.operator != OxcAssignmentOperator::Assign {
+            return None;
+        }
+        planned_assignment_target_place(self.scoping, &assignment.left)
+            .as_ref()
+            .and_then(static_alias_invalidation_path)
+    }
+
+    fn assignment_callable_target(&self, callee: &Expression<'_>) -> Option<StaticAliasPath> {
+        let Expression::AssignmentExpression(assignment) = callee.get_inner_expression() else {
+            return None;
+        };
+        self.assignment_target_path(assignment)
+    }
+
+    fn record_assignment_callable_read(&mut self, call: &CallExpression<'_>, discarded: bool) {
+        let Some(target) = self.assignment_callable_target(&call.callee) else {
+            return;
+        };
+        let span = (call.span.start, call.span.end);
+        self.direct_callable_reads
+            .entry(target.clone())
+            .or_default()
+            .insert(span);
+        if discarded {
+            self.discarded_invocation_reads
+                .entry(target)
+                .or_default()
+                .insert(span);
         }
     }
 
@@ -10214,6 +10252,20 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.class_instance_generator_bodies.insert(target, bodies);
     }
 
+    fn record_callable_initializer(
+        &mut self,
+        target: StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        self.record_forwarded_callable(target.clone(), initializer);
+        if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
+            self.record_constructed_class_generator_bodies(target, expression);
+        } else {
+            self.record_forwarded_class_generator_bodies(target.clone(), initializer);
+            self.record_forwarded_instance_generator_bodies(target, initializer);
+        }
+    }
+
     fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
         if let Some((path, span)) = self.callable_reference(expression) {
             self.discarded_invocation_reads
@@ -10275,6 +10327,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Expression::CallExpression(call) => {
                 self.discarded_invocation_spans
                     .insert((call.span.start, call.span.end));
+                self.record_assignment_callable_read(call, true);
                 self.record_nonexecuting_callable(&call.callee);
             }
             Expression::TaggedTemplateExpression(tagged) => {
@@ -10289,6 +10342,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 if let ChainElement::CallExpression(call) = &chain.expression {
                     self.discarded_invocation_spans
                         .insert((call.span.start, call.span.end));
+                    self.record_assignment_callable_read(call, true);
                     self.record_nonexecuting_callable(&call.callee);
                 }
             }
@@ -10412,6 +10466,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .get(&root)
                     .into_iter()
                     .flatten()
+                    .chain(self.direct_callable_reads.get(path).into_iter().flatten())
                     .all(|span| {
                         discarded.is_some_and(|discarded| discarded.contains(span))
                             || self.forwarded_callable_reads.iter().any(|forwarding| {
@@ -10468,13 +10523,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
             && let Some(target_symbol) = binding.symbol_id.get()
         {
             let target = StaticAliasPath::root(target_symbol);
-            self.record_forwarded_callable(target.clone(), initializer);
-            if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
-                self.record_constructed_class_generator_bodies(target, expression);
-            } else {
-                self.record_forwarded_class_generator_bodies(target.clone(), initializer);
-                self.record_forwarded_instance_generator_bodies(target, initializer);
-            }
+            self.record_callable_initializer(target, initializer);
             if !self
                 .scoping
                 .get_resolved_references(target_symbol)
@@ -10484,6 +10533,27 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
             }
         }
         walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if assignment.operator == OxcAssignmentOperator::Assign
+            && let Some(place) = planned_assignment_target_place(self.scoping, &assignment.left)
+            && let Some(target) = static_alias_invalidation_path(&place)
+        {
+            if let Some(span) = place.root_reference_span {
+                self.discarded_invocation_reads
+                    .entry(target.clone())
+                    .or_default()
+                    .insert((span.start(), span.end()));
+            }
+            self.record_callable_initializer(target, &assignment.right);
+        }
+        oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.record_assignment_callable_read(call, false);
+        walk_call_expression(self, call);
     }
 
     fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
