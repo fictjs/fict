@@ -3917,6 +3917,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect();",
         ),
         (
+            "unadvanced replacement constructor conditional generator capture",
+            "function* inspectA() { values.forEach = null; } function* inspectB() { values.forEach = null; } class Helper { constructor(choose) { return { inspect: choose ? inspectA : inspectB }; } } const helper = new Helper(true);",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced replacement constructor conditional bound generator capture",
+            "function* inspectA() { values.forEach = null; } function* inspectB() { values.forEach = null; } class Helper { constructor(choose) { return { inspect: choose ? inspectA.bind(null) : inspectB.bind(null) }; } } const helper = new Helper(true);",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced replacement constructor logical generator capture",
+            "function* inspectA() { values.forEach = null; } function* inspectB() { values.forEach = null; } class Helper { constructor() { return { inspect: inspectA || inspectB }; } } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
             "read-only class instance field",
             "class Helper { inspect = target => target.length; } const helper = new Helper();",
             "helper.inspect(values);",
@@ -4232,6 +4247,11 @@ fn observed_generator_iterators_propagate_local_effects() {
         (
             "replacement constructor inline bound generator capture advance",
             "class Helper { constructor() { return { mutate: (function* () { values.forEach = null; }).bind(null) }; } } const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "replacement constructor conditional generator capture advance",
+            "function* mutateA() { values.forEach = null; } function* mutateB() { values.forEach = null; } class Helper { constructor(choose) { return { mutate: choose ? mutateA : mutateB }; } } const helper = new Helper(true);",
             "helper.mutate().next();",
         ),
         (

@@ -10203,8 +10203,6 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .as_ref()
             .map(|(_, _, bodies)| bodies.clone())
             .unwrap_or_default();
-        let mut replacement_forwardings = BTreeMap::new();
-        let mut replacement_guarded_targets = BTreeMap::new();
         if let Some(object) = replacement_object {
             for property in &object.properties {
                 let OxcObjectPropertyKind::ObjectProperty(property) = property else {
@@ -10214,45 +10212,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     continue;
                 };
                 let name = name.into_owned();
-                let bodies = if let Some(forwarding) =
-                    self.generator_bind_forwarding(&property.value)
-                {
-                    match forwarding {
-                        GeneratorBindForwarding::Source {
-                            source,
-                            source_span,
-                            guard,
-                        } => {
-                            replacement_forwardings
-                                .insert(name.clone(), (source.clone(), source_span, Some(guard)));
-                            self.generator_body_spans_for_target(&source)
-                        }
-                        GeneratorBindForwarding::Inline { body_span, guard } => {
-                            replacement_guarded_targets.insert(name.clone(), guard);
-                            BTreeSet::from([body_span])
-                        }
-                    }
-                } else {
-                    match property.value.get_inner_expression() {
-                        Expression::FunctionExpression(function) => {
-                            Self::generator_body_span(function)
-                                .map(|span| BTreeSet::from([span]))
-                                .unwrap_or_default()
-                        }
-                        _ => self
-                            .callable_reference(&property.value)
-                            .map(|(source, source_span)| {
-                                replacement_forwardings
-                                    .insert(name.clone(), (source.clone(), source_span, None));
-                                self.generator_body_spans_for_target(&source)
-                            })
-                            .unwrap_or_default(),
-                    }
-                };
+                let target_method = target
+                    .clone()
+                    .with_property("prototype".to_string())
+                    .with_property(name.clone());
+                self.record_forwarded_callable(target_method.clone(), &property.value);
+                let bodies = self.generator_body_spans_for_target(&target_method);
                 if bodies.is_empty() {
                     instance_bodies.remove(&name);
-                    replacement_forwardings.remove(&name);
-                    replacement_guarded_targets.remove(&name);
                 } else {
                     instance_bodies.insert(name, bodies);
                 }
@@ -10308,16 +10275,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
         }
         for (name, bodies) in &instance_bodies {
+            if replacement_object.is_some() {
+                continue;
+            }
             let target_method = target
                 .clone()
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
             self.generator_body_targets
                 .extend(bodies.iter().map(|body| (*body, target_method.clone())));
-            if let Some(guard) = replacement_guarded_targets.get(name) {
-                self.guarded_generator_targets
-                    .push((target_method.clone(), guard.clone()));
-            }
             if let Some((source, source_span, inherited)) = &inherited_bodies
                 && inherited.get(name) == Some(bodies)
             {
@@ -10329,15 +10295,6 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     source_span: *source_span,
                     target: target_method,
                     bind_guard: None,
-                });
-            } else if let Some((source, source_span, bind_guard)) =
-                replacement_forwardings.get(name)
-            {
-                self.forwarded_callable_reads.push(ForwardedCallableRead {
-                    source: source.clone(),
-                    source_span: *source_span,
-                    target: target_method,
-                    bind_guard: bind_guard.clone(),
                 });
             }
         }
@@ -10625,6 +10582,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 if let Some(last) = sequence.expressions.last() {
                     self.record_forwarded_callable(target, last);
                 }
+            }
+            Expression::AssignmentExpression(assignment)
+                if assignment.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.record_forwarded_callable(target, &assignment.right);
             }
             Expression::TSAsExpression(expression) => {
                 self.record_forwarded_callable(target, &expression.expression);
