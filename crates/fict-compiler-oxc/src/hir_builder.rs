@@ -10979,6 +10979,69 @@ impl StaticHookAliasCollector<'_> {
         vec![self.collect_spread_invocation_argument(argument_list)]
     }
 
+    fn is_intact_reflect_apply_callee(&self, callee: &Expression<'_>) -> bool {
+        let Some(raw) = static_alias_source_path(self.scoping, callee) else {
+            return false;
+        };
+        let reflect_apply = StaticAliasPath::unresolved_global("Reflect".to_string())
+            .with_property("apply".to_string());
+        resolve_static_alias_path(&self.aliases, &raw) == reflect_apply
+            && self.path_is_currently_intact(&raw)
+            && self.path_is_currently_intact(&reflect_apply)
+    }
+
+    fn local_reflect_apply_invocation_fact(
+        &self,
+        callee: &Expression<'_>,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) -> Option<LocalInvocationFact> {
+        if !self.is_intact_reflect_apply_callee(callee) {
+            return None;
+        }
+        let target = arguments.first()?.as_expression()?;
+        let argument_list = arguments.get(2)?.as_expression()?;
+        self.local_invocation_fact_from_arguments(
+            target,
+            self.collect_apply_invocation_arguments(argument_list),
+        )
+    }
+
+    fn reflect_apply_exposed_argument_paths(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<BTreeSet<StaticAliasPath>> {
+        if !self.is_intact_reflect_apply_callee(&call.callee) {
+            return None;
+        }
+        let mut exposed = BTreeSet::new();
+        let Some(target) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return Some(exposed);
+        };
+        let Some(argument_list) = call
+            .arguments
+            .get(2)
+            .and_then(|argument| argument.as_expression())
+        else {
+            return Some(exposed);
+        };
+        if !self.callee_may_mutate_arguments(target) {
+            return Some(exposed);
+        }
+        if let Some(this_argument) = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+        {
+            self.collect_exposed_argument_paths(this_argument, &mut exposed);
+        }
+        self.collect_spread_exposed_argument_paths(argument_list, &mut exposed);
+        Some(exposed)
+    }
+
     fn local_apply_invocation_fact(
         &self,
         callee: &Expression<'_>,
@@ -11158,6 +11221,9 @@ impl StaticHookAliasCollector<'_> {
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
     ) -> Option<LocalInvocationFact> {
+        if let Some(invocation) = self.local_reflect_apply_invocation_fact(callee, arguments) {
+            return Some(invocation);
+        }
         if let Some(invocation) = self.local_apply_invocation_fact(callee, arguments) {
             return Some(invocation);
         }
@@ -13487,7 +13553,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         let local_invocation = self.local_invocation_fact(&call.callee, &call.arguments);
-        let exposed_arguments = if self.callee_may_mutate_arguments(&call.callee) {
+        let reflect_apply_exposed = self.reflect_apply_exposed_argument_paths(call);
+        let exposed_arguments = if let Some(exposed) = reflect_apply_exposed {
+            self.prepare_exposed_paths(exposed)
+        } else if self.callee_may_mutate_arguments(&call.callee) {
             let exposed = self.collect_invocation_argument_paths(&call.arguments);
             self.prepare_exposed_paths(exposed)
         } else {

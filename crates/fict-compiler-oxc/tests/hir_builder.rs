@@ -5078,6 +5078,173 @@ fn pure_and_overridden_function_apply_indirections_preserve_receivers() {
 }
 
 #[test]
+fn local_reflect_apply_invocations_propagate_parameter_invalidations() {
+    for (name, setup, helper, invocation) in [
+        (
+            "inline argument array",
+            "",
+            "function mutate(target) { target.forEach = null; }",
+            "Reflect.apply(mutate, null, [values]);",
+        ),
+        (
+            "stored argument array",
+            "const args = [values];",
+            "function mutate(target) { target.forEach = null; }",
+            "Reflect.apply(mutate, null, args);",
+        ),
+        (
+            "computed Reflect.apply",
+            "",
+            "function mutate(target) { target.forEach = null; }",
+            "Reflect['apply'](mutate, null, [values]);",
+        ),
+        (
+            "aliased Reflect.apply",
+            "const apply = Reflect.apply;",
+            "function mutate(target) { target.forEach = null; }",
+            "apply(mutate, null, [values]);",
+        ),
+        (
+            "destructured target",
+            "const box = { target: values };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "Reflect.apply(mutate, null, [box]);",
+        ),
+        (
+            "rest target",
+            "",
+            "function mutate(...targets) { targets[0].forEach = null; }",
+            "Reflect.apply(mutate, null, [values]);",
+        ),
+        (
+            "conditional target",
+            "",
+            "const mutate = choose ? function mutateValue(target) { target.forEach = null; } : function inspect(target) { return target.length; };",
+            "Reflect.apply(mutate, null, [values]);",
+        ),
+        (
+            "inline target",
+            "",
+            "",
+            "Reflect.apply(function (target) { target.forEach = null; }, null, [values]);",
+        ),
+        (
+            "external target",
+            "",
+            "",
+            "Reflect.apply(external, null, [values]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(external, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn pure_reflect_apply_invocations_preserve_receivers() {
+    for (name, setup, helper, invocation, callback_receiver) in [
+        (
+            "read-only target",
+            "",
+            "function inspect(target) { return target.length; }",
+            "Reflect.apply(inspect, null, [values]);",
+            "values",
+        ),
+        (
+            "detached target",
+            "",
+            "function inspect(target) { target = {}; target.forEach = null; }",
+            "Reflect.apply(inspect, null, [values]);",
+            "values",
+        ),
+        (
+            "stored argument container",
+            "const args = [values];",
+            "function inspect(target) { return target.length; }",
+            "Reflect.apply(inspect, null, args);",
+            "args",
+        ),
+        (
+            "safe builtin target",
+            "",
+            "",
+            "Reflect.apply(Array.isArray, null, [values]);",
+            "values",
+        ),
+        (
+            "aliased Reflect.apply",
+            "const apply = Reflect.apply;",
+            "function inspect(target) { return target.length; }",
+            "apply(inspect, null, [values]);",
+            "values",
+        ),
+        (
+            "missing argument list",
+            "",
+            "function inspect() { return 0; }",
+            "Reflect.apply(inspect, values);",
+            "values",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    {callback_receiver}.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_spread_invocations_propagate_parameter_invalidations() {
     for (name, setup, helper, invocation) in [
         (
