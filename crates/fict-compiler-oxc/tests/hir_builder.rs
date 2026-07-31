@@ -2936,12 +2936,18 @@ fn synchronous_safe_global_callbacks_do_not_escape_reactive_captures() {
         import { $state } from 'fict';
         function App() {
             const count = $state(0);
+            const groups = $state([[{ done: false }]]);
+            const rows = $state([{ done: false }]);
             const map = () => count;
             return [
                 Array.from([1], () => count),
                 Array.from([1], map),
+                Array.from(groups[0]),
+                Array.from(groups[0], undefined),
+                Array.from([1], () => count, rows[0]),
                 JSON.parse('{"value":1}', () => count),
                 JSON.stringify({ value: 1 }, map),
+                JSON.stringify(rows[0]),
             ].length;
         }
     "#;
@@ -3030,6 +3036,71 @@ fn safe_global_callback_proof_rejects_deferred_execution() {
                     })
             }),
             "{name}: expected FICT-R005 on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn safe_global_callbacks_reject_reactive_protocol_inputs() {
+    for (name, source, expected_span) in [
+        (
+            "array from source",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const groups = $state([[{ done: false }]]);
+                    return Array.from(groups[0], item => {
+                        item.done = true;
+                        return item;
+                    });
+                }
+            "#,
+            "groups[0]",
+        ),
+        (
+            "array from this argument",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    return Array.from([1], function () {
+                        this.done = true;
+                        return 1;
+                    }, rows[0]);
+                }
+            "#,
+            "rows[0]",
+        ),
+        (
+            "json stringify source",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    return JSON.stringify(rows[0], function (_key, value) {
+                        if (value && typeof value === 'object') value.done = true;
+                        return value;
+                    });
+                }
+            "#,
+            "rows[0]",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R002"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected FICT-R002 on {expected_span:?}, got {:?}",
             output.diagnostics
         );
     }

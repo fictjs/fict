@@ -9976,6 +9976,7 @@ impl<'a> Visit<'a> for CallbackPropertyCollector<'_> {
 struct CallbackTiming {
     may_suspend: bool,
     may_return_iterator: bool,
+    uses_dynamic_this: bool,
 }
 
 impl CallbackTiming {
@@ -9984,11 +9985,13 @@ impl CallbackTiming {
             Self {
                 may_suspend: false,
                 may_return_iterator: true,
+                uses_dynamic_this: !flags.is_arrow,
             }
         } else {
             Self {
                 may_suspend: flags.is_async,
                 may_return_iterator: false,
+                uses_dynamic_this: !flags.is_arrow,
             }
         }
     }
@@ -9997,6 +10000,7 @@ impl CallbackTiming {
         Self {
             may_suspend: self.may_suspend || other.may_suspend,
             may_return_iterator: self.may_return_iterator || other.may_return_iterator,
+            uses_dynamic_this: self.uses_dynamic_this || other.uses_dynamic_this,
         }
     }
 }
@@ -10232,16 +10236,19 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             Expression::ArrowFunctionExpression(function) => Some(CallbackTiming {
                 may_suspend: function.r#async,
                 may_return_iterator: false,
+                uses_dynamic_this: false,
             }),
             Expression::FunctionExpression(function) => Some(if function.generator {
                 CallbackTiming {
                     may_suspend: false,
                     may_return_iterator: true,
+                    uses_dynamic_this: true,
                 }
             } else {
                 CallbackTiming {
                     may_suspend: function.r#async,
                     may_return_iterator: false,
+                    uses_dynamic_this: true,
                 }
             }),
             Expression::ConditionalExpression(expression) => self
@@ -10654,44 +10661,99 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if !is_safe_global_call(self.scoping, self.callback_aliases, callee) {
             return false;
         }
-        let disposition = match unwrap_transparent_call_expression(callee) {
-            Expression::StaticMemberExpression(member)
-                if matches!(member.object.get_inner_expression(),
+        let (disposition, reactive_source, reactive_this) =
+            match unwrap_transparent_call_expression(callee) {
+                Expression::StaticMemberExpression(member)
+                    if matches!(member.object.get_inner_expression(),
                     Expression::Identifier(root) if root.name == "Array")
-                    && member.property.name == "from" =>
-            {
-                CallbackResultDisposition::Retained
-            }
-            Expression::StaticMemberExpression(member)
-                if matches!(member.object.get_inner_expression(),
+                        && member.property.name == "from" =>
+                {
+                    (CallbackResultDisposition::Retained, Some(0), Some(2))
+                }
+                Expression::StaticMemberExpression(member)
+                    if matches!(member.object.get_inner_expression(),
                     Expression::Identifier(root) if root.name == "JSON")
-                    && member.property.name == "parse" =>
-            {
-                CallbackResultDisposition::Retained
-            }
-            Expression::StaticMemberExpression(member)
-                if matches!(member.object.get_inner_expression(),
+                        && member.property.name == "parse" =>
+                {
+                    (CallbackResultDisposition::Retained, None, None)
+                }
+                Expression::StaticMemberExpression(member)
+                    if matches!(member.object.get_inner_expression(),
                     Expression::Identifier(root) if root.name == "JSON")
-                    && member.property.name == "stringify" =>
-            {
-                CallbackResultDisposition::Discarded
-            }
-            _ => return true,
-        };
+                        && member.property.name == "stringify" =>
+                {
+                    (CallbackResultDisposition::Discarded, Some(0), None)
+                }
+                _ => return true,
+            };
+        if arguments.iter().any(|argument| argument.spread) {
+            return arguments.iter().all(|argument| {
+                self.callback_captures(*argument).is_empty()
+                    && self
+                        .retained_reactive_references(argument.expression)
+                        .is_empty()
+            });
+        }
         let Some(callback) = arguments.get(1) else {
             return true;
         };
+        if self.callback_is_definitely_non_callable(callback.expression) {
+            return true;
+        }
+        let timing = self.callback_timing(callback.expression);
+        if reactive_source
+            .and_then(|index| arguments.get(index))
+            .is_some_and(|argument| {
+                !self
+                    .retained_reactive_references(argument.expression)
+                    .is_empty()
+            })
+            || reactive_this
+                .and_then(|index| arguments.get(index))
+                .is_some_and(|argument| {
+                    timing.is_none_or(|timing| timing.uses_dynamic_this)
+                        && !self
+                            .retained_reactive_references(argument.expression)
+                            .is_empty()
+                })
+        {
+            return false;
+        }
         if self.callback_captures(*callback).is_empty() {
             return true;
         }
-        if arguments.iter().any(|argument| argument.spread) {
-            return false;
-        }
-        let Some(timing) = self.callback_timing(callback.expression) else {
+        let Some(timing) = timing else {
             return false;
         };
         !timing.may_suspend
             && (disposition == CallbackResultDisposition::Discarded || !timing.may_return_iterator)
+    }
+
+    fn callback_is_definitely_non_callable(&self, expression: &Expression<'_>) -> bool {
+        let expression = expression.get_inner_expression();
+        if matches!(
+            expression,
+            Expression::NullLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NumericLiteral(_)
+                | Expression::BigIntLiteral(_)
+                | Expression::StringLiteral(_)
+                | Expression::RegExpLiteral(_)
+                | Expression::ArrayExpression(_)
+                | Expression::ObjectExpression(_)
+                | Expression::TemplateLiteral(_)
+        ) || matches!(expression,
+            Expression::UnaryExpression(unary) if unary.operator == OxcUnaryOperator::Void)
+        {
+            return true;
+        }
+        static_alias_source_path(self.scoping, expression).is_some_and(|path| {
+            let resolved = self.callback_aliases.resolve(&path);
+            matches!(&resolved.root,
+                StaticAliasRoot::UnresolvedGlobal(root) if root == "undefined")
+                && resolved.properties.is_empty()
+                && self.callback_aliases.path_is_intact(&path)
+        })
     }
 
     fn is_non_retaining_identity_argument(
