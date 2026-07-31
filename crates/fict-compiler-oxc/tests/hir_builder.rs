@@ -3717,6 +3717,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "run(values);",
         ),
         (
+            "unadvanced bound generator capture",
+            "function* inspect() { values.forEach = null; } const run = inspect.bind(null);",
+            "run();",
+        ),
+        (
+            "unadvanced computed bound generator capture",
+            "function* inspect() { values.forEach = null; } const run = inspect['bind'](null);",
+            "run();",
+        ),
+        (
+            "unadvanced inline bound generator capture",
+            "const run = (function* () { values.forEach = null; }).bind(null);",
+            "run();",
+        ),
+        (
             "unadvanced generator call indirection",
             "function* inspect(target) { target.forEach = null; }",
             "inspect.call(null, values);",
@@ -3874,6 +3889,16 @@ fn pure_local_calls_preserve_receiver_methods() {
         (
             "unadvanced replacement constructor chained generator alias capture",
             "function* inspect() { values.forEach = null; } const run = inspect; class Helper { constructor() { return { inspect: run }; } } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced replacement constructor bound generator capture",
+            "function* inspect() { values.forEach = null; } class Helper { constructor() { return { inspect: inspect.bind(null) }; } } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced replacement constructor inline bound generator capture",
+            "class Helper { constructor() { return { inspect: (function* () { values.forEach = null; }).bind(null) }; } } const helper = new Helper();",
             "helper.inspect();",
         ),
         (
@@ -4040,6 +4065,26 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = run(values); iterator.next();",
         ),
         (
+            "bound capturing generator advance",
+            "function* mutate() { values.forEach = null; } const run = mutate.bind(null);",
+            "run().next();",
+        ),
+        (
+            "overridden generator bind executes receiver",
+            "function* mutate() { values.forEach = null; } mutate.bind = function () { this().next(); return () => {}; }; const run = mutate.bind(null);",
+            "run();",
+        ),
+        (
+            "aliased overridden generator bind executes receiver",
+            "function* mutate() { values.forEach = null; } const alias = mutate; alias.bind = function () { this().next(); return () => {}; }; const run = mutate.bind(null);",
+            "run();",
+        ),
+        (
+            "overridden generator prototype bind executes receiver",
+            "function* mutate() { values.forEach = null; } Function.prototype.bind = function () { this().next(); return () => {}; }; const run = mutate.bind(null);",
+            "run();",
+        ),
+        (
             "call iterator advance",
             "function* mutate(target) { target.forEach = null; }",
             "const iterator = mutate.call(null, values); iterator.next();",
@@ -4162,6 +4207,16 @@ fn observed_generator_iterators_propagate_local_effects() {
         (
             "replacement constructor generator alias capture advance",
             "function* mutate() { values.forEach = null; } class Helper { constructor() { return { mutate }; } } const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "replacement constructor bound generator capture advance",
+            "function* mutate() { values.forEach = null; } class Helper { constructor() { return { mutate: mutate.bind(null) }; } } const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "replacement constructor inline bound generator capture advance",
+            "class Helper { constructor() { return { mutate: (function* () { values.forEach = null; }).bind(null) }; } } const helper = new Helper();",
             "helper.mutate().next();",
         ),
         (

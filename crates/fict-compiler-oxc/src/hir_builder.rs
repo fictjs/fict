@@ -9898,6 +9898,24 @@ struct ForwardedCallableRead {
     source: StaticAliasPath,
     source_span: (u32, u32),
     target: StaticAliasPath,
+    bind_guard: Option<GeneratorBindGuard>,
+}
+
+#[derive(Clone)]
+struct GeneratorBindGuard {
+    source: Option<StaticAliasPath>,
+}
+
+enum GeneratorBindForwarding {
+    Source {
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: GeneratorBindGuard,
+    },
+    Inline {
+        body_span: GeneratorBodySpan,
+        guard: GeneratorBindGuard,
+    },
 }
 
 type GeneratorBodySpan = (u32, u32);
@@ -9913,6 +9931,9 @@ struct GeneratorExecutionCollector<'semantic> {
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
     class_instance_generator_bodies: BTreeMap<StaticAliasPath, InstanceGeneratorBodies>,
     instance_generator_bodies: BTreeMap<StaticAliasPath, InstanceGeneratorBodies>,
+    member_invalidated: BTreeSet<StaticAliasPath>,
+    escaped_callable_paths: BTreeSet<StaticAliasPath>,
+    guarded_generator_targets: Vec<(StaticAliasPath, GeneratorBindGuard)>,
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
 }
@@ -9929,6 +9950,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             generator_body_targets: Vec::new(),
             class_instance_generator_bodies: BTreeMap::new(),
             instance_generator_bodies: BTreeMap::new(),
+            member_invalidated: BTreeSet::new(),
+            escaped_callable_paths: BTreeSet::new(),
+            guarded_generator_targets: Vec::new(),
             directly_unexecuted_body_spans: BTreeSet::new(),
             discarded_invocation_spans: BTreeSet::new(),
         }
@@ -9940,6 +9964,54 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     ) -> Option<(StaticAliasPath, (u32, u32))> {
         let path = static_alias_source_path(self.scoping, expression)?;
         Some((path, Self::root_identifier_span(expression)?))
+    }
+
+    fn generator_bind_forwarding(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<GeneratorBindForwarding> {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        if call.optional {
+            return None;
+        }
+        let object = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member)
+                if !member.optional && member.property.name == "bind" =>
+            {
+                &member.object
+            }
+            Expression::ComputedMemberExpression(member)
+                if !member.optional
+                    && static_member_name(&member.expression).as_deref() == Some("bind") =>
+            {
+                &member.object
+            }
+            _ => return None,
+        };
+        if let Some((source, source_span)) = self.callable_reference(object) {
+            return Some(GeneratorBindForwarding::Source {
+                guard: GeneratorBindGuard {
+                    source: Some(source.clone()),
+                },
+                source,
+                source_span,
+            });
+        }
+        let Expression::FunctionExpression(function) = object.get_inner_expression() else {
+            return None;
+        };
+        Some(GeneratorBindForwarding::Inline {
+            body_span: Self::generator_body_span(function)?,
+            guard: GeneratorBindGuard { source: None },
+        })
+    }
+
+    fn record_escaped_callable_path(&mut self, expression: &Expression<'_>) {
+        if let Some((path, _)) = self.callable_reference(expression) {
+            self.escaped_callable_paths.insert(path);
+        }
     }
 
     fn root_identifier_span(expression: &Expression<'_>) -> Option<(u32, u32)> {
@@ -10132,6 +10204,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .map(|(_, _, bodies)| bodies.clone())
             .unwrap_or_default();
         let mut replacement_forwardings = BTreeMap::new();
+        let mut replacement_guarded_targets = BTreeMap::new();
         if let Some(object) = replacement_object {
             for property in &object.properties {
                 let OxcObjectPropertyKind::ObjectProperty(property) = property else {
@@ -10141,22 +10214,45 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     continue;
                 };
                 let name = name.into_owned();
-                let bodies = match property.value.get_inner_expression() {
-                    Expression::FunctionExpression(function) => Self::generator_body_span(function)
-                        .map(|span| BTreeSet::from([span]))
-                        .unwrap_or_default(),
-                    _ => self
-                        .callable_reference(&property.value)
-                        .map(|(source, source_span)| {
+                let bodies = if let Some(forwarding) =
+                    self.generator_bind_forwarding(&property.value)
+                {
+                    match forwarding {
+                        GeneratorBindForwarding::Source {
+                            source,
+                            source_span,
+                            guard,
+                        } => {
                             replacement_forwardings
-                                .insert(name.clone(), (source.clone(), source_span));
+                                .insert(name.clone(), (source.clone(), source_span, Some(guard)));
                             self.generator_body_spans_for_target(&source)
-                        })
-                        .unwrap_or_default(),
+                        }
+                        GeneratorBindForwarding::Inline { body_span, guard } => {
+                            replacement_guarded_targets.insert(name.clone(), guard);
+                            BTreeSet::from([body_span])
+                        }
+                    }
+                } else {
+                    match property.value.get_inner_expression() {
+                        Expression::FunctionExpression(function) => {
+                            Self::generator_body_span(function)
+                                .map(|span| BTreeSet::from([span]))
+                                .unwrap_or_default()
+                        }
+                        _ => self
+                            .callable_reference(&property.value)
+                            .map(|(source, source_span)| {
+                                replacement_forwardings
+                                    .insert(name.clone(), (source.clone(), source_span, None));
+                                self.generator_body_spans_for_target(&source)
+                            })
+                            .unwrap_or_default(),
+                    }
                 };
                 if bodies.is_empty() {
                     instance_bodies.remove(&name);
                     replacement_forwardings.remove(&name);
+                    replacement_guarded_targets.remove(&name);
                 } else {
                     instance_bodies.insert(name, bodies);
                 }
@@ -10218,6 +10314,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .with_property(name.clone());
             self.generator_body_targets
                 .extend(bodies.iter().map(|body| (*body, target_method.clone())));
+            if let Some(guard) = replacement_guarded_targets.get(name) {
+                self.guarded_generator_targets
+                    .push((target_method.clone(), guard.clone()));
+            }
             if let Some((source, source_span, inherited)) = &inherited_bodies
                 && inherited.get(name) == Some(bodies)
             {
@@ -10228,12 +10328,16 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         .with_property(name.clone()),
                     source_span: *source_span,
                     target: target_method,
+                    bind_guard: None,
                 });
-            } else if let Some((source, source_span)) = replacement_forwardings.get(name) {
+            } else if let Some((source, source_span, bind_guard)) =
+                replacement_forwardings.get(name)
+            {
                 self.forwarded_callable_reads.push(ForwardedCallableRead {
                     source: source.clone(),
                     source_span: *source_span,
                     target: target_method,
+                    bind_guard: bind_guard.clone(),
                 });
             }
         }
@@ -10266,6 +10370,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source,
                 source_span,
                 target: instance_method,
+                bind_guard: None,
             });
         }
         self.instance_generator_bodies.insert(target, bodies);
@@ -10293,6 +10398,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source: source_method,
                 source_span,
                 target: target_method,
+                bind_guard: None,
             });
         }
         self.instance_generator_bodies.insert(target, bodies);
@@ -10326,6 +10432,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source: source_method,
                 source_span,
                 target: target_method,
+                bind_guard: None,
             });
         }
         self.class_instance_generator_bodies.insert(target, bodies);
@@ -10465,11 +10572,32 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
 
     fn record_forwarded_callable(&mut self, target: StaticAliasPath, expression: &Expression<'_>) {
         self.forwarding_targets.insert(target.clone());
+        if let Some(forwarding) = self.generator_bind_forwarding(expression) {
+            match forwarding {
+                GeneratorBindForwarding::Source {
+                    source,
+                    source_span,
+                    guard,
+                } => self.forwarded_callable_reads.push(ForwardedCallableRead {
+                    source,
+                    source_span,
+                    target,
+                    bind_guard: Some(guard),
+                }),
+                GeneratorBindForwarding::Inline { body_span, guard } => {
+                    self.generator_body_targets
+                        .push((body_span, target.clone()));
+                    self.guarded_generator_targets.push((target, guard));
+                }
+            }
+            return;
+        }
         if let Some((source, source_span)) = self.callable_reference(expression) {
             self.forwarded_callable_reads.push(ForwardedCallableRead {
                 source,
                 source_span,
                 target,
+                bind_guard: None,
             });
             return;
         }
@@ -10517,7 +10645,92 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn related_callable_paths(&self, initial: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
+        fn replace_prefix(
+            path: &StaticAliasPath,
+            from: &StaticAliasPath,
+            to: &StaticAliasPath,
+        ) -> Option<StaticAliasPath> {
+            if !path.starts_with(from) {
+                return None;
+            }
+            let mut related = to.clone();
+            related
+                .properties
+                .extend_from_slice(&path.properties[from.properties.len()..]);
+            related.element_wildcard |= path.element_wildcard;
+            Some(related.canonicalized())
+        }
+
+        let mut related = BTreeSet::new();
+        let mut pending = VecDeque::from([initial.clone()]);
+        while let Some(path) = pending.pop_front() {
+            if !related.insert(path.clone()) {
+                continue;
+            }
+            for forwarding in &self.forwarded_callable_reads {
+                if forwarding.bind_guard.is_some() {
+                    continue;
+                }
+                if let Some(alias) = replace_prefix(&path, &forwarding.source, &forwarding.target) {
+                    pending.push_back(alias);
+                }
+                if let Some(source) = replace_prefix(&path, &forwarding.target, &forwarding.source)
+                {
+                    pending.push_back(source);
+                }
+            }
+        }
+        related
+    }
+
+    fn bind_path_is_intact(&self, source: &StaticAliasPath) -> bool {
+        let sources = self.related_callable_paths(source);
+        if sources.iter().any(|source| {
+            self.escaped_callable_paths
+                .iter()
+                .any(|escaped| escaped.overlaps(source))
+        }) {
+            return false;
+        }
+        sources
+            .iter()
+            .map(|source| source.with_property("bind".to_string()))
+            .all(|bind| {
+                self.member_invalidated
+                    .iter()
+                    .all(|invalidated| !invalidated.overlaps(&bind))
+            })
+    }
+
+    fn bind_guard_is_intact(&self, guard: &GeneratorBindGuard) -> bool {
+        let function_prototype = StaticAliasPath::unresolved_global("Function".to_string())
+            .with_property("prototype".to_string());
+        self.bind_path_is_intact(&function_prototype)
+            && guard
+                .source
+                .as_ref()
+                .is_none_or(|source| self.bind_path_is_intact(source))
+    }
+
     fn finish(self) -> GeneratorExecutionProof {
+        let trusted_bind_forwardings = self
+            .forwarded_callable_reads
+            .iter()
+            .map(|forwarding| {
+                forwarding
+                    .bind_guard
+                    .as_ref()
+                    .is_none_or(|guard| self.bind_guard_is_intact(guard))
+            })
+            .collect::<Vec<_>>();
+        let forced_executed_targets = self
+            .guarded_generator_targets
+            .iter()
+            .filter_map(|(target, guard)| {
+                (!self.bind_guard_is_intact(guard)).then_some(target.clone())
+            })
+            .collect::<BTreeSet<_>>();
         let mut candidates = self.forwarding_targets.clone();
         candidates.extend(
             self.generator_body_targets
@@ -10533,7 +10746,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         loop {
             let mut changed = false;
             for path in &candidates {
-                if unexecuted.contains(path) {
+                if unexecuted.contains(path) || forced_executed_targets.contains(path) {
                     continue;
                 }
                 let Some(root) = path.binding_root() else {
@@ -10548,11 +10761,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .chain(self.direct_callable_reads.get(path).into_iter().flatten())
                     .all(|span| {
                         discarded.is_some_and(|discarded| discarded.contains(span))
-                            || self.forwarded_callable_reads.iter().any(|forwarding| {
-                                forwarding.source == *path
-                                    && forwarding.source_span == *span
-                                    && unexecuted.contains(&forwarding.target)
-                            })
+                            || self.forwarded_callable_reads.iter().enumerate().any(
+                                |(index, forwarding)| {
+                                    trusted_bind_forwardings[index]
+                                        && forwarding.source == *path
+                                        && forwarding.source_span == *span
+                                        && unexecuted.contains(&forwarding.target)
+                                },
+                            )
                     });
                 if all_reads_are_nonexecuting {
                     changed |= unexecuted.insert(path.clone());
@@ -10615,23 +10831,34 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-        if assignment.operator == OxcAssignmentOperator::Assign
-            && let Some(place) = planned_assignment_target_place(self.scoping, &assignment.left)
+        if let Some(place) = planned_assignment_target_place(self.scoping, &assignment.left)
             && let Some(target) = static_alias_invalidation_path(&place)
         {
-            if let Some(span) = place.root_reference_span {
-                self.discarded_invocation_reads
-                    .entry(target.clone())
-                    .or_default()
-                    .insert((span.start(), span.end()));
+            if !place.projections.is_empty()
+                || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. })
+            {
+                self.member_invalidated.insert(target.clone());
             }
-            self.record_callable_initializer(target, &assignment.right);
+            if assignment.operator == OxcAssignmentOperator::Assign {
+                if let Some(span) = place.root_reference_span {
+                    self.discarded_invocation_reads
+                        .entry(target.clone())
+                        .or_default()
+                        .insert((span.start(), span.end()));
+                }
+                self.record_callable_initializer(target, &assignment.right);
+            }
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_assignment_callable_read(call, false);
+        for argument in &call.arguments {
+            if let Some(argument) = argument.as_expression() {
+                self.record_escaped_callable_path(argument);
+            }
+        }
         walk_call_expression(self, call);
     }
 
@@ -10642,7 +10869,43 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
 
     fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
         self.record_nonexecuting_callable(&expression.callee);
+        for argument in &expression.arguments {
+            if let Some(argument) = argument.as_expression() {
+                self.record_escaped_callable_path(argument);
+            }
+        }
         oxc::ast_visit::walk::walk_new_expression(self, expression);
+    }
+
+    fn visit_update_expression(&mut self, expression: &UpdateExpression<'a>) {
+        if let Some(place) =
+            planned_simple_assignment_target_place(self.scoping, &expression.argument)
+            && (!place.projections.is_empty()
+                || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. }))
+            && let Some(target) = static_alias_invalidation_path(&place)
+        {
+            self.member_invalidated.insert(target);
+        }
+        oxc::ast_visit::walk::walk_update_expression(self, expression);
+    }
+
+    fn visit_unary_expression(&mut self, expression: &oxc::ast::ast::UnaryExpression<'a>) {
+        if expression.operator == OxcUnaryOperator::Delete
+            && let Some(place) = planned_expression_place(self.scoping, &expression.argument)
+            && (!place.projections.is_empty()
+                || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. }))
+            && let Some(target) = static_alias_invalidation_path(&place)
+        {
+            self.member_invalidated.insert(target);
+        }
+        oxc::ast_visit::walk::walk_unary_expression(self, expression);
+    }
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if let Some(argument) = &statement.argument {
+            self.record_escaped_callable_path(argument);
+        }
+        oxc::ast_visit::walk::walk_return_statement(self, statement);
     }
 
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
