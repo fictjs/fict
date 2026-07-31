@@ -9908,7 +9908,7 @@ struct StaticHookAliasCollector<'semantic> {
     callable_exposures: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     callable_exposure_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     local_callable_parameters: BTreeMap<StaticAliasPath, Vec<LocalCallableParameter>>,
-    local_callable_parameter_history: BTreeMap<StaticAliasPath, Vec<LocalCallableParameter>>,
+    local_callable_parameter_history: BTreeMap<StaticAliasPath, Vec<Vec<LocalCallableParameter>>>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
     parameter_member_invalidated: BTreeSet<StaticAliasPath>,
@@ -10373,7 +10373,9 @@ impl StaticHookAliasCollector<'_> {
         bindings: Vec<LocalCallableParameter>,
     ) {
         self.local_callable_parameter_history
-            .insert(target.clone(), bindings.clone());
+            .entry(target.clone())
+            .or_default()
+            .push(bindings.clone());
         self.local_callable_parameters.insert(target, bindings);
     }
 
@@ -11511,6 +11513,12 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
     }
 
+    fn mark_alias_target_ambiguous(&mut self, path: StaticAliasPath) {
+        self.local_callable_parameters
+            .retain(|target, _| !target.overlaps(&path));
+        self.ambiguous_alias_targets.insert(path);
+    }
+
     fn insert_alias(&mut self, target: StaticAliasPath, source: StaticAliasPath) {
         let array_length = self.known_array_length(&source);
         self.clear_overlapping_aliases(&target);
@@ -11580,12 +11588,12 @@ impl StaticHookAliasCollector<'_> {
             Expression::ConditionalExpression(expression) => {
                 self.collect_initializer(target.clone(), &expression.consequent);
                 self.collect_initializer(target.clone(), &expression.alternate);
-                self.ambiguous_alias_targets.insert(target);
+                self.mark_alias_target_ambiguous(target);
             }
             Expression::LogicalExpression(expression) => {
                 self.collect_initializer(target.clone(), &expression.left);
                 self.collect_initializer(target.clone(), &expression.right);
-                self.ambiguous_alias_targets.insert(target);
+                self.mark_alias_target_ambiguous(target);
             }
             Expression::SequenceExpression(expression) => {
                 if let Some(value) = expression.expressions.last() {
@@ -12740,8 +12748,11 @@ impl StaticHookAliasCollector<'_> {
                     };
                     callees
                         .iter()
-                        .filter_map(|callee| {
-                            self.local_callable_parameter_history.get(callee).cloned()
+                        .flat_map(|callee| {
+                            self.local_callable_parameter_history
+                                .get(callee)
+                                .cloned()
+                                .unwrap_or_default()
                         })
                         .collect::<Vec<_>>()
                 };
@@ -13198,6 +13209,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
         let prototype_path = self.prototype_assignment_target_path(&assignment.left);
+        let conditional = self
+            .function_control_baselines
+            .last()
+            .is_some_and(|baseline| self.control_depth > *baseline);
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
         self.invalidate_place(place.clone());
         if let Some(path) = prototype_path {
@@ -13213,7 +13228,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
         {
-            self.collect_initializer(path, &assignment.right);
+            self.collect_initializer(path.clone(), &assignment.right);
+            if conditional {
+                self.mark_alias_target_ambiguous(path);
+            }
         } else if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(source) = self.alias_source_path(&assignment.right)
         {

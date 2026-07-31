@@ -5553,6 +5553,109 @@ fn stored_ambiguous_structured_arguments_preserve_unmodified_values() {
 }
 
 #[test]
+fn ambiguous_callable_initializers_preserve_all_parameter_effects() {
+    for (name, setup, invocation) in [
+        (
+            "conditional binding",
+            "const mutate = choose ? function mutateValue(target) { target.forEach = null; } : function inspect(target) { return target.length; };",
+            "mutate(values);",
+        ),
+        (
+            "conditional method container",
+            "const handlers = choose ? { run(target) { target.forEach = null; } } : { run(target) { return target.length; } };",
+            "handlers.run(values);",
+        ),
+        (
+            "conditional assignment",
+            "let mutate; if (choose) { mutate = function mutateValue(target) { target.forEach = null; }; } else { mutate = function inspect(target) { return target.length; }; }",
+            "mutate(values);",
+        ),
+        (
+            "optional loop assignment",
+            "let mutate = function mutateValue(target) { target.forEach = null; }; while (choose) { mutate = function inspect(target) { return target.length; }; break; }",
+            "mutate(values);",
+        ),
+        (
+            "conditional Function.call target",
+            "const mutate = choose ? function mutateValue(target) { target.forEach = null; } : function inspect(target) { return target.length; };",
+            "mutate.call(null, values);",
+        ),
+        (
+            "conditional Function.apply target",
+            "const mutate = choose ? function mutateValue(target) { target.forEach = null; } : function inspect(target) { return target.length; };",
+            "mutate.apply(null, [values]);",
+        ),
+        (
+            "conditional constructor",
+            "const Mutate = choose ? class { constructor(target) { target.forEach = null; } } : class { constructor(target) { return target.length; } };",
+            "new Mutate(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn ambiguous_callable_initializers_preserve_unmodified_arguments() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(choose) {
+            const count = $state(0);
+            const values = [];
+            const other = [];
+            const mutate = choose
+                ? function mutateOther(target) { target.forEach = null; }
+                : function inspect(target) { return target.length; };
+            mutate(other);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")),
+        "expected unrelated receiver integrity to be preserved, got {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn stored_spread_initializers_propagate_nested_invalidations() {
     for (name, setup, helper, invocation) in [
         (
