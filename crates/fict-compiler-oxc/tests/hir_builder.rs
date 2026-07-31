@@ -3692,9 +3692,24 @@ fn pure_local_calls_preserve_receiver_methods() {
             "(function* (target) { target.forEach = null; }).call(null, values);",
         ),
         (
+            "unadvanced inline generator call capture",
+            "",
+            "(function* () { values.forEach = null; }).call(null);",
+        ),
+        (
             "unadvanced inline generator apply",
             "",
             "(function* (target) { target.forEach = null; }).apply(null, [values]);",
+        ),
+        (
+            "unadvanced inline generator apply capture",
+            "",
+            "(function* () { values.forEach = null; }).apply(null, []);",
+        ),
+        (
+            "unadvanced inline generator Reflect.apply capture",
+            "",
+            "Reflect.apply(function* () { values.forEach = null; }, null, []);",
         ),
         (
             "unadvanced inline bound generator",
@@ -3737,14 +3752,29 @@ fn pure_local_calls_preserve_receiver_methods() {
             "inspect.call(null, values);",
         ),
         (
+            "unadvanced generator call indirection capture",
+            "function* inspect() { values.forEach = null; }",
+            "inspect.call(null);",
+        ),
+        (
             "unadvanced generator apply indirection",
             "function* inspect(target) { target.forEach = null; }",
             "inspect.apply(null, [values]);",
         ),
         (
+            "unadvanced generator apply indirection capture",
+            "function* inspect() { values.forEach = null; }",
+            "inspect.apply(null, []);",
+        ),
+        (
             "unadvanced generator Reflect.apply indirection",
             "function* inspect(target) { target.forEach = null; }",
             "Reflect.apply(inspect, null, [values]);",
+        ),
+        (
+            "unadvanced generator Reflect.apply indirection capture",
+            "function* inspect() { values.forEach = null; }",
+            "Reflect.apply(inspect, null, []);",
         ),
         (
             "unread generator iterator",
@@ -4130,14 +4160,44 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate.call(null, values); iterator.next();",
         ),
         (
+            "call capturing generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "mutate.call(null).next();",
+        ),
+        (
             "apply iterator advance",
             "function* mutate(target) { target.forEach = null; }",
             "const iterator = mutate.apply(null, [values]); iterator.next();",
         ),
         (
+            "apply capturing generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "mutate.apply(null, []).next();",
+        ),
+        (
             "Reflect.apply iterator advance",
             "function* mutate(target) { target.forEach = null; }",
             "const iterator = Reflect.apply(mutate, null, [values]); iterator.next();",
+        ),
+        (
+            "Reflect.apply capturing generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "Reflect.apply(mutate, null, []).next();",
+        ),
+        (
+            "overridden generator prototype call executes receiver",
+            "function* mutate() { values.forEach = null; } Function.prototype.call = function () { this().next(); return {}; };",
+            "mutate.call(null);",
+        ),
+        (
+            "replaced generator prototype call executes receiver",
+            "function* mutate() { values.forEach = null; } const prototype = { call() { this().next(); return {}; } }; mutate.__proto__ = prototype;",
+            "mutate.call(null);",
+        ),
+        (
+            "overridden Reflect.apply executes generator",
+            "function* mutate() { values.forEach = null; } Reflect.apply = function (target) { target().next(); return {}; };",
+            "Reflect.apply(mutate, null, []);",
         ),
         (
             "generator dynamic receiver",
