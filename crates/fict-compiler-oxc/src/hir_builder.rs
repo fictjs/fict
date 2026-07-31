@@ -2028,6 +2028,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             scoping: self.semantic.scoping(),
             aliases: BTreeMap::new(),
             invalidated: BTreeSet::new(),
+            member_invalidated: BTreeSet::new(),
+            reflective_mutations: Vec::new(),
         };
         static_hook_aliases.visit_program(program);
         let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
@@ -2082,6 +2084,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut jsx = JsxCollector {
             scoping: self.semantic.scoping(),
             known_arrays: &known_arrays.symbols,
+            aliases: &static_hook_aliases,
             stack: vec![FunctionId::new(0)],
             scan_owners: Vec::new(),
             function_by_span: &function_by_span,
@@ -2129,6 +2132,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &calls.calls,
             &reactive_symbols.state,
             &reactive_symbols.state_receivers,
+            &static_hook_aliases,
         );
         self.state_receivers
             .clone_from(&reactive_symbols.state_receivers);
@@ -2603,6 +2607,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         calls: &[CallFact],
         state_symbols: &BTreeSet<SymbolId>,
         state_receivers: &BTreeMap<SymbolId, StateReceiverKind>,
+        aliases: &StaticHookAliases,
     ) {
         for call in calls {
             let Some(place) = call.callee_reference.as_ref() else {
@@ -2617,17 +2622,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             let Some(method) = place.projections.last() else {
                 continue;
             };
+            let receiver = state_receivers
+                .get(&symbol)
+                .copied()
+                .unwrap_or(StateReceiverKind::Unknown);
             let read_only = matches!(
                 method,
                 PlannedProjection::Static { name, .. }
-                    if classify_state_method_call(
-                        state_receivers
-                            .get(&symbol)
-                            .copied()
-                            .unwrap_or(StateReceiverKind::Unknown),
-                        name,
-                    )
+                    if classify_state_method_call(receiver, name)
                         == StateMethodCallSemantics::ReadOnlyReceiver
+                        && aliases.builtin_prototype_method_is_intact(receiver, name)
+                        && static_alias_path_from_place(place, true)
+                            .is_some_and(|path| aliases.path_is_intact(&path))
             );
             if !read_only {
                 self.report_nested_reactive_mutation(call.span);
@@ -3491,9 +3497,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .last()
                     .is_some_and(|name| is_hook_name(name))
                 || (target.properties.is_empty()
-                    && self
-                        .symbol_to_binding
-                        .get(&target.root)
+                    && target
+                        .binding_root()
+                        .and_then(|root| self.symbol_to_binding.get(&root))
                         .and_then(|binding| {
                             self.frontend.bindings.iter().find(|candidate| {
                                 self.old_to_new.get(&candidate.id.index()).copied()
@@ -3502,7 +3508,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         })
                         .is_some_and(|binding| is_hook_name(&binding.display_name)));
             let resolved = aliases.resolve(&target);
-            let Some(binding) = self.symbol_to_binding.get(&resolved.root).copied() else {
+            let Some(binding) = resolved
+                .binding_root()
+                .and_then(|root| self.symbol_to_binding.get(&root).copied())
+            else {
                 continue;
             };
             let Some(frontend_binding) = self.frontend.bindings.iter().find(|candidate| {
@@ -6616,6 +6625,7 @@ fn collect_reactive_component_accessor_spans(
 struct JsxCollector<'facts> {
     scoping: &'facts Scoping,
     known_arrays: &'facts BTreeSet<SymbolId>,
+    aliases: &'facts StaticHookAliases,
     stack: Vec<FunctionId>,
     scan_owners: Vec<FunctionId>,
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
@@ -6855,7 +6865,7 @@ impl<'a> Visit<'a> for JsxCollector<'_> {
         self.roots.push(JsxFact {
             owner,
             span: source_span(element.span),
-            root: raw_jsx_element(self.scoping, self.known_arrays, element),
+            root: raw_jsx_element(self.scoping, self.known_arrays, self.aliases, element),
             contains_fragment: fragments.found,
         });
         self.scan_owners.push(owner);
@@ -6872,7 +6882,7 @@ impl<'a> Visit<'a> for JsxCollector<'_> {
         self.roots.push(JsxFact {
             owner,
             span: source_span(fragment.span),
-            root: raw_jsx_fragment(self.scoping, self.known_arrays, fragment),
+            root: raw_jsx_fragment(self.scoping, self.known_arrays, self.aliases, fragment),
             contains_fragment: true,
         });
         self.scan_owners.push(owner);
@@ -6895,6 +6905,7 @@ impl<'a> Visit<'a> for FragmentDetector {
 fn raw_jsx_element(
     scoping: &Scoping,
     known_arrays: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
     element: &JSXElement<'_>,
 ) -> RawJsxNode {
     RawJsxNode::Element {
@@ -6903,12 +6914,12 @@ fn raw_jsx_element(
             .opening_element
             .attributes
             .iter()
-            .map(|attribute| raw_jsx_attribute(scoping, known_arrays, attribute))
+            .map(|attribute| raw_jsx_attribute(scoping, known_arrays, aliases, attribute))
             .collect(),
         children: element
             .children
             .iter()
-            .filter_map(|child| raw_jsx_child(scoping, known_arrays, child))
+            .filter_map(|child| raw_jsx_child(scoping, known_arrays, aliases, child))
             .collect(),
         span: source_span(element.span),
     }
@@ -6917,13 +6928,14 @@ fn raw_jsx_element(
 fn raw_jsx_fragment(
     scoping: &Scoping,
     known_arrays: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
     fragment: &JSXFragment<'_>,
 ) -> RawJsxNode {
     RawJsxNode::Fragment {
         children: fragment
             .children
             .iter()
-            .filter_map(|child| raw_jsx_child(scoping, known_arrays, child))
+            .filter_map(|child| raw_jsx_child(scoping, known_arrays, aliases, child))
             .collect(),
         span: source_span(fragment.span),
     }
@@ -6984,6 +6996,7 @@ fn raw_jsx_member_name(scoping: &Scoping, member: &JSXMemberExpression<'_>) -> R
 fn raw_jsx_attribute(
     scoping: &Scoping,
     known_arrays: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
     attribute: &JSXAttributeItem<'_>,
 ) -> RawJsxAttribute {
     match attribute {
@@ -6998,7 +7011,7 @@ fn raw_jsx_attribute(
                 .value
                 .as_ref()
                 .map_or(RawJsxAttributeValue::ImplicitTrue, |value| {
-                    raw_jsx_attribute_value(scoping, known_arrays, value)
+                    raw_jsx_attribute_value(scoping, known_arrays, aliases, value)
                 }),
             span: source_span(attribute.span),
         },
@@ -7103,6 +7116,7 @@ fn has_static_member_root(expression: &Expression<'_>) -> bool {
 fn raw_jsx_attribute_value(
     scoping: &Scoping,
     known_arrays: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
     value: &OxcJsxAttributeValue<'_>,
 ) -> RawJsxAttributeValue {
     match value {
@@ -7114,10 +7128,10 @@ fn raw_jsx_attribute_value(
                 RawJsxAttributeValue::ImplicitTrue,
                 |expression| match expression.get_inner_expression() {
                     Expression::JSXElement(element) => RawJsxAttributeValue::Node(Box::new(
-                        raw_jsx_element(scoping, known_arrays, element),
+                        raw_jsx_element(scoping, known_arrays, aliases, element),
                     )),
                     Expression::JSXFragment(fragment) => RawJsxAttributeValue::Node(Box::new(
-                        raw_jsx_fragment(scoping, known_arrays, fragment),
+                        raw_jsx_fragment(scoping, known_arrays, aliases, fragment),
                     )),
                     inner => {
                         let mut fragments = FragmentDetector::default();
@@ -7131,18 +7145,19 @@ fn raw_jsx_attribute_value(
                 },
             )
         }
-        OxcJsxAttributeValue::Element(element) => {
-            RawJsxAttributeValue::Node(Box::new(raw_jsx_element(scoping, known_arrays, element)))
-        }
-        OxcJsxAttributeValue::Fragment(fragment) => {
-            RawJsxAttributeValue::Node(Box::new(raw_jsx_fragment(scoping, known_arrays, fragment)))
-        }
+        OxcJsxAttributeValue::Element(element) => RawJsxAttributeValue::Node(Box::new(
+            raw_jsx_element(scoping, known_arrays, aliases, element),
+        )),
+        OxcJsxAttributeValue::Fragment(fragment) => RawJsxAttributeValue::Node(Box::new(
+            raw_jsx_fragment(scoping, known_arrays, aliases, fragment),
+        )),
     }
 }
 
 fn raw_jsx_child(
     scoping: &Scoping,
     known_arrays: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
     child: &OxcJsxChild<'_>,
 ) -> Option<RawJsxChild> {
     match child {
@@ -7155,22 +7170,24 @@ fn raw_jsx_child(
         OxcJsxChild::Element(element) => Some(RawJsxChild::Node(Box::new(raw_jsx_element(
             scoping,
             known_arrays,
+            aliases,
             element,
         )))),
         OxcJsxChild::Fragment(fragment) => Some(RawJsxChild::Node(Box::new(raw_jsx_fragment(
             scoping,
             known_arrays,
+            aliases,
             fragment,
         )))),
         OxcJsxChild::ExpressionContainer(container) => match &container.expression {
             JSXExpression::EmptyExpression(_) => None,
             expression => expression.as_expression().map(|expression| {
                 match expression.get_inner_expression() {
-                    Expression::JSXElement(element) => {
-                        RawJsxChild::Node(Box::new(raw_jsx_element(scoping, known_arrays, element)))
-                    }
+                    Expression::JSXElement(element) => RawJsxChild::Node(Box::new(
+                        raw_jsx_element(scoping, known_arrays, aliases, element),
+                    )),
                     Expression::JSXFragment(fragment) => RawJsxChild::Node(Box::new(
-                        raw_jsx_fragment(scoping, known_arrays, fragment),
+                        raw_jsx_fragment(scoping, known_arrays, aliases, fragment),
                     )),
                     inner => {
                         let kind = match inner {
@@ -7187,6 +7204,7 @@ fn raw_jsx_child(
                         let mut embedded = EmbeddedJsxCollector {
                             scoping,
                             known_arrays,
+                            aliases,
                             nodes: Vec::new(),
                         };
                         embedded.visit_expression(expression);
@@ -7195,7 +7213,12 @@ fn raw_jsx_child(
                             kind,
                             contains_fragment: fragments.found,
                             function_like: inner.is_function(),
-                            list: raw_jsx_list_expression(scoping, known_arrays, expression),
+                            list: raw_jsx_list_expression(
+                                scoping,
+                                known_arrays,
+                                aliases,
+                                expression,
+                            ),
                             embedded_nodes: embedded.nodes,
                         }
                     }
@@ -7212,6 +7235,7 @@ fn raw_jsx_child(
 struct EmbeddedJsxCollector<'facts> {
     scoping: &'facts Scoping,
     known_arrays: &'facts BTreeSet<SymbolId>,
+    aliases: &'facts StaticHookAliases,
     nodes: Vec<RawJsxNode>,
 }
 
@@ -7219,18 +7243,27 @@ impl<'a> Visit<'a> for EmbeddedJsxCollector<'_> {
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
     fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
-        self.nodes
-            .push(raw_jsx_element(self.scoping, self.known_arrays, element));
+        self.nodes.push(raw_jsx_element(
+            self.scoping,
+            self.known_arrays,
+            self.aliases,
+            element,
+        ));
     }
     fn visit_jsx_fragment(&mut self, fragment: &JSXFragment<'a>) {
-        self.nodes
-            .push(raw_jsx_fragment(self.scoping, self.known_arrays, fragment));
+        self.nodes.push(raw_jsx_fragment(
+            self.scoping,
+            self.known_arrays,
+            self.aliases,
+            fragment,
+        ));
     }
 }
 
 fn raw_jsx_list_expression(
     scoping: &Scoping,
     known_arrays: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
     expression: &Expression<'_>,
 ) -> Option<RawJsxListExpression> {
     let call = match expression.get_inner_expression() {
@@ -7259,6 +7292,9 @@ fn raw_jsx_list_expression(
         }
         _ => return None,
     };
+    if !aliases.receiver_method_is_intact(scoping, items, StateReceiverKind::Array, "map") {
+        return None;
+    }
     let callback = call.arguments[0].as_expression()?.get_inner_expression();
     let (parameters, returned, function_expression) = match callback {
         Expression::ArrowFunctionExpression(callback) if !callback.r#async => (
@@ -7349,7 +7385,7 @@ fn raw_jsx_list_expression(
             reference.start() < initializer.start() || reference.end() > initializer.end()
         });
     }
-    let receiver = classify_raw_list_receiver(scoping, known_arrays, items)?;
+    let receiver = classify_raw_list_receiver(scoping, known_arrays, aliases, items)?;
     Some(RawJsxListExpression {
         items: source_span(items.span()),
         optional,
@@ -7538,6 +7574,7 @@ fn direct_jsx_key_expression<'a, 'element>(
 fn classify_raw_list_receiver(
     scoping: &Scoping,
     known_arrays: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
     expression: &Expression<'_>,
 ) -> Option<RawJsxListReceiver> {
     match expression.get_inner_expression() {
@@ -7560,24 +7597,35 @@ fn classify_raw_list_receiver(
             })
         }
         Expression::CallExpression(call) if !call.optional => {
-            let receiver = match call.callee.get_inner_expression() {
+            let (receiver, method) = match call.callee.get_inner_expression() {
                 Expression::StaticMemberExpression(member)
                     if !member.optional
                         && trusted_array_returning_method(member.property.name.as_str()) =>
                 {
-                    &member.object
+                    (&member.object, member.property.name.as_str())
                 }
-                Expression::ComputedMemberExpression(member)
-                    if !member.optional
-                        && matches!(member.expression.get_inner_expression(),
-                            Expression::StringLiteral(property)
-                                if trusted_array_returning_method(property.value.as_str())) =>
-                {
-                    &member.object
+                Expression::ComputedMemberExpression(member) if !member.optional => {
+                    let Expression::StringLiteral(property) =
+                        member.expression.get_inner_expression()
+                    else {
+                        return None;
+                    };
+                    if !trusted_array_returning_method(property.value.as_str()) {
+                        return None;
+                    }
+                    (&member.object, property.value.as_str())
                 }
                 _ => return None,
             };
-            classify_raw_list_receiver(scoping, known_arrays, receiver)
+            if !aliases.receiver_method_is_intact(
+                scoping,
+                receiver,
+                StateReceiverKind::Array,
+                method,
+            ) {
+                return None;
+            }
+            classify_raw_list_receiver(scoping, known_arrays, aliases, receiver)
         }
         _ => None,
     }
@@ -8024,17 +8072,37 @@ enum PlannedProjection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum StaticAliasRoot {
+    Binding(SymbolId),
+    UnresolvedGlobal(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct StaticAliasPath {
-    root: SymbolId,
+    root: StaticAliasRoot,
     properties: Vec<String>,
 }
 
 impl StaticAliasPath {
     fn root(root: SymbolId) -> Self {
         Self {
-            root,
+            root: StaticAliasRoot::Binding(root),
             properties: Vec::new(),
         }
+    }
+
+    fn unresolved_global(name: String) -> Self {
+        Self {
+            root: StaticAliasRoot::UnresolvedGlobal(name),
+            properties: Vec::new(),
+        }
+    }
+
+    fn binding_root(&self) -> Option<SymbolId> {
+        let StaticAliasRoot::Binding(root) = self.root else {
+            return None;
+        };
+        Some(root)
     }
 
     fn with_property(&self, property: String) -> Self {
@@ -8055,6 +8123,7 @@ impl StaticAliasPath {
 #[derive(Debug, Default)]
 struct StaticHookAliases {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    member_invalidated: BTreeSet<StaticAliasPath>,
 }
 
 impl StaticHookAliases {
@@ -8066,7 +8135,7 @@ impl StaticHookAliases {
         while visited.len() <= self.aliases.len() {
             let replacement = (0..=current.properties.len()).rev().find_map(|length| {
                 let prefix = StaticAliasPath {
-                    root: current.root,
+                    root: current.root.clone(),
                     properties: current.properties[..length].to_vec(),
                 };
                 self.aliases.get(&prefix).map(|source| {
@@ -8087,6 +8156,48 @@ impl StaticHookAliases {
         }
 
         current
+    }
+
+    fn path_is_intact(&self, path: &StaticAliasPath) -> bool {
+        let resolved = self.resolve(path);
+        self.member_invalidated
+            .iter()
+            .all(|invalidated| !invalidated.overlaps(path) && !invalidated.overlaps(&resolved))
+    }
+
+    fn builtin_prototype_method_is_intact(
+        &self,
+        receiver: StateReceiverKind,
+        method: &str,
+    ) -> bool {
+        if receiver == StateReceiverKind::Unknown {
+            return false;
+        }
+        self.path_is_intact(
+            &StaticAliasPath::unresolved_global("Object".to_string())
+                .with_property("prototype".to_string())
+                .with_property(method.to_string()),
+        ) && builtin_state_receiver_constructor_names(receiver)
+            .iter()
+            .all(|constructor| {
+                self.path_is_intact(
+                    &StaticAliasPath::unresolved_global((*constructor).to_string())
+                        .with_property("prototype".to_string())
+                        .with_property(method.to_string()),
+                )
+            })
+    }
+
+    fn receiver_method_is_intact(
+        &self,
+        scoping: &Scoping,
+        receiver: &Expression<'_>,
+        receiver_kind: StateReceiverKind,
+        method: &str,
+    ) -> bool {
+        self.builtin_prototype_method_is_intact(receiver_kind, method)
+            && static_alias_source_path(scoping, receiver)
+                .is_none_or(|path| self.path_is_intact(&path.with_property(method.to_string())))
     }
 }
 
@@ -9421,10 +9532,26 @@ fn span_is_within_owned_pattern(
         .any(|(pattern_owner, pattern)| *pattern_owner == owner && span_contains(*pattern, span))
 }
 
+fn static_member_name(expression: &Expression<'_>) -> Option<String> {
+    match expression.get_inner_expression() {
+        Expression::StringLiteral(property) => Some(property.value.to_string()),
+        Expression::NumericLiteral(property) => Some(property.value.to_string()),
+        _ => None,
+    }
+}
+
 struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     invalidated: BTreeSet<StaticAliasPath>,
+    member_invalidated: BTreeSet<StaticAliasPath>,
+    reflective_mutations: Vec<ReflectiveMemberMutationFact>,
+}
+
+struct ReflectiveMemberMutationFact {
+    callee: StaticAliasPath,
+    target: StaticAliasPath,
+    key: Option<String>,
 }
 
 impl StaticHookAliasCollector<'_> {
@@ -9478,21 +9605,57 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn invalidate_place(&mut self, place: Option<PlannedPlace>) {
-        if let Some(path) = place.as_ref().and_then(static_alias_invalidation_path) {
+        if let Some(place) = place.as_ref()
+            && let Some(path) = static_alias_invalidation_path(place)
+        {
+            if !place.projections.is_empty()
+                || matches!(&place.base, PlannedPlaceBase::UnresolvedGlobal { .. })
+            {
+                self.member_invalidated.insert(path.clone());
+            }
             self.invalidated.insert(path);
         }
     }
 
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
+        let resolver = StaticHookAliases {
+            aliases: self.aliases.clone(),
+            member_invalidated: BTreeSet::new(),
+        };
+        for mutation in &self.reflective_mutations {
+            let callee = resolver.resolve(&mutation.callee);
+            let Some(keyed) = reflective_member_mutator_kind(&callee) else {
+                continue;
+            };
+            let mut target = resolver.resolve(&mutation.target);
+            if keyed && let Some(key) = &mutation.key {
+                target.properties.push(key.clone());
+            }
+            self.invalidated.insert(target.clone());
+            self.member_invalidated.insert(target);
+        }
+        let mut invalidated = self.invalidated.clone();
+        invalidated.extend(self.invalidated.iter().map(|path| resolver.resolve(path)));
+        let mut member_invalidated = self.member_invalidated.clone();
+        member_invalidated.extend(
+            self.member_invalidated
+                .iter()
+                .map(|path| resolver.resolve(path)),
+        );
         self.aliases.retain(|target, source| {
-            !mutable_symbols.contains(&target.root)
-                && !mutable_symbols.contains(&source.root)
-                && self.invalidated.iter().all(|invalidated| {
+            target
+                .binding_root()
+                .is_none_or(|root| !mutable_symbols.contains(&root))
+                && source
+                    .binding_root()
+                    .is_none_or(|root| !mutable_symbols.contains(&root))
+                && invalidated.iter().all(|invalidated| {
                     !target.overlaps(invalidated) && !source.overlaps(invalidated)
                 })
         });
         StaticHookAliases {
             aliases: self.aliases,
+            member_invalidated,
         }
     }
 }
@@ -9532,6 +9695,46 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             ));
         }
         oxc::ast_visit::walk::walk_unary_expression(self, expression);
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        if let Some(callee) = static_alias_source_path(self.scoping, &call.callee)
+            && let Some(target) = call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .and_then(|target| static_alias_source_path(self.scoping, target))
+        {
+            let key = call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .and_then(static_member_name);
+            self.reflective_mutations
+                .push(ReflectiveMemberMutationFact {
+                    callee,
+                    target,
+                    key,
+                });
+        }
+        walk_call_expression(self, call);
+    }
+}
+
+fn reflective_member_mutator_kind(callee: &StaticAliasPath) -> Option<bool> {
+    let StaticAliasRoot::UnresolvedGlobal(root) = &callee.root else {
+        return None;
+    };
+    let [method] = callee.properties.as_slice() else {
+        return None;
+    };
+    match (root.as_str(), method.as_str()) {
+        ("Object", "defineProperty") | ("Reflect", "defineProperty" | "set" | "deleteProperty") => {
+            Some(true)
+        }
+        ("Object", "assign" | "defineProperties" | "setPrototypeOf")
+        | ("Reflect", "setPrototypeOf") => Some(false),
+        _ => None,
     }
 }
 
@@ -10196,6 +10399,94 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         }
     }
 
+    fn builtin_method_is_intact(
+        &self,
+        receiver: &Expression<'_>,
+        receiver_kind: StateReceiverKind,
+        method: &str,
+    ) -> bool {
+        self.callback_aliases.receiver_method_is_intact(
+            self.scoping,
+            receiver,
+            receiver_kind,
+            method,
+        ) && self.builtin_receiver_origin_is_intact(receiver, receiver_kind)
+    }
+
+    fn builtin_receiver_origin_is_intact(
+        &self,
+        expression: &Expression<'_>,
+        expected: StateReceiverKind,
+    ) -> bool {
+        match expression.get_inner_expression() {
+            Expression::NewExpression(expression) => {
+                classify_global_state_constructor(self.scoping, &expression.callee) == expected
+                    && static_alias_source_path(self.scoping, &expression.callee)
+                        .is_some_and(|path| self.callback_aliases.path_is_intact(&path))
+            }
+            Expression::CallExpression(call) => {
+                self.builtin_receiver_call_origin_is_intact(call, expected)
+            }
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => {
+                    self.builtin_receiver_call_origin_is_intact(call, expected)
+                }
+                ChainElement::TSNonNullExpression(expression) => {
+                    self.builtin_receiver_origin_is_intact(&expression.expression, expected)
+                }
+                ChainElement::ComputedMemberExpression(_)
+                | ChainElement::PrivateFieldExpression(_)
+                | ChainElement::StaticMemberExpression(_) => true,
+            },
+            Expression::ConditionalExpression(expression) => {
+                self.builtin_receiver_origin_is_intact(&expression.consequent, expected)
+                    && self.builtin_receiver_origin_is_intact(&expression.alternate, expected)
+            }
+            Expression::LogicalExpression(expression) => {
+                self.builtin_receiver_origin_is_intact(&expression.left, expected)
+                    && self.builtin_receiver_origin_is_intact(&expression.right, expected)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_some_and(|value| self.builtin_receiver_origin_is_intact(value, expected)),
+            Expression::AssignmentExpression(expression) => {
+                self.builtin_receiver_origin_is_intact(&expression.right, expected)
+            }
+            _ => true,
+        }
+    }
+
+    fn builtin_receiver_call_origin_is_intact(
+        &self,
+        call: &CallExpression<'_>,
+        expected: StateReceiverKind,
+    ) -> bool {
+        if classify_global_state_factory_call(self.scoping, call) == expected
+            || classify_global_state_constructor(self.scoping, &call.callee) == expected
+        {
+            return static_alias_source_path(self.scoping, &call.callee)
+                .is_some_and(|path| self.callback_aliases.path_is_intact(&path));
+        }
+        let (receiver, method) = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.as_str())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Expression::StringLiteral(property) = member.expression.get_inner_expression()
+                else {
+                    return false;
+                };
+                (&member.object, property.value.as_str())
+            }
+            _ => return false,
+        };
+        let receiver_kind =
+            classify_state_receiver_assignment(self.scoping, receiver, self.proven_receivers);
+        classify_state_method_result(receiver_kind, method) == expected
+            && self.builtin_method_is_intact(receiver, receiver_kind, method)
+    }
+
     fn is_non_escaping_callback_host(
         &self,
         callee: &Expression<'_>,
@@ -10240,6 +10531,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             classify_state_receiver_assignment(self.scoping, receiver, self.proven_receivers);
         if receiver_kind == StateReceiverKind::Unknown && self.is_known_array_receiver(receiver) {
             receiver_kind = StateReceiverKind::Array;
+        }
+        if !self.builtin_method_is_intact(receiver, receiver_kind, method) {
+            return false;
         }
         let disposition = match receiver_kind {
             StateReceiverKind::Array
@@ -10345,6 +10639,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if receiver_kind == StateReceiverKind::Unknown && self.is_known_array_receiver(receiver) {
             receiver_kind = StateReceiverKind::Array;
         }
+        if !self.builtin_method_is_intact(receiver, receiver_kind, method) {
+            return false;
+        }
         matches!(
             (receiver_kind, method),
             (
@@ -10362,11 +10659,11 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         callee: &Expression<'_>,
         arguments: &[EscapeArgument<'_, '_>],
     ) -> bool {
-        let receiver = match unwrap_transparent_call_expression(callee) {
+        let (receiver, method) = match unwrap_transparent_call_expression(callee) {
             Expression::StaticMemberExpression(member)
                 if is_mutating_array_method(member.property.name.as_str()) =>
             {
-                &member.object
+                (&member.object, member.property.name.as_str())
             }
             Expression::ComputedMemberExpression(member) => {
                 let Expression::StringLiteral(property) = member.expression.get_inner_expression()
@@ -10376,11 +10673,14 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 if !is_mutating_array_method(property.value.as_str()) {
                     return false;
                 }
-                &member.object
+                (&member.object, property.value.as_str())
             }
             _ => return false,
         };
         if !self.is_known_array_receiver(receiver) {
+            return false;
+        }
+        if !self.builtin_method_is_intact(receiver, StateReceiverKind::Array, method) {
             return false;
         }
         let mut found_hook_accessor = false;
@@ -11324,8 +11624,12 @@ fn static_alias_path_from_place(
     place: &PlannedPlace,
     allow_optional: bool,
 ) -> Option<StaticAliasPath> {
-    let PlannedPlaceBase::Binding(root) = place.base else {
-        return None;
+    let root = match &place.base {
+        PlannedPlaceBase::Binding(root) => StaticAliasRoot::Binding(*root),
+        PlannedPlaceBase::UnresolvedGlobal { name, .. } => {
+            StaticAliasRoot::UnresolvedGlobal(name.clone())
+        }
+        PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => return None,
     };
     let properties = place
         .projections
@@ -11353,10 +11657,17 @@ fn static_alias_source_path(
 }
 
 fn static_alias_invalidation_path(place: &PlannedPlace) -> Option<StaticAliasPath> {
-    let PlannedPlaceBase::Binding(root) = place.base else {
-        return None;
+    let root = match &place.base {
+        PlannedPlaceBase::Binding(root) => StaticAliasRoot::Binding(*root),
+        PlannedPlaceBase::UnresolvedGlobal { name, .. } => {
+            StaticAliasRoot::UnresolvedGlobal(name.clone())
+        }
+        PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => return None,
     };
-    let mut path = StaticAliasPath::root(root);
+    let mut path = StaticAliasPath {
+        root,
+        properties: Vec::new(),
+    };
     for projection in &place.projections {
         match projection {
             PlannedProjection::Static { name, .. } => path.properties.push(name.clone()),
@@ -11839,6 +12150,38 @@ fn classify_builtin_state_receiver_name(name: &str) -> Option<StateReceiverKind>
         "WeakSet" => StateReceiverKind::WeakSet,
         _ => return None,
     })
+}
+
+fn builtin_state_receiver_constructor_names(
+    receiver: StateReceiverKind,
+) -> &'static [&'static str] {
+    match receiver {
+        StateReceiverKind::Array => &["Array"],
+        StateReceiverKind::DataView => &["DataView"],
+        StateReceiverKind::Date => &["Date"],
+        StateReceiverKind::Function => &["Function"],
+        StateReceiverKind::Map => &["Map"],
+        StateReceiverKind::Number => &["BigInt", "Number"],
+        StateReceiverKind::Promise => &["Promise"],
+        StateReceiverKind::Set => &["Set"],
+        StateReceiverKind::String => &["String"],
+        StateReceiverKind::TypedArray => &[
+            "BigInt64Array",
+            "BigUint64Array",
+            "Float32Array",
+            "Float64Array",
+            "Int8Array",
+            "Int16Array",
+            "Int32Array",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Uint16Array",
+            "Uint32Array",
+        ],
+        StateReceiverKind::WeakMap => &["WeakMap"],
+        StateReceiverKind::WeakSet => &["WeakSet"],
+        StateReceiverKind::Unknown => &[],
+    }
 }
 
 fn configured_reactive_scope_call(

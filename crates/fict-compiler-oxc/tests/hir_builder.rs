@@ -2558,6 +2558,222 @@ fn identity_lookup_escape_exemptions_fail_closed() {
 }
 
 #[test]
+fn builtin_escape_exemptions_reject_overridden_methods() {
+    for (name, source, expected_span, expected_code) in [
+        (
+            "overridden array lookup",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const rows = $state([{ done: false }]);
+                    const values = [];
+                    values.includes = sink;
+                    return values.includes(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "overridden array callback host",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    const values = [];
+                    values.forEach = sink;
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "overridden array prototype",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    Array.prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "overridden method through alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const rows = $state([{ done: false }]);
+                    const values = [];
+                    const alias = values;
+                    alias['includes'] = sink;
+                    return values.includes(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "overridden array returning chain",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const rows = $state([{ done: false }]);
+                    const values = [];
+                    values.filter = sink;
+                    return values.filter(Boolean).includes(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "overridden prototype through alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    const prototype = Array.prototype;
+                    prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "defined array lookup property",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const rows = $state([{ done: false }]);
+                    const values = [];
+                    Object.defineProperty(values, 'includes', { value: sink });
+                    return values.includes(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "defined array prototype callback host",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    Reflect.defineProperty(Array.prototype, 'forEach', { value: sink });
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "aliased reflective mutator",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const rows = $state([{ done: false }]);
+                    const values = [];
+                    const define = Object['defineProperty'];
+                    define(values, 'includes', { value: sink });
+                    return values.includes(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == expected_code
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected {expected_code} on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn state_method_proofs_reject_authored_builtin_overrides() {
+    for (name, source, expected_span) in [
+        (
+            "prototype override",
+            r#"
+                import { $state } from 'fict';
+                function App(sink) {
+                    Array.prototype.includes = sink;
+                    const rows = $state([1]);
+                    return rows.includes(1);
+                }
+            "#,
+            "rows.includes(1)",
+        ),
+        (
+            "instance override through alias",
+            r#"
+                import { $state } from 'fict';
+                function App(sink) {
+                    const rows = $state([1]);
+                    const alias = rows;
+                    alias.includes = sink;
+                    return rows.includes(1);
+                }
+            "#,
+            "rows.includes(1)",
+        ),
+        (
+            "object prototype override",
+            r#"
+                import { $state } from 'fict';
+                function App(sink) {
+                    Object.prototype.hasOwnProperty = sink;
+                    const rows = $state([1]);
+                    return rows.hasOwnProperty(0);
+                }
+            "#,
+            "rows.hasOwnProperty(0)",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-M"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected FICT-M on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn synchronous_builtin_callback_hosts_do_not_escape_reactive_captures() {
     let source = r#"
         import { $state, $store } from 'fict';
@@ -7745,6 +7961,85 @@ fn traces_trusted_array_method_chains_to_their_base_receiver() {
         "rows.filter(row => row.visible)"
     );
 }
+
+#[test]
+fn jsx_list_proofs_reject_authored_array_method_overrides() {
+    for (name, source) in [
+        (
+            "instance override",
+            r#"
+                export function App(sink) {
+                    const rows = [{ id: 1 }];
+                    rows.map = sink;
+                    return <ul>{rows.map(row => <li key={row.id}>{row.id}</li>)}</ul>;
+                }
+            "#,
+        ),
+        (
+            "override through alias",
+            r#"
+                export function App(sink) {
+                    const rows = [{ id: 1 }];
+                    const alias = rows;
+                    alias.map = sink;
+                    return <ul>{rows.map(row => <li key={row.id}>{row.id}</li>)}</ul>;
+                }
+            "#,
+        ),
+        (
+            "prototype chain override",
+            r#"
+                export function App(sink) {
+                    Array.prototype.filter = sink;
+                    const rows = [{ id: 1 }];
+                    return <ul>{rows.filter(Boolean).map(row => <li key={row.id}>{row.id}</li>)}</ul>;
+                }
+            "#,
+        ),
+        (
+            "literal prototype override",
+            r#"
+                export function App(sink) {
+                    Array.prototype.map = sink;
+                    return <ul>{[{ id: 1 }].map(row => <li key={row.id}>{row.id}</li>)}</ul>;
+                }
+            "#,
+        ),
+        (
+            "reflective instance override",
+            r#"
+                export function App() {
+                    const rows = [{ id: 1 }];
+                    Object.assign(rows, { map: sink });
+                    return <ul>{rows.map(row => <li key={row.id}>{row.id}</li>)}</ul>;
+                }
+            "#,
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScriptJsx),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.diagnostics.is_empty(),
+            "{name}: {:?}",
+            output.diagnostics
+        );
+        let hir = output.hir.expect("verified fallback HIR");
+        let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
+            panic!("{name}: intrinsic list root")
+        };
+        assert!(
+            matches!(
+                &root.children[0],
+                fict_hir::JsxChild::Expression { list: None, .. }
+            ),
+            "{name}: overridden methods must not use list metadata"
+        );
+    }
+}
+
 #[test]
 fn distinguishes_optional_map_members_from_optional_calls() {
     let source = r#"
