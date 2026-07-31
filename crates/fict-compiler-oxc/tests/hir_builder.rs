@@ -5121,6 +5121,11 @@ fn local_template_tags_propagate_substitution_invalidations() {
             "function tag(...args) { args[1].forEach = null; }",
             "tag`${values}`;",
         ),
+        (
+            "dynamic tag receiver",
+            "const holder = { target: values, tag: function () { this.target.forEach = null; } };",
+            "holder.tag``;",
+        ),
     ] {
         let source = format!(
             r#"
@@ -5237,6 +5242,61 @@ fn local_function_call_indirections_propagate_parameter_invalidations() {
             "",
             "(function (target) { target.forEach = null; }).call(null, values);",
         ),
+        (
+            "dynamic receiver",
+            "function mutate() { this.forEach = null; }",
+            "mutate.call(values);",
+        ),
+        (
+            "aliased dynamic receiver",
+            "function mutate() { this.forEach = null; } const run = mutate;",
+            "run['call'](values);",
+        ),
+        (
+            "inline dynamic receiver",
+            "",
+            "(function () { this.forEach = null; }).call(values);",
+        ),
+        (
+            "aliased this receiver",
+            "function mutate() { const receiver = this; receiver.forEach = null; }",
+            "mutate.call(values);",
+        ),
+        (
+            "lexical arrow receiver",
+            "function mutate() { (() => { this.forEach = null; })(); }",
+            "mutate.call(values);",
+        ),
+        (
+            "structured method receiver",
+            "const holder = { target: values, mutate: function () { this.target.forEach = null; } };",
+            "holder.mutate();",
+        ),
+        (
+            "optional structured method receiver",
+            "const holder = { target: values, mutate: function () { this.target.forEach = null; } };",
+            "holder.mutate?.();",
+        ),
+        (
+            "exposed dynamic receiver",
+            "function mutate() { external(this); }",
+            "mutate.call(values);",
+        ),
+        (
+            "reflectively mutated dynamic receiver",
+            "function mutate() { Object.defineProperty(this, 'forEach', { value: null }); }",
+            "mutate.call(values);",
+        ),
+        (
+            "assigned dynamic receiver",
+            "function mutate() { Object.assign(this, { forEach: null }); }",
+            "mutate.call(values);",
+        ),
+        (
+            "computed class key receiver",
+            "function mutate() { class Snapshot { [((this.forEach = null), 'value')]() {} } void Snapshot; }",
+            "mutate.call(values);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -5287,6 +5347,41 @@ fn pure_and_overridden_function_call_indirections_preserve_receivers() {
             "overridden call property",
             "function inspect(target) { target.forEach = null; } inspect.call = function (thisArg, target) { return target.length; };",
             "inspect.call(null, values);",
+        ),
+        (
+            "read-only dynamic receiver",
+            "function inspect() { return this.length; }",
+            "inspect.call(values);",
+        ),
+        (
+            "arrow lexical receiver",
+            "const inspect = () => { this.forEach = null; };",
+            "inspect.call(values);",
+        ),
+        (
+            "detached dynamic receiver alias",
+            "function inspect() { let receiver = this; receiver = {}; receiver.forEach = null; }",
+            "inspect.call(values);",
+        ),
+        (
+            "detached method reference",
+            "const holder = { inspect: function () { this.forEach = null; } }; const inspect = holder.inspect;",
+            "inspect();",
+        ),
+        (
+            "instance field receiver",
+            "function inspect() { class Snapshot { value = (this.forEach = null); } void Snapshot; }",
+            "inspect.call(values);",
+        ),
+        (
+            "static field receiver",
+            "function inspect() { class Snapshot { static value = (this.forEach = null); } void Snapshot; }",
+            "inspect.call(values);",
+        ),
+        (
+            "static block receiver",
+            "function inspect() { class Snapshot { static { this.forEach = null; } } void Snapshot; }",
+            "inspect.call(values);",
         ),
     ] {
         let source = format!(
@@ -5363,6 +5458,12 @@ fn local_function_apply_indirections_propagate_parameter_invalidations() {
             "",
             "(function (target) { target.forEach = null; }).apply(null, [values]);",
         ),
+        (
+            "dynamic receiver",
+            "",
+            "function mutate() { this.forEach = null; }",
+            "mutate.apply(values, []);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -5414,6 +5515,11 @@ fn pure_and_overridden_function_apply_indirections_preserve_receivers() {
             "overridden apply property",
             "function inspect(target) { target.forEach = null; } inspect.apply = function (thisArg, args) { return args[0].length; };",
             "inspect.apply(null, [values]);",
+        ),
+        (
+            "read-only dynamic receiver",
+            "function inspect() { return this.length; }",
+            "inspect.apply(values, []);",
         ),
     ] {
         let source = format!(
@@ -5502,6 +5608,12 @@ fn local_reflect_apply_invocations_propagate_parameter_invalidations() {
             "",
             "Reflect.apply(external, null, [values]);",
         ),
+        (
+            "dynamic receiver",
+            "",
+            "function mutate() { this.forEach = null; }",
+            "Reflect.apply(mutate, values, []);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -5579,6 +5691,13 @@ fn pure_reflect_apply_invocations_preserve_receivers() {
             "",
             "function inspect() { return 0; }",
             "Reflect.apply(inspect, values);",
+            "values",
+        ),
+        (
+            "read-only dynamic receiver",
+            "",
+            "function inspect() { return this.length; }",
+            "Reflect.apply(inspect, values, []);",
             "values",
         ),
     ] {
@@ -5855,6 +5974,30 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "new Bound(values);",
         ),
         (
+            "bound dynamic receiver",
+            "",
+            "function mutate() { this.forEach = null; } const run = mutate.bind(values);",
+            "run();",
+        ),
+        (
+            "bound dynamic receiver through call",
+            "",
+            "function mutate() { this.forEach = null; } const run = mutate.bind(values);",
+            "run.call(null);",
+        ),
+        (
+            "bound dynamic receiver through apply",
+            "",
+            "function mutate() { this.forEach = null; } const run = mutate.bind(values);",
+            "run.apply(null, []);",
+        ),
+        (
+            "bound dynamic receiver through Reflect.apply",
+            "",
+            "function mutate() { this.forEach = null; } const run = mutate.bind(values);",
+            "Reflect.apply(run, null, []);",
+        ),
+        (
             "Reflect.construct inline bound class",
             "",
             "const Bound = (class { constructor(target) { target.forEach = null; } }).bind(null);",
@@ -6009,6 +6152,24 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "overridden bind property",
             "",
             "function mutate(target) { target.forEach = null; } mutate.bind = function (_this, target) { return () => target.length; }; const run = mutate.bind(null, values);",
+            "run();",
+        ),
+        (
+            "bound receiver ignores call receiver",
+            "const other = [];",
+            "function mutate() { this.forEach = null; } const run = mutate.bind(other);",
+            "run.call(values);",
+        ),
+        (
+            "constructed bound receiver",
+            "",
+            "function Mutate() { this.forEach = null; } const Bound = Mutate.bind(values);",
+            "new Bound();",
+        ),
+        (
+            "correlated conditional receivers",
+            "const other = [];",
+            "function mutate() { this.forEach = null; } function inspect() { return this.length; } const run = choose ? mutate.bind(other) : inspect.bind(values);",
             "run();",
         ),
         (
@@ -7036,6 +7197,16 @@ fn stored_callable_spread_initializers_propagate_parameter_invalidations() {
             "wrapper.run.apply(null, [values]);",
         ),
         (
+            "spread object dynamic receiver",
+            "const source = { target: values, run() { this.target.forEach = null; } }; const wrapper = { ...source };",
+            "wrapper.run();",
+        ),
+        (
+            "spread array dynamic receiver",
+            "const source = [function run() { this[1].forEach = null; }, values]; const wrapper = [...source];",
+            "wrapper[0]();",
+        ),
+        (
             "spread constructor",
             "const source = [class { constructor(target) { target.forEach = null; } }]; const wrapper = [...source];",
             "new wrapper[0](values);",
@@ -7105,6 +7276,16 @@ fn stored_callable_spread_initializers_preserve_unmodified_values() {
             "uninvoked deferred replacement",
             "const source = { run(target) { return target.length; } }; function replace() { source.run = function mutate(target) { target.forEach = null; }; } const wrapper = { ...source };",
             "wrapper.run(values);",
+        ),
+        (
+            "overwritten dynamic receiver",
+            "const source = { target: values, run() { this.target.forEach = null; } }; const wrapper = { ...source, run() { return this.target.length; } };",
+            "wrapper.run();",
+        ),
+        (
+            "unselected dynamic receiver",
+            "const source = [function inspect() { return this.length; }, function mutate() { this.forEach = null; }]; const wrapper = [...source];",
+            "wrapper[0]();",
         ),
     ] {
         let source = format!(

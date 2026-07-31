@@ -31,8 +31,8 @@ use oxc::{
     allocator::Allocator,
     ast::{
         ast::{
-            ArrayAssignmentTarget, ArrayExpressionElement, ArrowFunctionExpression,
-            AssignmentExpression, AssignmentPattern, AssignmentTarget,
+            AccessorProperty, ArrayAssignmentTarget, ArrayExpressionElement,
+            ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
             AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
             CallExpression, ChainElement, Class, ClassElement, ClassType, ComputedMemberExpression,
@@ -43,11 +43,12 @@ use oxc::{
             JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
             JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
             MetaProperty, MethodDefinitionKind, NewExpression, ObjectAssignmentTarget,
-            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
-            PropertyKind, ReturnStatement, SimpleAssignmentTarget, Statement, Super,
-            TSImportEqualsDeclaration, TSLiteral, TSModuleReference, TSType, TSTypeName,
-            TSTypeOperatorOperator, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
-            UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyDefinition,
+            PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement, SimpleAssignmentTarget,
+            Statement, StaticBlock, Super, TSImportEqualsDeclaration, TSLiteral, TSModuleReference,
+            TSType, TSTypeName, TSTypeOperatorOperator, TaggedTemplateExpression, TemplateLiteral,
+            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
+            VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -2048,6 +2049,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             callable_exposure_history: BTreeMap::new(),
             local_callable_parameters: BTreeMap::new(),
             local_callable_parameter_history: BTreeMap::new(),
+            local_callable_receivers: BTreeMap::new(),
+            local_callable_receiver_history: BTreeMap::new(),
             local_bound_callables: BTreeMap::new(),
             local_bound_callable_history: BTreeMap::new(),
             default_derived_constructors: BTreeMap::new(),
@@ -2063,6 +2066,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             control_depth: 0,
             function_control_baselines: Vec::new(),
             function_depth: 0,
+            dynamic_this_roots: Vec::new(),
         };
         static_hook_aliases.visit_program(program);
         let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
@@ -8108,6 +8112,7 @@ enum PlannedProjection {
 enum StaticAliasRoot {
     Binding(SymbolId),
     UnresolvedGlobal(String),
+    DynamicThis { start: u32, end: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -8129,6 +8134,17 @@ impl StaticAliasPath {
     fn unresolved_global(name: String) -> Self {
         Self {
             root: StaticAliasRoot::UnresolvedGlobal(name),
+            properties: Vec::new(),
+            element_wildcard: false,
+        }
+    }
+
+    fn dynamic_this(span: Span) -> Self {
+        Self {
+            root: StaticAliasRoot::DynamicThis {
+                start: span.start,
+                end: span.end,
+            },
             properties: Vec::new(),
             element_wildcard: false,
         }
@@ -9914,6 +9930,8 @@ struct StaticHookAliasCollector<'semantic> {
     callable_exposure_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     local_callable_parameters: BTreeMap<StaticAliasPath, Vec<LocalCallableParameter>>,
     local_callable_parameter_history: BTreeMap<StaticAliasPath, Vec<Vec<LocalCallableParameter>>>,
+    local_callable_receivers: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    local_callable_receiver_history: BTreeMap<StaticAliasPath, Vec<Option<StaticAliasPath>>>,
     local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
     local_bound_callable_history: BTreeMap<StaticAliasPath, Vec<LocalBoundCallable>>,
     default_derived_constructors:
@@ -9931,6 +9949,7 @@ struct StaticHookAliasCollector<'semantic> {
     control_depth: usize,
     function_control_baselines: Vec<usize>,
     function_depth: usize,
+    dynamic_this_roots: Vec<Option<StaticAliasPath>>,
 }
 
 #[derive(Clone)]
@@ -9963,6 +9982,7 @@ struct StoredSpreadCallableSignature {
     properties: Vec<String>,
     element_wildcard: bool,
     parameters: Vec<LocalCallableParameter>,
+    dynamic_receiver: Option<StaticAliasPath>,
 }
 
 struct StoredSpreadCallableExposure {
@@ -9991,6 +10011,7 @@ struct LocalBoundCallable {
     parameters: Vec<LocalCallableParameter>,
     arguments: Vec<LocalInvocationArgumentSegment>,
     receiver: Vec<LocalInvocationArgument>,
+    dynamic_receiver: Option<StaticAliasPath>,
     unknown: bool,
 }
 
@@ -10092,6 +10113,14 @@ enum LocalParameterInvalidationKind {
     Member,
     Exposure,
 }
+
+type LocalInvocationEffectAdditions = BTreeMap<
+    StaticAliasPath,
+    (
+        LocalParameterInvalidationKind,
+        Option<LocalParameterInvalidationKind>,
+    ),
+>;
 
 #[derive(Clone)]
 enum LocalInvocationSourceProjection {
@@ -10337,8 +10366,15 @@ struct LocalInvocationFact {
     argument_offset: usize,
     function_depth: usize,
     bound_receiver: Vec<LocalInvocationArgument>,
+    dynamic_receiver: LocalInvocationDynamicReceiver,
     force_argument_exposure: bool,
     construct: bool,
+}
+
+#[derive(Clone)]
+enum LocalInvocationDynamicReceiver {
+    ResolveFromCallee,
+    Known(Option<StaticAliasPath>),
 }
 
 impl LocalInvocationFact {
@@ -10346,10 +10382,17 @@ impl LocalInvocationFact {
         let Some(target) = index.checked_add(self.argument_offset) else {
             return Vec::new();
         };
+        Self::arguments_at(&self.arguments, target)
+    }
+
+    fn arguments_at(
+        arguments: &[LocalInvocationArgumentSegment],
+        target: usize,
+    ) -> Vec<LocalInvocationArgument> {
         let mut position = 0usize;
         let mut uncertain = false;
         let mut matches = Vec::new();
-        for segment in &self.arguments {
+        for segment in arguments {
             match segment {
                 LocalInvocationArgumentSegment::Fixed(arguments) => {
                     if (!uncertain && target == position) || (uncertain && target >= position) {
@@ -10458,7 +10501,27 @@ impl StaticHookAliasCollector<'_> {
             .entry(target.clone())
             .or_default()
             .push(bindings.clone());
+        self.local_callable_receiver_history
+            .entry(target.clone())
+            .or_default()
+            .push(None);
+        self.local_callable_receivers.remove(&target);
         self.local_callable_parameters.insert(target, bindings);
+    }
+
+    fn record_local_callable_receiver(
+        &mut self,
+        target: StaticAliasPath,
+        receiver: StaticAliasPath,
+    ) {
+        if let Some(current) = self
+            .local_callable_receiver_history
+            .get_mut(&target)
+            .and_then(|history| history.last_mut())
+        {
+            *current = Some(receiver.clone());
+        }
+        self.local_callable_receivers.insert(target, receiver);
     }
 
     fn record_local_bound_callable(
@@ -10575,6 +10638,7 @@ impl StaticHookAliasCollector<'_> {
                             parameters,
                             arguments: Vec::new(),
                             receiver: Vec::new(),
+                            dynamic_receiver: None,
                             unknown: false,
                         })
                     }));
@@ -10591,6 +10655,7 @@ impl StaticHookAliasCollector<'_> {
                         parameters: parameters.clone(),
                         arguments: Vec::new(),
                         receiver: Vec::new(),
+                        dynamic_receiver: None,
                         unknown: false,
                     },
                 ));
@@ -10685,6 +10750,7 @@ impl StaticHookAliasCollector<'_> {
                         parameters: Self::local_callable_parameters(&function.params),
                         arguments: Vec::new(),
                         receiver: Vec::new(),
+                        dynamic_receiver: Some(StaticAliasPath::dynamic_this(function.span)),
                         unknown: false,
                     },
                 )]
@@ -10696,6 +10762,7 @@ impl StaticHookAliasCollector<'_> {
                             parameters: Self::class_constructor_parameters(class),
                             arguments: Vec::new(),
                             receiver: Vec::new(),
+                            dynamic_receiver: None,
                             unknown: false,
                         },
                     )]
@@ -10741,6 +10808,7 @@ impl StaticHookAliasCollector<'_> {
                             parameters: Vec::new(),
                             arguments: Vec::new(),
                             receiver: Vec::new(),
+                            dynamic_receiver: None,
                             unknown: true,
                         },
                     )]
@@ -10779,6 +10847,15 @@ impl StaticHookAliasCollector<'_> {
                 Some(Self::local_callable_parameters(&function.params))
             }
             Expression::ClassExpression(class) => Some(Self::class_constructor_parameters(class)),
+            _ => None,
+        }
+    }
+
+    fn inline_callable_receiver(expression: &Expression<'_>) -> Option<StaticAliasPath> {
+        match unwrap_transparent_call_expression(expression) {
+            Expression::FunctionExpression(function) if !function.generator => {
+                Some(StaticAliasPath::dynamic_this(function.span))
+            }
             _ => None,
         }
     }
@@ -11332,10 +11409,22 @@ impl StaticHookAliasCollector<'_> {
         }
         let target = arguments.first()?.as_expression()?;
         let argument_list = arguments.get(2)?.as_expression()?;
-        self.local_invocation_fact_from_arguments(
+        let mut invocation = self.local_invocation_fact_from_arguments(
             target,
             self.collect_apply_invocation_arguments(argument_list),
-        )
+        )?;
+        let bound_receiver_applied = invocation
+            .callee
+            .as_ref()
+            .is_some_and(|callee| self.local_bound_callables.contains_key(callee));
+        if !bound_receiver_applied {
+            invocation.bound_receiver = arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
+                .unwrap_or_default();
+        }
+        Some(invocation)
     }
 
     fn reflect_apply_exposed_argument_paths(
@@ -11428,18 +11517,24 @@ impl StaticHookAliasCollector<'_> {
         arguments: &[oxc::ast::ast::Argument<'_>],
     ) -> Option<LocalInvocationFact> {
         let argument_list = arguments.get(1)?.as_expression()?;
-        let arguments = self.collect_apply_invocation_arguments(argument_list);
+        let local_arguments = self.collect_apply_invocation_arguments(argument_list);
+        let receiver = arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
+            .unwrap_or_default();
         if let Some(raw_callee) = static_alias_source_path(self.scoping, callee) {
             let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
             let (raw_target, target) = self.intact_function_apply_target(&raw_callee, &callee)?;
             let invocation = LocalInvocationFact {
                 parameters: self.local_callable_parameters.get(&target).cloned(),
-                arguments,
+                arguments: local_arguments,
                 argument_offset: 0,
                 raw_callee: Some(raw_target),
                 callee: Some(target.clone()),
                 function_depth: self.function_depth,
-                bound_receiver: Vec::new(),
+                bound_receiver: receiver,
+                dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 force_argument_exposure: false,
                 construct: false,
             };
@@ -11448,15 +11543,39 @@ impl StaticHookAliasCollector<'_> {
         let parameters = self.inline_function_indirection_parameters(callee, "apply")?;
         Some(LocalInvocationFact {
             parameters: Some(parameters),
-            arguments,
+            arguments: local_arguments,
             argument_offset: 0,
             raw_callee: None,
             callee: None,
             function_depth: self.function_depth,
-            bound_receiver: Vec::new(),
+            bound_receiver: receiver,
+            dynamic_receiver: LocalInvocationDynamicReceiver::Known(
+                self.inline_function_indirection_receiver(callee, "apply"),
+            ),
             force_argument_exposure: false,
             construct: false,
         })
+    }
+
+    fn invocation_reference_receiver(
+        &self,
+        callee: &Expression<'_>,
+    ) -> Vec<LocalInvocationArgument> {
+        let receiver = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => Some(&member.object),
+            Expression::ComputedMemberExpression(member) => Some(&member.object),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::StaticMemberExpression(member) => Some(&member.object),
+                ChainElement::ComputedMemberExpression(member) => Some(&member.object),
+                ChainElement::CallExpression(_)
+                | ChainElement::PrivateFieldExpression(_)
+                | ChainElement::TSNonNullExpression(_) => None,
+            },
+            _ => None,
+        };
+        receiver
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
+            .unwrap_or_default()
     }
 
     fn local_invocation_fact_from_arguments(
@@ -11464,6 +11583,7 @@ impl StaticHookAliasCollector<'_> {
         callee: &Expression<'_>,
         arguments: Vec<LocalInvocationArgumentSegment>,
     ) -> Option<LocalInvocationFact> {
+        let call_receiver = LocalInvocationFact::arguments_at(&arguments, 0);
         if let Some(parameters) = self.inline_function_indirection_parameters(callee, "call") {
             return Some(LocalInvocationFact {
                 parameters: Some(parameters),
@@ -11472,15 +11592,18 @@ impl StaticHookAliasCollector<'_> {
                 raw_callee: None,
                 callee: None,
                 function_depth: self.function_depth,
-                bound_receiver: Vec::new(),
+                bound_receiver: call_receiver,
+                dynamic_receiver: LocalInvocationDynamicReceiver::Known(
+                    self.inline_function_indirection_receiver(callee, "call"),
+                ),
                 force_argument_exposure: false,
                 construct: false,
             });
         }
-        if let Some(callee) = static_alias_source_path(self.scoping, callee) {
-            let resolved_callee = resolve_static_alias_path(&self.aliases, &callee);
+        if let Some(raw_callee) = static_alias_source_path(self.scoping, callee) {
+            let resolved_callee = resolve_static_alias_path(&self.aliases, &raw_callee);
             if let Some((raw_target, target)) =
-                self.intact_function_call_target(&callee, &resolved_callee)
+                self.intact_function_call_target(&raw_callee, &resolved_callee)
             {
                 let invocation = LocalInvocationFact {
                     parameters: self.local_callable_parameters.get(&target).cloned(),
@@ -11489,7 +11612,8 @@ impl StaticHookAliasCollector<'_> {
                     raw_callee: Some(raw_target),
                     callee: Some(target.clone()),
                     function_depth: self.function_depth,
-                    bound_receiver: Vec::new(),
+                    bound_receiver: call_receiver,
+                    dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                     force_argument_exposure: false,
                     construct: false,
                 };
@@ -11502,10 +11626,11 @@ impl StaticHookAliasCollector<'_> {
                     .cloned(),
                 arguments,
                 argument_offset: 0,
-                raw_callee: Some(callee),
+                raw_callee: Some(raw_callee),
                 callee: Some(resolved_callee.clone()),
                 function_depth: self.function_depth,
-                bound_receiver: Vec::new(),
+                bound_receiver: self.invocation_reference_receiver(callee),
+                dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 force_argument_exposure: false,
                 construct: false,
             };
@@ -11518,7 +11643,10 @@ impl StaticHookAliasCollector<'_> {
             raw_callee: None,
             callee: None,
             function_depth: self.function_depth,
-            bound_receiver: Vec::new(),
+            bound_receiver: self.invocation_reference_receiver(callee),
+            dynamic_receiver: LocalInvocationDynamicReceiver::Known(
+                Self::inline_callable_receiver(callee),
+            ),
             force_argument_exposure: false,
             construct: false,
         })
@@ -11541,6 +11669,8 @@ impl StaticHookAliasCollector<'_> {
     ) -> LocalInvocationFact {
         invocation.parameters = Some(bound.parameters.clone());
         invocation.bound_receiver = bound.receiver.clone();
+        invocation.dynamic_receiver =
+            LocalInvocationDynamicReceiver::Known(bound.dynamic_receiver.clone());
         invocation.force_argument_exposure = bound.unknown;
         invocation.arguments.splice(
             invocation.argument_offset..invocation.argument_offset,
@@ -11585,6 +11715,32 @@ impl StaticHookAliasCollector<'_> {
             }
             _ => None,
         }
+    }
+
+    fn inline_function_indirection_receiver(
+        &self,
+        callee: &Expression<'_>,
+        expected_method: &str,
+    ) -> Option<StaticAliasPath> {
+        if !self.path_is_currently_intact(
+            &StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string())
+                .with_property(expected_method.to_string()),
+        ) {
+            return None;
+        }
+        let (object, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        (method == expected_method)
+            .then(|| Self::inline_callable_receiver(object))
+            .flatten()
     }
 
     fn inline_function_indirection_exposures(
@@ -12059,6 +12215,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn insert_invalidation_path(&mut self, path: StaticAliasPath, member: bool) {
         for path in prototype_sensitive_invalidation_paths(&path) {
+            if member && matches!(&path.root, StaticAliasRoot::DynamicThis { .. }) {
+                self.parameter_member_invalidated.insert(path.clone());
+            }
             self.invalidated.insert(path.clone());
             self.resolving_invalidated.insert(path.clone());
             if member {
@@ -12070,6 +12229,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn insert_slot_invalidation_path(&mut self, path: StaticAliasPath, member: bool) {
         for path in prototype_sensitive_invalidation_paths(&path) {
+            if member && matches!(&path.root, StaticAliasRoot::DynamicThis { .. }) {
+                self.parameter_slot_invalidated.insert(path.clone());
+            }
             self.invalidated.insert(path.clone());
             if member {
                 self.member_invalidated.insert(path);
@@ -12090,6 +12252,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
         self.local_callable_parameters
             .retain(|target, _| !target.overlaps(path));
+        self.local_callable_receivers
+            .retain(|target, _| !target.overlaps(path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(path));
         self.default_derived_constructors
@@ -12098,6 +12262,8 @@ impl StaticHookAliasCollector<'_> {
 
     fn mark_alias_target_ambiguous(&mut self, path: StaticAliasPath) {
         self.local_callable_parameters
+            .retain(|target, _| !target.overlaps(&path));
+        self.local_callable_receivers
             .retain(|target, _| !target.overlaps(&path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(&path));
@@ -12204,7 +12370,18 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
-        static_alias_source_path(self.scoping, expression)
+        let expression = unwrap_transparent_call_expression(expression);
+        planned_expression_place(self.scoping, expression)
+            .and_then(|place| {
+                static_alias_path_from_place_with_context(
+                    &place,
+                    false,
+                    self.dynamic_this_roots
+                        .last()
+                        .and_then(Option::as_ref)
+                        .map(|path| &path.root),
+                )
+            })
             .or_else(|| self.prototype_derived_path(expression))
     }
 
@@ -12279,6 +12456,14 @@ impl StaticHookAliasCollector<'_> {
         };
         self.record_unreferenced_callable_initializer(&target, value);
         self.record_local_callable_signature(target.clone(), parameters);
+        if let Expression::FunctionExpression(function) = inner
+            && !function.generator
+        {
+            self.record_local_callable_receiver(
+                target.clone(),
+                StaticAliasPath::dynamic_this(function.span),
+            );
+        }
         if let Expression::ClassExpression(class) = inner {
             self.record_default_derived_constructor(target.clone(), class);
         }
@@ -12345,14 +12530,22 @@ impl StaticHookAliasCollector<'_> {
                         continue;
                     }
                     if let Some(signatures) = self.local_callable_parameter_history.get(&source) {
-                        alternatives.extend(signatures.iter().cloned().map(|parameters| {
-                            LocalBoundCallable {
-                                parameters,
-                                arguments: Vec::new(),
-                                receiver: receiver.clone(),
-                                unknown: false,
-                            }
-                        }));
+                        alternatives.extend(signatures.iter().cloned().enumerate().map(
+                            |(index, parameters)| {
+                                LocalBoundCallable {
+                                    parameters,
+                                    arguments: Vec::new(),
+                                    receiver: receiver.clone(),
+                                    dynamic_receiver: self
+                                        .local_callable_receiver_history
+                                        .get(&source)
+                                        .and_then(|history| history.get(index))
+                                        .cloned()
+                                        .flatten(),
+                                    unknown: false,
+                                }
+                            },
+                        ));
                         continue;
                     }
                 } else if let Some(bound) = self.local_bound_callables.get(&source) {
@@ -12363,6 +12556,7 @@ impl StaticHookAliasCollector<'_> {
                         parameters: parameters.clone(),
                         arguments: Vec::new(),
                         receiver: receiver.clone(),
+                        dynamic_receiver: self.local_callable_receivers.get(&source).cloned(),
                         unknown: false,
                     });
                     continue;
@@ -12372,6 +12566,7 @@ impl StaticHookAliasCollector<'_> {
                         parameters: Vec::new(),
                         arguments: Vec::new(),
                         receiver: receiver.clone(),
+                        dynamic_receiver: None,
                         unknown: true,
                     });
                 }
@@ -12387,6 +12582,7 @@ impl StaticHookAliasCollector<'_> {
                 parameters,
                 arguments: Vec::new(),
                 receiver,
+                dynamic_receiver: self.inline_function_indirection_receiver(&call.callee, "bind"),
                 unknown: false,
             });
         } else {
@@ -12683,13 +12879,21 @@ impl StaticHookAliasCollector<'_> {
                         continue;
                     }
                     let properties = candidate.properties[base.properties.len()..].to_vec();
-                    entries.extend(signatures.iter().cloned().map(|parameters| {
-                        StoredSpreadCallableSignature {
-                            properties: properties.clone(),
-                            element_wildcard: candidate.element_wildcard,
-                            parameters,
-                        }
-                    }));
+                    entries.extend(signatures.iter().cloned().enumerate().map(
+                        |(index, parameters)| {
+                            StoredSpreadCallableSignature {
+                                properties: properties.clone(),
+                                element_wildcard: candidate.element_wildcard,
+                                parameters,
+                                dynamic_receiver: self
+                                    .local_callable_receiver_history
+                                    .get(candidate)
+                                    .and_then(|history| history.get(index))
+                                    .cloned()
+                                    .flatten(),
+                            }
+                        },
+                    ));
                 }
             }
         } else {
@@ -12705,6 +12909,7 @@ impl StaticHookAliasCollector<'_> {
                         properties: candidate.properties[base.properties.len()..].to_vec(),
                         element_wildcard: candidate.element_wildcard,
                         parameters: parameters.clone(),
+                        dynamic_receiver: self.local_callable_receivers.get(candidate).cloned(),
                     });
                 }
             }
@@ -12794,6 +12999,9 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             };
             self.record_local_callable_signature(callable_target.clone(), signature.parameters);
+            if let Some(receiver) = signature.dynamic_receiver {
+                self.record_local_callable_receiver(callable_target.clone(), receiver);
+            }
             if signatures.historical {
                 ambiguous.insert(callable_target);
             }
@@ -13326,7 +13534,13 @@ impl StaticHookAliasCollector<'_> {
 
     fn invalidate_place(&mut self, place: Option<PlannedPlace>) {
         if let Some(place) = place.as_ref()
-            && let Some(path) = static_alias_invalidation_path(place)
+            && let Some(path) = static_alias_invalidation_path_with_context(
+                place,
+                self.dynamic_this_roots
+                    .last()
+                    .and_then(Option::as_ref)
+                    .map(|path| &path.root),
+            )
         {
             let member = !place.projections.is_empty()
                 || matches!(&place.base,
@@ -13355,6 +13569,7 @@ impl StaticHookAliasCollector<'_> {
                         .contains(SymbolFlags::Import)
             }
             StaticAliasRoot::UnresolvedGlobal(_) => true,
+            StaticAliasRoot::DynamicThis { .. } => false,
         }
     }
 
@@ -13567,6 +13782,12 @@ impl StaticHookAliasCollector<'_> {
 
     fn invalidate_exposed_path(&mut self, path: StaticAliasPath) {
         let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if matches!(&path.root, StaticAliasRoot::DynamicThis { .. }) {
+            self.parameter_exposed.insert(path.clone());
+        }
+        if matches!(&resolved.root, StaticAliasRoot::DynamicThis { .. }) {
+            self.parameter_exposed.insert(resolved.clone());
+        }
         if let Some(parameter) = self.attached_parameter_path(&path, &resolved) {
             self.parameter_exposed.insert(parameter);
         }
@@ -13669,6 +13890,41 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn invocation_dynamic_receivers(
+        &self,
+        invocation: &LocalInvocationFact,
+    ) -> Vec<StaticAliasPath> {
+        match &invocation.dynamic_receiver {
+            LocalInvocationDynamicReceiver::Known(receiver) => {
+                return receiver.iter().cloned().collect();
+            }
+            LocalInvocationDynamicReceiver::ResolveFromCallee => {}
+        }
+        let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
+            self.path_requires_historical_aliases(callee, invocation.function_depth)
+        });
+        self.invocation_callees(invocation)
+            .iter()
+            .flat_map(|callee| {
+                if historical {
+                    self.local_callable_receiver_history
+                        .get(callee)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                } else {
+                    self.local_callable_receivers
+                        .get(callee)
+                        .cloned()
+                        .into_iter()
+                        .collect()
+                }
+            })
+            .collect()
+    }
+
     fn materialize_default_derived_alternative(
         &self,
         alternative: &DefaultDerivedConstructorAlternative,
@@ -13726,6 +13982,7 @@ impl StaticHookAliasCollector<'_> {
                         parameters,
                         arguments: Vec::new(),
                         receiver: Vec::new(),
+                        dynamic_receiver: None,
                         unknown: false,
                     },
                 ));
@@ -13736,6 +13993,7 @@ impl StaticHookAliasCollector<'_> {
                 parameters: Vec::new(),
                 arguments: Vec::new(),
                 receiver: Vec::new(),
+                dynamic_receiver: None,
                 unknown: true,
             });
         }
@@ -13800,6 +14058,58 @@ impl StaticHookAliasCollector<'_> {
         variants
     }
 
+    fn map_local_invocation_effect(
+        &self,
+        invocation_argument: &LocalInvocationArgument,
+        properties: &[String],
+        element_wildcard: bool,
+        kind: LocalParameterInvalidationKind,
+        function_depth: usize,
+        additions: &mut LocalInvocationEffectAdditions,
+    ) {
+        let Some((mapped_properties, mapped_element_wildcard)) =
+            invocation_argument.map_properties(properties, element_wildcard, kind)
+        else {
+            return;
+        };
+        let historical =
+            self.path_requires_historical_aliases(&invocation_argument.raw, function_depth);
+        let arguments = if historical {
+            if kind == LocalParameterInvalidationKind::Slot {
+                resolve_historical_alias_slot_paths(&self.alias_history, &invocation_argument.raw)
+            } else {
+                resolve_historical_alias_paths(&self.alias_history, &invocation_argument.raw)
+            }
+        } else {
+            BTreeSet::from([invocation_argument.resolved.clone()])
+        };
+        for argument_path in &arguments {
+            let mut mapped = argument_path.clone();
+            mapped.properties.extend(mapped_properties.clone());
+            mapped.element_wildcard |= mapped_element_wildcard;
+            let mapped_paths = if historical {
+                if kind == LocalParameterInvalidationKind::Slot {
+                    resolve_historical_alias_slot_paths(&self.alias_history, &mapped)
+                } else {
+                    resolve_historical_alias_paths(&self.alias_history, &mapped)
+                }
+            } else {
+                BTreeSet::from([mapped.canonicalized()])
+            };
+            for mapped in mapped_paths {
+                additions
+                    .entry(mapped)
+                    .and_modify(|(existing_kind, attached_kind)| {
+                        *existing_kind = (*existing_kind).max(kind);
+                        if invocation_argument.parameter_attached {
+                            *attached_kind = Some(attached_kind.unwrap_or(kind).max(kind));
+                        }
+                    })
+                    .or_insert((kind, invocation_argument.parameter_attached.then_some(kind)));
+            }
+        }
+    }
+
     fn propagate_local_invocation_invalidations(&mut self) {
         let invocation_variants = self
             .local_invocations
@@ -13849,13 +14159,7 @@ impl StaticHookAliasCollector<'_> {
             for path in &self.parameter_exposed {
                 invalidated.insert(path.clone(), LocalParameterInvalidationKind::Exposure);
             }
-            let mut additions = BTreeMap::<
-                StaticAliasPath,
-                (
-                    LocalParameterInvalidationKind,
-                    Option<LocalParameterInvalidationKind>,
-                ),
-            >::new();
+            let mut additions = LocalInvocationEffectAdditions::new();
             for invocation in &invocation_variants {
                 let parameter_sets = if let Some(parameters) = &invocation.parameters {
                     vec![parameters.clone()]
@@ -13896,73 +14200,35 @@ impl StaticHookAliasCollector<'_> {
                             for invocation_argument in
                                 invocation.arguments_for_parameter(argument_index)
                             {
-                                let Some((mapped_properties, mapped_element_wildcard)) =
-                                    invocation_argument.map_properties(
-                                        &properties,
-                                        element_wildcard,
-                                        *kind,
-                                    )
-                                else {
-                                    continue;
-                                };
-                                let historical = self.path_requires_historical_aliases(
-                                    &invocation_argument.raw,
+                                self.map_local_invocation_effect(
+                                    &invocation_argument,
+                                    &properties,
+                                    element_wildcard,
+                                    *kind,
                                     invocation.function_depth,
+                                    &mut additions,
                                 );
-                                let arguments = if historical {
-                                    if *kind == LocalParameterInvalidationKind::Slot {
-                                        resolve_historical_alias_slot_paths(
-                                            &self.alias_history,
-                                            &invocation_argument.raw,
-                                        )
-                                    } else {
-                                        resolve_historical_alias_paths(
-                                            &self.alias_history,
-                                            &invocation_argument.raw,
-                                        )
-                                    }
-                                } else {
-                                    BTreeSet::from([invocation_argument.resolved.clone()])
-                                };
-                                for argument_path in &arguments {
-                                    let mut mapped = argument_path.clone();
-                                    mapped.properties.extend(mapped_properties.clone());
-                                    mapped.element_wildcard |= mapped_element_wildcard;
-                                    let mapped_paths = if historical {
-                                        if *kind == LocalParameterInvalidationKind::Slot {
-                                            resolve_historical_alias_slot_paths(
-                                                &self.alias_history,
-                                                &mapped,
-                                            )
-                                        } else {
-                                            resolve_historical_alias_paths(
-                                                &self.alias_history,
-                                                &mapped,
-                                            )
-                                        }
-                                    } else {
-                                        BTreeSet::from([mapped.canonicalized()])
-                                    };
-                                    for mapped in mapped_paths {
-                                        additions
-                                            .entry(mapped)
-                                            .and_modify(|(existing_kind, attached_kind)| {
-                                                *existing_kind = (*existing_kind).max(*kind);
-                                                if invocation_argument.parameter_attached {
-                                                    *attached_kind = Some(
-                                                        attached_kind.unwrap_or(*kind).max(*kind),
-                                                    );
-                                                }
-                                            })
-                                            .or_insert((
-                                                *kind,
-                                                invocation_argument
-                                                    .parameter_attached
-                                                    .then_some(*kind),
-                                            ));
-                                    }
-                                }
                             }
+                        }
+                    }
+                }
+                if invocation.construct {
+                    continue;
+                }
+                for receiver in self.invocation_dynamic_receivers(invocation) {
+                    for (invalidated, kind) in &invalidated {
+                        if invalidated.root != receiver.root {
+                            continue;
+                        }
+                        for invocation_receiver in &invocation.bound_receiver {
+                            self.map_local_invocation_effect(
+                                invocation_receiver,
+                                &invalidated.properties,
+                                invalidated.element_wildcard,
+                                *kind,
+                                invocation.function_depth,
+                                &mut additions,
+                            );
                         }
                     }
                 }
@@ -14206,6 +14472,52 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         oxc::ast_visit::walk::walk_class(self, class);
     }
 
+    fn visit_property_definition(&mut self, property: &PropertyDefinition<'a>) {
+        let kind = AstKind::PropertyDefinition(self.alloc(property));
+        self.enter_node(kind);
+        self.visit_span(&property.span);
+        self.visit_decorators(&property.decorators);
+        self.visit_property_key(&property.key);
+        if let Some(type_annotation) = &property.type_annotation {
+            self.visit_ts_type_annotation(type_annotation);
+        }
+        if let Some(value) = &property.value {
+            self.dynamic_this_roots.push(None);
+            self.visit_expression(value);
+            self.dynamic_this_roots.pop();
+        }
+        self.leave_node(kind);
+    }
+
+    fn visit_accessor_property(&mut self, property: &AccessorProperty<'a>) {
+        let kind = AstKind::AccessorProperty(self.alloc(property));
+        self.enter_node(kind);
+        self.visit_span(&property.span);
+        self.visit_decorators(&property.decorators);
+        self.visit_property_key(&property.key);
+        if let Some(type_annotation) = &property.type_annotation {
+            self.visit_ts_type_annotation(type_annotation);
+        }
+        if let Some(value) = &property.value {
+            self.dynamic_this_roots.push(None);
+            self.visit_expression(value);
+            self.dynamic_this_roots.pop();
+        }
+        self.leave_node(kind);
+    }
+
+    fn visit_static_block(&mut self, block: &StaticBlock<'a>) {
+        let kind = AstKind::StaticBlock(self.alloc(block));
+        self.enter_node(kind);
+        self.enter_scope(ScopeFlags::ClassStaticBlock, &block.scope_id);
+        self.visit_span(&block.span);
+        self.dynamic_this_roots.push(None);
+        self.visit_statements(&block.body);
+        self.dynamic_this_roots.pop();
+        self.leave_scope();
+        self.leave_node(kind);
+    }
+
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         if function.r#type == FunctionType::FunctionDeclaration
             && let Some(symbol) = function
@@ -14219,6 +14531,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .or_insert(self.function_depth);
             self.record_unreferenced_callable_span(&target, function.span);
             self.record_local_callable_parameters(target.clone(), &function.params);
+            if !function.generator {
+                self.record_local_callable_receiver(
+                    target.clone(),
+                    StaticAliasPath::dynamic_this(function.span),
+                );
+            }
             if let Some(body) = &function.body {
                 let paths = self.returned_function_body_paths(body);
                 self.record_callable_exposures(target, paths);
@@ -14250,6 +14568,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, parameters)| (target.clone(), parameters.clone()))
             .collect::<Vec<_>>();
+        let outer_local_callable_receivers = self
+            .local_callable_receivers
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, receiver)| (target.clone(), receiver.clone()))
+            .collect::<Vec<_>>();
         let outer_local_bound_callables = self
             .local_bound_callables
             .iter()
@@ -14258,7 +14582,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         self.function_control_baselines.push(self.control_depth);
         self.function_depth = depth;
+        self.dynamic_this_roots
+            .push(Some(StaticAliasPath::dynamic_this(function.span)));
         walk_function(self, function, flags);
+        self.dynamic_this_roots.pop();
         let changed_outer_targets = self
             .aliases
             .keys()
@@ -14290,6 +14617,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_callable_parameters
             .extend(outer_local_callable_parameters);
+        let changed_outer_targets = self
+            .local_callable_receivers
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_callable_receivers.remove(&target);
+        }
+        self.local_callable_receivers
+            .extend(outer_local_callable_receivers);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
@@ -14332,6 +14670,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, parameters)| (target.clone(), parameters.clone()))
             .collect::<Vec<_>>();
+        let outer_local_callable_receivers = self
+            .local_callable_receivers
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, receiver)| (target.clone(), receiver.clone()))
+            .collect::<Vec<_>>();
         let outer_local_bound_callables = self
             .local_bound_callables
             .iter()
@@ -14372,6 +14716,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_callable_parameters
             .extend(outer_local_callable_parameters);
+        let changed_outer_targets = self
+            .local_callable_receivers
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_callable_receivers.remove(&target);
+        }
+        self.local_callable_receivers
+            .extend(outer_local_callable_receivers);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
@@ -16628,11 +16983,23 @@ fn static_alias_path_from_place(
     place: &PlannedPlace,
     allow_optional: bool,
 ) -> Option<StaticAliasPath> {
+    static_alias_path_from_place_with_context(place, allow_optional, None)
+}
+
+fn static_alias_path_from_place_with_context(
+    place: &PlannedPlace,
+    allow_optional: bool,
+    dynamic_this: Option<&StaticAliasRoot>,
+) -> Option<StaticAliasPath> {
     let root = match &place.base {
         PlannedPlaceBase::Binding(root) => StaticAliasRoot::Binding(*root),
         PlannedPlaceBase::UnresolvedGlobal { name, .. } => {
             StaticAliasRoot::UnresolvedGlobal(name.clone())
         }
+        PlannedPlaceBase::Context {
+            kind: ContextValueKind::This,
+            ..
+        } => dynamic_this?.clone(),
         PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => return None,
     };
     let properties = place
@@ -16668,11 +17035,22 @@ fn static_alias_source_path(
 }
 
 fn static_alias_invalidation_path(place: &PlannedPlace) -> Option<StaticAliasPath> {
+    static_alias_invalidation_path_with_context(place, None)
+}
+
+fn static_alias_invalidation_path_with_context(
+    place: &PlannedPlace,
+    dynamic_this: Option<&StaticAliasRoot>,
+) -> Option<StaticAliasPath> {
     let root = match &place.base {
         PlannedPlaceBase::Binding(root) => StaticAliasRoot::Binding(*root),
         PlannedPlaceBase::UnresolvedGlobal { name, .. } => {
             StaticAliasRoot::UnresolvedGlobal(name.clone())
         }
+        PlannedPlaceBase::Context {
+            kind: ContextValueKind::This,
+            ..
+        } => dynamic_this?.clone(),
         PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => return None,
     };
     let mut path = StaticAliasPath {
@@ -16717,6 +17095,14 @@ fn planned_expression_place(
     expression: &Expression<'_>,
 ) -> Option<PlannedPlace> {
     match expression.get_inner_expression() {
+        Expression::ThisExpression(expression) => Some(PlannedPlace {
+            base: PlannedPlaceBase::Context {
+                kind: ContextValueKind::This,
+                span: source_span(expression.span),
+            },
+            projections: Vec::new(),
+            root_reference_span: Some(source_span(expression.span)),
+        }),
         Expression::Identifier(identifier)
             if is_context_arguments_reference(scoping, identifier) =>
         {
