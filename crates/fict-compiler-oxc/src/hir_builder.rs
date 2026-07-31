@@ -8211,6 +8211,25 @@ fn resolve_historical_alias_paths(
     resolved
 }
 
+fn prototype_sensitive_invalidation_paths(path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
+    let mut paths = BTreeSet::from([path.clone()]);
+    for (index, property) in path.properties.iter().enumerate() {
+        if property == "__proto__"
+            || (property == "constructor"
+                && path
+                    .properties
+                    .get(index + 1)
+                    .is_some_and(|next| next == "prototype"))
+        {
+            paths.insert(StaticAliasPath {
+                root: path.root.clone(),
+                properties: path.properties[..index].to_vec(),
+            });
+        }
+    }
+    paths
+}
+
 impl StaticHookAliases {
     fn resolve(&self, original: &StaticAliasPath) -> StaticAliasPath {
         resolve_static_alias_path(&self.aliases, original)
@@ -9668,6 +9687,15 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn insert_invalidation_path(&mut self, path: StaticAliasPath, member: bool) {
+        for path in prototype_sensitive_invalidation_paths(&path) {
+            self.invalidated.insert(path.clone());
+            if member {
+                self.member_invalidated.insert(path);
+            }
+        }
+    }
+
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
         self.record_cross_scope_target(path);
         self.aliases.retain(|target, _| !target.overlaps(path));
@@ -9841,32 +9869,30 @@ impl StaticHookAliasCollector<'_> {
         {
             let resolved = resolve_static_alias_path(&self.aliases, &path);
             let deferred = self.path_requires_historical_aliases(&path, self.function_depth);
-            if !place.projections.is_empty()
+            let member = !place.projections.is_empty()
                 || matches!(&place.base,
-                    PlannedPlaceBase::UnresolvedGlobal { name, .. } if name != "globalThis")
-            {
-                self.member_invalidated.insert(path.clone());
-                self.member_invalidated.insert(resolved.clone());
-                if deferred {
-                    self.deferred_member_invalidated.insert(path.clone());
-                }
+                    PlannedPlaceBase::UnresolvedGlobal { name, .. } if name != "globalThis");
+            if member && deferred {
+                self.deferred_member_invalidated.insert(path.clone());
             }
             if deferred {
                 self.deferred_invalidated.insert(path.clone());
             }
-            self.invalidated.insert(path);
-            self.invalidated.insert(resolved);
+            self.insert_invalidation_path(path, member);
+            self.insert_invalidation_path(resolved, member);
         }
     }
 
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
         for path in self.deferred_invalidated.clone() {
-            self.invalidated
-                .extend(resolve_historical_alias_paths(&self.alias_history, &path));
+            for path in resolve_historical_alias_paths(&self.alias_history, &path) {
+                self.insert_invalidation_path(path, false);
+            }
         }
         for path in self.deferred_member_invalidated.clone() {
-            self.member_invalidated
-                .extend(resolve_historical_alias_paths(&self.alias_history, &path));
+            for path in resolve_historical_alias_paths(&self.alias_history, &path) {
+                self.insert_invalidation_path(path, true);
+            }
         }
         let resolver = StaticHookAliases {
             aliases: self.aliases.clone(),
@@ -9897,8 +9923,7 @@ impl StaticHookAliasCollector<'_> {
                     if keyed && let Some(key) = &mutation.key {
                         target = target.with_property(key.clone());
                     }
-                    self.invalidated.insert(target.clone());
-                    self.member_invalidated.insert(target);
+                    self.insert_invalidation_path(target, true);
                 }
             }
         }

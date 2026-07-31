@@ -2714,6 +2714,89 @@ fn builtin_escape_exemptions_reject_overridden_methods() {
 }
 
 #[test]
+fn prototype_indirection_invalidates_builtin_escape_exemptions() {
+    for (name, mutation) in [
+        (
+            "prototype reassignment",
+            "values.__proto__ = { forEach: sink };",
+        ),
+        (
+            "prototype member mutation",
+            "values.__proto__.forEach = sink;",
+        ),
+        (
+            "computed prototype member mutation",
+            "values['__proto__']['forEach'] = sink;",
+        ),
+        (
+            "constructor prototype mutation",
+            "values.constructor.prototype.forEach = sink;",
+        ),
+        (
+            "reflective prototype reassignment",
+            "Reflect.set(values, '__proto__', { forEach: sink });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function useRun(sink) {{
+                    const count = $state(0);
+                    const values = [];
+                    {mutation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn own_constructor_property_does_not_invalidate_builtin_methods() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(sink) {
+            const count = $state(0);
+            const values = [];
+            values.constructor = { prototype: { forEach: sink } };
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "an own constructor property does not change the receiver prototype: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
