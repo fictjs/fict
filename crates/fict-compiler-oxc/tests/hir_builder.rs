@@ -2776,6 +2776,161 @@ fn safe_global_escape_exemptions_reject_overridden_calls() {
 }
 
 #[test]
+fn global_this_overrides_invalidate_safe_global_calls() {
+    for (name, source, expected_span, expected_code) in [
+        (
+            "assigned converter",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    globalThis.String = sink;
+                    return String(() => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "computed array factory",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    globalThis['Array']['from'] = sink;
+                    return Array.from([1], () => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "reflectively defined serializer",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const rows = $state([{ done: false }]);
+                    Object.defineProperty(globalThis, 'JSON', { value: { stringify: sink } });
+                    return JSON.stringify(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "aliased global object",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    const root = globalThis;
+                    root.String = sink;
+                    return String(() => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "bulk global assignment",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    Object.assign(globalThis, { String: sink });
+                    return String(() => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "dynamic global property",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink, key) {
+                    const count = $state(0);
+                    globalThis[key] = sink;
+                    return String(() => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == expected_code
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected {expected_code} on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn shadowed_global_this_does_not_invalidate_safe_global_calls() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(sink) {
+            const count = $state(0);
+            const globalThis = { String: sink };
+            globalThis.String = sink;
+            return String(() => count);
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "a lexical globalThis binding must not invalidate real globals: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn reassigned_global_this_binding_does_not_invalidate_other_globals() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            globalThis = {};
+            return String(() => count);
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "reassigning the globalThis property does not replace sibling globals: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn synchronous_safe_global_callbacks_do_not_escape_reactive_captures() {
     let source = r#"
         import { $state } from 'fict';

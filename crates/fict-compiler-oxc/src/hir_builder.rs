@@ -8108,7 +8108,22 @@ impl StaticAliasPath {
     fn with_property(&self, property: String) -> Self {
         let mut path = self.clone();
         path.properties.push(property);
-        path
+        path.canonicalized()
+    }
+
+    fn canonicalized(mut self) -> Self {
+        if matches!(&self.root, StaticAliasRoot::UnresolvedGlobal(root) if root == "globalThis")
+            && let Some(global) = self.properties.first().cloned()
+        {
+            self.root = StaticAliasRoot::UnresolvedGlobal(global);
+            self.properties.remove(0);
+        }
+        self
+    }
+
+    fn is_global_object_root(&self) -> bool {
+        matches!(&self.root, StaticAliasRoot::UnresolvedGlobal(root) if root == "globalThis")
+            && self.properties.is_empty()
     }
 
     fn starts_with(&self, prefix: &Self) -> bool {
@@ -8128,7 +8143,7 @@ struct StaticHookAliases {
 
 impl StaticHookAliases {
     fn resolve(&self, original: &StaticAliasPath) -> StaticAliasPath {
-        let mut current = original.clone();
+        let mut current = original.clone().canonicalized();
         let mut visited = BTreeSet::new();
         visited.insert(current.clone());
 
@@ -8143,7 +8158,7 @@ impl StaticHookAliases {
                     resolved
                         .properties
                         .extend_from_slice(&current.properties[length..]);
-                    resolved
+                    resolved.canonicalized()
                 })
             });
             let Some(replacement) = replacement else {
@@ -8159,10 +8174,21 @@ impl StaticHookAliases {
     }
 
     fn path_is_intact(&self, path: &StaticAliasPath) -> bool {
-        let resolved = self.resolve(path);
+        let path = path.clone().canonicalized();
+        let resolved = self.resolve(&path);
+        if self
+            .member_invalidated
+            .iter()
+            .any(StaticAliasPath::is_global_object_root)
+            && [&path, &resolved].iter().any(|candidate| {
+                matches!(&candidate.root, StaticAliasRoot::UnresolvedGlobal(root) if root != "globalThis")
+            })
+        {
+            return false;
+        }
         self.member_invalidated
             .iter()
-            .all(|invalidated| !invalidated.overlaps(path) && !invalidated.overlaps(&resolved))
+            .all(|invalidated| !invalidated.overlaps(&path) && !invalidated.overlaps(&resolved))
     }
 
     fn builtin_prototype_method_is_intact(
@@ -9609,7 +9635,8 @@ impl StaticHookAliasCollector<'_> {
             && let Some(path) = static_alias_invalidation_path(place)
         {
             if !place.projections.is_empty()
-                || matches!(&place.base, PlannedPlaceBase::UnresolvedGlobal { .. })
+                || matches!(&place.base,
+                    PlannedPlaceBase::UnresolvedGlobal { name, .. } if name != "globalThis")
             {
                 self.member_invalidated.insert(path.clone());
             }
@@ -9629,7 +9656,7 @@ impl StaticHookAliasCollector<'_> {
             };
             let mut target = resolver.resolve(&mutation.target);
             if keyed && let Some(key) = &mutation.key {
-                target.properties.push(key.clone());
+                target = target.with_property(key.clone());
             }
             self.invalidated.insert(target.clone());
             self.member_invalidated.insert(target);
@@ -11754,7 +11781,7 @@ fn static_alias_path_from_place(
             PlannedProjection::Computed { .. } => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(StaticAliasPath { root, properties })
+    Some(StaticAliasPath { root, properties }.canonicalized())
 }
 
 fn static_alias_source_path(
@@ -11785,7 +11812,7 @@ fn static_alias_invalidation_path(place: &PlannedPlace) -> Option<StaticAliasPat
             PlannedProjection::Computed { .. } => break,
         }
     }
-    Some(path)
+    Some(path.canonicalized())
 }
 
 fn resolved_imported_hook_member_binding(
