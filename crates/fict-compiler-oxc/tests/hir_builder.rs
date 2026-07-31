@@ -3459,6 +3459,110 @@ fn pure_local_calls_preserve_receiver_methods() {
 }
 
 #[test]
+fn alias_slot_replacements_preserve_previous_receiver_methods() {
+    for (name, operation) in [
+        ("direct assignment", "box.target = [];"),
+        ("direct deletion", "delete box.target;"),
+        (
+            "local assignment",
+            "function replace(wrapper) { wrapper.target = []; } replace(box);",
+        ),
+        (
+            "local deletion",
+            "function remove(wrapper) { delete wrapper.target; } remove(box);",
+        ),
+        (
+            "reflective replacement",
+            "function replace(wrapper) { Object.defineProperty(wrapper, 'target', { value: [] }); } replace(box);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const box = {{ target: values }};
+                    {operation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected the previous receiver to stay intact, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn alias_slot_nested_mutations_still_invalidate_receivers() {
+    for (name, operation) in [
+        ("direct nested assignment", "box.target.forEach = null;"),
+        (
+            "local nested assignment",
+            "function mutate(wrapper) { wrapper.target.forEach = null; } mutate(box);",
+        ),
+        (
+            "reflective nested replacement",
+            "function mutate(wrapper) { Object.defineProperty(wrapper.target, 'forEach', { value: null }); } mutate(box);",
+        ),
+        (
+            "root alias assignment",
+            "const alias = values; alias.forEach = null;",
+        ),
+        (
+            "nested external exposure",
+            "function expose(wrapper) { external(wrapper.target); } expose(box);",
+        ),
+        (
+            "nested reflective mutation",
+            "function mutate(wrapper) { Object.assign(wrapper.target, { forEach: null }); } mutate(box);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const box = {{ target: values }};
+                    {operation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_calls_propagate_destructured_parameter_invalidations() {
     for (name, setup, helper) in [
         (

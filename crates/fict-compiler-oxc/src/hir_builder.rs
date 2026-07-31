@@ -2032,8 +2032,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             cross_scope_alias_targets: BTreeSet::new(),
             invalidated: BTreeSet::new(),
             member_invalidated: BTreeSet::new(),
+            resolving_invalidated: BTreeSet::new(),
+            resolving_member_invalidated: BTreeSet::new(),
             deferred_invalidated: BTreeSet::new(),
             deferred_member_invalidated: BTreeSet::new(),
+            deferred_slot_invalidated: BTreeSet::new(),
+            deferred_slot_member_invalidated: BTreeSet::new(),
             deferred_exposed_paths: BTreeSet::new(),
             callable_exposures: BTreeMap::new(),
             callable_exposure_history: BTreeMap::new(),
@@ -2042,6 +2046,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_invocations: Vec::new(),
             attached_callable_parameters: BTreeSet::new(),
             parameter_member_invalidated: BTreeSet::new(),
+            parameter_slot_invalidated: BTreeSet::new(),
             reflective_mutations: Vec::new(),
             external_callable_parameters: BTreeSet::new(),
             control_depth: 0,
@@ -8192,24 +8197,44 @@ fn resolve_static_alias_path(
     aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
     original: &StaticAliasPath,
 ) -> StaticAliasPath {
+    resolve_static_alias_path_with_mode(aliases, original, true)
+}
+
+fn resolve_static_alias_slot_path(
+    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
+    original: &StaticAliasPath,
+) -> StaticAliasPath {
+    resolve_static_alias_path_with_mode(aliases, original, false)
+}
+
+fn resolve_static_alias_path_with_mode(
+    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
+    original: &StaticAliasPath,
+    allow_exact_alias: bool,
+) -> StaticAliasPath {
     let mut current = original.clone().canonicalized();
     let mut visited = BTreeSet::new();
     visited.insert(current.clone());
 
     while visited.len() <= aliases.len() {
-        let replacement = (0..=current.properties.len()).rev().find_map(|length| {
-            let prefix = StaticAliasPath {
-                root: current.root.clone(),
-                properties: current.properties[..length].to_vec(),
-                element_wildcard: false,
-            };
-            aliases.get(&prefix).map(|source| {
-                let mut resolved = source.clone();
-                resolved
-                    .properties
-                    .extend_from_slice(&current.properties[length..]);
-                resolved.element_wildcard |= current.element_wildcard;
-                resolved.canonicalized()
+        let max_length = allow_exact_alias
+            .then_some(current.properties.len())
+            .or_else(|| current.properties.len().checked_sub(1));
+        let replacement = max_length.and_then(|max_length| {
+            (0..=max_length).rev().find_map(|length| {
+                let prefix = StaticAliasPath {
+                    root: current.root.clone(),
+                    properties: current.properties[..length].to_vec(),
+                    element_wildcard: false,
+                };
+                aliases.get(&prefix).map(|source| {
+                    let mut resolved = source.clone();
+                    resolved
+                        .properties
+                        .extend_from_slice(&current.properties[length..]);
+                    resolved.element_wildcard |= current.element_wildcard;
+                    resolved.canonicalized()
+                })
             })
         });
         let Some(replacement) = replacement else {
@@ -8228,13 +8253,34 @@ fn resolve_historical_alias_paths(
     aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     original: &StaticAliasPath,
 ) -> BTreeSet<StaticAliasPath> {
+    resolve_historical_alias_paths_with_mode(aliases, original, true)
+}
+
+fn resolve_historical_alias_slot_paths(
+    aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    original: &StaticAliasPath,
+) -> BTreeSet<StaticAliasPath> {
+    resolve_historical_alias_paths_with_mode(aliases, original, false)
+}
+
+fn resolve_historical_alias_paths_with_mode(
+    aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    original: &StaticAliasPath,
+    allow_exact_alias: bool,
+) -> BTreeSet<StaticAliasPath> {
     let mut resolved = BTreeSet::new();
     let mut pending = VecDeque::from([original.clone().canonicalized()]);
     while let Some(current) = pending.pop_front() {
         if !resolved.insert(current.clone()) {
             continue;
         }
-        for length in (0..=current.properties.len()).rev() {
+        let max_length = allow_exact_alias
+            .then_some(current.properties.len())
+            .or_else(|| current.properties.len().checked_sub(1));
+        let Some(max_length) = max_length else {
+            continue;
+        };
+        for length in (0..=max_length).rev() {
             let prefix = StaticAliasPath {
                 root: current.root.clone(),
                 properties: current.properties[..length].to_vec(),
@@ -9790,8 +9836,12 @@ struct StaticHookAliasCollector<'semantic> {
     cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
     invalidated: BTreeSet<StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
+    resolving_invalidated: BTreeSet<StaticAliasPath>,
+    resolving_member_invalidated: BTreeSet<StaticAliasPath>,
     deferred_invalidated: BTreeSet<StaticAliasPath>,
     deferred_member_invalidated: BTreeSet<StaticAliasPath>,
+    deferred_slot_invalidated: BTreeSet<StaticAliasPath>,
+    deferred_slot_member_invalidated: BTreeSet<StaticAliasPath>,
     deferred_exposed_paths: BTreeSet<StaticAliasPath>,
     callable_exposures: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     callable_exposure_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
@@ -9800,6 +9850,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
     parameter_member_invalidated: BTreeSet<StaticAliasPath>,
+    parameter_slot_invalidated: BTreeSet<StaticAliasPath>,
     reflective_mutations: Vec<ReflectiveMemberMutationFact>,
     external_callable_parameters: BTreeSet<SymbolId>,
     control_depth: usize,
@@ -10714,6 +10765,17 @@ impl StaticHookAliasCollector<'_> {
     fn insert_invalidation_path(&mut self, path: StaticAliasPath, member: bool) {
         for path in prototype_sensitive_invalidation_paths(&path) {
             self.invalidated.insert(path.clone());
+            self.resolving_invalidated.insert(path.clone());
+            if member {
+                self.member_invalidated.insert(path.clone());
+                self.resolving_member_invalidated.insert(path);
+            }
+        }
+    }
+
+    fn insert_slot_invalidation_path(&mut self, path: StaticAliasPath, member: bool) {
+        for path in prototype_sensitive_invalidation_paths(&path) {
+            self.invalidated.insert(path.clone());
             if member {
                 self.member_invalidated.insert(path);
             }
@@ -11090,6 +11152,22 @@ impl StaticHookAliasCollector<'_> {
         self.insert_invalidation_path(resolved, member);
     }
 
+    fn invalidate_slot_path(&mut self, path: StaticAliasPath, member: bool) {
+        let resolved = resolve_static_alias_slot_path(&self.aliases, &path);
+        if member && let Some(parameter) = self.attached_parameter_path(&path, &resolved) {
+            self.parameter_slot_invalidated.insert(parameter);
+        }
+        let deferred = self.path_requires_historical_aliases(&path, self.function_depth);
+        if member && deferred {
+            self.deferred_slot_member_invalidated.insert(path.clone());
+        }
+        if deferred {
+            self.deferred_slot_invalidated.insert(path.clone());
+        }
+        self.insert_slot_invalidation_path(path, member);
+        self.insert_slot_invalidation_path(resolved, member);
+    }
+
     fn invalidate_place(&mut self, place: Option<PlannedPlace>) {
         if let Some(place) = place.as_ref()
             && let Some(path) = static_alias_invalidation_path(place)
@@ -11097,7 +11175,7 @@ impl StaticHookAliasCollector<'_> {
             let member = !place.projections.is_empty()
                 || matches!(&place.base,
                     PlannedPlaceBase::UnresolvedGlobal { name, .. } if name != "globalThis");
-            self.invalidate_path(path, member);
+            self.invalidate_slot_path(path, member);
         }
     }
 
@@ -11335,9 +11413,18 @@ impl StaticHookAliasCollector<'_> {
             let previous_len = (
                 self.member_invalidated.len(),
                 self.parameter_member_invalidated.len(),
+                self.parameter_slot_invalidated.len(),
             );
-            let invalidated = self.parameter_member_invalidated.clone();
-            let mut additions = BTreeMap::new();
+            let mut invalidated = self
+                .parameter_slot_invalidated
+                .iter()
+                .cloned()
+                .map(|path| (path, true))
+                .collect::<BTreeMap<_, _>>();
+            for path in &self.parameter_member_invalidated {
+                invalidated.insert(path.clone(), false);
+            }
+            let mut additions = BTreeMap::<StaticAliasPath, (bool, bool)>::new();
             for invocation in self.local_invocations.clone() {
                 let parameter_sets = if let Some(parameters) = &invocation.parameters {
                     vec![parameters.clone()]
@@ -11363,7 +11450,7 @@ impl StaticHookAliasCollector<'_> {
                 };
                 for parameters in parameter_sets {
                     for parameter in parameters {
-                        for invalidated in &invalidated {
+                        for (invalidated, slot) in &invalidated {
                             if invalidated.root != StaticAliasRoot::Binding(parameter.symbol) {
                                 continue;
                             }
@@ -11393,29 +11480,39 @@ impl StaticHookAliasCollector<'_> {
                                     }
                                     additions
                                         .entry(mapped.canonicalized())
-                                        .and_modify(|attached| {
+                                        .and_modify(|(attached, slot_only)| {
                                             *attached |= invocation_argument.parameter_attached;
+                                            *slot_only &= *slot;
                                         })
-                                        .or_insert(invocation_argument.parameter_attached);
+                                        .or_insert((invocation_argument.parameter_attached, *slot));
                                 }
                             }
                         }
                     }
                 }
             }
-            for (path, parameter_attached) in additions {
+            for (path, (parameter_attached, slot)) in additions {
                 if parameter_attached
                     && path
                         .binding_root()
                         .is_some_and(|root| self.external_callable_parameters.contains(&root))
                 {
-                    self.parameter_member_invalidated.insert(path.clone());
+                    if slot {
+                        self.parameter_slot_invalidated.insert(path.clone());
+                    } else {
+                        self.parameter_member_invalidated.insert(path.clone());
+                    }
                 }
-                self.insert_invalidation_path(path, true);
+                if slot {
+                    self.insert_slot_invalidation_path(path, true);
+                } else {
+                    self.insert_invalidation_path(path, true);
+                }
             }
             if (
                 self.member_invalidated.len(),
                 self.parameter_member_invalidated.len(),
+                self.parameter_slot_invalidated.len(),
             ) == previous_len
             {
                 return;
@@ -11457,6 +11554,16 @@ impl StaticHookAliasCollector<'_> {
                 self.insert_invalidation_path(path, true);
             }
         }
+        for path in self.deferred_slot_invalidated.clone() {
+            for path in resolve_historical_alias_slot_paths(&self.alias_history, &path) {
+                self.insert_slot_invalidation_path(path, false);
+            }
+        }
+        for path in self.deferred_slot_member_invalidated.clone() {
+            for path in resolve_historical_alias_slot_paths(&self.alias_history, &path) {
+                self.insert_slot_invalidation_path(path, true);
+            }
+        }
         let resolver = StaticHookAliases {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
@@ -11486,25 +11593,41 @@ impl StaticHookAliasCollector<'_> {
                     if keyed && let Some(key) = &mutation.key {
                         target = target.with_property(key.clone());
                     }
-                    self.insert_invalidation_path(target, true);
+                    if keyed {
+                        self.insert_slot_invalidation_path(target, true);
+                    } else {
+                        self.insert_invalidation_path(target, true);
+                    }
                     if let Some(mut parameter) = mutation.parameter_target.clone() {
                         if keyed && let Some(key) = &mutation.key {
                             parameter = parameter.with_property(key.clone());
                         }
-                        self.parameter_member_invalidated.insert(parameter);
+                        if keyed {
+                            self.parameter_slot_invalidated.insert(parameter);
+                        } else {
+                            self.parameter_member_invalidated.insert(parameter);
+                        }
                     }
                 }
             }
         }
         self.propagate_local_invocation_invalidations();
         let mut invalidated = self.invalidated.clone();
-        invalidated.extend(self.invalidated.iter().map(|path| resolver.resolve(path)));
+        invalidated.extend(self.invalidated.iter().map(|path| {
+            if self.resolving_invalidated.contains(path) {
+                resolver.resolve(path)
+            } else {
+                resolve_static_alias_slot_path(&resolver.aliases, path)
+            }
+        }));
         let mut member_invalidated = self.member_invalidated.clone();
-        member_invalidated.extend(
-            self.member_invalidated
-                .iter()
-                .map(|path| resolver.resolve(path)),
-        );
+        member_invalidated.extend(self.member_invalidated.iter().map(|path| {
+            if self.resolving_member_invalidated.contains(path) {
+                resolver.resolve(path)
+            } else {
+                resolve_static_alias_slot_path(&resolver.aliases, path)
+            }
+        }));
         self.aliases.retain(|target, source| {
             target
                 .binding_root()
