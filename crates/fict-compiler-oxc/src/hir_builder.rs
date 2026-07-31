@@ -9970,8 +9970,28 @@ impl StaticHookAliasCollector<'_> {
         callee: &Expression<'_>,
         arguments: Vec<Option<LocalInvocationArgument>>,
     ) -> Option<LocalInvocationFact> {
+        if let Some(parameters) = self.inline_function_call_parameters(callee) {
+            return Some(LocalInvocationFact {
+                parameters: Some(parameters),
+                arguments: arguments.into_iter().skip(1).collect(),
+                raw_callee: None,
+                callee: None,
+                function_depth: self.function_depth,
+            });
+        }
         if let Some(callee) = static_alias_source_path(self.scoping, callee) {
             let resolved_callee = resolve_static_alias_path(&self.aliases, &callee);
+            if let Some((raw_target, target)) =
+                self.intact_function_call_target(&callee, &resolved_callee)
+            {
+                return Some(LocalInvocationFact {
+                    parameters: self.local_callable_parameters.get(&target).cloned(),
+                    arguments: arguments.into_iter().skip(1).collect(),
+                    raw_callee: Some(raw_target),
+                    callee: Some(target),
+                    function_depth: self.function_depth,
+                });
+            }
             return Some(LocalInvocationFact {
                 parameters: self
                     .local_callable_parameters
@@ -9990,6 +10010,69 @@ impl StaticHookAliasCollector<'_> {
             callee: None,
             function_depth: self.function_depth,
         })
+    }
+
+    fn inline_function_call_parameters(
+        &self,
+        callee: &Expression<'_>,
+    ) -> Option<Vec<LocalCallableParameter>> {
+        if !self.path_is_currently_intact(
+            &StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string())
+                .with_property("call".to_string()),
+        ) {
+            return None;
+        }
+        let (object, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        if method != "call" {
+            return None;
+        }
+        match unwrap_transparent_call_expression(object) {
+            Expression::FunctionExpression(function) if !function.generator => {
+                Some(Self::local_callable_parameters(&function.params))
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                Some(Self::local_callable_parameters(&function.params))
+            }
+            _ => None,
+        }
+    }
+
+    fn intact_function_call_target(
+        &self,
+        raw_callee: &StaticAliasPath,
+        callee: &StaticAliasPath,
+    ) -> Option<(StaticAliasPath, StaticAliasPath)> {
+        if raw_callee
+            .properties
+            .last()
+            .is_none_or(|method| method != "call")
+            || callee
+                .properties
+                .last()
+                .is_none_or(|method| method != "call")
+            || !self.path_is_currently_intact(raw_callee)
+            || !self.path_is_currently_intact(
+                &StaticAliasPath::unresolved_global("Function".to_string())
+                    .with_property("prototype".to_string())
+                    .with_property("call".to_string()),
+            )
+        {
+            return None;
+        }
+        let mut raw_target = raw_callee.clone();
+        raw_target.properties.pop();
+        let mut target = callee.clone();
+        target.properties.pop();
+        Some((raw_target, target))
     }
 
     fn local_invocation_fact(
