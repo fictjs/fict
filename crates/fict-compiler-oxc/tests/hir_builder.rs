@@ -2776,6 +2776,111 @@ fn safe_global_escape_exemptions_reject_overridden_calls() {
 }
 
 #[test]
+fn synchronous_safe_global_callbacks_do_not_escape_reactive_captures() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const map = () => count;
+            return [
+                Array.from([1], () => count),
+                Array.from([1], map),
+                JSON.parse('{"value":1}', () => count),
+                JSON.stringify({ value: 1 }, map),
+            ].length;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "proven synchronous safe-global callbacks must not escape: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn safe_global_callback_proof_rejects_deferred_execution() {
+    for (name, source, expected_span) in [
+        (
+            "array from async map",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    return Array.from([1], async () => { await pause(); return count; });
+                }
+            "#,
+            "async () => { await pause(); return count; }",
+        ),
+        (
+            "array from generator map",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const count = $state(0);
+                    return Array.from([1], function* () { yield count; });
+                }
+            "#,
+            "function* () { yield count; }",
+        ),
+        (
+            "json parse async reviver",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    const revive = async () => { await pause(); return count; };
+                    return JSON.parse('{"value":1}', revive);
+                }
+            "#,
+            "revive",
+        ),
+        (
+            "json stringify async replacer",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    return JSON.stringify({ value: 1 }, async () => {
+                        await pause();
+                        return count;
+                    });
+                }
+            "#,
+            "async () => {\n                        await pause();\n                        return count;\n                    }",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected FICT-R005 on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn state_method_proofs_reject_authored_builtin_overrides() {
     for (name, source, expected_span) in [
         (

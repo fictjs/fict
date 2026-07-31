@@ -10336,7 +10336,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if store
             || macro_kind.is_some()
             || fact.runtime_creation_kind == Some(RuntimeReactiveCreationKind::NamespaceMemo)
-            || is_safe_global_call(self.scoping, self.callback_aliases, &call.callee)
+            || self.is_non_escaping_safe_global_call(&call.callee, arguments)
         {
             return;
         }
@@ -10613,6 +10613,54 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             .then(|| self.callback_timing(callback.expression))
             .flatten()
         else {
+            return false;
+        };
+        !timing.may_suspend
+            && (disposition == CallbackResultDisposition::Discarded || !timing.may_return_iterator)
+    }
+
+    fn is_non_escaping_safe_global_call(
+        &self,
+        callee: &Expression<'_>,
+        arguments: &[EscapeArgument<'_, '_>],
+    ) -> bool {
+        if !is_safe_global_call(self.scoping, self.callback_aliases, callee) {
+            return false;
+        }
+        let disposition = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member)
+                if matches!(member.object.get_inner_expression(),
+                    Expression::Identifier(root) if root.name == "Array")
+                    && member.property.name == "from" =>
+            {
+                CallbackResultDisposition::Retained
+            }
+            Expression::StaticMemberExpression(member)
+                if matches!(member.object.get_inner_expression(),
+                    Expression::Identifier(root) if root.name == "JSON")
+                    && member.property.name == "parse" =>
+            {
+                CallbackResultDisposition::Retained
+            }
+            Expression::StaticMemberExpression(member)
+                if matches!(member.object.get_inner_expression(),
+                    Expression::Identifier(root) if root.name == "JSON")
+                    && member.property.name == "stringify" =>
+            {
+                CallbackResultDisposition::Discarded
+            }
+            _ => return true,
+        };
+        let Some(callback) = arguments.get(1) else {
+            return true;
+        };
+        if self.callback_captures(*callback).is_empty() {
+            return true;
+        }
+        if arguments.iter().any(|argument| argument.spread) {
+            return false;
+        }
+        let Some(timing) = self.callback_timing(callback.expression) else {
             return false;
         };
         !timing.may_suspend
@@ -11109,9 +11157,8 @@ fn is_safe_global_call(
         }
         _ => false,
     };
-    safe
-        && static_alias_source_path(scoping, callee)
-            .is_some_and(|path| aliases.path_is_intact(&path))
+    safe && static_alias_source_path(scoping, callee)
+        .is_some_and(|path| aliases.path_is_intact(&path))
 }
 
 struct DynamicReactivePropertyCollector<'semantic, 'reactive> {
