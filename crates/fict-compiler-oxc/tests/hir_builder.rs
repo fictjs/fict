@@ -3285,6 +3285,180 @@ fn external_calls_preserve_receivers_hidden_by_factories() {
 }
 
 #[test]
+fn local_calls_propagate_parameter_method_invalidations() {
+    for (name, helper, call) in [
+        (
+            "function declaration",
+            "function mutate(target) { target.forEach = sink; }",
+            "mutate(values);",
+        ),
+        (
+            "arrow binding",
+            "const mutate = target => { target.forEach = sink; };",
+            "mutate(values);",
+        ),
+        (
+            "aliased helper",
+            "function mutate(target) { target.forEach = sink; } const run = mutate;",
+            "run(values);",
+        ),
+        (
+            "aliased parameter",
+            "function mutate(target) { const alias = target; alias.forEach = sink; }",
+            "mutate(values);",
+        ),
+        (
+            "delegated helper",
+            "function inner(target) { target.forEach = sink; } function mutate(target) { inner(target); }",
+            "mutate(values);",
+        ),
+        (
+            "reflective helper",
+            "function mutate(target) { Object.defineProperty(target, 'forEach', { value: null }); }",
+            "mutate(values);",
+        ),
+        (
+            "mutation before detachment",
+            "function mutate(target) { target.forEach = sink; target = {}; }",
+            "mutate(values);",
+        ),
+        (
+            "conditional detachment",
+            "function mutate(target, flag) { if (flag) target = {}; target.forEach = sink; }",
+            "mutate(values, false);",
+        ),
+        (
+            "logical detachment",
+            "function mutate(target, flag) { flag && (target = {}); target.forEach = sink; }",
+            "mutate(values, false);",
+        ),
+        (
+            "catch detachment",
+            "function mutate(target) { try {} catch { target = {}; } target.forEach = sink; }",
+            "mutate(values);",
+        ),
+        (
+            "default detachment",
+            "function mutate(target, spare = (target = {})) { target.forEach = sink; }",
+            "mutate(values, {});",
+        ),
+        (
+            "hoisted declaration",
+            "mutate(values); function mutate(target) { target.forEach = sink; }",
+            "",
+        ),
+        (
+            "deferred signature reassignment",
+            "let mutate = target => { target.forEach = sink; }; function replace() { mutate = target => target.length; }",
+            "mutate(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(sink) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {call}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn pure_local_calls_preserve_receiver_methods() {
+    for (name, helper, call) in [
+        (
+            "read-only helper",
+            "function inspect(target) { return target.length; }",
+            "inspect(values);",
+        ),
+        (
+            "detached direct mutation",
+            "function detach(target) { target = {}; target.forEach = sink; }",
+            "detach(values);",
+        ),
+        (
+            "detached delegated mutation",
+            "function mutate(target) { target.forEach = sink; } function detach(target) { target = {}; mutate(target); }",
+            "detach(values);",
+        ),
+        (
+            "detached reflective mutation",
+            "function detach(target) { target = {}; Object.defineProperty(target, 'forEach', { value: null }); }",
+            "detach(values);",
+        ),
+        (
+            "rebound parameter",
+            "function mutate(target, other) { target = other; target.forEach = null; } const other = [];",
+            "mutate(values, other);",
+        ),
+        (
+            "deferred pure signature",
+            "let inspect = target => target.length; function replace() { inspect = target => { target.forEach = null; }; }",
+            "inspect(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(sink) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {call}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let labels = output
+            .diagnostics
+            .iter()
+            .filter_map(|diagnostic| diagnostic.primary_span)
+            .map(|span| &source[span.start() as usize..span.end() as usize])
+            .collect::<Vec<_>>();
+        assert!(
+            output.hir.is_some(),
+            "{name}: labels={labels:?}, diagnostics={:?}",
+            output.diagnostics
+        );
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
