@@ -9730,8 +9730,79 @@ impl StaticHookAliasCollector<'_> {
         self.clear_overlapping_aliases(&target);
         if let Expression::ObjectExpression(object) = value.get_inner_expression() {
             self.collect_object(&target, object);
-        } else if let Some(source) = static_alias_source_path(self.scoping, value) {
+        } else if let Some(source) = self.alias_source_path(value) {
             self.insert_alias(target, source);
+        }
+    }
+
+    fn alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
+        static_alias_source_path(self.scoping, expression)
+            .or_else(|| self.prototype_derived_path(expression))
+    }
+
+    fn prototype_lookup_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        if call.optional {
+            return None;
+        }
+        let callee = static_alias_source_path(self.scoping, &call.callee)?;
+        let callee = resolve_static_alias_path(&self.aliases, &callee);
+        if !is_prototype_lookup_path(&callee) {
+            return None;
+        }
+        let receiver = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(|receiver| self.alias_source_path(receiver))?;
+        Some(receiver.with_property("__proto__".to_string()))
+    }
+
+    fn prototype_derived_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
+        if let Some(path) = self.prototype_lookup_source_path(expression) {
+            return Some(path);
+        }
+        match expression.get_inner_expression() {
+            Expression::StaticMemberExpression(member) if !member.optional => self
+                .prototype_derived_path(&member.object)
+                .map(|path| path.with_property(member.property.name.to_string())),
+            Expression::ComputedMemberExpression(member) if !member.optional => {
+                let property = static_member_name(&member.expression)?;
+                self.prototype_derived_path(&member.object)
+                    .map(|path| path.with_property(property))
+            }
+            _ => None,
+        }
+    }
+
+    fn prototype_assignment_target_path(
+        &self,
+        target: &AssignmentTarget<'_>,
+    ) -> Option<StaticAliasPath> {
+        match target {
+            AssignmentTarget::StaticMemberExpression(member) if !member.optional => self
+                .prototype_derived_path(&member.object)
+                .map(|path| path.with_property(member.property.name.to_string())),
+            AssignmentTarget::ComputedMemberExpression(member) if !member.optional => {
+                let property = static_member_name(&member.expression)?;
+                self.prototype_derived_path(&member.object)
+                    .map(|path| path.with_property(property))
+            }
+            AssignmentTarget::TSAsExpression(expression) => {
+                self.prototype_derived_path(&expression.expression)
+            }
+            AssignmentTarget::TSSatisfiesExpression(expression) => {
+                self.prototype_derived_path(&expression.expression)
+            }
+            AssignmentTarget::TSNonNullExpression(expression) => {
+                self.prototype_derived_path(&expression.expression)
+            }
+            AssignmentTarget::TSTypeAssertion(expression) => {
+                self.prototype_derived_path(&expression.expression)
+            }
+            _ => None,
         }
     }
 
@@ -9871,29 +9942,33 @@ impl StaticHookAliasCollector<'_> {
             }
             if let Expression::ObjectExpression(nested) = property.value.get_inner_expression() {
                 self.collect_object(&property_target, nested);
-            } else if let Some(source) = static_alias_source_path(self.scoping, &property.value) {
+            } else if let Some(source) = self.alias_source_path(&property.value) {
                 self.insert_alias(property_target, source);
             }
         }
+    }
+
+    fn invalidate_path(&mut self, path: StaticAliasPath, member: bool) {
+        let resolved = resolve_static_alias_path(&self.aliases, &path);
+        let deferred = self.path_requires_historical_aliases(&path, self.function_depth);
+        if member && deferred {
+            self.deferred_member_invalidated.insert(path.clone());
+        }
+        if deferred {
+            self.deferred_invalidated.insert(path.clone());
+        }
+        self.insert_invalidation_path(path, member);
+        self.insert_invalidation_path(resolved, member);
     }
 
     fn invalidate_place(&mut self, place: Option<PlannedPlace>) {
         if let Some(place) = place.as_ref()
             && let Some(path) = static_alias_invalidation_path(place)
         {
-            let resolved = resolve_static_alias_path(&self.aliases, &path);
-            let deferred = self.path_requires_historical_aliases(&path, self.function_depth);
             let member = !place.projections.is_empty()
                 || matches!(&place.base,
                     PlannedPlaceBase::UnresolvedGlobal { name, .. } if name != "globalThis");
-            if member && deferred {
-                self.deferred_member_invalidated.insert(path.clone());
-            }
-            if deferred {
-                self.deferred_invalidated.insert(path.clone());
-            }
-            self.insert_invalidation_path(path, member);
-            self.insert_invalidation_path(resolved, member);
+            self.invalidate_path(path, member);
         }
     }
 
@@ -9975,7 +10050,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 && let Some(root) = binding.symbol_id.get()
             {
                 self.collect_initializer(StaticAliasPath::root(root), initializer);
-            } else if let Some(source) = static_alias_source_path(self.scoping, initializer) {
+            } else if let Some(source) = self.alias_source_path(initializer) {
                 self.collect_pattern_initializer(&declarator.id, &source);
             }
         }
@@ -10048,14 +10123,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
+        let prototype_path = self.prototype_assignment_target_path(&assignment.left);
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
         self.invalidate_place(place.clone());
+        if let Some(path) = prototype_path {
+            self.invalidate_path(path, true);
+        }
         if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
         {
             self.collect_initializer(path, &assignment.right);
         } else if assignment.operator == OxcAssignmentOperator::Assign
-            && let Some(source) = static_alias_source_path(self.scoping, &assignment.right)
+            && let Some(source) = self.alias_source_path(&assignment.right)
         {
             self.collect_assignment_target_initializer(&assignment.left, &source);
         }
@@ -10086,7 +10165,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .arguments
                 .first()
                 .and_then(|argument| argument.as_expression())
-                .and_then(|target| static_alias_source_path(self.scoping, target))
+                .and_then(|target| self.alias_source_path(target))
         {
             let key = call
                 .arguments
@@ -10126,6 +10205,16 @@ fn reflective_member_mutator_kind(callee: &StaticAliasPath) -> Option<bool> {
         | ("Reflect", "setPrototypeOf") => Some(false),
         _ => None,
     }
+}
+
+fn is_prototype_lookup_path(path: &StaticAliasPath) -> bool {
+    matches!(
+        (&path.root, path.properties.as_slice()),
+        (
+            StaticAliasRoot::UnresolvedGlobal(root),
+            [method]
+        ) if matches!(root.as_str(), "Object" | "Reflect") && method == "getPrototypeOf"
+    )
 }
 
 struct FunctionCaptureCollector<'facts, 'semantic, 'reactive> {

@@ -2769,6 +2769,69 @@ fn prototype_indirection_invalidates_builtin_escape_exemptions() {
 }
 
 #[test]
+fn prototype_lookup_mutations_invalidate_builtin_escape_exemptions() {
+    for (name, mutation) in [
+        (
+            "direct object lookup",
+            "Object.getPrototypeOf(values).forEach = sink;",
+        ),
+        (
+            "direct reflect lookup",
+            "Reflect.getPrototypeOf(values).forEach = sink;",
+        ),
+        (
+            "stored prototype",
+            "const prototype = Object.getPrototypeOf(values); prototype.forEach = sink;",
+        ),
+        (
+            "assigned prototype",
+            "let prototype; prototype = Object.getPrototypeOf(values); prototype.forEach = sink;",
+        ),
+        (
+            "nested prototype alias",
+            "const holder = { prototype: Object.getPrototypeOf(values) }; holder.prototype.forEach = sink;",
+        ),
+        (
+            "aliased lookup",
+            "const getPrototype = Object.getPrototypeOf; const prototype = getPrototype(values); prototype.forEach = sink;",
+        ),
+        (
+            "reflective prototype mutation",
+            "Object.defineProperty(Object.getPrototypeOf(values), 'forEach', { value: sink });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function useRun(sink) {{
+                    const count = $state(0);
+                    const values = [];
+                    {mutation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn shared_prototype_mutations_invalidate_other_builtin_receivers() {
     for (name, mutation) in [
         ("prototype member", "first.__proto__.forEach = sink;"),
