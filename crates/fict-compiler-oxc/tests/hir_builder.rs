@@ -3099,6 +3099,83 @@ fn unknown_calls_invalidate_exposed_shared_prototypes() {
 }
 
 #[test]
+fn external_constructors_and_tags_invalidate_exposed_builtin_receivers() {
+    for (name, parameters, exposure) in [
+        ("constructor", "External", "new External(values);"),
+        (
+            "spread constructor arguments",
+            "External",
+            "new External(...[values]);",
+        ),
+        (
+            "wrapped constructor argument",
+            "External",
+            "new External({ values });",
+        ),
+        ("tagged template", "tag", "tag`${values}`;"),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App({parameters}) {{
+                    const count = $state(0);
+                    const values = [];
+                    {exposure}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn builtin_constructors_preserve_source_receiver_methods() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            new Array(values);
+            new Set(values);
+            new Uint8Array(values);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "intact builtin constructors do not expose their source receiver: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (

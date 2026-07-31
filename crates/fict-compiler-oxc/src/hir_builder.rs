@@ -10096,6 +10096,22 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn constructor_may_mutate_arguments(&self, callee: &Expression<'_>) -> bool {
+        let Some(path) = static_alias_source_path(self.scoping, callee) else {
+            return false;
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if matches!(
+            (&resolved.root, resolved.properties.as_slice()),
+            (StaticAliasRoot::UnresolvedGlobal(root), [])
+                if classify_builtin_state_receiver_name(root).is_some()
+        ) && self.path_is_currently_intact(&path)
+        {
+            return false;
+        }
+        self.callee_may_mutate_arguments(callee)
+    }
+
     fn collect_exposed_argument_paths(
         &self,
         expression: &Expression<'_>,
@@ -10188,6 +10204,33 @@ impl StaticHookAliasCollector<'_> {
             }
             _ => {}
         }
+    }
+
+    fn collect_invocation_argument_paths(
+        &self,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) -> BTreeSet<StaticAliasPath> {
+        let mut exposed = BTreeSet::new();
+        for argument in arguments {
+            if let Some(argument) = argument.as_expression() {
+                self.collect_exposed_argument_paths(argument, &mut exposed);
+            } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
+                self.collect_spread_exposed_argument_paths(&spread.argument, &mut exposed);
+            }
+        }
+        exposed
+    }
+
+    fn prepare_exposed_paths(
+        &mut self,
+        exposed: BTreeSet<StaticAliasPath>,
+    ) -> BTreeSet<StaticAliasPath> {
+        for path in &exposed {
+            if self.path_requires_historical_aliases(path, self.function_depth) {
+                self.deferred_exposed_paths.insert(path.clone());
+            }
+        }
+        self.expand_exposed_paths(exposed)
     }
 
     fn expand_exposed_paths(
@@ -10425,25 +10468,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let mut exposed_arguments = BTreeSet::new();
-        if self.callee_may_mutate_arguments(&call.callee) {
-            for argument in &call.arguments {
-                if let Some(argument) = argument.as_expression() {
-                    self.collect_exposed_argument_paths(argument, &mut exposed_arguments);
-                } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
-                    self.collect_spread_exposed_argument_paths(
-                        &spread.argument,
-                        &mut exposed_arguments,
-                    );
-                }
-            }
-        }
-        for path in &exposed_arguments {
-            if self.path_requires_historical_aliases(path, self.function_depth) {
-                self.deferred_exposed_paths.insert(path.clone());
-            }
-        }
-        let exposed_arguments = self.expand_exposed_paths(exposed_arguments);
+        let exposed_arguments = if self.callee_may_mutate_arguments(&call.callee) {
+            let exposed = self.collect_invocation_argument_paths(&call.arguments);
+            self.prepare_exposed_paths(exposed)
+        } else {
+            BTreeSet::new()
+        };
         let reflective_mutation = if let Some(callee) =
             static_alias_source_path(self.scoping, &call.callee)
             && let Some(target) = call
@@ -10474,6 +10504,35 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         if let Some(mutation) = reflective_mutation {
             self.reflective_mutations.push(mutation);
+        }
+    }
+
+    fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
+        let exposed_arguments = if self.constructor_may_mutate_arguments(&expression.callee) {
+            let exposed = self.collect_invocation_argument_paths(&expression.arguments);
+            self.prepare_exposed_paths(exposed)
+        } else {
+            BTreeSet::new()
+        };
+        oxc::ast_visit::walk::walk_new_expression(self, expression);
+        for path in exposed_arguments {
+            self.invalidate_exposed_path(path);
+        }
+    }
+
+    fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
+        let exposed_arguments = if self.callee_may_mutate_arguments(&expression.tag) {
+            let mut exposed = BTreeSet::new();
+            for substitution in &expression.quasi.expressions {
+                self.collect_exposed_argument_paths(substitution, &mut exposed);
+            }
+            self.prepare_exposed_paths(exposed)
+        } else {
+            BTreeSet::new()
+        };
+        oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
+        for path in exposed_arguments {
+            self.invalidate_exposed_path(path);
         }
     }
 }
