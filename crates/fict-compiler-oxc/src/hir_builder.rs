@@ -10995,6 +10995,61 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
+    fn record_class_callables(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
+        for element in &class.body.body {
+            let ClassElement::MethodDefinition(method) = element else {
+                continue;
+            };
+            if method.kind == MethodDefinitionKind::Constructor
+                || matches!(&method.key, OxcPropertyKey::PrivateIdentifier(_))
+            {
+                continue;
+            }
+            let Some(name) = method.key.static_name() else {
+                continue;
+            };
+            let method_target = if method.r#static {
+                target.clone()
+            } else {
+                target.clone().with_property("prototype".to_string())
+            }
+            .with_property(name.into_owned());
+            self.clear_overlapping_aliases(&method_target);
+            if method.kind != MethodDefinitionKind::Method {
+                continue;
+            }
+            self.record_unreferenced_callable_span(&method_target, method.value.span);
+            self.record_local_callable_parameters(method_target.clone(), &method.value.params);
+            self.record_local_callable_receiver(
+                method_target.clone(),
+                StaticAliasPath::dynamic_this(method.value.span),
+            );
+            if method.value.generator {
+                self.record_local_generator(method_target.clone());
+            }
+            if let Some(body) = &method.value.body {
+                let paths = self.returned_function_body_paths(body);
+                self.record_callable_exposures(method_target, paths);
+            }
+        }
+        for element in &class.body.body {
+            let ClassElement::PropertyDefinition(property) = element else {
+                continue;
+            };
+            if !property.r#static || matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) {
+                continue;
+            }
+            let Some(name) = property.key.static_name() else {
+                continue;
+            };
+            let property_target = target.clone().with_property(name.into_owned());
+            self.clear_overlapping_aliases(&property_target);
+            if let Some(value) = &property.value {
+                self.collect_initializer(property_target, value);
+            }
+        }
+    }
+
     fn default_derived_path_alternatives(
         &self,
         raw_source: StaticAliasPath,
@@ -12918,6 +12973,7 @@ impl StaticHookAliasCollector<'_> {
         }
         if let Expression::ClassExpression(class) = inner {
             self.record_default_derived_constructor(target.clone(), class);
+            self.record_class_callables(&target, class);
         }
         let Some(paths) = self.returned_function_paths(value) else {
             return true;
@@ -14981,6 +15037,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 Self::class_constructor_parameters(class),
             );
             self.record_default_derived_constructor(StaticAliasPath::root(symbol), class);
+            self.record_class_callables(&StaticAliasPath::root(symbol), class);
         }
         oxc::ast_visit::walk::walk_class(self, class);
     }

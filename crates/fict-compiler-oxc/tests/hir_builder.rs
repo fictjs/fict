@@ -3741,6 +3741,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "inspect(values); function* inspect(target) { target.forEach = null; }",
             "",
         ),
+        (
+            "read-only class method receiver",
+            "class Helper { inspect() { return this.length; } }",
+            "Helper.prototype.inspect.call(values);",
+        ),
+        (
+            "unadvanced class generator method receiver",
+            "class Helper { *inspect() { this.forEach = null; } }",
+            "Helper.prototype.inspect.call(values);",
+        ),
+        (
+            "static field overrides mutating method",
+            "class Helper { static inspect(target) { target.forEach = null; } static inspect = target => target.length; }",
+            "Helper.inspect(values);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -3908,6 +3923,91 @@ fn mixed_generator_and_eager_callables_preserve_eager_effects() {
         "expected FICT-R005 on callback, got {:?}",
         output.diagnostics
     );
+}
+
+#[test]
+fn class_method_invocations_propagate_local_effects() {
+    for (name, helper, invocation) in [
+        (
+            "instance receiver",
+            "class Helper { mutate() { this.forEach = null; } }",
+            "Helper.prototype.mutate.call(values);",
+        ),
+        (
+            "instance parameter",
+            "class Helper { mutate(target) { target.forEach = null; } }",
+            "Helper.prototype.mutate(values);",
+        ),
+        (
+            "static receiver",
+            "class Helper { static mutate() { this.forEach = null; } }",
+            "Helper.mutate.call(values);",
+        ),
+        (
+            "class expression receiver",
+            "const Helper = class { mutate() { this.forEach = null; } };",
+            "Helper.prototype.mutate.call(values);",
+        ),
+        (
+            "aliased receiver",
+            "class Helper { mutate() { this.forEach = null; } } const mutate = Helper.prototype.mutate;",
+            "mutate.call(values);",
+        ),
+        (
+            "bound receiver",
+            "class Helper { mutate() { this.forEach = null; } } const mutate = Helper.prototype.mutate.bind(values);",
+            "mutate();",
+        ),
+        (
+            "computed method receiver",
+            "class Helper { ['mutate']() { this.forEach = null; } }",
+            "Helper.prototype.mutate.call(values);",
+        ),
+        (
+            "generator method receiver",
+            "class Helper { *mutate() { this.forEach = null; } }",
+            "Helper.prototype.mutate.call(values).next();",
+        ),
+        (
+            "static field parameter",
+            "class Helper { static mutate = target => { target.forEach = null; }; }",
+            "Helper.mutate(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: diagnostics={:?}",
+            output.diagnostics
+        );
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
 }
 
 #[test]
