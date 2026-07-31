@@ -2056,6 +2056,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_callable_receiver_history: BTreeMap::new(),
             local_generator_callables: BTreeSet::new(),
             local_generator_callable_history: BTreeMap::new(),
+            local_class_instances: BTreeSet::new(),
+            transient_callable_alias_targets: BTreeSet::new(),
             local_bound_callables: BTreeMap::new(),
             local_bound_callable_history: BTreeMap::new(),
             default_derived_constructors: BTreeMap::new(),
@@ -10292,6 +10294,21 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 }
 
+#[derive(Default)]
+struct ConstructorValueReturnCollector {
+    found: bool,
+}
+
+impl<'a> Visit<'a> for ConstructorValueReturnCollector {
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        self.found |= statement.argument.is_some();
+    }
+}
+
 struct EscapedFunctionValueCollector<'collector, 'semantic> {
     owner: &'collector StaticHookAliasCollector<'semantic>,
     paths: BTreeSet<StaticAliasPath>,
@@ -10350,6 +10367,8 @@ struct StaticHookAliasCollector<'semantic> {
     local_callable_receiver_history: BTreeMap<StaticAliasPath, Vec<Option<StaticAliasPath>>>,
     local_generator_callables: BTreeSet<StaticAliasPath>,
     local_generator_callable_history: BTreeMap<StaticAliasPath, Vec<bool>>,
+    local_class_instances: BTreeSet<StaticAliasPath>,
+    transient_callable_alias_targets: BTreeSet<StaticAliasPath>,
     local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
     local_bound_callable_history: BTreeMap<StaticAliasPath, Vec<LocalBoundCallable>>,
     default_derived_constructors:
@@ -11081,7 +11100,50 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
+    fn class_preserves_instance_prototype(class: &Class<'_>) -> bool {
+        let constructor = class.body.body.iter().find_map(|element| {
+            let ClassElement::MethodDefinition(method) = element else {
+                return None;
+            };
+            (method.kind == MethodDefinitionKind::Constructor).then_some(&method.value)
+        });
+        let Some(body) = constructor.and_then(|constructor| constructor.body.as_ref()) else {
+            return true;
+        };
+        let mut returns = ConstructorValueReturnCollector::default();
+        for statement in &body.statements {
+            returns.visit_statement(statement);
+        }
+        !returns.found
+    }
+
     fn record_class_callables(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
+        if Self::class_preserves_instance_prototype(class) {
+            self.local_class_instances.insert(target.clone());
+        } else {
+            self.local_class_instances.remove(target);
+        }
+        if let Some(super_class) = &class.super_class
+            && let Some(raw_super) = static_alias_source_path(self.scoping, super_class)
+        {
+            let super_class = resolve_static_alias_path(&self.aliases, &raw_super);
+            let super_prototype = super_class.with_property("prototype".to_string());
+            let prototype = target.clone().with_property("prototype".to_string());
+            let inherited = self
+                .local_callable_parameters
+                .keys()
+                .chain(self.aliases.keys())
+                .filter(|candidate| candidate.starts_with(&super_prototype))
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            for method in inherited {
+                let mut inherited_method = prototype.clone();
+                inherited_method
+                    .properties
+                    .extend_from_slice(&method.properties[super_prototype.properties.len()..]);
+                self.insert_alias(inherited_method, method);
+            }
+        }
         for element in &class.body.body {
             let ClassElement::MethodDefinition(method) = element else {
                 continue;
@@ -11133,6 +11195,39 @@ impl StaticHookAliasCollector<'_> {
             if let Some(value) = &property.value {
                 self.collect_initializer(property_target, value);
             }
+        }
+    }
+
+    fn collect_class_instance_aliases(
+        &mut self,
+        target: &StaticAliasPath,
+        expression: &NewExpression<'_>,
+    ) {
+        let Some(raw_class) = static_alias_source_path(self.scoping, &expression.callee) else {
+            return;
+        };
+        let class = resolve_static_alias_path(&self.aliases, &raw_class);
+        if !self.local_class_instances.contains(&class)
+            || !self.path_is_currently_intact(&raw_class)
+        {
+            return;
+        }
+        let prototype = class.with_property("prototype".to_string());
+        let methods = self
+            .local_callable_parameters
+            .keys()
+            .chain(self.aliases.keys())
+            .filter(|candidate| candidate.starts_with(&prototype))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for method in methods {
+            let mut instance_method = target.clone();
+            instance_method
+                .properties
+                .extend_from_slice(&method.properties[prototype.properties.len()..]);
+            self.insert_alias(instance_method.clone(), method);
+            self.transient_callable_alias_targets
+                .insert(instance_method);
         }
     }
 
@@ -12839,6 +12934,8 @@ impl StaticHookAliasCollector<'_> {
 
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
         self.record_cross_scope_target(path);
+        self.transient_callable_alias_targets
+            .retain(|target| !target.overlaps(path));
         self.aliases.retain(|target, _| !target.overlaps(path));
         self.array_lengths
             .retain(|target, _| !target.starts_with(path));
@@ -12854,6 +12951,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
         self.local_generator_callables
             .retain(|target| !target.overlaps(path));
+        self.local_class_instances
+            .retain(|target| !target.starts_with(path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(path));
         self.default_derived_constructors
@@ -12861,12 +12960,16 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn mark_alias_target_ambiguous(&mut self, path: StaticAliasPath) {
+        self.transient_callable_alias_targets
+            .retain(|target| !target.overlaps(&path));
         self.local_callable_parameters
             .retain(|target, _| !target.overlaps(&path));
         self.local_callable_receivers
             .retain(|target, _| !target.overlaps(&path));
         self.local_generator_callables
             .retain(|target| !target.overlaps(&path));
+        self.local_class_instances
+            .retain(|target| !target.starts_with(&path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(&path));
         self.default_derived_constructors
@@ -12933,6 +13036,9 @@ impl StaticHookAliasCollector<'_> {
             return;
         }
         match value.get_inner_expression() {
+            Expression::NewExpression(expression) => {
+                self.collect_class_instance_aliases(&target, expression);
+            }
             Expression::ObjectExpression(object) => {
                 self.structured_own_properties
                     .insert(target.clone(), BTreeSet::new());
@@ -15041,9 +15147,10 @@ impl StaticHookAliasCollector<'_> {
             }
         }));
         self.aliases.retain(|target, source| {
-            target
-                .binding_root()
-                .is_none_or(|root| !mutable_symbols.contains(&root))
+            !self.transient_callable_alias_targets.contains(target)
+                && target
+                    .binding_root()
+                    .is_none_or(|root| !mutable_symbols.contains(&root))
                 && source
                     .binding_root()
                     .is_none_or(|root| !mutable_symbols.contains(&root))
@@ -15249,6 +15356,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
             .collect::<Vec<_>>();
+        let outer_local_class_instances = self
+            .local_class_instances
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
         let outer_local_bound_callables = self
             .local_bound_callables
             .iter()
@@ -15315,6 +15428,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_generator_callables
             .extend(outer_local_generator_callables);
         let changed_outer_targets = self
+            .local_class_instances
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_class_instances.remove(&target);
+        }
+        self.local_class_instances
+            .extend(outer_local_class_instances);
+        let changed_outer_targets = self
             .local_bound_callables
             .keys()
             .filter(|target| self.path_owner_depth(target) < depth)
@@ -15374,6 +15498,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         let outer_local_generator_callables = self
             .local_generator_callables
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        let outer_local_class_instances = self
+            .local_class_instances
             .iter()
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
@@ -15440,6 +15570,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_generator_callables
             .extend(outer_local_generator_callables);
+        let changed_outer_targets = self
+            .local_class_instances
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_class_instances.remove(&target);
+        }
+        self.local_class_instances
+            .extend(outer_local_class_instances);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
