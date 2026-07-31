@@ -2030,6 +2030,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             alias_history: BTreeMap::new(),
             binding_owner_depths: BTreeMap::new(),
             cross_scope_alias_targets: BTreeSet::new(),
+            ambiguous_alias_targets: BTreeSet::new(),
             invalidated: BTreeSet::new(),
             member_invalidated: BTreeSet::new(),
             resolving_invalidated: BTreeSet::new(),
@@ -9835,6 +9836,7 @@ struct StaticHookAliasCollector<'semantic> {
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     binding_owner_depths: BTreeMap<SymbolId, usize>,
     cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
+    ambiguous_alias_targets: BTreeSet<StaticAliasPath>,
     invalidated: BTreeSet<StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
     resolving_invalidated: BTreeSet<StaticAliasPath>,
@@ -11381,6 +11383,10 @@ impl StaticHookAliasCollector<'_> {
                 .cross_scope_alias_targets
                 .iter()
                 .any(|target| target.overlaps(path))
+            || self
+                .ambiguous_alias_targets
+                .iter()
+                .any(|target| target.overlaps(path))
     }
 
     fn record_pattern_owner(&mut self, pattern: &BindingPattern<'_>) {
@@ -11447,6 +11453,26 @@ impl StaticHookAliasCollector<'_> {
         match value.get_inner_expression() {
             Expression::ObjectExpression(object) => self.collect_object(&target, object),
             Expression::ArrayExpression(array) => self.collect_array(&target, array),
+            Expression::ConditionalExpression(expression) => {
+                self.ambiguous_alias_targets.insert(target.clone());
+                self.collect_initializer(target.clone(), &expression.consequent);
+                self.collect_initializer(target, &expression.alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.ambiguous_alias_targets.insert(target.clone());
+                self.collect_initializer(target.clone(), &expression.left);
+                self.collect_initializer(target, &expression.right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_initializer(target, value);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_initializer(target, &expression.right);
+            }
             _ => {
                 if let Some(source) = self.alias_source_path(value) {
                     self.insert_alias(target, source);
@@ -11723,19 +11749,7 @@ impl StaticHookAliasCollector<'_> {
             if property.kind != PropertyKind::Init || property.method {
                 continue;
             }
-            match property.value.get_inner_expression() {
-                Expression::ObjectExpression(nested) => {
-                    self.collect_object(&property_target, nested);
-                }
-                Expression::ArrayExpression(nested) => {
-                    self.collect_array(&property_target, nested);
-                }
-                _ => {
-                    if let Some(source) = self.alias_source_path(&property.value) {
-                        self.insert_alias(property_target, source);
-                    }
-                }
-            }
+            self.collect_initializer(property_target, &property.value);
         }
     }
 
@@ -11757,19 +11771,7 @@ impl StaticHookAliasCollector<'_> {
             if self.collect_callable_initializer(property_target.clone(), value) {
                 continue;
             }
-            match value.get_inner_expression() {
-                Expression::ObjectExpression(nested) => {
-                    self.collect_object(&property_target, nested);
-                }
-                Expression::ArrayExpression(nested) => {
-                    self.collect_array(&property_target, nested);
-                }
-                _ => {
-                    if let Some(source) = self.alias_source_path(value) {
-                        self.insert_alias(property_target, source);
-                    }
-                }
-            }
+            self.collect_initializer(property_target, value);
         }
     }
 
@@ -12197,14 +12199,22 @@ impl StaticHookAliasCollector<'_> {
                                 else {
                                     continue;
                                 };
-                                let arguments = if self.path_requires_historical_aliases(
+                                let historical = self.path_requires_historical_aliases(
                                     &invocation_argument.raw,
                                     invocation.function_depth,
-                                ) {
-                                    resolve_historical_alias_paths(
-                                        &self.alias_history,
-                                        &invocation_argument.raw,
-                                    )
+                                );
+                                let arguments = if historical {
+                                    if *kind == LocalParameterInvalidationKind::Slot {
+                                        resolve_historical_alias_slot_paths(
+                                            &self.alias_history,
+                                            &invocation_argument.raw,
+                                        )
+                                    } else {
+                                        resolve_historical_alias_paths(
+                                            &self.alias_history,
+                                            &invocation_argument.raw,
+                                        )
+                                    }
                                 } else {
                                     BTreeSet::from([invocation_argument.resolved.clone()])
                                 };
@@ -12212,19 +12222,39 @@ impl StaticHookAliasCollector<'_> {
                                     let mut mapped = argument_path.clone();
                                     mapped.properties.extend(mapped_properties.clone());
                                     mapped.element_wildcard |= mapped_element_wildcard;
-                                    additions
-                                        .entry(mapped.canonicalized())
-                                        .and_modify(|(existing_kind, attached_kind)| {
-                                            *existing_kind = (*existing_kind).max(*kind);
-                                            if invocation_argument.parameter_attached {
-                                                *attached_kind =
-                                                    Some(attached_kind.unwrap_or(*kind).max(*kind));
-                                            }
-                                        })
-                                        .or_insert((
-                                            *kind,
-                                            invocation_argument.parameter_attached.then_some(*kind),
-                                        ));
+                                    let mapped_paths = if historical {
+                                        if *kind == LocalParameterInvalidationKind::Slot {
+                                            resolve_historical_alias_slot_paths(
+                                                &self.alias_history,
+                                                &mapped,
+                                            )
+                                        } else {
+                                            resolve_historical_alias_paths(
+                                                &self.alias_history,
+                                                &mapped,
+                                            )
+                                        }
+                                    } else {
+                                        BTreeSet::from([mapped.canonicalized()])
+                                    };
+                                    for mapped in mapped_paths {
+                                        additions
+                                            .entry(mapped)
+                                            .and_modify(|(existing_kind, attached_kind)| {
+                                                *existing_kind = (*existing_kind).max(*kind);
+                                                if invocation_argument.parameter_attached {
+                                                    *attached_kind = Some(
+                                                        attached_kind.unwrap_or(*kind).max(*kind),
+                                                    );
+                                                }
+                                            })
+                                            .or_insert((
+                                                *kind,
+                                                invocation_argument
+                                                    .parameter_attached
+                                                    .then_some(*kind),
+                                            ));
+                                    }
                                 }
                             }
                         }

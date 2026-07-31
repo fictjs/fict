@@ -5416,6 +5416,143 @@ fn nested_local_spread_invocations_preserve_unselected_elements() {
 }
 
 #[test]
+fn stored_ambiguous_structured_arguments_propagate_nested_invalidations() {
+    for (name, setup, helper, invocation) in [
+        (
+            "conditional array",
+            "const args = true ? [values] : [];",
+            "function mutate(target) { target.forEach = null; }",
+            "mutate(...args);",
+        ),
+        (
+            "conditional object",
+            "const wrapper = true ? { target: values } : {};",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "logical value",
+            "const selected = true && values;",
+            "function mutate(target) { target.forEach = null; }",
+            "mutate(selected);",
+        ),
+        (
+            "sequence array",
+            "const args = (0, [values]);",
+            "function mutate(target) { target.forEach = null; }",
+            "mutate(...args);",
+        ),
+        (
+            "assignment result array",
+            "let args; const selected = (args = [values]);",
+            "function mutate(target) { target.forEach = null; }",
+            "mutate(...selected);",
+        ),
+        (
+            "nested conditional object",
+            "const wrapper = { payload: true ? { target: values } : {} };",
+            "function mutate(wrapper) { wrapper.payload.target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "nested conditional array",
+            "const wrapper = [true ? [values] : []];",
+            "function mutate(wrapper) { wrapper[0][0].forEach = null; }",
+            "mutate(wrapper);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn stored_ambiguous_structured_arguments_preserve_unmodified_values() {
+    for (name, setup, helper, invocation) in [
+        (
+            "unselected conditional array element",
+            "const args = true ? [[], values] : [];",
+            "function mutate(target) { target.forEach = null; }",
+            "mutate(...args);",
+        ),
+        (
+            "conditional object sibling",
+            "const wrapper = true ? { target: values, other: [] } : {};",
+            "function mutate({ other }) { other.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "conditional property replacement",
+            "const wrapper = true ? { target: values } : {};",
+            "function replace(wrapper) { wrapper.target = []; }",
+            "replace(wrapper);",
+        ),
+        (
+            "discarded sequence value",
+            "const args = ([values], []);",
+            "function mutate(target) { target.forEach = null; }",
+            "mutate(...args);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
