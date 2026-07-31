@@ -3842,6 +3842,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect(values);",
         ),
         (
+            "primitive constructor return preserves instance",
+            "class Helper { constructor() { return 1; } inspect(target) { return target.length; } } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
+            "explicit this constructor return preserves instance",
+            "class Helper { constructor() { return this; } inspect(target) { return target.length; } } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
             "unadvanced replacement constructor generator capture",
             "class Helper { constructor() { return { inspect: function* () { values.forEach = null; } }; } } const helper = new Helper();",
             "helper.inspect();",
@@ -4411,6 +4421,21 @@ fn class_instance_method_invocations_propagate_local_effects() {
         (
             "replacement constructor unknown callable",
             "class Helper { constructor(factory) { return { mutate: factory() }; } } const helper = new Helper(() => null);",
+            "helper.mutate(values);",
+        ),
+        (
+            "conditional replacement constructor result",
+            "class Helper { constructor(choose) { if (choose) return { mutate(target) { target.forEach = null; } }; return { mutate(target) { return target.length; } }; } } const helper = new Helper(true);",
+            "helper.mutate(values);",
+        ),
+        (
+            "unknown replacement constructor result",
+            "class Helper { constructor(factory) { return factory(); } } const helper = new Helper(() => ({ mutate(target) { target.forEach = null; } }));",
+            "helper.mutate(values);",
+        ),
+        (
+            "spread replacement constructor result",
+            "const methods = { mutate(target) { target.forEach = null; } }; class Helper { constructor() { return { ...methods }; } } const helper = new Helper();",
             "helper.mutate(values);",
         ),
     ] {

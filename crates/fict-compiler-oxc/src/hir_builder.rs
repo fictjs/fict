@@ -10682,8 +10682,25 @@ impl<'a> Visit<'a> for ConstructorValueReturnCollector {
     fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
 
     fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
-        self.found |= statement.argument.is_some();
+        self.found |= statement
+            .argument
+            .as_ref()
+            .is_some_and(constructor_return_may_replace_instance);
     }
+}
+
+fn constructor_return_may_replace_instance(expression: &Expression<'_>) -> bool {
+    !matches!(
+        expression.get_inner_expression(),
+        Expression::ThisExpression(_)
+            | Expression::NullLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BigIntLiteral(_)
+            | Expression::StringLiteral(_)
+            | Expression::TemplateLiteral(_)
+            | Expression::UnaryExpression(_)
+    )
 }
 
 fn class_preserves_instance_prototype(class: &Class<'_>) -> bool {
@@ -11619,12 +11636,13 @@ impl StaticHookAliasCollector<'_> {
         self.local_class_instance_callables.remove(target);
         self.open_local_class_instance_fields.remove(target);
         let replacement_object = class_guaranteed_returned_object(class);
-        if Self::class_preserves_instance_prototype(class) || replacement_object.is_some() {
+        let preserves_instance = Self::class_preserves_instance_prototype(class);
+        if preserves_instance || replacement_object.is_some() {
             self.local_class_instances.insert(target.clone());
         } else {
             self.local_class_instances.remove(target);
         }
-        if replacement_object.is_some() {
+        if replacement_object.is_some() || !preserves_instance {
             self.open_local_class_instance_fields.insert(target.clone());
         }
         if replacement_object.is_none()
@@ -11761,9 +11779,13 @@ impl StaticHookAliasCollector<'_> {
             return;
         };
         let class = resolve_static_alias_path(&self.aliases, &raw_class);
-        if !self.local_class_instances.contains(&class)
-            || !self.path_is_currently_intact(&raw_class)
-        {
+        if !self.path_is_currently_intact(&raw_class) {
+            return;
+        }
+        if !self.local_class_instances.contains(&class) {
+            if self.open_local_class_instance_fields.contains(&class) {
+                self.open_structured_containers.insert(target.clone());
+            }
             return;
         }
         let prototype = class.with_property("prototype".to_string());
@@ -14918,6 +14940,14 @@ impl StaticHookAliasCollector<'_> {
 
     fn callable_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
         let resolved = resolve_static_alias_path(&self.aliases, path);
+        if self.open_structured_containers.iter().any(|container| {
+            [path, &resolved].into_iter().any(|candidate| {
+                candidate.starts_with(container)
+                    && candidate.properties.len() > container.properties.len()
+            })
+        }) {
+            return true;
+        }
         if reflective_member_mutator_kind(&resolved).is_some()
             || (is_safe_global_path(&resolved) && self.path_is_currently_intact(path))
         {
