@@ -70,7 +70,7 @@ use oxc::{
             UpdateOperator as OxcUpdateOperator,
         },
         scope::{ScopeFlags, ScopeId as OxcScopeId},
-        symbol::SymbolId,
+        symbol::{SymbolFlags, SymbolId},
     },
 };
 
@@ -2034,7 +2034,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             member_invalidated: BTreeSet::new(),
             deferred_invalidated: BTreeSet::new(),
             deferred_member_invalidated: BTreeSet::new(),
+            deferred_exposed_paths: BTreeSet::new(),
             reflective_mutations: Vec::new(),
+            external_callable_parameters: BTreeSet::new(),
             function_depth: 0,
         };
         static_hook_aliases.visit_program(program);
@@ -8211,6 +8213,27 @@ fn resolve_historical_alias_paths(
     resolved
 }
 
+fn resolve_historical_exposed_paths(
+    aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    original: &StaticAliasPath,
+) -> BTreeSet<StaticAliasPath> {
+    let mut exposed = BTreeSet::new();
+    let mut pending = VecDeque::from_iter(resolve_historical_alias_paths(aliases, original));
+    while let Some(path) = pending.pop_front() {
+        if !exposed.insert(path.clone()) {
+            continue;
+        }
+        for (target, sources) in aliases {
+            if target.starts_with(&path) {
+                for source in sources {
+                    pending.extend(resolve_historical_alias_paths(aliases, source));
+                }
+            }
+        }
+    }
+    exposed
+}
+
 fn prototype_sensitive_invalidation_paths(path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
     let mut paths = BTreeSet::from([path.clone()]);
     for (index, property) in path.properties.iter().enumerate() {
@@ -8244,27 +8267,51 @@ fn prototype_sensitive_invalidation_paths(path: &StaticAliasPath) -> BTreeSet<St
     paths
 }
 
+fn path_may_reference_shared_prototype(path: &StaticAliasPath) -> bool {
+    match path.properties.as_slice() {
+        [.., property] if matches!(property.as_str(), "__proto__" | "constructor") => true,
+        [.., constructor, prototype]
+            if constructor == "constructor" && prototype == "prototype" =>
+        {
+            true
+        }
+        [prototype] if prototype == "prototype" => matches!(
+            &path.root,
+            StaticAliasRoot::UnresolvedGlobal(root)
+                if classify_builtin_state_receiver_name(root).is_some()
+        ),
+        _ => false,
+    }
+}
+
+fn static_alias_path_is_intact(
+    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
+    member_invalidated: &BTreeSet<StaticAliasPath>,
+    path: &StaticAliasPath,
+) -> bool {
+    let path = path.clone().canonicalized();
+    let resolved = resolve_static_alias_path(aliases, &path);
+    if member_invalidated
+        .iter()
+        .any(StaticAliasPath::is_global_object_root)
+        && [&path, &resolved].iter().any(|candidate| {
+            matches!(&candidate.root, StaticAliasRoot::UnresolvedGlobal(root) if root != "globalThis")
+        })
+    {
+        return false;
+    }
+    member_invalidated
+        .iter()
+        .all(|invalidated| !invalidated.overlaps(&path) && !invalidated.overlaps(&resolved))
+}
+
 impl StaticHookAliases {
     fn resolve(&self, original: &StaticAliasPath) -> StaticAliasPath {
         resolve_static_alias_path(&self.aliases, original)
     }
 
     fn path_is_intact(&self, path: &StaticAliasPath) -> bool {
-        let path = path.clone().canonicalized();
-        let resolved = self.resolve(&path);
-        if self
-            .member_invalidated
-            .iter()
-            .any(StaticAliasPath::is_global_object_root)
-            && [&path, &resolved].iter().any(|candidate| {
-                matches!(&candidate.root, StaticAliasRoot::UnresolvedGlobal(root) if root != "globalThis")
-            })
-        {
-            return false;
-        }
-        self.member_invalidated
-            .iter()
-            .all(|invalidated| !invalidated.overlaps(&path) && !invalidated.overlaps(&resolved))
+        static_alias_path_is_intact(&self.aliases, &self.member_invalidated, path)
     }
 
     fn builtin_prototype_method_is_intact(
@@ -9652,7 +9699,9 @@ struct StaticHookAliasCollector<'semantic> {
     member_invalidated: BTreeSet<StaticAliasPath>,
     deferred_invalidated: BTreeSet<StaticAliasPath>,
     deferred_member_invalidated: BTreeSet<StaticAliasPath>,
+    deferred_exposed_paths: BTreeSet<StaticAliasPath>,
     reflective_mutations: Vec<ReflectiveMemberMutationFact>,
+    external_callable_parameters: BTreeSet<SymbolId>,
     function_depth: usize,
 }
 
@@ -9667,6 +9716,12 @@ struct ReflectiveMemberMutationFact {
 }
 
 impl StaticHookAliasCollector<'_> {
+    fn record_external_callable_parameter(&mut self, pattern: &BindingPattern<'_>) {
+        let mut bindings = PatternBindingCollector::default();
+        bindings.visit_binding_pattern(pattern);
+        self.external_callable_parameters.extend(bindings.symbols);
+    }
+
     fn path_owner_depth(&self, path: &StaticAliasPath) -> usize {
         path.binding_root()
             .and_then(|root| self.binding_owner_depths.get(&root).copied())
@@ -9728,10 +9783,14 @@ impl StaticHookAliasCollector<'_> {
 
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
         self.clear_overlapping_aliases(&target);
-        if let Expression::ObjectExpression(object) = value.get_inner_expression() {
-            self.collect_object(&target, object);
-        } else if let Some(source) = self.alias_source_path(value) {
-            self.insert_alias(target, source);
+        match value.get_inner_expression() {
+            Expression::ObjectExpression(object) => self.collect_object(&target, object),
+            Expression::ArrayExpression(array) => self.collect_array(&target, array),
+            _ => {
+                if let Some(source) = self.alias_source_path(value) {
+                    self.insert_alias(target, source);
+                }
+            }
         }
     }
 
@@ -9940,10 +9999,49 @@ impl StaticHookAliasCollector<'_> {
             if property.kind != PropertyKind::Init || property.method {
                 continue;
             }
-            if let Expression::ObjectExpression(nested) = property.value.get_inner_expression() {
-                self.collect_object(&property_target, nested);
-            } else if let Some(source) = self.alias_source_path(&property.value) {
-                self.insert_alias(property_target, source);
+            match property.value.get_inner_expression() {
+                Expression::ObjectExpression(nested) => {
+                    self.collect_object(&property_target, nested);
+                }
+                Expression::ArrayExpression(nested) => {
+                    self.collect_array(&property_target, nested);
+                }
+                _ => {
+                    if let Some(source) = self.alias_source_path(&property.value) {
+                        self.insert_alias(property_target, source);
+                    }
+                }
+            }
+        }
+    }
+
+    fn collect_array(
+        &mut self,
+        target: &StaticAliasPath,
+        array: &oxc::ast::ast::ArrayExpression<'_>,
+    ) {
+        for (index, element) in array.elements.iter().enumerate() {
+            let property_target = target.with_property(index.to_string());
+            self.clear_overlapping_aliases(&property_target);
+            if matches!(
+                element,
+                ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_)
+            ) {
+                continue;
+            }
+            let value = element.to_expression();
+            match value.get_inner_expression() {
+                Expression::ObjectExpression(nested) => {
+                    self.collect_object(&property_target, nested);
+                }
+                Expression::ArrayExpression(nested) => {
+                    self.collect_array(&property_target, nested);
+                }
+                _ => {
+                    if let Some(source) = self.alias_source_path(value) {
+                        self.insert_alias(property_target, source);
+                    }
+                }
             }
         }
     }
@@ -9972,7 +10070,165 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn path_is_currently_intact(&self, path: &StaticAliasPath) -> bool {
+        static_alias_path_is_intact(&self.aliases, &self.member_invalidated, path)
+    }
+
+    fn callee_may_mutate_arguments(&self, callee: &Expression<'_>) -> bool {
+        let Some(path) = static_alias_source_path(self.scoping, callee) else {
+            return false;
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if reflective_member_mutator_kind(&resolved).is_some()
+            || (is_safe_global_path(&resolved) && self.path_is_currently_intact(&path))
+        {
+            return false;
+        }
+        match resolved.root {
+            StaticAliasRoot::Binding(root) => {
+                self.external_callable_parameters.contains(&root)
+                    || self
+                        .scoping
+                        .symbol_flags(root)
+                        .contains(SymbolFlags::Import)
+            }
+            StaticAliasRoot::UnresolvedGlobal(_) => true,
+        }
+    }
+
+    fn collect_exposed_argument_paths(
+        &self,
+        expression: &Expression<'_>,
+        paths: &mut BTreeSet<StaticAliasPath>,
+    ) {
+        if let Some(path) = self.alias_source_path(expression) {
+            paths.insert(path);
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ObjectExpression(object) => {
+                for property in &object.properties {
+                    if let OxcObjectPropertyKind::ObjectProperty(property) = property {
+                        self.collect_exposed_argument_paths(&property.value, paths);
+                    }
+                }
+            }
+            Expression::ArrayExpression(array) => {
+                for element in &array.elements {
+                    if !matches!(
+                        element,
+                        ArrayExpressionElement::Elision(_)
+                            | ArrayExpressionElement::SpreadElement(_)
+                    ) {
+                        self.collect_exposed_argument_paths(element.to_expression(), paths);
+                    }
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_exposed_argument_paths(&expression.consequent, paths);
+                self.collect_exposed_argument_paths(&expression.alternate, paths);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_exposed_argument_paths(&expression.left, paths);
+                self.collect_exposed_argument_paths(&expression.right, paths);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_exposed_argument_paths(value, paths);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_exposed_argument_paths(&expression.right, paths);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_spread_exposed_argument_paths(
+        &self,
+        expression: &Expression<'_>,
+        paths: &mut BTreeSet<StaticAliasPath>,
+    ) {
+        if let Some(path) = self.alias_source_path(expression) {
+            for (target, source) in &self.aliases {
+                if target.starts_with(&path) && target.properties.len() > path.properties.len() {
+                    paths.insert(source.clone());
+                }
+            }
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(array) => {
+                for element in &array.elements {
+                    match element {
+                        ArrayExpressionElement::Elision(_) => {}
+                        ArrayExpressionElement::SpreadElement(spread) => {
+                            self.collect_spread_exposed_argument_paths(&spread.argument, paths);
+                        }
+                        element => {
+                            self.collect_exposed_argument_paths(element.to_expression(), paths);
+                        }
+                    }
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_spread_exposed_argument_paths(&expression.consequent, paths);
+                self.collect_spread_exposed_argument_paths(&expression.alternate, paths);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_spread_exposed_argument_paths(&expression.left, paths);
+                self.collect_spread_exposed_argument_paths(&expression.right, paths);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_spread_exposed_argument_paths(value, paths);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn expand_exposed_paths(
+        &self,
+        initial: BTreeSet<StaticAliasPath>,
+    ) -> BTreeSet<StaticAliasPath> {
+        let mut exposed = BTreeSet::new();
+        let mut pending = VecDeque::from_iter(initial);
+        while let Some(path) = pending.pop_front() {
+            if !exposed.insert(path.clone()) {
+                continue;
+            }
+            for (target, source) in &self.aliases {
+                if target.starts_with(&path) {
+                    pending.push_back(source.clone());
+                }
+            }
+        }
+        exposed
+    }
+
+    fn invalidate_exposed_path(&mut self, path: StaticAliasPath) {
+        let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if path_may_reference_shared_prototype(&path)
+            || path_may_reference_shared_prototype(&resolved)
+        {
+            self.insert_invalidation_path(
+                StaticAliasPath::unresolved_global("Object".to_string())
+                    .with_property("prototype".to_string()),
+                true,
+            );
+        }
+        self.invalidate_path(path, true);
+    }
+
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
+        for path in self.deferred_exposed_paths.clone() {
+            for path in resolve_historical_exposed_paths(&self.alias_history, &path) {
+                self.insert_invalidation_path(path, true);
+            }
+        }
         for path in self.deferred_invalidated.clone() {
             for path in resolve_historical_alias_paths(&self.alias_history, &path) {
                 self.insert_invalidation_path(path, false);
@@ -10063,6 +10319,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .entry(symbol)
                 .or_insert(self.function_depth);
         }
+    }
+
+    fn visit_formal_parameter(&mut self, parameter: &FormalParameter<'a>) {
+        self.record_external_callable_parameter(&parameter.pattern);
+        oxc::ast_visit::walk::walk_formal_parameter(self, parameter);
+    }
+
+    fn visit_formal_parameter_rest(&mut self, parameter: &FormalParameterRest<'a>) {
+        self.record_external_callable_parameter(&parameter.rest.argument);
+        oxc::ast_visit::walk::walk_formal_parameter_rest(self, parameter);
     }
 
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
@@ -10159,6 +10425,25 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let mut exposed_arguments = BTreeSet::new();
+        if self.callee_may_mutate_arguments(&call.callee) {
+            for argument in &call.arguments {
+                if let Some(argument) = argument.as_expression() {
+                    self.collect_exposed_argument_paths(argument, &mut exposed_arguments);
+                } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
+                    self.collect_spread_exposed_argument_paths(
+                        &spread.argument,
+                        &mut exposed_arguments,
+                    );
+                }
+            }
+        }
+        for path in &exposed_arguments {
+            if self.path_requires_historical_aliases(path, self.function_depth) {
+                self.deferred_exposed_paths.insert(path.clone());
+            }
+        }
+        let exposed_arguments = self.expand_exposed_paths(exposed_arguments);
         let reflective_mutation = if let Some(callee) =
             static_alias_source_path(self.scoping, &call.callee)
             && let Some(target) = call
@@ -10184,6 +10469,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
+        for path in exposed_arguments {
+            self.invalidate_exposed_path(path);
+        }
         if let Some(mutation) = reflective_mutation {
             self.reflective_mutations.push(mutation);
         }
@@ -11633,73 +11921,71 @@ fn is_safe_global_call(
             .get()
             .is_some_and(|reference| scoping.get_reference(reference).symbol_id().is_none())
     };
-    let safe = match unwrap_transparent_call_expression(callee) {
-        Expression::Identifier(identifier) => {
-            unresolved(identifier)
-                && matches!(
-                    identifier.name.as_str(),
-                    "String"
-                        | "Number"
-                        | "Boolean"
-                        | "parseInt"
-                        | "parseFloat"
-                        | "isNaN"
-                        | "isFinite"
-                        | "typeof"
-                )
-        }
+    let direct_global = match unwrap_transparent_call_expression(callee) {
+        Expression::Identifier(identifier) => unresolved(identifier),
         Expression::StaticMemberExpression(member) => {
             let Expression::Identifier(root) = member.object.get_inner_expression() else {
                 return false;
             };
-            if !unresolved(root) {
-                return false;
-            }
-            matches!(
-                (root.name.as_str(), member.property.name.as_str()),
-                (
-                    "console",
-                    "log" | "info" | "warn" | "error" | "debug" | "trace" | "dir" | "table"
-                ) | ("JSON", "stringify" | "parse")
-                    | (
-                        "Object",
-                        "keys"
-                            | "values"
-                            | "entries"
-                            | "isFrozen"
-                            | "isSealed"
-                            | "isExtensible"
-                            | "getOwnPropertyNames"
-                            | "getOwnPropertyDescriptor"
-                            | "getPrototypeOf"
-                    )
-                    | ("Array", "isArray" | "from" | "of")
-                    | (
-                        "Math",
-                        "abs"
-                            | "ceil"
-                            | "floor"
-                            | "round"
-                            | "max"
-                            | "min"
-                            | "pow"
-                            | "sqrt"
-                            | "random"
-                            | "sin"
-                            | "cos"
-                            | "tan"
-                            | "log"
-                            | "exp"
-                            | "sign"
-                            | "trunc"
-                    )
-                    | ("Date", "now" | "parse")
-            )
+            unresolved(root)
         }
         _ => false,
     };
-    safe && static_alias_source_path(scoping, callee)
-        .is_some_and(|path| aliases.path_is_intact(&path))
+    direct_global
+        && static_alias_source_path(scoping, callee)
+            .is_some_and(|path| is_safe_global_path(&path) && aliases.path_is_intact(&path))
+}
+
+fn is_safe_global_path(path: &StaticAliasPath) -> bool {
+    let StaticAliasRoot::UnresolvedGlobal(root) = &path.root else {
+        return false;
+    };
+    match (root.as_str(), path.properties.as_slice()) {
+        (
+            "String" | "Number" | "Boolean" | "parseInt" | "parseFloat" | "isNaN" | "isFinite"
+            | "typeof",
+            [],
+        ) => true,
+        ("console", [method]) => matches!(
+            method.as_str(),
+            "log" | "info" | "warn" | "error" | "debug" | "trace" | "dir" | "table"
+        ),
+        ("JSON", [method]) => matches!(method.as_str(), "stringify" | "parse"),
+        ("Object", [method]) => matches!(
+            method.as_str(),
+            "keys"
+                | "values"
+                | "entries"
+                | "isFrozen"
+                | "isSealed"
+                | "isExtensible"
+                | "getOwnPropertyNames"
+                | "getOwnPropertyDescriptor"
+                | "getPrototypeOf"
+        ),
+        ("Array", [method]) => matches!(method.as_str(), "isArray" | "from" | "of"),
+        ("Math", [method]) => matches!(
+            method.as_str(),
+            "abs"
+                | "ceil"
+                | "floor"
+                | "round"
+                | "max"
+                | "min"
+                | "pow"
+                | "sqrt"
+                | "random"
+                | "sin"
+                | "cos"
+                | "tan"
+                | "log"
+                | "exp"
+                | "sign"
+                | "trunc"
+        ),
+        ("Date", [method]) => matches!(method.as_str(), "now" | "parse"),
+        _ => false,
+    }
 }
 
 struct DynamicReactivePropertyCollector<'semantic, 'reactive> {

@@ -2930,6 +2930,175 @@ fn own_constructor_property_does_not_invalidate_builtin_methods() {
 }
 
 #[test]
+fn unknown_calls_invalidate_exposed_builtin_receivers() {
+    for (name, prelude, parameters, exposure) in [
+        ("parameter", "", "configure", "configure(values);"),
+        ("parameter member", "", "api", "api.configure(values);"),
+        (
+            "aliased parameter",
+            "",
+            "configure",
+            "const run = configure; run(values);",
+        ),
+        (
+            "import",
+            "import { configure } from 'external';",
+            "",
+            "configure(values);",
+        ),
+        ("unresolved global", "", "", "configure(values);"),
+        ("object wrapper", "", "configure", "configure({ values });"),
+        ("array wrapper", "", "configure", "configure([values]);"),
+        (
+            "stored nested wrapper",
+            "",
+            "configure",
+            "const payload = { nested: [values] }; configure(payload);",
+        ),
+        (
+            "literal spread arguments",
+            "",
+            "configure",
+            "configure(...[values]);",
+        ),
+        (
+            "stored spread arguments",
+            "",
+            "configure",
+            "const args = [values]; configure(...args);",
+        ),
+        (
+            "reassigned wrapper after exposure",
+            "",
+            "configure",
+            "let payload = { values }; configure(payload, payload = {});",
+        ),
+        (
+            "deferred reassigned wrapper",
+            "",
+            "configure",
+            "let payload = { values: [] }; function expose() { configure(payload); } payload = { values }; expose();",
+        ),
+        (
+            "conditional result",
+            "",
+            "configure, flag",
+            "configure(flag ? values : []);",
+        ),
+        (
+            "overridden safe global",
+            "",
+            "configure",
+            "Object.keys = configure; Object.keys(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                {prelude}
+                function App({parameters}) {{
+                    const count = $state(0);
+                    const values = [];
+                    {exposure}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn external_calls_preserve_unexposed_builtin_receivers() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(configure) {
+            const count = $state(0);
+            const values = [];
+            configure(values.length);
+            Object.keys(values);
+            const keys = Object.keys;
+            keys(values);
+            configure(...values);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "primitive projections and safe globals must preserve method integrity: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn unknown_calls_invalidate_exposed_shared_prototypes() {
+    for (name, exposure) in [
+        ("prototype object", "configure(first.__proto__);"),
+        ("constructor object", "configure(first.constructor);"),
+        (
+            "looked-up prototype object",
+            "configure(Object.getPrototypeOf(first));",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure) {{
+                    const count = $state(0);
+                    const first = [];
+                    const second = [];
+                    {exposure}
+                    second.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
