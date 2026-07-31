@@ -2035,6 +2035,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             deferred_invalidated: BTreeSet::new(),
             deferred_member_invalidated: BTreeSet::new(),
             deferred_exposed_paths: BTreeSet::new(),
+            callable_exposures: BTreeMap::new(),
+            callable_exposure_history: BTreeMap::new(),
             reflective_mutations: Vec::new(),
             external_callable_parameters: BTreeSet::new(),
             function_depth: 0,
@@ -8215,6 +8217,7 @@ fn resolve_historical_alias_paths(
 
 fn resolve_historical_exposed_paths(
     aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    callable_exposures: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     original: &StaticAliasPath,
 ) -> BTreeSet<StaticAliasPath> {
     let mut exposed = BTreeSet::new();
@@ -8224,6 +8227,13 @@ fn resolve_historical_exposed_paths(
             continue;
         }
         for (target, sources) in aliases {
+            if target.starts_with(&path) {
+                for source in sources {
+                    pending.extend(resolve_historical_alias_paths(aliases, source));
+                }
+            }
+        }
+        for (target, sources) in callable_exposures {
             if target.starts_with(&path) {
                 for source in sources {
                     pending.extend(resolve_historical_alias_paths(aliases, source));
@@ -9689,6 +9699,36 @@ fn static_member_name(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
+struct EscapedFunctionValueCollector<'collector, 'semantic> {
+    owner: &'collector StaticHookAliasCollector<'semantic>,
+    paths: BTreeSet<StaticAliasPath>,
+}
+
+impl<'a> Visit<'a> for EscapedFunctionValueCollector<'_, '_> {
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if let Some(expression) = &statement.argument {
+            self.owner
+                .collect_exposed_argument_paths(expression, &mut self.paths);
+        }
+    }
+
+    fn visit_yield_expression(&mut self, expression: &oxc::ast::ast::YieldExpression<'a>) {
+        if let Some(argument) = &expression.argument {
+            if expression.delegate {
+                self.owner
+                    .collect_spread_exposed_argument_paths(argument, &mut self.paths);
+            } else {
+                self.owner
+                    .collect_exposed_argument_paths(argument, &mut self.paths);
+            }
+        }
+    }
+}
+
 struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
@@ -9700,6 +9740,8 @@ struct StaticHookAliasCollector<'semantic> {
     deferred_invalidated: BTreeSet<StaticAliasPath>,
     deferred_member_invalidated: BTreeSet<StaticAliasPath>,
     deferred_exposed_paths: BTreeSet<StaticAliasPath>,
+    callable_exposures: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    callable_exposure_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     reflective_mutations: Vec<ReflectiveMemberMutationFact>,
     external_callable_parameters: BTreeSet<SymbolId>,
     function_depth: usize,
@@ -9768,6 +9810,8 @@ impl StaticHookAliasCollector<'_> {
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
         self.record_cross_scope_target(path);
         self.aliases.retain(|target, _| !target.overlaps(path));
+        self.callable_exposures
+            .retain(|target, _| !target.overlaps(path));
     }
 
     fn insert_alias(&mut self, target: StaticAliasPath, source: StaticAliasPath) {
@@ -9783,6 +9827,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
         self.clear_overlapping_aliases(&target);
+        if self.collect_callable_initializer(target.clone(), value) {
+            return;
+        }
         match value.get_inner_expression() {
             Expression::ObjectExpression(object) => self.collect_object(&target, object),
             Expression::ArrayExpression(array) => self.collect_array(&target, array),
@@ -9797,6 +9844,55 @@ impl StaticHookAliasCollector<'_> {
     fn alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
         static_alias_source_path(self.scoping, expression)
             .or_else(|| self.prototype_derived_path(expression))
+    }
+
+    fn returned_function_paths(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<BTreeSet<StaticAliasPath>> {
+        let mut collector = EscapedFunctionValueCollector {
+            owner: self,
+            paths: BTreeSet::new(),
+        };
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                let body = function.body.as_ref()?;
+                for statement in &body.statements {
+                    collector.visit_statement(statement);
+                }
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                if let Some(value) = function.get_expression() {
+                    collector
+                        .owner
+                        .collect_exposed_argument_paths(value, &mut collector.paths);
+                } else {
+                    for statement in &function.body.statements {
+                        collector.visit_statement(statement);
+                    }
+                }
+            }
+            _ => return None,
+        }
+        Some(collector.paths)
+    }
+
+    fn collect_callable_initializer(
+        &mut self,
+        target: StaticAliasPath,
+        value: &Expression<'_>,
+    ) -> bool {
+        let Some(paths) = self.returned_function_paths(value) else {
+            return false;
+        };
+        if !paths.is_empty() {
+            self.callable_exposure_history
+                .entry(target.clone())
+                .or_default()
+                .extend(paths.iter().cloned());
+            self.callable_exposures.insert(target, paths);
+        }
+        true
     }
 
     fn prototype_lookup_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
@@ -9996,6 +10092,9 @@ impl StaticHookAliasCollector<'_> {
             };
             let property_target = target.with_property(name.into_owned());
             self.clear_overlapping_aliases(&property_target);
+            if self.collect_callable_initializer(property_target.clone(), &property.value) {
+                continue;
+            }
             if property.kind != PropertyKind::Init || property.method {
                 continue;
             }
@@ -10030,6 +10129,9 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             let value = element.to_expression();
+            if self.collect_callable_initializer(property_target.clone(), value) {
+                continue;
+            }
             match value.get_inner_expression() {
                 Expression::ObjectExpression(nested) => {
                     self.collect_object(&property_target, nested);
@@ -10119,6 +10221,10 @@ impl StaticHookAliasCollector<'_> {
     ) {
         if let Some(path) = self.alias_source_path(expression) {
             paths.insert(path);
+            return;
+        }
+        if let Some(returned) = self.returned_function_paths(expression) {
+            paths.extend(returned);
             return;
         }
         match expression.get_inner_expression() {
@@ -10248,6 +10354,11 @@ impl StaticHookAliasCollector<'_> {
                     pending.push_back(source.clone());
                 }
             }
+            for (target, sources) in &self.callable_exposures {
+                if target.starts_with(&path) {
+                    pending.extend(sources.iter().cloned());
+                }
+            }
         }
         exposed
     }
@@ -10268,7 +10379,11 @@ impl StaticHookAliasCollector<'_> {
 
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
         for path in self.deferred_exposed_paths.clone() {
-            for path in resolve_historical_exposed_paths(&self.alias_history, &path) {
+            for path in resolve_historical_exposed_paths(
+                &self.alias_history,
+                &self.callable_exposure_history,
+                &path,
+            ) {
                 self.insert_invalidation_path(path, true);
             }
         }
@@ -10392,6 +10507,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, source)| (target.clone(), source.clone()))
             .collect::<Vec<_>>();
+        let outer_callable_exposures = self
+            .callable_exposures
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, sources)| (target.clone(), sources.clone()))
+            .collect::<Vec<_>>();
         self.function_depth = depth;
         walk_function(self, function, flags);
         let changed_outer_targets = self
@@ -10404,6 +10525,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.aliases.remove(&target);
         }
         self.aliases.extend(outer_aliases);
+        let changed_outer_targets = self
+            .callable_exposures
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.callable_exposures.remove(&target);
+        }
+        self.callable_exposures.extend(outer_callable_exposures);
         self.function_depth = depth - 1;
     }
 
@@ -10414,6 +10545,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .iter()
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, source)| (target.clone(), source.clone()))
+            .collect::<Vec<_>>();
+        let outer_callable_exposures = self
+            .callable_exposures
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, sources)| (target.clone(), sources.clone()))
             .collect::<Vec<_>>();
         self.function_depth = depth;
         walk_arrow_function_expression(self, function);
@@ -10427,6 +10564,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.aliases.remove(&target);
         }
         self.aliases.extend(outer_aliases);
+        let changed_outer_targets = self
+            .callable_exposures
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.callable_exposures.remove(&target);
+        }
+        self.callable_exposures.extend(outer_callable_exposures);
         self.function_depth = depth - 1;
     }
 

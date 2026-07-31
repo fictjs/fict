@@ -3176,6 +3176,115 @@ fn builtin_constructors_preserve_source_receiver_methods() {
 }
 
 #[test]
+fn external_calls_invalidate_receivers_returned_by_factories() {
+    for (name, exposure) in [
+        ("concise arrow", "configure(() => values);"),
+        ("block arrow", "configure(() => { return { values }; });"),
+        (
+            "function expression",
+            "configure(function () { return values; });",
+        ),
+        (
+            "generator yield",
+            "configure(function* () { yield values; });",
+        ),
+        (
+            "delegated generator yield",
+            "configure(function* () { yield* [values]; });",
+        ),
+        (
+            "stored factory",
+            "const expose = () => values; configure(expose);",
+        ),
+        (
+            "assigned factory",
+            "let expose; expose = () => values; configure(expose);",
+        ),
+        (
+            "aliased factory",
+            "const expose = () => values; const run = expose; configure(run);",
+        ),
+        (
+            "factory property",
+            "const holder = { expose: () => values }; configure(holder.expose);",
+        ),
+        (
+            "factory container",
+            "const holder = { expose: () => values }; configure(holder);",
+        ),
+        (
+            "factory method container",
+            "const holder = { expose() { return values; } }; configure(holder);",
+        ),
+        (
+            "deferred reassigned factory",
+            "let expose = () => []; function pass() { configure(expose); } expose = () => values; pass();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure) {{
+                    const count = $state(0);
+                    const values = [];
+                    {exposure}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn external_calls_preserve_receivers_hidden_by_factories() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(configure) {
+            const count = $state(0);
+            const values = [];
+            configure(() => values.length);
+            configure(() => { void values; return 1; });
+            let expose = () => values;
+            expose = () => [];
+            configure(expose);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "capturing without returning a receiver must preserve method integrity: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
