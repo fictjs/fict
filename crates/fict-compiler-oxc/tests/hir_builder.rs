@@ -3185,6 +3185,22 @@ fn external_calls_invalidate_receivers_returned_by_factories() {
             "configure(function () { return values; });",
         ),
         (
+            "function declaration",
+            "function expose() { return values; } configure(expose);",
+        ),
+        (
+            "hoisted function declaration",
+            "configure(expose); function expose() { return values; }",
+        ),
+        (
+            "async function declaration",
+            "async function expose() { return values; } configure(expose);",
+        ),
+        (
+            "generator declaration",
+            "function* expose() { yield values; } configure(expose);",
+        ),
+        (
             "generator yield",
             "configure(function* () { yield values; });",
         ),
@@ -3282,6 +3298,54 @@ fn external_calls_preserve_receivers_hidden_by_factories() {
         "capturing without returning a receiver must preserve method integrity: {:?}",
         output.diagnostics
     );
+}
+
+#[test]
+fn function_declaration_factories_preserve_hidden_receivers() {
+    for (name, setup) in [
+        (
+            "captured but unreturned receiver",
+            "function inspect() { void values; return 1; } configure(inspect);",
+        ),
+        (
+            "unrelated returned receiver",
+            "const other = []; function expose() { return other; } configure(expose);",
+        ),
+        (
+            "reassigned declaration",
+            "function expose() { return values; } expose = () => []; configure(expose);",
+        ),
+        (
+            "nested declaration capture",
+            "function inspect() { function nested() { return values; } return 1; } configure(inspect);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
 }
 
 #[test]

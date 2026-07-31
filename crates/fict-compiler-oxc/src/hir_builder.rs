@@ -11948,31 +11948,53 @@ impl StaticHookAliasCollector<'_> {
         &self,
         expression: &Expression<'_>,
     ) -> Option<BTreeSet<StaticAliasPath>> {
-        let mut collector = EscapedFunctionValueCollector {
-            owner: self,
-            paths: BTreeSet::new(),
-        };
         match expression.get_inner_expression() {
             Expression::FunctionExpression(function) => {
                 let body = function.body.as_ref()?;
-                for statement in &body.statements {
-                    collector.visit_statement(statement);
-                }
+                Some(self.returned_function_body_paths(body))
             }
             Expression::ArrowFunctionExpression(function) => {
+                let mut collector = EscapedFunctionValueCollector {
+                    owner: self,
+                    paths: BTreeSet::new(),
+                };
                 if let Some(value) = function.get_expression() {
                     collector
                         .owner
                         .collect_exposed_argument_paths(value, &mut collector.paths);
                 } else {
-                    for statement in &function.body.statements {
-                        collector.visit_statement(statement);
-                    }
+                    collector.paths = self.returned_function_body_paths(&function.body);
                 }
+                Some(collector.paths)
             }
-            _ => return None,
+            _ => None,
         }
-        Some(collector.paths)
+    }
+
+    fn returned_function_body_paths(&self, body: &FunctionBody<'_>) -> BTreeSet<StaticAliasPath> {
+        let mut collector = EscapedFunctionValueCollector {
+            owner: self,
+            paths: BTreeSet::new(),
+        };
+        for statement in &body.statements {
+            collector.visit_statement(statement);
+        }
+        collector.paths
+    }
+
+    fn record_callable_exposures(
+        &mut self,
+        target: StaticAliasPath,
+        paths: BTreeSet<StaticAliasPath>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        self.callable_exposure_history
+            .entry(target.clone())
+            .or_default()
+            .extend(paths.iter().cloned());
+        self.callable_exposures.insert(target, paths);
     }
 
     fn collect_callable_initializer(
@@ -11995,13 +12017,7 @@ impl StaticHookAliasCollector<'_> {
         let Some(paths) = self.returned_function_paths(value) else {
             return true;
         };
-        if !paths.is_empty() {
-            self.callable_exposure_history
-                .entry(target.clone())
-                .or_default()
-                .extend(paths.iter().cloned());
-            self.callable_exposures.insert(target, paths);
-        }
+        self.record_callable_exposures(target, paths);
         true
     }
 
@@ -13821,7 +13837,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .entry(symbol)
                 .or_insert(self.function_depth);
             self.record_unreferenced_callable_span(&target, function.span);
-            self.record_local_callable_parameters(target, &function.params);
+            self.record_local_callable_parameters(target.clone(), &function.params);
+            if let Some(body) = &function.body {
+                let paths = self.returned_function_body_paths(body);
+                self.record_callable_exposures(target, paths);
+            }
         }
         if self.function_depth > 0
             && self
