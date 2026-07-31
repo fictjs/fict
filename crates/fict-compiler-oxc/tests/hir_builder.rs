@@ -3621,6 +3621,126 @@ fn pure_local_calls_preserve_receiver_methods() {
             "let inspect = target => target.length; function replace() { inspect = target => { target.forEach = null; }; }",
             "inspect(values);",
         ),
+        (
+            "unadvanced generator",
+            "function* inspect(target) { target.forEach = null; }",
+            "inspect(values);",
+        ),
+        (
+            "unadvanced generator capture",
+            "function* inspect() { values.forEach = null; }",
+            "inspect();",
+        ),
+        (
+            "unadvanced aliased generator capture",
+            "function* inspect() { values.forEach = null; } const run = inspect;",
+            "run();",
+        ),
+        (
+            "unadvanced conditional generator capture",
+            "function* inspectA() { values.forEach = null; } function* inspectB() { values.forEach = null; } const run = choose ? inspectA : inspectB;",
+            "run();",
+        ),
+        (
+            "voided generator iterator",
+            "function* inspect(target) { target.forEach = null; }",
+            "void inspect(values);",
+        ),
+        (
+            "sequenced generator iterator",
+            "function* inspect(target) { target.forEach = null; }",
+            "(inspect(values), 0);",
+        ),
+        (
+            "unadvanced generator expression",
+            "const inspect = function* (target) { target.forEach = null; };",
+            "inspect(values);",
+        ),
+        (
+            "unadvanced inline generator",
+            "",
+            "(function* (target) { target.forEach = null; })(values);",
+        ),
+        (
+            "unadvanced inline generator capture",
+            "",
+            "(function* () { values.forEach = null; })();",
+        ),
+        (
+            "unadvanced inline generator call",
+            "",
+            "(function* (target) { target.forEach = null; }).call(null, values);",
+        ),
+        (
+            "unadvanced inline generator apply",
+            "",
+            "(function* (target) { target.forEach = null; }).apply(null, [values]);",
+        ),
+        (
+            "unadvanced inline bound generator",
+            "const inspect = (function* (target) { target.forEach = null; }).bind(null);",
+            "inspect(values);",
+        ),
+        (
+            "unadvanced async generator",
+            "async function* inspect(target) { target.forEach = null; }",
+            "inspect(values);",
+        ),
+        (
+            "unadvanced generator method",
+            "const holder = { *inspect(target) { target.forEach = null; } };",
+            "holder.inspect(values);",
+        ),
+        (
+            "unadvanced bound generator",
+            "function* inspect(target) { target.forEach = null; } const run = inspect.bind(null);",
+            "run(values);",
+        ),
+        (
+            "unadvanced generator call indirection",
+            "function* inspect(target) { target.forEach = null; }",
+            "inspect.call(null, values);",
+        ),
+        (
+            "unadvanced generator apply indirection",
+            "function* inspect(target) { target.forEach = null; }",
+            "inspect.apply(null, [values]);",
+        ),
+        (
+            "unadvanced generator Reflect.apply indirection",
+            "function* inspect(target) { target.forEach = null; }",
+            "Reflect.apply(inspect, null, [values]);",
+        ),
+        (
+            "unread generator iterator",
+            "function* inspect(target) { target.forEach = null; }",
+            "const iterator = inspect(values);",
+        ),
+        (
+            "unread captured generator iterator",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect();",
+        ),
+        (
+            "generator used as constructor",
+            "function* inspect(target) { target.forEach = null; }",
+            "new inspect(values);",
+        ),
+        (
+            "capturing generator used as constructor",
+            "function* inspect() { values.forEach = null; }",
+            "new inspect();",
+        ),
+        (
+            "conditional unadvanced generators",
+            "function* inspectA(target) { target.forEach = null; } function* inspectB(target) { target.forEach = null; } const inspect = choose ? inspectA : inspectB;",
+            "inspect(values);",
+        ),
+        (
+            "hoisted unadvanced generator",
+            "inspect(values); function* inspect(target) { target.forEach = null; }",
+            "",
+        ),
     ] {
         let source = format!(
             r#"
@@ -3659,6 +3779,135 @@ fn pure_local_calls_preserve_receiver_methods() {
             output.diagnostics
         );
     }
+}
+
+#[test]
+fn observed_generator_iterators_propagate_local_effects() {
+    for (name, setup, invocation) in [
+        (
+            "immediate iterator advance",
+            "function* mutate(target) { target.forEach = null; }",
+            "mutate(values).next();",
+        ),
+        (
+            "stored iterator advance",
+            "function* mutate(target) { target.forEach = null; }",
+            "const iterator = mutate(values); iterator.next();",
+        ),
+        (
+            "bound iterator advance",
+            "function* mutate(target) { target.forEach = null; } const run = mutate.bind(null);",
+            "const iterator = run(values); iterator.next();",
+        ),
+        (
+            "call iterator advance",
+            "function* mutate(target) { target.forEach = null; }",
+            "const iterator = mutate.call(null, values); iterator.next();",
+        ),
+        (
+            "apply iterator advance",
+            "function* mutate(target) { target.forEach = null; }",
+            "const iterator = mutate.apply(null, [values]); iterator.next();",
+        ),
+        (
+            "Reflect.apply iterator advance",
+            "function* mutate(target) { target.forEach = null; }",
+            "const iterator = Reflect.apply(mutate, null, [values]); iterator.next();",
+        ),
+        (
+            "generator dynamic receiver",
+            "function* mutate() { this.forEach = null; }",
+            "const iterator = mutate.call(values); iterator.next();",
+        ),
+        (
+            "inline generator advance",
+            "",
+            "(function* (target) { target.forEach = null; })(values).next();",
+        ),
+        (
+            "capturing generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "mutate().next();",
+        ),
+        (
+            "stored capturing generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.next();",
+        ),
+        (
+            "assigned capturing generator advance",
+            "function* mutate() { values.forEach = null; } let iterator;",
+            "(iterator = mutate(), 0); iterator.next();",
+        ),
+        (
+            "generator parameter default",
+            "function* mutate(unused = (values.forEach = null)) {}",
+            "mutate();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn mixed_generator_and_eager_callables_preserve_eager_effects() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(choose) {
+            const count = $state(0);
+            const values = [];
+            function* deferred(target) { target.forEach = null; }
+            function eager(target) { target.forEach = null; }
+            const mutate = choose ? deferred : eager;
+            mutate(values);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_none(), "expected a hard diagnostic");
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
+                && diagnostic.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize] == "() => count"
+                })
+        }),
+        "expected FICT-R005 on callback, got {:?}",
+        output.diagnostics
+    );
 }
 
 #[test]
@@ -5173,6 +5422,10 @@ fn pure_local_template_tags_preserve_receiver_methods() {
         (
             "detached substitution",
             "function tag(strings, target) { target = {}; target.forEach = null; }",
+        ),
+        (
+            "unadvanced generator tag",
+            "function* tag(strings, target) { target.forEach = null; }",
         ),
     ] {
         let source = format!(
@@ -7286,6 +7539,11 @@ fn stored_callable_spread_initializers_preserve_unmodified_values() {
             "unselected dynamic receiver",
             "const source = [function inspect() { return this.length; }, function mutate() { this.forEach = null; }]; const wrapper = [...source];",
             "wrapper[0]();",
+        ),
+        (
+            "unadvanced spread generator",
+            "const source = { *run(target) { target.forEach = null; } }; const wrapper = { ...source };",
+            "wrapper.run(values);",
         ),
     ] {
         let source = format!(

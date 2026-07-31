@@ -57,8 +57,8 @@ use oxc::{
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
             walk_call_expression, walk_expression, walk_expression_statement, walk_function,
-            walk_jsx_element, walk_return_statement, walk_ts_import_equals_declaration,
-            walk_variable_declaration, walk_variable_declarator,
+            walk_function_body, walk_jsx_element, walk_return_statement,
+            walk_ts_import_equals_declaration, walk_variable_declaration, walk_variable_declarator,
         },
     },
     semantic::{Scoping, Semantic, SemanticBuilder},
@@ -2025,6 +2025,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter(|binding| binding.mutated)
             .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
             .collect();
+        let mut generator_execution = GeneratorExecutionCollector::new(self.semantic.scoping());
+        generator_execution.visit_program(program);
+        let generator_execution = generator_execution.finish();
         let mut static_hook_aliases = StaticHookAliasCollector {
             scoping: self.semantic.scoping(),
             aliases: BTreeMap::new(),
@@ -2051,6 +2054,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_callable_parameter_history: BTreeMap::new(),
             local_callable_receivers: BTreeMap::new(),
             local_callable_receiver_history: BTreeMap::new(),
+            local_generator_callables: BTreeSet::new(),
+            local_generator_callable_history: BTreeMap::new(),
             local_bound_callables: BTreeMap::new(),
             local_bound_callable_history: BTreeMap::new(),
             default_derived_constructors: BTreeMap::new(),
@@ -2067,6 +2072,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             function_control_baselines: Vec::new(),
             function_depth: 0,
             dynamic_this_roots: Vec::new(),
+            discarded_invocation_spans: generator_execution.discarded_invocation_spans,
+            unexecuted_generator_body_spans: generator_execution.unexecuted_body_spans,
         };
         static_hook_aliases.visit_program(program);
         let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
@@ -9876,6 +9883,329 @@ fn static_member_name(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
+struct GeneratorExecutionProof {
+    discarded_invocation_spans: BTreeSet<(u32, u32)>,
+    unexecuted_body_spans: BTreeSet<(u32, u32)>,
+}
+
+struct ForwardedCallableRead {
+    source: SymbolId,
+    source_span: (u32, u32),
+    target: SymbolId,
+}
+
+struct GeneratorExecutionCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    discarded_invocation_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    forwarded_callable_reads: Vec<ForwardedCallableRead>,
+    forwarding_targets: BTreeSet<SymbolId>,
+    generator_body_targets: Vec<((u32, u32), SymbolId)>,
+    directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
+    discarded_invocation_spans: BTreeSet<(u32, u32)>,
+}
+
+impl<'semantic> GeneratorExecutionCollector<'semantic> {
+    fn new(scoping: &'semantic Scoping) -> Self {
+        Self {
+            scoping,
+            binding_reads: BTreeMap::new(),
+            discarded_invocation_reads: BTreeMap::new(),
+            forwarded_callable_reads: Vec::new(),
+            forwarding_targets: BTreeSet::new(),
+            generator_body_targets: Vec::new(),
+            directly_unexecuted_body_spans: BTreeSet::new(),
+            discarded_invocation_spans: BTreeSet::new(),
+        }
+    }
+
+    fn identifier_symbol(&self, identifier: &IdentifierReference<'_>) -> Option<SymbolId> {
+        self.scoping
+            .get_reference(identifier.reference_id.get()?)
+            .symbol_id()
+    }
+
+    fn generator_body_span(function: &Function<'_>) -> Option<(u32, u32)> {
+        function
+            .generator
+            .then_some(function.body.as_ref())
+            .flatten()
+            .map(|body| (body.span.start, body.span.end))
+    }
+
+    fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
+        match expression {
+            Expression::Identifier(identifier) => {
+                if let Some(symbol) = self.identifier_symbol(identifier) {
+                    self.discarded_invocation_reads
+                        .entry(symbol)
+                        .or_default()
+                        .insert((identifier.span.start, identifier.span.end));
+                }
+            }
+            Expression::FunctionExpression(function) => {
+                if let Some(span) = Self::generator_body_span(function) {
+                    self.directly_unexecuted_body_spans.insert(span);
+                }
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.record_nonexecuting_callable(&conditional.consequent);
+                self.record_nonexecuting_callable(&conditional.alternate);
+            }
+            Expression::LogicalExpression(logical) => {
+                self.record_nonexecuting_callable(&logical.left);
+                self.record_nonexecuting_callable(&logical.right);
+            }
+            Expression::ParenthesizedExpression(parenthesized) => {
+                self.record_nonexecuting_callable(&parenthesized.expression);
+            }
+            Expression::SequenceExpression(sequence) => {
+                if let Some(last) = sequence.expressions.last() {
+                    self.record_nonexecuting_callable(last);
+                }
+            }
+            Expression::TSAsExpression(expression) => {
+                self.record_nonexecuting_callable(&expression.expression);
+            }
+            Expression::TSSatisfiesExpression(expression) => {
+                self.record_nonexecuting_callable(&expression.expression);
+            }
+            Expression::TSTypeAssertion(expression) => {
+                self.record_nonexecuting_callable(&expression.expression);
+            }
+            Expression::TSNonNullExpression(expression) => {
+                self.record_nonexecuting_callable(&expression.expression);
+            }
+            Expression::TSInstantiationExpression(expression) => {
+                self.record_nonexecuting_callable(&expression.expression);
+            }
+            _ => {}
+        }
+    }
+
+    fn record_discarded_expression(&mut self, expression: &Expression<'_>) {
+        match expression {
+            Expression::CallExpression(call) => {
+                self.discarded_invocation_spans
+                    .insert((call.span.start, call.span.end));
+                self.record_nonexecuting_callable(&call.callee);
+            }
+            Expression::TaggedTemplateExpression(tagged) => {
+                self.discarded_invocation_spans
+                    .insert((tagged.span.start, tagged.span.end));
+                self.record_nonexecuting_callable(&tagged.tag);
+            }
+            Expression::NewExpression(expression) => {
+                self.record_nonexecuting_callable(&expression.callee);
+            }
+            Expression::ChainExpression(chain) => {
+                if let ChainElement::CallExpression(call) = &chain.expression {
+                    self.discarded_invocation_spans
+                        .insert((call.span.start, call.span.end));
+                    self.record_nonexecuting_callable(&call.callee);
+                }
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.record_discarded_expression(&conditional.consequent);
+                self.record_discarded_expression(&conditional.alternate);
+            }
+            Expression::LogicalExpression(logical) => {
+                self.record_discarded_expression(&logical.left);
+                self.record_discarded_expression(&logical.right);
+            }
+            Expression::UnaryExpression(unary) => {
+                self.record_discarded_expression(&unary.argument);
+            }
+            Expression::SequenceExpression(sequence) => {
+                for expression in &sequence.expressions {
+                    self.record_discarded_expression(expression);
+                }
+            }
+            Expression::ParenthesizedExpression(parenthesized) => {
+                self.record_discarded_expression(&parenthesized.expression);
+            }
+            Expression::TSAsExpression(expression) => {
+                self.record_discarded_expression(&expression.expression);
+            }
+            Expression::TSSatisfiesExpression(expression) => {
+                self.record_discarded_expression(&expression.expression);
+            }
+            Expression::TSTypeAssertion(expression) => {
+                self.record_discarded_expression(&expression.expression);
+            }
+            Expression::TSNonNullExpression(expression) => {
+                self.record_discarded_expression(&expression.expression);
+            }
+            Expression::TSInstantiationExpression(expression) => {
+                self.record_discarded_expression(&expression.expression);
+            }
+            _ => {}
+        }
+    }
+
+    fn record_forwarded_callable(&mut self, target: SymbolId, expression: &Expression<'_>) {
+        self.forwarding_targets.insert(target);
+        match expression {
+            Expression::Identifier(identifier) => {
+                if let Some(source) = self.identifier_symbol(identifier) {
+                    self.forwarded_callable_reads.push(ForwardedCallableRead {
+                        source,
+                        source_span: (identifier.span.start, identifier.span.end),
+                        target,
+                    });
+                }
+            }
+            Expression::FunctionExpression(function) => {
+                if let Some(span) = Self::generator_body_span(function) {
+                    self.generator_body_targets.push((span, target));
+                }
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.record_forwarded_callable(target, &conditional.consequent);
+                self.record_forwarded_callable(target, &conditional.alternate);
+            }
+            Expression::LogicalExpression(logical) => {
+                self.record_forwarded_callable(target, &logical.left);
+                self.record_forwarded_callable(target, &logical.right);
+            }
+            Expression::ParenthesizedExpression(parenthesized) => {
+                self.record_forwarded_callable(target, &parenthesized.expression);
+            }
+            Expression::SequenceExpression(sequence) => {
+                if let Some(last) = sequence.expressions.last() {
+                    self.record_forwarded_callable(target, last);
+                }
+            }
+            Expression::TSAsExpression(expression) => {
+                self.record_forwarded_callable(target, &expression.expression);
+            }
+            Expression::TSSatisfiesExpression(expression) => {
+                self.record_forwarded_callable(target, &expression.expression);
+            }
+            Expression::TSTypeAssertion(expression) => {
+                self.record_forwarded_callable(target, &expression.expression);
+            }
+            Expression::TSNonNullExpression(expression) => {
+                self.record_forwarded_callable(target, &expression.expression);
+            }
+            Expression::TSInstantiationExpression(expression) => {
+                self.record_forwarded_callable(target, &expression.expression);
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(self) -> GeneratorExecutionProof {
+        let mut candidates = self.forwarding_targets.clone();
+        candidates.extend(
+            self.generator_body_targets
+                .iter()
+                .map(|(_, target)| *target),
+        );
+        candidates.extend(
+            self.forwarded_callable_reads
+                .iter()
+                .map(|forwarding| forwarding.source),
+        );
+        let mut unexecuted = BTreeSet::new();
+        loop {
+            let mut changed = false;
+            for symbol in &candidates {
+                if unexecuted.contains(symbol) {
+                    continue;
+                }
+                let discarded = self.discarded_invocation_reads.get(symbol);
+                let all_reads_are_nonexecuting = self
+                    .binding_reads
+                    .get(symbol)
+                    .into_iter()
+                    .flatten()
+                    .all(|span| {
+                        discarded.is_some_and(|discarded| discarded.contains(span))
+                            || self.forwarded_callable_reads.iter().any(|forwarding| {
+                                forwarding.source == *symbol
+                                    && forwarding.source_span == *span
+                                    && unexecuted.contains(&forwarding.target)
+                            })
+                    });
+                if all_reads_are_nonexecuting {
+                    changed |= unexecuted.insert(*symbol);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut unexecuted_body_spans = self.directly_unexecuted_body_spans;
+        unexecuted_body_spans.extend(
+            self.generator_body_targets
+                .into_iter()
+                .filter_map(|(span, target)| unexecuted.contains(&target).then_some(span)),
+        );
+        GeneratorExecutionProof {
+            discarded_invocation_spans: self.discarded_invocation_spans,
+            unexecuted_body_spans,
+        }
+    }
+}
+
+impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let Some(reference_id) = identifier.reference_id.get() else {
+            return;
+        };
+        let reference = self.scoping.get_reference(reference_id);
+        if reference.is_read()
+            && let Some(symbol) = reference.symbol_id()
+        {
+            self.binding_reads
+                .entry(symbol)
+                .or_default()
+                .insert((identifier.span.start, identifier.span.end));
+        }
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let Some(initializer) = &declarator.init
+            && let BindingPattern::BindingIdentifier(binding) = &declarator.id
+            && let Some(target) = binding.symbol_id.get()
+        {
+            self.record_forwarded_callable(target, initializer);
+            if !self
+                .scoping
+                .get_resolved_references(target)
+                .any(|reference| reference.is_read())
+            {
+                self.record_discarded_expression(initializer);
+            }
+        }
+        walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
+        self.record_discarded_expression(&statement.expression);
+        walk_expression_statement(self, statement);
+    }
+
+    fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
+        self.record_nonexecuting_callable(&expression.callee);
+        oxc::ast_visit::walk::walk_new_expression(self, expression);
+    }
+
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if function.r#type == FunctionType::FunctionDeclaration
+            && let Some(span) = Self::generator_body_span(function)
+            && let Some(target) = function
+                .id
+                .as_ref()
+                .and_then(|identifier| identifier.symbol_id.get())
+        {
+            self.generator_body_targets.push((span, target));
+        }
+        walk_function(self, function, flags);
+    }
+}
+
 struct EscapedFunctionValueCollector<'collector, 'semantic> {
     owner: &'collector StaticHookAliasCollector<'semantic>,
     paths: BTreeSet<StaticAliasPath>,
@@ -9932,6 +10262,8 @@ struct StaticHookAliasCollector<'semantic> {
     local_callable_parameter_history: BTreeMap<StaticAliasPath, Vec<Vec<LocalCallableParameter>>>,
     local_callable_receivers: BTreeMap<StaticAliasPath, StaticAliasPath>,
     local_callable_receiver_history: BTreeMap<StaticAliasPath, Vec<Option<StaticAliasPath>>>,
+    local_generator_callables: BTreeSet<StaticAliasPath>,
+    local_generator_callable_history: BTreeMap<StaticAliasPath, Vec<bool>>,
     local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
     local_bound_callable_history: BTreeMap<StaticAliasPath, Vec<LocalBoundCallable>>,
     default_derived_constructors:
@@ -9950,6 +10282,8 @@ struct StaticHookAliasCollector<'semantic> {
     function_control_baselines: Vec<usize>,
     function_depth: usize,
     dynamic_this_roots: Vec<Option<StaticAliasPath>>,
+    discarded_invocation_spans: BTreeSet<(u32, u32)>,
+    unexecuted_generator_body_spans: BTreeSet<(u32, u32)>,
 }
 
 #[derive(Clone)]
@@ -9983,6 +10317,7 @@ struct StoredSpreadCallableSignature {
     element_wildcard: bool,
     parameters: Vec<LocalCallableParameter>,
     dynamic_receiver: Option<StaticAliasPath>,
+    generator: bool,
 }
 
 struct StoredSpreadCallableExposure {
@@ -10012,6 +10347,7 @@ struct LocalBoundCallable {
     arguments: Vec<LocalInvocationArgumentSegment>,
     receiver: Vec<LocalInvocationArgument>,
     dynamic_receiver: Option<StaticAliasPath>,
+    generator: bool,
     unknown: bool,
 }
 
@@ -10367,6 +10703,8 @@ struct LocalInvocationFact {
     function_depth: usize,
     bound_receiver: Vec<LocalInvocationArgument>,
     dynamic_receiver: LocalInvocationDynamicReceiver,
+    generator: LocalInvocationGenerator,
+    result_discarded: bool,
     force_argument_exposure: bool,
     construct: bool,
 }
@@ -10375,6 +10713,12 @@ struct LocalInvocationFact {
 enum LocalInvocationDynamicReceiver {
     ResolveFromCallee,
     Known(Option<StaticAliasPath>),
+}
+
+#[derive(Clone)]
+enum LocalInvocationGenerator {
+    ResolveFromCallee,
+    Known(bool),
 }
 
 impl LocalInvocationFact {
@@ -10505,7 +10849,12 @@ impl StaticHookAliasCollector<'_> {
             .entry(target.clone())
             .or_default()
             .push(None);
+        self.local_generator_callable_history
+            .entry(target.clone())
+            .or_default()
+            .push(false);
         self.local_callable_receivers.remove(&target);
+        self.local_generator_callables.remove(&target);
         self.local_callable_parameters.insert(target, bindings);
     }
 
@@ -10522,6 +10871,17 @@ impl StaticHookAliasCollector<'_> {
             *current = Some(receiver.clone());
         }
         self.local_callable_receivers.insert(target, receiver);
+    }
+
+    fn record_local_generator(&mut self, target: StaticAliasPath) {
+        if let Some(current) = self
+            .local_generator_callable_history
+            .get_mut(&target)
+            .and_then(|history| history.last_mut())
+        {
+            *current = true;
+        }
+        self.local_generator_callables.insert(target);
     }
 
     fn record_local_bound_callable(
@@ -10544,6 +10904,35 @@ impl StaticHookAliasCollector<'_> {
                 .any(|reference| reference.is_read())
         }) {
             self.unreferenced_callable_spans
+                .insert((span.start, span.end));
+        }
+    }
+
+    fn record_discarded_invocation(&mut self, expression: &Expression<'_>) {
+        let span = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => Some(call.span),
+            Expression::TaggedTemplateExpression(tagged) => Some(tagged.span),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => Some(call.span),
+                ChainElement::ComputedMemberExpression(_)
+                | ChainElement::StaticMemberExpression(_)
+                | ChainElement::PrivateFieldExpression(_)
+                | ChainElement::TSNonNullExpression(_) => None,
+            },
+            Expression::UnaryExpression(unary) => {
+                self.record_discarded_invocation(&unary.argument);
+                None
+            }
+            Expression::SequenceExpression(sequence) => {
+                for expression in &sequence.expressions {
+                    self.record_discarded_invocation(expression);
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(span) = span {
+            self.discarded_invocation_spans
                 .insert((span.start, span.end));
         }
     }
@@ -10639,6 +11028,7 @@ impl StaticHookAliasCollector<'_> {
                             arguments: Vec::new(),
                             receiver: Vec::new(),
                             dynamic_receiver: None,
+                            generator: false,
                             unknown: false,
                         })
                     }));
@@ -10656,6 +11046,7 @@ impl StaticHookAliasCollector<'_> {
                         arguments: Vec::new(),
                         receiver: Vec::new(),
                         dynamic_receiver: None,
+                        generator: false,
                         unknown: false,
                     },
                 ));
@@ -10751,6 +11142,7 @@ impl StaticHookAliasCollector<'_> {
                         arguments: Vec::new(),
                         receiver: Vec::new(),
                         dynamic_receiver: Some(StaticAliasPath::dynamic_this(function.span)),
+                        generator: false,
                         unknown: false,
                     },
                 )]
@@ -10763,6 +11155,7 @@ impl StaticHookAliasCollector<'_> {
                             arguments: Vec::new(),
                             receiver: Vec::new(),
                             dynamic_receiver: None,
+                            generator: false,
                             unknown: false,
                         },
                     )]
@@ -10809,6 +11202,7 @@ impl StaticHookAliasCollector<'_> {
                             arguments: Vec::new(),
                             receiver: Vec::new(),
                             dynamic_receiver: None,
+                            generator: false,
                             unknown: true,
                         },
                     )]
@@ -10840,7 +11234,7 @@ impl StaticHookAliasCollector<'_> {
         expression: &Expression<'_>,
     ) -> Option<Vec<LocalCallableParameter>> {
         match unwrap_transparent_call_expression(expression) {
-            Expression::FunctionExpression(function) if !function.generator => {
+            Expression::FunctionExpression(function) => {
                 Some(Self::local_callable_parameters(&function.params))
             }
             Expression::ArrowFunctionExpression(function) => {
@@ -10853,11 +11247,18 @@ impl StaticHookAliasCollector<'_> {
 
     fn inline_callable_receiver(expression: &Expression<'_>) -> Option<StaticAliasPath> {
         match unwrap_transparent_call_expression(expression) {
-            Expression::FunctionExpression(function) if !function.generator => {
+            Expression::FunctionExpression(function) => {
                 Some(StaticAliasPath::dynamic_this(function.span))
             }
             _ => None,
         }
+    }
+
+    fn inline_callable_is_generator(expression: &Expression<'_>) -> bool {
+        matches!(
+            unwrap_transparent_call_expression(expression),
+            Expression::FunctionExpression(function) if function.generator
+        )
     }
 
     fn collect_local_invocation_arguments(
@@ -11535,6 +11936,8 @@ impl StaticHookAliasCollector<'_> {
                 function_depth: self.function_depth,
                 bound_receiver: receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
+                generator: LocalInvocationGenerator::ResolveFromCallee,
+                result_discarded: false,
                 force_argument_exposure: false,
                 construct: false,
             };
@@ -11552,6 +11955,10 @@ impl StaticHookAliasCollector<'_> {
             dynamic_receiver: LocalInvocationDynamicReceiver::Known(
                 self.inline_function_indirection_receiver(callee, "apply"),
             ),
+            generator: LocalInvocationGenerator::Known(
+                self.inline_function_indirection_is_generator(callee, "apply"),
+            ),
+            result_discarded: false,
             force_argument_exposure: false,
             construct: false,
         })
@@ -11596,6 +12003,10 @@ impl StaticHookAliasCollector<'_> {
                 dynamic_receiver: LocalInvocationDynamicReceiver::Known(
                     self.inline_function_indirection_receiver(callee, "call"),
                 ),
+                generator: LocalInvocationGenerator::Known(
+                    self.inline_function_indirection_is_generator(callee, "call"),
+                ),
+                result_discarded: false,
                 force_argument_exposure: false,
                 construct: false,
             });
@@ -11614,6 +12025,8 @@ impl StaticHookAliasCollector<'_> {
                     function_depth: self.function_depth,
                     bound_receiver: call_receiver,
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
+                    generator: LocalInvocationGenerator::ResolveFromCallee,
+                    result_discarded: false,
                     force_argument_exposure: false,
                     construct: false,
                 };
@@ -11631,6 +12044,8 @@ impl StaticHookAliasCollector<'_> {
                 function_depth: self.function_depth,
                 bound_receiver: self.invocation_reference_receiver(callee),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
+                generator: LocalInvocationGenerator::ResolveFromCallee,
+                result_discarded: false,
                 force_argument_exposure: false,
                 construct: false,
             };
@@ -11647,6 +12062,8 @@ impl StaticHookAliasCollector<'_> {
             dynamic_receiver: LocalInvocationDynamicReceiver::Known(
                 Self::inline_callable_receiver(callee),
             ),
+            generator: LocalInvocationGenerator::Known(Self::inline_callable_is_generator(callee)),
+            result_discarded: false,
             force_argument_exposure: false,
             construct: false,
         })
@@ -11671,6 +12088,7 @@ impl StaticHookAliasCollector<'_> {
         invocation.bound_receiver = bound.receiver.clone();
         invocation.dynamic_receiver =
             LocalInvocationDynamicReceiver::Known(bound.dynamic_receiver.clone());
+        invocation.generator = LocalInvocationGenerator::Known(bound.generator);
         invocation.force_argument_exposure = bound.unknown;
         invocation.arguments.splice(
             invocation.argument_offset..invocation.argument_offset,
@@ -11704,7 +12122,7 @@ impl StaticHookAliasCollector<'_> {
             return None;
         }
         match unwrap_transparent_call_expression(object) {
-            Expression::FunctionExpression(function) if !function.generator => {
+            Expression::FunctionExpression(function) => {
                 Some(Self::local_callable_parameters(&function.params))
             }
             Expression::ArrowFunctionExpression(function) => {
@@ -11741,6 +12159,33 @@ impl StaticHookAliasCollector<'_> {
         (method == expected_method)
             .then(|| Self::inline_callable_receiver(object))
             .flatten()
+    }
+
+    fn inline_function_indirection_is_generator(
+        &self,
+        callee: &Expression<'_>,
+        expected_method: &str,
+    ) -> bool {
+        if !self.path_is_currently_intact(
+            &StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string())
+                .with_property(expected_method.to_string()),
+        ) {
+            return false;
+        }
+        let (object, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Some(method) = static_member_name(&member.expression) else {
+                    return false;
+                };
+                (&member.object, method)
+            }
+            _ => return false,
+        };
+        method == expected_method && Self::inline_callable_is_generator(object)
     }
 
     fn inline_function_indirection_exposures(
@@ -12254,6 +12699,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
         self.local_callable_receivers
             .retain(|target, _| !target.overlaps(path));
+        self.local_generator_callables
+            .retain(|target| !target.overlaps(path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(path));
         self.default_derived_constructors
@@ -12265,6 +12712,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(&path));
         self.local_callable_receivers
             .retain(|target, _| !target.overlaps(&path));
+        self.local_generator_callables
+            .retain(|target| !target.overlaps(&path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(&path));
         self.default_derived_constructors
@@ -12456,13 +12905,16 @@ impl StaticHookAliasCollector<'_> {
         };
         self.record_unreferenced_callable_initializer(&target, value);
         self.record_local_callable_signature(target.clone(), parameters);
-        if let Expression::FunctionExpression(function) = inner
-            && !function.generator
-        {
+        if let Expression::FunctionExpression(function) = inner {
             self.record_local_callable_receiver(
                 target.clone(),
                 StaticAliasPath::dynamic_this(function.span),
             );
+        }
+        if let Expression::FunctionExpression(function) = inner
+            && function.generator
+        {
+            self.record_local_generator(target.clone());
         }
         if let Expression::ClassExpression(class) = inner {
             self.record_default_derived_constructor(target.clone(), class);
@@ -12542,6 +12994,12 @@ impl StaticHookAliasCollector<'_> {
                                         .and_then(|history| history.get(index))
                                         .cloned()
                                         .flatten(),
+                                    generator: self
+                                        .local_generator_callable_history
+                                        .get(&source)
+                                        .and_then(|history| history.get(index))
+                                        .copied()
+                                        .unwrap_or(false),
                                     unknown: false,
                                 }
                             },
@@ -12557,6 +13015,7 @@ impl StaticHookAliasCollector<'_> {
                         arguments: Vec::new(),
                         receiver: receiver.clone(),
                         dynamic_receiver: self.local_callable_receivers.get(&source).cloned(),
+                        generator: self.local_generator_callables.contains(&source),
                         unknown: false,
                     });
                     continue;
@@ -12567,6 +13026,7 @@ impl StaticHookAliasCollector<'_> {
                         arguments: Vec::new(),
                         receiver: receiver.clone(),
                         dynamic_receiver: None,
+                        generator: false,
                         unknown: true,
                     });
                 }
@@ -12583,6 +13043,7 @@ impl StaticHookAliasCollector<'_> {
                 arguments: Vec::new(),
                 receiver,
                 dynamic_receiver: self.inline_function_indirection_receiver(&call.callee, "bind"),
+                generator: self.inline_function_indirection_is_generator(&call.callee, "bind"),
                 unknown: false,
             });
         } else {
@@ -12891,6 +13352,12 @@ impl StaticHookAliasCollector<'_> {
                                     .and_then(|history| history.get(index))
                                     .cloned()
                                     .flatten(),
+                                generator: self
+                                    .local_generator_callable_history
+                                    .get(candidate)
+                                    .and_then(|history| history.get(index))
+                                    .copied()
+                                    .unwrap_or(false),
                             }
                         },
                     ));
@@ -12910,6 +13377,7 @@ impl StaticHookAliasCollector<'_> {
                         element_wildcard: candidate.element_wildcard,
                         parameters: parameters.clone(),
                         dynamic_receiver: self.local_callable_receivers.get(candidate).cloned(),
+                        generator: self.local_generator_callables.contains(candidate),
                     });
                 }
             }
@@ -13001,6 +13469,9 @@ impl StaticHookAliasCollector<'_> {
             self.record_local_callable_signature(callable_target.clone(), signature.parameters);
             if let Some(receiver) = signature.dynamic_receiver {
                 self.record_local_callable_receiver(callable_target.clone(), receiver);
+            }
+            if signature.generator {
+                self.record_local_generator(callable_target.clone());
             }
             if signatures.historical {
                 ambiguous.insert(callable_target);
@@ -13925,6 +14396,27 @@ impl StaticHookAliasCollector<'_> {
             .collect()
     }
 
+    fn invocation_is_definitely_generator(&self, invocation: &LocalInvocationFact) -> bool {
+        match invocation.generator {
+            LocalInvocationGenerator::Known(generator) => return generator,
+            LocalInvocationGenerator::ResolveFromCallee => {}
+        }
+        let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
+            self.path_requires_historical_aliases(callee, invocation.function_depth)
+        });
+        let mut generators = Vec::new();
+        for callee in self.invocation_callees(invocation) {
+            if historical {
+                if let Some(history) = self.local_generator_callable_history.get(&callee) {
+                    generators.extend(history.iter().copied());
+                }
+            } else if self.local_callable_parameters.contains_key(&callee) {
+                generators.push(self.local_generator_callables.contains(&callee));
+            }
+        }
+        !generators.is_empty() && generators.into_iter().all(|generator| generator)
+    }
+
     fn materialize_default_derived_alternative(
         &self,
         alternative: &DefaultDerivedConstructorAlternative,
@@ -13983,6 +14475,7 @@ impl StaticHookAliasCollector<'_> {
                         arguments: Vec::new(),
                         receiver: Vec::new(),
                         dynamic_receiver: None,
+                        generator: false,
                         unknown: false,
                     },
                 ));
@@ -13994,6 +14487,7 @@ impl StaticHookAliasCollector<'_> {
                 arguments: Vec::new(),
                 receiver: Vec::new(),
                 dynamic_receiver: None,
+                generator: false,
                 unknown: true,
             });
         }
@@ -14116,6 +14610,10 @@ impl StaticHookAliasCollector<'_> {
             .clone()
             .into_iter()
             .flat_map(|invocation| self.bound_invocation_variants(invocation))
+            .filter(|invocation| {
+                !self.invocation_is_definitely_generator(invocation)
+                    || (!invocation.result_discarded && !invocation.construct)
+            })
             .collect::<Vec<_>>();
         let mut forced_exposures = Vec::new();
         for invocation in &invocation_variants {
@@ -14423,6 +14921,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.record_pattern_owner(&declarator.id);
         if let Some(initializer) = &declarator.init {
             if let BindingPattern::BindingIdentifier(binding) = &declarator.id
+                && binding.symbol_id.get().is_some_and(|symbol| {
+                    !self
+                        .scoping
+                        .get_resolved_references(symbol)
+                        .any(|reference| reference.is_read())
+                })
+            {
+                self.record_discarded_invocation(initializer);
+            }
+            if let BindingPattern::BindingIdentifier(binding) = &declarator.id
                 && let Some(root) = binding.symbol_id.get()
             {
                 self.collect_initializer(StaticAliasPath::root(root), initializer);
@@ -14431,6 +14939,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             }
         }
         walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
+        self.record_discarded_invocation(&statement.expression);
+        walk_expression_statement(self, statement);
     }
 
     fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
@@ -14531,11 +15044,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .or_insert(self.function_depth);
             self.record_unreferenced_callable_span(&target, function.span);
             self.record_local_callable_parameters(target.clone(), &function.params);
-            if !function.generator {
-                self.record_local_callable_receiver(
-                    target.clone(),
-                    StaticAliasPath::dynamic_this(function.span),
-                );
+            self.record_local_callable_receiver(
+                target.clone(),
+                StaticAliasPath::dynamic_this(function.span),
+            );
+            if function.generator {
+                self.record_local_generator(target.clone());
             }
             if let Some(body) = &function.body {
                 let paths = self.returned_function_body_paths(body);
@@ -14573,6 +15087,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .iter()
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, receiver)| (target.clone(), receiver.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_generator_callables = self
+            .local_generator_callables
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
             .collect::<Vec<_>>();
         let outer_local_bound_callables = self
             .local_bound_callables
@@ -14629,6 +15149,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_callable_receivers
             .extend(outer_local_callable_receivers);
         let changed_outer_targets = self
+            .local_generator_callables
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_generator_callables.remove(&target);
+        }
+        self.local_generator_callables
+            .extend(outer_local_generator_callables);
+        let changed_outer_targets = self
             .local_bound_callables
             .keys()
             .filter(|target| self.path_owner_depth(target) < depth)
@@ -14641,6 +15172,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .extend(outer_local_bound_callables);
         self.function_control_baselines.pop();
         self.function_depth = depth - 1;
+    }
+
+    fn visit_function_body(&mut self, body: &FunctionBody<'a>) {
+        if self
+            .unexecuted_generator_body_spans
+            .contains(&(body.span.start, body.span.end))
+        {
+            return;
+        }
+        walk_function_body(self, body);
     }
 
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
@@ -14675,6 +15216,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .iter()
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, receiver)| (target.clone(), receiver.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_generator_callables = self
+            .local_generator_callables
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
             .collect::<Vec<_>>();
         let outer_local_bound_callables = self
             .local_bound_callables
@@ -14727,6 +15274,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_callable_receivers
             .extend(outer_local_callable_receivers);
+        let changed_outer_targets = self
+            .local_generator_callables
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_generator_callables.remove(&target);
+        }
+        self.local_generator_callables
+            .extend(outer_local_generator_callables);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
@@ -14799,7 +15357,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let local_invocation = self.local_invocation_fact(&call.callee, &call.arguments);
+        let local_invocation = self
+            .local_invocation_fact(&call.callee, &call.arguments)
+            .map(|mut invocation| {
+                invocation.result_discarded = self
+                    .discarded_invocation_spans
+                    .contains(&(call.span.start, call.span.end));
+                invocation
+            });
         let reflect_exposed = self
             .reflect_apply_exposed_argument_paths(call)
             .or_else(|| self.reflect_construct_exposed_argument_paths(call));
@@ -14879,8 +15444,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 self.collect_local_invocation_value_arguments(argument),
             )
         }));
-        let local_invocation =
-            self.local_invocation_fact_from_arguments(&expression.tag, local_arguments);
+        let local_invocation = self
+            .local_invocation_fact_from_arguments(&expression.tag, local_arguments)
+            .map(|mut invocation| {
+                invocation.result_discarded = self
+                    .discarded_invocation_spans
+                    .contains(&(expression.span.start, expression.span.end));
+                invocation
+            });
         let exposed_arguments = if self.callee_may_mutate_arguments(&expression.tag) {
             let mut exposed = BTreeSet::new();
             for substitution in &expression.quasi.expressions {
