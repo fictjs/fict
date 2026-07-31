@@ -4027,6 +4027,117 @@ fn pure_local_constructors_preserve_receiver_methods() {
 }
 
 #[test]
+fn local_template_tags_propagate_substitution_invalidations() {
+    for (name, tag, invocation) in [
+        (
+            "function tag",
+            "function tag(strings, target) { target.forEach = null; }",
+            "tag`${values}`;",
+        ),
+        (
+            "arrow tag",
+            "const tag = (strings, target) => { target.forEach = null; };",
+            "tag`value:${values}`;",
+        ),
+        (
+            "aliased tag",
+            "function tag(strings, target) { target.forEach = null; } const run = tag;",
+            "run`${values}`;",
+        ),
+        (
+            "inline tag",
+            "",
+            "((strings, target) => { target.forEach = null; })`${values}`;",
+        ),
+        (
+            "destructured substitution",
+            "const box = { target: values }; function tag(strings, { target }) { target.forEach = null; }",
+            "tag`${box}`;",
+        ),
+        (
+            "rest tag",
+            "function tag(...args) { args[1].forEach = null; }",
+            "tag`${values}`;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {tag}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn pure_local_template_tags_preserve_receiver_methods() {
+    for (name, tag) in [
+        (
+            "template object mutation",
+            "function tag(strings, target) { strings.forEach = null; return target.length; }",
+        ),
+        (
+            "read-only substitution",
+            "function tag(strings, target) { return target.length; }",
+        ),
+        (
+            "detached substitution",
+            "function tag(strings, target) { target = {}; target.forEach = null; }",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {tag}
+                    tag`${{values}}`;
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (

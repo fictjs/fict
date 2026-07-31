@@ -9945,23 +9945,30 @@ impl StaticHookAliasCollector<'_> {
         arguments
             .iter()
             .map(|argument| {
-                let raw = argument
+                argument
                     .as_expression()
-                    .and_then(|argument| self.alias_source_path(argument))?;
-                let resolved = resolve_static_alias_path(&self.aliases, &raw);
-                Some(LocalInvocationArgument {
-                    parameter_attached: self.attached_parameter_path(&raw, &resolved).is_some(),
-                    resolved,
-                    raw,
-                })
+                    .and_then(|argument| self.collect_local_invocation_argument(argument))
             })
             .collect()
     }
 
-    fn local_invocation_fact(
+    fn collect_local_invocation_argument(
+        &self,
+        argument: &Expression<'_>,
+    ) -> Option<LocalInvocationArgument> {
+        let raw = self.alias_source_path(argument)?;
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        Some(LocalInvocationArgument {
+            parameter_attached: self.attached_parameter_path(&raw, &resolved).is_some(),
+            resolved,
+            raw,
+        })
+    }
+
+    fn local_invocation_fact_from_arguments(
         &self,
         callee: &Expression<'_>,
-        arguments: &[oxc::ast::ast::Argument<'_>],
+        arguments: Vec<Option<LocalInvocationArgument>>,
     ) -> Option<LocalInvocationFact> {
         if let Some(callee) = static_alias_source_path(self.scoping, callee) {
             let resolved_callee = resolve_static_alias_path(&self.aliases, &callee);
@@ -9970,7 +9977,7 @@ impl StaticHookAliasCollector<'_> {
                     .local_callable_parameters
                     .get(&resolved_callee)
                     .cloned(),
-                arguments: self.collect_local_invocation_arguments(arguments),
+                arguments,
                 raw_callee: Some(callee),
                 callee: Some(resolved_callee),
                 function_depth: self.function_depth,
@@ -9978,11 +9985,22 @@ impl StaticHookAliasCollector<'_> {
         }
         Self::inline_callable_parameters(callee).map(|parameters| LocalInvocationFact {
             parameters: Some(parameters),
-            arguments: self.collect_local_invocation_arguments(arguments),
+            arguments,
             raw_callee: None,
             callee: None,
             function_depth: self.function_depth,
         })
+    }
+
+    fn local_invocation_fact(
+        &self,
+        callee: &Expression<'_>,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) -> Option<LocalInvocationFact> {
+        self.local_invocation_fact_from_arguments(
+            callee,
+            self.collect_local_invocation_arguments(arguments),
+        )
     }
 
     fn collect_local_callable_parameter_bindings(
@@ -11426,6 +11444,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
+        let mut local_arguments = Vec::with_capacity(expression.quasi.expressions.len() + 1);
+        local_arguments.push(None);
+        local_arguments.extend(
+            expression
+                .quasi
+                .expressions
+                .iter()
+                .map(|argument| self.collect_local_invocation_argument(argument)),
+        );
+        let local_invocation =
+            self.local_invocation_fact_from_arguments(&expression.tag, local_arguments);
         let exposed_arguments = if self.callee_may_mutate_arguments(&expression.tag) {
             let mut exposed = BTreeSet::new();
             for substitution in &expression.quasi.expressions {
@@ -11436,6 +11465,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
+        if let Some(invocation) = local_invocation {
+            self.local_invocations.push(invocation);
+        }
         for path in exposed_arguments {
             self.invalidate_exposed_path(path);
         }
