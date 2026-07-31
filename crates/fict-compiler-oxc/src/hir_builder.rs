@@ -9937,7 +9937,22 @@ struct LocalInvocationArgument {
     resolved: StaticAliasPath,
     parameter_attached: bool,
     coarse: bool,
-    source_prefix: Vec<String>,
+    source_projection: LocalInvocationSourceProjection,
+}
+
+#[derive(Clone)]
+enum LocalInvocationSourceProjection {
+    Value(Vec<LocalInvocationSourceComponent>),
+    ObjectSpread {
+        prefix: Vec<LocalInvocationSourceComponent>,
+        excluded: BTreeSet<String>,
+    },
+}
+
+#[derive(Clone)]
+enum LocalInvocationSourceComponent {
+    Exact(String),
+    Dynamic(BTreeSet<String>),
 }
 
 impl LocalInvocationArgument {
@@ -9945,11 +9960,104 @@ impl LocalInvocationArgument {
         if self.coarse {
             return Some(Vec::new());
         }
-        let remaining = properties.strip_prefix(self.source_prefix.as_slice())?;
-        if slot && !self.source_prefix.is_empty() && remaining.is_empty() {
-            return None;
+        match &self.source_projection {
+            LocalInvocationSourceProjection::Value(prefix) => {
+                let remaining = match_invocation_source_prefix(prefix, properties)?;
+                if slot && !prefix.is_empty() && remaining.is_empty() {
+                    return None;
+                }
+                Some(remaining.to_vec())
+            }
+            LocalInvocationSourceProjection::ObjectSpread { prefix, excluded } => {
+                let remaining = match_invocation_source_prefix(prefix, properties)?;
+                let property = remaining.first()?;
+                if excluded.contains(property) || (slot && remaining.len() == 1) {
+                    return None;
+                }
+                Some(remaining.to_vec())
+            }
         }
-        Some(remaining.to_vec())
+    }
+
+    fn exclude_overwritten_property(
+        &mut self,
+        context: &[LocalInvocationSourceComponent],
+        property: &str,
+    ) -> bool {
+        match &mut self.source_projection {
+            LocalInvocationSourceProjection::Value(prefix) => {
+                exclude_invocation_source_property(prefix, context, property)
+            }
+            LocalInvocationSourceProjection::ObjectSpread { prefix, excluded } => {
+                if invocation_source_prefix_shape_eq(prefix, context) {
+                    excluded.insert(property.to_string());
+                    true
+                } else {
+                    exclude_invocation_source_property(prefix, context, property)
+                }
+            }
+        }
+    }
+}
+
+fn match_invocation_source_prefix<'a>(
+    prefix: &[LocalInvocationSourceComponent],
+    properties: &'a [String],
+) -> Option<&'a [String]> {
+    if properties.len() < prefix.len() {
+        return None;
+    }
+    for (component, property) in prefix.iter().zip(properties) {
+        match component {
+            LocalInvocationSourceComponent::Exact(expected) if expected != property => return None,
+            LocalInvocationSourceComponent::Dynamic(excluded) if excluded.contains(property) => {
+                return None;
+            }
+            LocalInvocationSourceComponent::Exact(_)
+            | LocalInvocationSourceComponent::Dynamic(_) => {}
+        }
+    }
+    Some(&properties[prefix.len()..])
+}
+
+fn invocation_source_prefix_shape_eq(
+    left: &[LocalInvocationSourceComponent],
+    right: &[LocalInvocationSourceComponent],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            matches!(
+                (left, right),
+                (
+                    LocalInvocationSourceComponent::Dynamic(_),
+                    LocalInvocationSourceComponent::Dynamic(_)
+                )
+            ) || matches!(
+                (left, right),
+                (
+                    LocalInvocationSourceComponent::Exact(left),
+                    LocalInvocationSourceComponent::Exact(right)
+                ) if left == right
+            )
+        })
+}
+
+fn exclude_invocation_source_property(
+    prefix: &mut [LocalInvocationSourceComponent],
+    context: &[LocalInvocationSourceComponent],
+    property: &str,
+) -> bool {
+    if prefix.len() <= context.len()
+        || !invocation_source_prefix_shape_eq(&prefix[..context.len()], context)
+    {
+        return true;
+    }
+    match &mut prefix[context.len()] {
+        LocalInvocationSourceComponent::Exact(candidate) => candidate != property,
+        LocalInvocationSourceComponent::Dynamic(excluded) => {
+            excluded.insert(property.to_string());
+            true
+        }
     }
 }
 
@@ -10130,7 +10238,11 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn collect_local_invocation_path(&self, raw: StaticAliasPath) -> LocalInvocationArgument {
-        self.collect_local_invocation_path_with_source(raw, false, Vec::new())
+        self.collect_local_invocation_path_with_projection(
+            raw,
+            false,
+            LocalInvocationSourceProjection::Value(Vec::new()),
+        )
     }
 
     fn collect_local_invocation_path_with_precision(
@@ -10138,14 +10250,18 @@ impl StaticHookAliasCollector<'_> {
         raw: StaticAliasPath,
         coarse: bool,
     ) -> LocalInvocationArgument {
-        self.collect_local_invocation_path_with_source(raw, coarse, Vec::new())
+        self.collect_local_invocation_path_with_projection(
+            raw,
+            coarse,
+            LocalInvocationSourceProjection::Value(Vec::new()),
+        )
     }
 
-    fn collect_local_invocation_path_with_source(
+    fn collect_local_invocation_path_with_projection(
         &self,
         mut raw: StaticAliasPath,
         coarse: bool,
-        source_prefix: Vec<String>,
+        source_projection: LocalInvocationSourceProjection,
     ) -> LocalInvocationArgument {
         if coarse {
             raw = raw.with_element_wildcard();
@@ -10156,7 +10272,7 @@ impl StaticHookAliasCollector<'_> {
             resolved,
             raw,
             coarse,
-            source_prefix,
+            source_projection,
         }
     }
 
@@ -10172,14 +10288,14 @@ impl StaticHookAliasCollector<'_> {
     fn collect_local_invocation_value_sources(
         &self,
         value: &Expression<'_>,
-        prefix: &[String],
+        prefix: &[LocalInvocationSourceComponent],
         arguments: &mut Vec<LocalInvocationArgument>,
     ) {
         if let Some(raw) = self.alias_source_path(value) {
-            arguments.push(self.collect_local_invocation_path_with_source(
+            arguments.push(self.collect_local_invocation_path_with_projection(
                 raw,
                 false,
-                prefix.to_vec(),
+                LocalInvocationSourceProjection::Value(prefix.to_vec()),
             ));
             return;
         }
@@ -10188,21 +10304,26 @@ impl StaticHookAliasCollector<'_> {
                 let mut object_arguments = Vec::new();
                 for property in &object.properties {
                     let OxcObjectPropertyKind::ObjectProperty(property) = property else {
-                        object_arguments.retain(|argument: &LocalInvocationArgument| {
-                            !argument.source_prefix.starts_with(prefix)
-                        });
-                        continue;
-                    };
-                    let Some(name) = property.key.static_name() else {
-                        object_arguments.retain(|argument: &LocalInvocationArgument| {
-                            !argument.source_prefix.starts_with(prefix)
-                        });
+                        if let OxcObjectPropertyKind::SpreadProperty(spread) = property {
+                            self.collect_local_object_spread_sources(
+                                &spread.argument,
+                                prefix,
+                                &mut object_arguments,
+                            );
+                        }
                         continue;
                     };
                     let mut property_prefix = prefix.to_vec();
-                    property_prefix.push(name.into_owned());
-                    object_arguments
-                        .retain(|argument| !argument.source_prefix.starts_with(&property_prefix));
+                    if let Some(name) = property.key.static_name() {
+                        let name = name.into_owned();
+                        object_arguments.retain_mut(|argument| {
+                            argument.exclude_overwritten_property(prefix, &name)
+                        });
+                        property_prefix.push(LocalInvocationSourceComponent::Exact(name));
+                    } else {
+                        property_prefix
+                            .push(LocalInvocationSourceComponent::Dynamic(BTreeSet::new()));
+                    };
                     if property.kind == PropertyKind::Init && !property.method {
                         self.collect_local_invocation_value_sources(
                             &property.value,
@@ -10220,10 +10341,7 @@ impl StaticHookAliasCollector<'_> {
                         break;
                     }
                     let mut element_prefix = prefix.to_vec();
-                    element_prefix.push(index.to_string());
-                    array_arguments.retain(|argument: &LocalInvocationArgument| {
-                        !argument.source_prefix.starts_with(&element_prefix)
-                    });
+                    element_prefix.push(LocalInvocationSourceComponent::Exact(index.to_string()));
                     if !matches!(element, ArrayExpressionElement::Elision(_)) {
                         self.collect_local_invocation_value_sources(
                             element.to_expression(),
@@ -10267,6 +10385,49 @@ impl StaticHookAliasCollector<'_> {
                 if expression.operator == OxcAssignmentOperator::Assign =>
             {
                 self.collect_local_invocation_value_sources(&expression.right, prefix, arguments);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_local_object_spread_sources(
+        &self,
+        spread: &Expression<'_>,
+        prefix: &[LocalInvocationSourceComponent],
+        arguments: &mut Vec<LocalInvocationArgument>,
+    ) {
+        if let Some(raw) = self.alias_source_path(spread) {
+            arguments.push(self.collect_local_invocation_path_with_projection(
+                raw,
+                false,
+                LocalInvocationSourceProjection::ObjectSpread {
+                    prefix: prefix.to_vec(),
+                    excluded: BTreeSet::new(),
+                },
+            ));
+            return;
+        }
+        match spread.get_inner_expression() {
+            Expression::ObjectExpression(_) => {
+                self.collect_local_invocation_value_sources(spread, prefix, arguments);
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_local_object_spread_sources(&expression.consequent, prefix, arguments);
+                self.collect_local_object_spread_sources(&expression.alternate, prefix, arguments);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_local_object_spread_sources(&expression.left, prefix, arguments);
+                self.collect_local_object_spread_sources(&expression.right, prefix, arguments);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_local_object_spread_sources(value, prefix, arguments);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_local_object_spread_sources(&expression.right, prefix, arguments);
             }
             _ => {}
         }

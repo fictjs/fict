@@ -3712,6 +3712,155 @@ fn inline_structured_invocations_preserve_detached_and_sibling_values() {
 }
 
 #[test]
+fn computed_and_spread_object_arguments_propagate_nested_invalidations() {
+    for (name, setup, helper, invocation) in [
+        (
+            "computed property after static property",
+            "const key = 'other';",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ target: values, [key]: [] });",
+        ),
+        (
+            "computed property value",
+            "const key = 'target';",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ [key]: values });",
+        ),
+        (
+            "object spread value",
+            "const source = { target: values };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ ...source });",
+        ),
+        (
+            "object spread preserves absent property",
+            "const source = { other: [] };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ target: values, ...source });",
+        ),
+        (
+            "nested object spread",
+            "const source = { target: values };",
+            "function mutate({ payload: { target } }) { target.forEach = null; }",
+            "mutate({ payload: { ...source } });",
+        ),
+        (
+            "nested computed property",
+            "const key = 'target';",
+            "function mutate({ payload: { target } }) { target.forEach = null; }",
+            "mutate({ payload: { [key]: values } });",
+        ),
+        (
+            "inline object spread",
+            "",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ ...{ target: values } });",
+        ),
+        (
+            "conditional object spread",
+            "const source = { target: values };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ ...(true ? source : {}) });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn later_object_properties_and_fresh_spread_slots_preserve_values() {
+    for (name, setup, helper, invocation) in [
+        (
+            "static property overrides computed property",
+            "const key = 'target';",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ [key]: values, target: [] });",
+        ),
+        (
+            "static property overrides object spread",
+            "const source = { target: values };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate({ ...source, target: [] });",
+        ),
+        (
+            "nested static property overrides computed property",
+            "const key = 'target';",
+            "function mutate({ payload: { target } }) { target.forEach = null; }",
+            "mutate({ payload: { [key]: values, target: [] } });",
+        ),
+        (
+            "fresh spread slot replacement",
+            "const source = { target: values };",
+            "function replace(wrapper) { wrapper.target = []; }",
+            "replace({ ...source });",
+        ),
+        (
+            "spread sibling mutation",
+            "const source = { target: values, other: [] };",
+            "function mutate(wrapper) { wrapper.other.forEach = null; }",
+            "mutate({ ...source });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_calls_propagate_destructured_parameter_invalidations() {
     for (name, setup, helper) in [
         (
