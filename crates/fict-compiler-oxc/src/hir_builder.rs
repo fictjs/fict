@@ -9937,6 +9937,17 @@ struct StoredSpreadAliasSources {
     entries: BTreeSet<StoredSpreadAliasSource>,
 }
 
+struct StoredSpreadCallableSignatures {
+    historical: bool,
+    entries: Vec<StoredSpreadCallableSignature>,
+}
+
+struct StoredSpreadCallableSignature {
+    properties: Vec<String>,
+    element_wildcard: bool,
+    parameters: Vec<LocalCallableParameter>,
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct StoredSpreadAliasSource {
     properties: Vec<String>,
@@ -11912,11 +11923,116 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
+    fn stored_spread_callable_signatures(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<StoredSpreadCallableSignatures> {
+        let raw = self.alias_source_path(expression)?;
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        let historical = [&raw, &resolved].into_iter().any(|path| {
+            self.path_owner_depth(path) < self.function_depth
+                || self
+                    .ambiguous_alias_targets
+                    .iter()
+                    .any(|target| target.overlaps(path))
+        });
+        let bases = if historical {
+            resolve_historical_alias_paths(&self.alias_history, &raw)
+        } else {
+            BTreeSet::from([raw, resolved])
+        };
+        let mut entries = Vec::new();
+        if historical {
+            for base in &bases {
+                for (candidate, signatures) in &self.local_callable_parameter_history {
+                    if !candidate.starts_with(base)
+                        || (candidate.properties.len() == base.properties.len()
+                            && !candidate.element_wildcard)
+                    {
+                        continue;
+                    }
+                    let properties = candidate.properties[base.properties.len()..].to_vec();
+                    entries.extend(signatures.iter().cloned().map(|parameters| {
+                        StoredSpreadCallableSignature {
+                            properties: properties.clone(),
+                            element_wildcard: candidate.element_wildcard,
+                            parameters,
+                        }
+                    }));
+                }
+            }
+        } else {
+            for base in &bases {
+                for (candidate, parameters) in &self.local_callable_parameters {
+                    if !candidate.starts_with(base)
+                        || (candidate.properties.len() == base.properties.len()
+                            && !candidate.element_wildcard)
+                    {
+                        continue;
+                    }
+                    entries.push(StoredSpreadCallableSignature {
+                        properties: candidate.properties[base.properties.len()..].to_vec(),
+                        element_wildcard: candidate.element_wildcard,
+                        parameters: parameters.clone(),
+                    });
+                }
+            }
+        }
+        Some(StoredSpreadCallableSignatures {
+            historical,
+            entries,
+        })
+    }
+
+    fn record_stored_spread_callable_signatures(
+        &mut self,
+        target: &StaticAliasPath,
+        signatures: StoredSpreadCallableSignatures,
+        array_offset: Option<usize>,
+    ) {
+        let mut ambiguous = BTreeSet::new();
+        for signature in signatures.entries {
+            let mut callable_target = if let Some(offset) = array_offset {
+                if signature.element_wildcard {
+                    target.with_element_wildcard()
+                } else {
+                    let Some((index_name, remaining)) = signature.properties.split_first() else {
+                        continue;
+                    };
+                    let Ok(index) = index_name.parse::<usize>() else {
+                        continue;
+                    };
+                    if index.to_string() != *index_name {
+                        continue;
+                    }
+                    let mut callable_target =
+                        target.with_property(offset.saturating_add(index).to_string());
+                    callable_target.properties.extend_from_slice(remaining);
+                    callable_target
+                }
+            } else {
+                let mut callable_target = target.clone();
+                callable_target.properties.extend(signature.properties);
+                callable_target.element_wildcard |= signature.element_wildcard;
+                callable_target
+            };
+            callable_target = callable_target.canonicalized();
+            self.record_local_callable_signature(callable_target.clone(), signature.parameters);
+            if signatures.historical {
+                ambiguous.insert(callable_target);
+            }
+        }
+        for callable_target in ambiguous {
+            self.mark_alias_target_ambiguous(callable_target);
+        }
+    }
+
     fn collect_object_spread_initializer(
         &mut self,
         target: &StaticAliasPath,
         expression: &Expression<'_>,
     ) {
+        let callable_signatures = self.stored_spread_callable_signatures(expression);
         if let Some(StoredSpreadAliasSources {
             historical,
             entries: sources,
@@ -11962,6 +12078,9 @@ impl StaticHookAliasCollector<'_> {
                     self.ambiguous_alias_targets.insert(property_target.clone());
                 }
                 self.insert_alias(property_target, source.source);
+            }
+            if let Some(signatures) = callable_signatures {
+                self.record_stored_spread_callable_signatures(target, signatures, None);
             }
             return;
         }
@@ -12015,6 +12134,7 @@ impl StaticHookAliasCollector<'_> {
         offset: usize,
         expression: &Expression<'_>,
     ) {
+        let callable_signatures = self.stored_spread_callable_signatures(expression);
         if let Some(StoredSpreadAliasSources {
             historical,
             entries: sources,
@@ -12050,6 +12170,9 @@ impl StaticHookAliasCollector<'_> {
                     self.ambiguous_alias_targets.insert(property_target.clone());
                 }
                 self.insert_alias(property_target, source.source);
+            }
+            if let Some(signatures) = callable_signatures {
+                self.record_stored_spread_callable_signatures(target, signatures, Some(offset));
             }
             return;
         }
