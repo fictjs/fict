@@ -3861,6 +3861,143 @@ fn later_object_properties_and_fresh_spread_slots_preserve_values() {
 }
 
 #[test]
+fn spread_array_arguments_propagate_nested_invalidations() {
+    for (name, setup, helper, invocation) in [
+        (
+            "inline array spread",
+            "",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate([...[values]]);",
+        ),
+        (
+            "inline spread after fixed element",
+            "",
+            "function mutate([_prefix, target]) { target.forEach = null; }",
+            "mutate([0, ...[values]]);",
+        ),
+        (
+            "inline spread before fixed element",
+            "",
+            "function mutate([_prefix, target]) { target.forEach = null; }",
+            "mutate([...[0], values]);",
+        ),
+        (
+            "stored array spread",
+            "const source = [values];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate([...source]);",
+        ),
+        (
+            "nested array spread",
+            "",
+            "function mutate({ payload: [target] }) { target.forEach = null; }",
+            "mutate({ payload: [...[values]] });",
+        ),
+        (
+            "conditional array spread",
+            "const source = [values];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate([...(true ? source : [])]);",
+        ),
+        (
+            "unknown length before fixed value",
+            "const prefix = true ? [] : [0];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate([...prefix, values]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn spread_array_positions_and_fresh_slots_preserve_values() {
+    for (name, setup, helper, invocation) in [
+        (
+            "fixed value before unknown spread",
+            "const source = [];",
+            "function mutate([_first, second]) { second.forEach = null; }",
+            "mutate([values, ...source]);",
+        ),
+        (
+            "known spread position",
+            "",
+            "function mutate([first]) { first.forEach = null; }",
+            "mutate([...[[]], values]);",
+        ),
+        (
+            "fresh spread slot replacement",
+            "const source = [values];",
+            "function replace(wrapper) { wrapper[0] = []; }",
+            "replace([...source]);",
+        ),
+        (
+            "fresh array container",
+            "const source = [values];",
+            "function mutate(wrapper) { wrapper.forEach = null; }",
+            "mutate([...source]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_calls_propagate_destructured_parameter_invalidations() {
     for (name, setup, helper) in [
         (

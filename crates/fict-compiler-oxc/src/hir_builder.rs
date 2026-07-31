@@ -9953,14 +9953,12 @@ enum LocalInvocationSourceProjection {
 enum LocalInvocationSourceComponent {
     Exact(String),
     Dynamic(BTreeSet<String>),
+    DynamicIndex { minimum: usize },
 }
 
 impl LocalInvocationArgument {
     fn map_properties(&self, properties: &[String], slot: bool) -> Option<Vec<String>> {
-        if self.coarse {
-            return Some(Vec::new());
-        }
-        match &self.source_projection {
+        let mapped = match &self.source_projection {
             LocalInvocationSourceProjection::Value(prefix) => {
                 let remaining = match_invocation_source_prefix(prefix, properties)?;
                 if slot && !prefix.is_empty() && remaining.is_empty() {
@@ -9976,7 +9974,8 @@ impl LocalInvocationArgument {
                 }
                 Some(remaining.to_vec())
             }
-        }
+        }?;
+        self.coarse.then(Vec::new).or(Some(mapped))
     }
 
     fn exclude_overwritten_property(
@@ -10013,6 +10012,12 @@ fn match_invocation_source_prefix<'a>(
             LocalInvocationSourceComponent::Dynamic(excluded) if excluded.contains(property) => {
                 return None;
             }
+            LocalInvocationSourceComponent::DynamicIndex { minimum } => {
+                let index = property.parse::<usize>().ok()?;
+                if index.to_string() != *property || index < *minimum {
+                    return None;
+                }
+            }
             LocalInvocationSourceComponent::Exact(_)
             | LocalInvocationSourceComponent::Dynamic(_) => {}
         }
@@ -10038,6 +10043,12 @@ fn invocation_source_prefix_shape_eq(
                     LocalInvocationSourceComponent::Exact(left),
                     LocalInvocationSourceComponent::Exact(right)
                 ) if left == right
+            ) || matches!(
+                (left, right),
+                (
+                    LocalInvocationSourceComponent::DynamicIndex { minimum: left },
+                    LocalInvocationSourceComponent::DynamicIndex { minimum: right }
+                ) if left == right
             )
         })
 }
@@ -10058,6 +10069,7 @@ fn exclude_invocation_source_property(
             excluded.insert(property.to_string());
             true
         }
+        LocalInvocationSourceComponent::DynamicIndex { .. } => true,
     }
 }
 
@@ -10336,20 +10348,15 @@ impl StaticHookAliasCollector<'_> {
             }
             Expression::ArrayExpression(array) => {
                 let mut array_arguments = Vec::new();
-                for (index, element) in array.elements.iter().enumerate() {
-                    if matches!(element, ArrayExpressionElement::SpreadElement(_)) {
-                        break;
-                    }
-                    let mut element_prefix = prefix.to_vec();
-                    element_prefix.push(LocalInvocationSourceComponent::Exact(index.to_string()));
-                    if !matches!(element, ArrayExpressionElement::Elision(_)) {
-                        self.collect_local_invocation_value_sources(
-                            element.to_expression(),
-                            &element_prefix,
-                            &mut array_arguments,
-                        );
-                    }
-                }
+                let mut position = 0usize;
+                let mut uncertain = false;
+                self.collect_local_array_element_sources(
+                    array,
+                    prefix,
+                    &mut position,
+                    &mut uncertain,
+                    &mut array_arguments,
+                );
                 arguments.extend(array_arguments);
             }
             Expression::ConditionalExpression(expression) => {
@@ -10430,6 +10437,196 @@ impl StaticHookAliasCollector<'_> {
                 self.collect_local_object_spread_sources(&expression.right, prefix, arguments);
             }
             _ => {}
+        }
+    }
+
+    fn collect_local_array_element_sources(
+        &self,
+        array: &oxc::ast::ast::ArrayExpression<'_>,
+        prefix: &[LocalInvocationSourceComponent],
+        position: &mut usize,
+        uncertain: &mut bool,
+        arguments: &mut Vec<LocalInvocationArgument>,
+    ) {
+        for element in &array.elements {
+            match element {
+                ArrayExpressionElement::Elision(_) => {
+                    *position = position.saturating_add(1);
+                }
+                ArrayExpressionElement::SpreadElement(spread) => {
+                    if let Expression::ArrayExpression(nested) =
+                        spread.argument.get_inner_expression()
+                    {
+                        self.collect_local_array_element_sources(
+                            nested, prefix, position, uncertain, arguments,
+                        );
+                    } else {
+                        let minimum_length = self.collect_local_array_spread_sources(
+                            &spread.argument,
+                            prefix,
+                            *position,
+                            *uncertain,
+                            arguments,
+                        );
+                        *position = position.saturating_add(minimum_length);
+                        *uncertain = true;
+                    }
+                }
+                element => {
+                    let mut element_prefix = prefix.to_vec();
+                    element_prefix.push(if *uncertain {
+                        LocalInvocationSourceComponent::DynamicIndex { minimum: *position }
+                    } else {
+                        LocalInvocationSourceComponent::Exact(position.to_string())
+                    });
+                    self.collect_local_invocation_value_sources(
+                        element.to_expression(),
+                        &element_prefix,
+                        arguments,
+                    );
+                    *position = position.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    fn collect_local_array_spread_sources(
+        &self,
+        spread: &Expression<'_>,
+        prefix: &[LocalInvocationSourceComponent],
+        position: usize,
+        uncertain: bool,
+        arguments: &mut Vec<LocalInvocationArgument>,
+    ) -> usize {
+        if let Some(raw) = self.alias_source_path(spread) {
+            let resolved = resolve_static_alias_path(&self.aliases, &raw);
+            let mut indices = BTreeSet::new();
+            for target in self.aliases.keys() {
+                for base in [&raw, &resolved] {
+                    if !target.starts_with(base) || target.properties.len() <= base.properties.len()
+                    {
+                        continue;
+                    }
+                    let property = &target.properties[base.properties.len()];
+                    let Ok(index) = property.parse::<usize>() else {
+                        continue;
+                    };
+                    if index.to_string() == *property {
+                        indices.insert(index);
+                    }
+                }
+            }
+            for index in &indices {
+                let mut element_prefix = prefix.to_vec();
+                element_prefix.push(if uncertain {
+                    LocalInvocationSourceComponent::DynamicIndex {
+                        minimum: position.saturating_add(*index),
+                    }
+                } else {
+                    LocalInvocationSourceComponent::Exact(
+                        position.saturating_add(*index).to_string(),
+                    )
+                });
+                arguments.push(self.collect_local_invocation_path_with_projection(
+                    raw.with_property(index.to_string()),
+                    false,
+                    LocalInvocationSourceProjection::Value(element_prefix),
+                ));
+            }
+            let mut element_prefix = prefix.to_vec();
+            element_prefix.push(LocalInvocationSourceComponent::DynamicIndex { minimum: position });
+            arguments.push(self.collect_local_invocation_path_with_projection(
+                raw,
+                true,
+                LocalInvocationSourceProjection::Value(element_prefix),
+            ));
+            return indices
+                .last()
+                .and_then(|index| index.checked_add(1))
+                .unwrap_or(0);
+        }
+        match spread.get_inner_expression() {
+            Expression::ArrayExpression(array) => {
+                let mut branch_position = position;
+                let mut branch_uncertain = uncertain;
+                self.collect_local_array_element_sources(
+                    array,
+                    prefix,
+                    &mut branch_position,
+                    &mut branch_uncertain,
+                    arguments,
+                );
+                branch_position.saturating_sub(position)
+            }
+            Expression::ConditionalExpression(expression) => {
+                let consequent = self.collect_local_array_spread_sources(
+                    &expression.consequent,
+                    prefix,
+                    position,
+                    uncertain,
+                    arguments,
+                );
+                let alternate = self.collect_local_array_spread_sources(
+                    &expression.alternate,
+                    prefix,
+                    position,
+                    uncertain,
+                    arguments,
+                );
+                consequent.min(alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                let left = self.collect_local_array_spread_sources(
+                    &expression.left,
+                    prefix,
+                    position,
+                    uncertain,
+                    arguments,
+                );
+                let right = self.collect_local_array_spread_sources(
+                    &expression.right,
+                    prefix,
+                    position,
+                    uncertain,
+                    arguments,
+                );
+                left.min(right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .map(|value| {
+                    self.collect_local_array_spread_sources(
+                        value, prefix, position, uncertain, arguments,
+                    )
+                })
+                .unwrap_or(0),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_local_array_spread_sources(
+                    &expression.right,
+                    prefix,
+                    position,
+                    uncertain,
+                    arguments,
+                )
+            }
+            _ => {
+                let mut paths = BTreeSet::new();
+                self.collect_spread_exposed_argument_paths(spread, &mut paths);
+                for path in paths {
+                    let mut element_prefix = prefix.to_vec();
+                    element_prefix
+                        .push(LocalInvocationSourceComponent::DynamicIndex { minimum: position });
+                    arguments.push(self.collect_local_invocation_path_with_projection(
+                        path,
+                        false,
+                        LocalInvocationSourceProjection::Value(element_prefix),
+                    ));
+                }
+                0
+            }
         }
     }
 
