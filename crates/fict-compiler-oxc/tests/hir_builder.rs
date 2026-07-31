@@ -3285,6 +3285,145 @@ fn external_calls_preserve_receivers_hidden_by_factories() {
 }
 
 #[test]
+fn unreferenced_deferred_factory_replacements_preserve_receivers() {
+    for (name, setup) in [
+        (
+            "ordinary callable",
+            "let expose = () => []; function replace() { expose = () => values; } configure(expose);",
+        ),
+        (
+            "bound callable",
+            "const returnsValues = () => values; const hidden = () => []; let expose = hidden.bind(null); function replace() { expose = returnsValues.bind(null); } configure(expose);",
+        ),
+        (
+            "arrow callable",
+            "let expose = () => []; const replace = () => { expose = () => values; }; configure(expose);",
+        ),
+        (
+            "function expression callable",
+            "let expose = () => []; const replace = function () { expose = () => values; }; configure(expose);",
+        ),
+        (
+            "assigned callable",
+            "let expose = () => []; let replace; replace = () => { expose = () => values; }; configure(expose);",
+        ),
+        (
+            "aliased replacement",
+            "const returnsValues = () => values; let expose = () => []; function replace() { expose = returnsValues; } configure(expose);",
+        ),
+        (
+            "unreferenced object method",
+            "let expose = () => []; const helpers = { replace() { expose = () => values; } }; configure(expose);",
+        ),
+        (
+            "unreferenced array function",
+            "let expose = () => []; const helpers = [() => { expose = () => values; }]; configure(expose);",
+        ),
+        (
+            "overwritten exposure history",
+            "let expose = () => values; expose = () => []; function replace() { expose = () => values; } configure(expose);",
+        ),
+        (
+            "overwritten alias history",
+            "const returnsValues = () => values; const hidden = () => []; let expose = returnsValues; expose = hidden; function replace() { expose = returnsValues; } configure(expose);",
+        ),
+        (
+            "conditional dead replacement",
+            "let expose = () => []; function replace() { if (choose) expose = () => values; } configure(expose);",
+        ),
+        (
+            "unreferenced deferred exposure",
+            "const expose = () => values; function pass() { configure(expose); }",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn invoked_deferred_factory_replacements_invalidate_receivers() {
+    for (name, setup) in [
+        (
+            "ordinary callable",
+            "let expose = () => []; function replace() { expose = () => values; } replace(); configure(expose);",
+        ),
+        (
+            "bound callable",
+            "const returnsValues = () => values; const hidden = () => []; let expose = hidden.bind(null); function replace() { expose = returnsValues.bind(null); } replace(); configure(expose);",
+        ),
+        (
+            "arrow callable",
+            "let expose = () => []; const replace = () => { expose = () => values; }; replace(); configure(expose);",
+        ),
+        (
+            "assigned callable",
+            "let expose = () => []; let replace; replace = () => { expose = () => values; }; replace(); configure(expose);",
+        ),
+        (
+            "aliased invocation",
+            "let expose = () => []; function replace() { expose = () => values; } const run = replace; run(); configure(expose);",
+        ),
+        (
+            "escaped replacement",
+            "let expose = () => []; function replace() { expose = () => values; } schedule(replace); configure(expose);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure, schedule) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_calls_propagate_parameter_method_invalidations() {
     for (name, helper, call) in [
         (

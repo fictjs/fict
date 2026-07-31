@@ -2050,6 +2050,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_callable_parameter_history: BTreeMap::new(),
             local_bound_callables: BTreeMap::new(),
             local_bound_callable_history: BTreeMap::new(),
+            unreferenced_callable_spans: BTreeSet::new(),
             local_invocations: Vec::new(),
             attached_callable_parameters: BTreeSet::new(),
             parameter_member_invalidated: BTreeSet::new(),
@@ -9913,6 +9914,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_callable_parameter_history: BTreeMap<StaticAliasPath, Vec<Vec<LocalCallableParameter>>>,
     local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
     local_bound_callable_history: BTreeMap<StaticAliasPath, Vec<LocalBoundCallable>>,
+    unreferenced_callable_spans: BTreeSet<(u32, u32)>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
     parameter_member_invalidated: BTreeSet<StaticAliasPath>,
@@ -10450,6 +10452,31 @@ impl StaticHookAliasCollector<'_> {
             .or_default()
             .push(callable.clone());
         self.local_bound_callables.insert(target, callable);
+    }
+
+    fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
+        if target.binding_root().is_some_and(|symbol| {
+            !self
+                .scoping
+                .get_resolved_references(symbol)
+                .any(|reference| reference.is_read())
+        }) {
+            self.unreferenced_callable_spans
+                .insert((span.start, span.end));
+        }
+    }
+
+    fn record_unreferenced_callable_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        value: &Expression<'_>,
+    ) {
+        let span = match value.get_inner_expression() {
+            Expression::FunctionExpression(function) => function.span,
+            Expression::ArrowFunctionExpression(function) => function.span,
+            _ => return,
+        };
+        self.record_unreferenced_callable_span(target, span);
     }
 
     fn local_callable_parameters(parameters: &FormalParameters<'_>) -> Vec<LocalCallableParameter> {
@@ -11963,6 +11990,7 @@ impl StaticHookAliasCollector<'_> {
             Expression::ClassExpression(class) => Self::class_constructor_parameters(class),
             _ => return false,
         };
+        self.record_unreferenced_callable_initializer(&target, value);
         self.record_local_callable_signature(target.clone(), parameters);
         let Some(paths) = self.returned_function_paths(value) else {
             return true;
@@ -13788,10 +13816,19 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .as_ref()
                 .and_then(|identifier| identifier.symbol_id.get())
         {
+            let target = StaticAliasPath::root(symbol);
             self.binding_owner_depths
                 .entry(symbol)
                 .or_insert(self.function_depth);
-            self.record_local_callable_parameters(StaticAliasPath::root(symbol), &function.params);
+            self.record_unreferenced_callable_span(&target, function.span);
+            self.record_local_callable_parameters(target, &function.params);
+        }
+        if self.function_depth > 0
+            && self
+                .unreferenced_callable_spans
+                .contains(&(function.span.start, function.span.end))
+        {
+            return;
         }
         let depth = self.function_depth + 1;
         let outer_aliases = self
@@ -13868,6 +13905,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        if self.function_depth > 0
+            && self
+                .unreferenced_callable_spans
+                .contains(&(function.span.start, function.span.end))
+        {
+            return;
+        }
         let depth = self.function_depth + 1;
         let outer_aliases = self
             .aliases
@@ -13949,6 +13993,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .function_control_baselines
             .last()
             .is_some_and(|baseline| self.control_depth > *baseline);
+        if assignment.operator == OxcAssignmentOperator::Assign
+            && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
+        {
+            self.record_unreferenced_callable_initializer(&path, &assignment.right);
+        }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
         self.invalidate_place(place.clone());
         if let Some(path) = prototype_path {
