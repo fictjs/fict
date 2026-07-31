@@ -10218,11 +10218,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .with_property(name.clone());
                 self.record_forwarded_callable(target_method.clone(), &property.value);
                 let bodies = self.generator_body_spans_for_target(&target_method);
-                if bodies.is_empty() {
-                    instance_bodies.remove(&name);
-                } else {
-                    instance_bodies.insert(name, bodies);
-                }
+                instance_bodies.insert(name, bodies);
             }
         } else {
             for element in &class.body.body {
@@ -10703,6 +10699,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.forwarded_callable_reads
                 .iter()
                 .map(|forwarding| forwarding.source.clone()),
+        );
+        candidates.extend(
+            self.forwarded_callable_reads
+                .iter()
+                .map(|forwarding| forwarding.target.clone()),
         );
         let mut unexecuted = BTreeSet::new();
         loop {
