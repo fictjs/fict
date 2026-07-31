@@ -11078,7 +11078,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_class_instances: BTreeSet<StaticAliasPath>,
     local_class_instance_fields: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     local_class_instance_callables:
-        BTreeMap<StaticAliasPath, BTreeMap<String, LocalClassInstanceCallable>>,
+        BTreeMap<StaticAliasPath, BTreeMap<String, Vec<LocalClassInstanceCallable>>>,
     open_local_class_instance_fields: BTreeSet<StaticAliasPath>,
     closed_replacement_class_instances: BTreeSet<StaticAliasPath>,
     transient_callable_alias_targets: BTreeSet<StaticAliasPath>,
@@ -11830,15 +11830,51 @@ impl StaticHookAliasCollector<'_> {
         class_preserves_instance_prototype(class)
     }
 
-    fn local_class_instance_callable(
+    fn local_class_instance_callables(
         &self,
         value: &Expression<'_>,
         lexical_receiver_span: Span,
-    ) -> LocalClassInstanceCallable {
+    ) -> Vec<LocalClassInstanceCallable> {
+        match value.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let mut callables = self
+                    .local_class_instance_callables(&expression.consequent, lexical_receiver_span);
+                callables.extend(
+                    self.local_class_instance_callables(
+                        &expression.alternate,
+                        lexical_receiver_span,
+                    ),
+                );
+                return callables;
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut callables =
+                    self.local_class_instance_callables(&expression.left, lexical_receiver_span);
+                callables.extend(
+                    self.local_class_instance_callables(&expression.right, lexical_receiver_span),
+                );
+                return callables;
+            }
+            Expression::SequenceExpression(expression) => {
+                return expression
+                    .expressions
+                    .last()
+                    .map_or_else(Vec::new, |value| {
+                        self.local_class_instance_callables(value, lexical_receiver_span)
+                    });
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                return self
+                    .local_class_instance_callables(&expression.right, lexical_receiver_span);
+            }
+            _ => {}
+        }
         if let Some((bound_callables, exposures, bound_historical)) =
             self.local_bound_callable_initializer(value)
         {
-            return LocalClassInstanceCallable {
+            return vec![LocalClassInstanceCallable {
                 source: None,
                 parameters: Vec::new(),
                 dynamic_receiver: None,
@@ -11848,7 +11884,7 @@ impl StaticHookAliasCollector<'_> {
                 bound_callables,
                 bound_historical,
                 exposures,
-            };
+            }];
         }
         let (source, parameters, dynamic_receiver, lexical_receiver, generator, unknown) =
             match value.get_inner_expression() {
@@ -11877,7 +11913,7 @@ impl StaticHookAliasCollector<'_> {
                     true,
                 ),
             };
-        LocalClassInstanceCallable {
+        vec![LocalClassInstanceCallable {
             source,
             parameters,
             dynamic_receiver,
@@ -11887,7 +11923,7 @@ impl StaticHookAliasCollector<'_> {
             bound_callables: Vec::new(),
             bound_historical: false,
             exposures: self.returned_function_paths(value).unwrap_or_default(),
-        }
+        }]
     }
 
     fn record_replacement_object_callables(
@@ -11907,11 +11943,11 @@ impl StaticHookAliasCollector<'_> {
                 .entry(target.clone())
                 .or_default()
                 .insert(name.clone());
-            let callable = self.local_class_instance_callable(&property.value, property.span);
+            let callables = self.local_class_instance_callables(&property.value, property.span);
             self.local_class_instance_callables
                 .entry(target.clone())
                 .or_default()
-                .insert(name, callable);
+                .insert(name, callables);
         }
     }
 
@@ -12051,7 +12087,7 @@ impl StaticHookAliasCollector<'_> {
             ) {
                 continue;
             }
-            let callable = self.local_class_instance_callable(value, property.span);
+            let callable = self.local_class_instance_callables(value, property.span);
             self.local_class_instance_callables
                 .entry(target.clone())
                 .or_default()
@@ -12116,65 +12152,72 @@ impl StaticHookAliasCollector<'_> {
             .get(&class)
             .cloned()
             .unwrap_or_default();
-        for (name, callable) in callables {
+        for (name, callables) in callables {
             let instance_field = target.clone().with_property(name);
             self.clear_overlapping_aliases(&instance_field);
-            if let Some(source) = callable.source.clone() {
-                self.insert_alias(instance_field.clone(), source);
-                self.transient_callable_alias_targets.insert(instance_field);
-                continue;
-            }
-            if !callable.bound_callables.is_empty() {
-                for bound in callable.bound_callables {
-                    self.record_local_bound_callable(instance_field.clone(), bound);
+            let ambiguous = callables.len() > 1;
+            for callable in callables {
+                if let Some(source) = callable.source.clone() {
+                    self.insert_alias(instance_field.clone(), source);
+                    self.transient_callable_alias_targets
+                        .insert(instance_field.clone());
+                    continue;
                 }
-                if callable.bound_historical {
-                    self.mark_alias_target_ambiguous(instance_field.clone());
+                if !callable.bound_callables.is_empty() {
+                    for bound in callable.bound_callables {
+                        self.record_local_bound_callable(instance_field.clone(), bound);
+                    }
+                    if callable.bound_historical {
+                        self.mark_alias_target_ambiguous(instance_field.clone());
+                    }
+                    self.record_callable_exposures(instance_field.clone(), callable.exposures);
+                    continue;
                 }
-                self.record_callable_exposures(instance_field, callable.exposures);
-                continue;
-            }
-            self.record_local_callable_signature(
-                instance_field.clone(),
-                callable.parameters.clone(),
-            );
-            if let Some(receiver) = callable.dynamic_receiver {
-                self.record_local_callable_receiver(instance_field.clone(), receiver.clone());
-                if callable.lexical_receiver {
+                self.record_local_callable_signature(
+                    instance_field.clone(),
+                    callable.parameters.clone(),
+                );
+                if let Some(receiver) = callable.dynamic_receiver {
+                    self.record_local_callable_receiver(instance_field.clone(), receiver.clone());
+                    if callable.lexical_receiver {
+                        self.record_local_bound_callable(
+                            instance_field.clone(),
+                            LocalBoundCallable {
+                                parameters: self
+                                    .local_callable_parameters
+                                    .get(&instance_field)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                                arguments: Vec::new(),
+                                receiver: vec![self.collect_local_invocation_path(target.clone())],
+                                dynamic_receiver: Some(receiver),
+                                generator: callable.generator,
+                                unknown: false,
+                            },
+                        );
+                    }
+                }
+                if callable.generator {
+                    self.record_local_generator(instance_field.clone());
+                }
+                if callable.unknown {
                     self.record_local_bound_callable(
                         instance_field.clone(),
                         LocalBoundCallable {
-                            parameters: self
-                                .local_callable_parameters
-                                .get(&instance_field)
-                                .cloned()
-                                .unwrap_or_default(),
+                            parameters: callable.parameters,
                             arguments: Vec::new(),
-                            receiver: vec![self.collect_local_invocation_path(target.clone())],
-                            dynamic_receiver: Some(receiver),
-                            generator: callable.generator,
-                            unknown: false,
+                            receiver: Vec::new(),
+                            dynamic_receiver: None,
+                            generator: false,
+                            unknown: true,
                         },
                     );
                 }
+                self.record_callable_exposures(instance_field.clone(), callable.exposures);
             }
-            if callable.generator {
-                self.record_local_generator(instance_field.clone());
+            if ambiguous {
+                self.mark_alias_target_ambiguous(instance_field);
             }
-            if callable.unknown {
-                self.record_local_bound_callable(
-                    instance_field.clone(),
-                    LocalBoundCallable {
-                        parameters: callable.parameters,
-                        arguments: Vec::new(),
-                        receiver: Vec::new(),
-                        dynamic_receiver: None,
-                        generator: false,
-                        unknown: true,
-                    },
-                );
-            }
-            self.record_callable_exposures(instance_field, callable.exposures);
         }
     }
 

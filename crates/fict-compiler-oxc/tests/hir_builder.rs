@@ -3862,6 +3862,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect(values);",
         ),
         (
+            "replacement constructor conditional callable",
+            "function inspectA(target) { return target.length; } function inspectB(target) { return target.length + 1; } class Helper { constructor(choose) { return { inspect: choose ? inspectA : inspectB }; } } const helper = new Helper(true);",
+            "helper.inspect(values);",
+        ),
+        (
+            "replacement constructor conditional bound callable",
+            "function inspectA(target) { return target.length; } function inspectB(target) { return target.length + 1; } class Helper { constructor(choose) { return { inspect: choose ? inspectA.bind(null) : inspectB.bind(null) }; } } const helper = new Helper(true);",
+            "helper.inspect(values);",
+        ),
+        (
+            "replacement constructor logical callable",
+            "function inspectA(target) { return target.length; } function inspectB(target) { return target.length + 1; } class Helper { constructor() { return { inspect: inspectA || inspectB }; } } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
             "replacement constructor shadows instance field",
             "class Helper { constructor() { return { inspect: target => target.length }; } inspect = target => { target.forEach = null; }; } const helper = new Helper();",
             "helper.inspect(values);",
@@ -4492,6 +4507,16 @@ fn class_instance_method_invocations_propagate_local_effects() {
             "replacement constructor bound receiver",
             "function mutate() { this.forEach = null; } class Helper { constructor() { return { mutate: mutate.bind(values) }; } } const helper = new Helper();",
             "helper.mutate();",
+        ),
+        (
+            "replacement constructor conditional callable",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } class Helper { constructor(choose) { return { mutate: choose ? inspect : mutate }; } } const helper = new Helper(false);",
+            "helper.mutate(values);",
+        ),
+        (
+            "replacement constructor conditional unknown callable",
+            "function inspect(target) { return target.length; } class Helper { constructor(choose, factory) { return { mutate: choose ? inspect : factory() }; } } const helper = new Helper(false, () => null);",
+            "helper.mutate(values);",
         ),
         (
             "replacement constructor unknown callable",
