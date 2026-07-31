@@ -3805,6 +3805,108 @@ fn nested_rest_container_mutations_preserve_source_values() {
 }
 
 #[test]
+fn immediately_invoked_functions_propagate_parameter_invalidations() {
+    for (name, setup, call) in [
+        (
+            "arrow IIFE",
+            "",
+            "(target => { target.forEach = null; })(values);",
+        ),
+        (
+            "function IIFE",
+            "",
+            "(function (target) { target.forEach = null; })(values);",
+        ),
+        (
+            "sequence IIFE",
+            "",
+            "(0, target => { target.forEach = null; })(values);",
+        ),
+        (
+            "destructured IIFE",
+            "const box = { target: values };",
+            "(({ target }) => { target.forEach = null; })(box);",
+        ),
+        (
+            "rest IIFE",
+            "",
+            "((...targets) => { targets[0].forEach = null; })(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {call}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn pure_immediately_invoked_functions_preserve_receiver_methods() {
+    for (name, call) in [
+        ("read-only IIFE", "(target => target.length)(values);"),
+        (
+            "detached IIFE",
+            "(target => { target = {}; target.forEach = null; })(values);",
+        ),
+        (
+            "rest slot replacement",
+            "((...targets) => { targets[0] = []; })(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {call}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (

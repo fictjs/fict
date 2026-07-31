@@ -9854,8 +9854,8 @@ struct LocalInvocationArgument {
 
 #[derive(Clone)]
 struct LocalInvocationFact {
-    raw_callee: StaticAliasPath,
-    callee: StaticAliasPath,
+    raw_callee: Option<StaticAliasPath>,
+    callee: Option<StaticAliasPath>,
     parameters: Option<Vec<LocalCallableParameter>>,
     arguments: Vec<Option<LocalInvocationArgument>>,
     function_depth: usize,
@@ -9875,6 +9875,13 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         parameters: &FormalParameters<'_>,
     ) {
+        let bindings = Self::local_callable_parameters(parameters);
+        self.local_callable_parameter_history
+            .insert(target.clone(), bindings.clone());
+        self.local_callable_parameters.insert(target, bindings);
+    }
+
+    fn local_callable_parameters(parameters: &FormalParameters<'_>) -> Vec<LocalCallableParameter> {
         let mut bindings = Vec::new();
         for (index, parameter) in parameters.items.iter().enumerate() {
             Self::collect_local_callable_parameter_bindings(
@@ -9891,9 +9898,41 @@ impl StaticHookAliasCollector<'_> {
                 &mut bindings,
             );
         }
-        self.local_callable_parameter_history
-            .insert(target.clone(), bindings.clone());
-        self.local_callable_parameters.insert(target, bindings);
+        bindings
+    }
+
+    fn inline_callable_parameters(
+        expression: &Expression<'_>,
+    ) -> Option<Vec<LocalCallableParameter>> {
+        match unwrap_transparent_call_expression(expression) {
+            Expression::FunctionExpression(function) if !function.generator => {
+                Some(Self::local_callable_parameters(&function.params))
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                Some(Self::local_callable_parameters(&function.params))
+            }
+            _ => None,
+        }
+    }
+
+    fn collect_local_invocation_arguments(
+        &self,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) -> Vec<Option<LocalInvocationArgument>> {
+        arguments
+            .iter()
+            .map(|argument| {
+                let raw = argument
+                    .as_expression()
+                    .and_then(|argument| self.alias_source_path(argument))?;
+                let resolved = resolve_static_alias_path(&self.aliases, &raw);
+                Some(LocalInvocationArgument {
+                    parameter_attached: self.attached_parameter_path(&raw, &resolved).is_some(),
+                    resolved,
+                    raw,
+                })
+            })
+            .collect()
     }
 
     fn collect_local_callable_parameter_bindings(
@@ -10851,13 +10890,17 @@ impl StaticHookAliasCollector<'_> {
                 let parameter_sets = if let Some(parameters) = invocation.parameters {
                     vec![parameters]
                 } else {
-                    let callees = if self.path_requires_historical_aliases(
-                        &invocation.raw_callee,
-                        invocation.function_depth,
-                    ) {
-                        resolve_historical_alias_paths(&self.alias_history, &invocation.raw_callee)
+                    let (Some(raw_callee), Some(callee)) =
+                        (&invocation.raw_callee, invocation.callee)
+                    else {
+                        continue;
+                    };
+                    let callees = if self
+                        .path_requires_historical_aliases(raw_callee, invocation.function_depth)
+                    {
+                        resolve_historical_alias_paths(&self.alias_history, raw_callee)
                     } else {
-                        BTreeSet::from([invocation.callee])
+                        BTreeSet::from([callee])
                     };
                     callees
                         .iter()
@@ -11246,35 +11289,29 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let local_invocation = static_alias_source_path(self.scoping, &call.callee).map(|callee| {
+        let local_invocation = if let Some(callee) =
+            static_alias_source_path(self.scoping, &call.callee)
+        {
             let resolved_callee = resolve_static_alias_path(&self.aliases, &callee);
-            LocalInvocationFact {
+            Some(LocalInvocationFact {
                 parameters: self
                     .local_callable_parameters
                     .get(&resolved_callee)
                     .cloned(),
-                arguments: call
-                    .arguments
-                    .iter()
-                    .map(|argument| {
-                        let raw = argument
-                            .as_expression()
-                            .and_then(|argument| self.alias_source_path(argument))?;
-                        let resolved = resolve_static_alias_path(&self.aliases, &raw);
-                        Some(LocalInvocationArgument {
-                            parameter_attached: self
-                                .attached_parameter_path(&raw, &resolved)
-                                .is_some(),
-                            resolved,
-                            raw,
-                        })
-                    })
-                    .collect(),
-                raw_callee: callee,
-                callee: resolved_callee,
+                arguments: self.collect_local_invocation_arguments(&call.arguments),
+                raw_callee: Some(callee),
+                callee: Some(resolved_callee),
                 function_depth: self.function_depth,
-            }
-        });
+            })
+        } else {
+            Self::inline_callable_parameters(&call.callee).map(|parameters| LocalInvocationFact {
+                parameters: Some(parameters),
+                arguments: self.collect_local_invocation_arguments(&call.arguments),
+                raw_callee: None,
+                callee: None,
+                function_depth: self.function_depth,
+            })
+        };
         let exposed_arguments = if self.callee_may_mutate_arguments(&call.callee) {
             let exposed = self.collect_invocation_argument_paths(&call.arguments);
             self.prepare_exposed_paths(exposed)
