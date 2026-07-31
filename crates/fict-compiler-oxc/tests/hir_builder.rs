@@ -3811,6 +3811,31 @@ fn pure_local_calls_preserve_receiver_methods() {
             "class Helper { constructor() { return { inspect(target) { return target.length; } }; } inspect(target) { target.forEach = null; } } const helper = new Helper();",
             "helper.inspect(values);",
         ),
+        (
+            "read-only class instance field",
+            "class Helper { inspect = target => target.length; } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
+            "arrow instance field lexical receiver",
+            "class Helper { inspect = () => { this.forEach = null; }; } const helper = new Helper();",
+            "helper.inspect.call(values);",
+        ),
+        (
+            "instance field shadows mutating method",
+            "class Helper { inspect(target) { target.forEach = null; } inspect = target => target.length; } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
+            "inherited instance field shadows mutating method",
+            "class Parent { inspect(target) { target.forEach = null; } } class Helper extends Parent { inspect = target => target.length; } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
+            "unadvanced generator instance field",
+            "class Helper { inspect = function* (target) { target.forEach = null; }; } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -4132,6 +4157,81 @@ fn class_instance_method_invocations_propagate_local_effects() {
             "replaced prototype method",
             "class Helper { mutate(target) { return target.length; } } const helper = new Helper(); Helper.prototype.mutate = function (target) { target.forEach = null; };",
             "helper.mutate(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: diagnostics={:?}",
+            output.diagnostics
+        );
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn class_instance_field_invocations_propagate_local_effects() {
+    for (name, helper, invocation) in [
+        (
+            "arrow field parameter",
+            "class Helper { mutate = target => { target.forEach = null; }; } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "function field parameter",
+            "class Helper { mutate = function (target) { target.forEach = null; }; } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "function field receiver",
+            "class Helper { mutate = function () { this.forEach = null; }; } const helper = new Helper();",
+            "helper.mutate.call(values);",
+        ),
+        (
+            "generator field parameter",
+            "class Helper { mutate = function* (target) { target.forEach = null; }; } const helper = new Helper();",
+            "helper.mutate(values).next();",
+        ),
+        (
+            "inherited arrow field",
+            "class Parent { mutate = target => { target.forEach = null; }; } class Helper extends Parent {} const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "field shadows pure prototype method",
+            "class Helper { mutate(target) { return target.length; } mutate = target => { target.forEach = null; }; } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "bound arrow field",
+            "class Helper { mutate = target => { target.forEach = null; }; } const helper = new Helper(); const mutate = helper.mutate.bind(null);",
+            "mutate(values);",
         ),
     ] {
         let source = format!(

@@ -2057,6 +2057,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_generator_callables: BTreeSet::new(),
             local_generator_callable_history: BTreeMap::new(),
             local_class_instances: BTreeSet::new(),
+            local_class_instance_fields: BTreeMap::new(),
+            local_class_instance_callables: BTreeMap::new(),
+            open_local_class_instance_fields: BTreeSet::new(),
             transient_callable_alias_targets: BTreeSet::new(),
             local_bound_callables: BTreeMap::new(),
             local_bound_callable_history: BTreeMap::new(),
@@ -10368,6 +10371,10 @@ struct StaticHookAliasCollector<'semantic> {
     local_generator_callables: BTreeSet<StaticAliasPath>,
     local_generator_callable_history: BTreeMap<StaticAliasPath, Vec<bool>>,
     local_class_instances: BTreeSet<StaticAliasPath>,
+    local_class_instance_fields: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    local_class_instance_callables:
+        BTreeMap<StaticAliasPath, BTreeMap<String, LocalClassInstanceCallable>>,
+    open_local_class_instance_fields: BTreeSet<StaticAliasPath>,
     transient_callable_alias_targets: BTreeSet<StaticAliasPath>,
     local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
     local_bound_callable_history: BTreeMap<StaticAliasPath, Vec<LocalBoundCallable>>,
@@ -10454,6 +10461,15 @@ struct LocalBoundCallable {
     dynamic_receiver: Option<StaticAliasPath>,
     generator: bool,
     unknown: bool,
+}
+
+#[derive(Clone)]
+struct LocalClassInstanceCallable {
+    parameters: Vec<LocalCallableParameter>,
+    dynamic_receiver: Option<StaticAliasPath>,
+    lexical_receiver: bool,
+    generator: bool,
+    exposures: BTreeSet<StaticAliasPath>,
 }
 
 #[derive(Clone)]
@@ -11118,6 +11134,9 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_class_callables(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
+        self.local_class_instance_fields.remove(target);
+        self.local_class_instance_callables.remove(target);
+        self.open_local_class_instance_fields.remove(target);
         if Self::class_preserves_instance_prototype(class) {
             self.local_class_instances.insert(target.clone());
         } else {
@@ -11127,6 +11146,21 @@ impl StaticHookAliasCollector<'_> {
             && let Some(raw_super) = static_alias_source_path(self.scoping, super_class)
         {
             let super_class = resolve_static_alias_path(&self.aliases, &raw_super);
+            if let Some(fields) = self.local_class_instance_fields.get(&super_class).cloned() {
+                self.local_class_instance_fields
+                    .insert(target.clone(), fields);
+            }
+            if let Some(callables) = self
+                .local_class_instance_callables
+                .get(&super_class)
+                .cloned()
+            {
+                self.local_class_instance_callables
+                    .insert(target.clone(), callables);
+            }
+            if self.open_local_class_instance_fields.contains(&super_class) {
+                self.open_local_class_instance_fields.insert(target.clone());
+            }
             let super_prototype = super_class.with_property("prototype".to_string());
             let prototype = target.clone().with_property("prototype".to_string());
             let inherited = self
@@ -11184,17 +11218,64 @@ impl StaticHookAliasCollector<'_> {
             let ClassElement::PropertyDefinition(property) = element else {
                 continue;
             };
-            if !property.r#static || matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) {
+            if matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) {
                 continue;
             }
             let Some(name) = property.key.static_name() else {
+                if !property.r#static {
+                    self.open_local_class_instance_fields.insert(target.clone());
+                }
                 continue;
             };
-            let property_target = target.clone().with_property(name.into_owned());
-            self.clear_overlapping_aliases(&property_target);
-            if let Some(value) = &property.value {
-                self.collect_initializer(property_target, value);
+            let name = name.into_owned();
+            if property.r#static {
+                let property_target = target.clone().with_property(name);
+                self.clear_overlapping_aliases(&property_target);
+                if let Some(value) = &property.value {
+                    self.collect_initializer(property_target, value);
+                }
+                continue;
             }
+            self.local_class_instance_fields
+                .entry(target.clone())
+                .or_default()
+                .insert(name.clone());
+            if let Some(callables) = self.local_class_instance_callables.get_mut(target) {
+                callables.remove(&name);
+            }
+            let Some(value) = &property.value else {
+                continue;
+            };
+            let (parameters, dynamic_receiver, lexical_receiver, generator) =
+                match value.get_inner_expression() {
+                    Expression::FunctionExpression(function) => (
+                        Self::local_callable_parameters(&function.params),
+                        Some(StaticAliasPath::dynamic_this(function.span)),
+                        false,
+                        function.generator,
+                    ),
+                    Expression::ArrowFunctionExpression(function) => (
+                        Self::local_callable_parameters(&function.params),
+                        Some(StaticAliasPath::dynamic_this(property.span)),
+                        true,
+                        false,
+                    ),
+                    _ => continue,
+                };
+            let exposures = self.returned_function_paths(value).unwrap_or_default();
+            self.local_class_instance_callables
+                .entry(target.clone())
+                .or_default()
+                .insert(
+                    name,
+                    LocalClassInstanceCallable {
+                        parameters,
+                        dynamic_receiver,
+                        lexical_receiver,
+                        generator,
+                        exposures,
+                    },
+                );
         }
     }
 
@@ -11213,11 +11294,22 @@ impl StaticHookAliasCollector<'_> {
             return;
         }
         let prototype = class.with_property("prototype".to_string());
+        let fields = self
+            .local_class_instance_fields
+            .get(&class)
+            .cloned()
+            .unwrap_or_default();
+        let open_fields = self.open_local_class_instance_fields.contains(&class);
         let methods = self
             .local_callable_parameters
             .keys()
             .chain(self.aliases.keys())
-            .filter(|candidate| candidate.starts_with(&prototype))
+            .filter(|candidate| {
+                candidate.starts_with(&prototype)
+                    && candidate.properties.len() > prototype.properties.len()
+                    && !open_fields
+                    && !fields.contains(&candidate.properties[prototype.properties.len()])
+            })
             .cloned()
             .collect::<BTreeSet<_>>();
         for method in methods {
@@ -11228,6 +11320,40 @@ impl StaticHookAliasCollector<'_> {
             self.insert_alias(instance_method.clone(), method);
             self.transient_callable_alias_targets
                 .insert(instance_method);
+        }
+        let callables = self
+            .local_class_instance_callables
+            .get(&class)
+            .cloned()
+            .unwrap_or_default();
+        for (name, callable) in callables {
+            let instance_field = target.clone().with_property(name);
+            self.clear_overlapping_aliases(&instance_field);
+            self.record_local_callable_signature(instance_field.clone(), callable.parameters);
+            if let Some(receiver) = callable.dynamic_receiver {
+                self.record_local_callable_receiver(instance_field.clone(), receiver.clone());
+                if callable.lexical_receiver {
+                    self.record_local_bound_callable(
+                        instance_field.clone(),
+                        LocalBoundCallable {
+                            parameters: self
+                                .local_callable_parameters
+                                .get(&instance_field)
+                                .cloned()
+                                .unwrap_or_default(),
+                            arguments: Vec::new(),
+                            receiver: vec![self.collect_local_invocation_path(target.clone())],
+                            dynamic_receiver: Some(receiver),
+                            generator: callable.generator,
+                            unknown: false,
+                        },
+                    );
+                }
+            }
+            if callable.generator {
+                self.record_local_generator(instance_field.clone());
+            }
+            self.record_callable_exposures(instance_field, callable.exposures);
         }
     }
 
@@ -12953,6 +13079,12 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target| !target.overlaps(path));
         self.local_class_instances
             .retain(|target| !target.starts_with(path));
+        self.local_class_instance_fields
+            .retain(|target, _| !target.starts_with(path));
+        self.local_class_instance_callables
+            .retain(|target, _| !target.starts_with(path));
+        self.open_local_class_instance_fields
+            .retain(|target| !target.starts_with(path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(path));
         self.default_derived_constructors
@@ -12969,6 +13101,12 @@ impl StaticHookAliasCollector<'_> {
         self.local_generator_callables
             .retain(|target| !target.overlaps(&path));
         self.local_class_instances
+            .retain(|target| !target.starts_with(&path));
+        self.local_class_instance_fields
+            .retain(|target, _| !target.starts_with(&path));
+        self.local_class_instance_callables
+            .retain(|target, _| !target.starts_with(&path));
+        self.open_local_class_instance_fields
             .retain(|target| !target.starts_with(&path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(&path));
@@ -15257,7 +15395,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
-            self.dynamic_this_roots.push(None);
+            self.dynamic_this_roots
+                .push((!property.r#static).then(|| StaticAliasPath::dynamic_this(property.span)));
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
         }
@@ -15362,6 +15501,24 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
             .collect::<Vec<_>>();
+        let outer_local_class_instance_fields = self
+            .local_class_instance_fields
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, fields)| (target.clone(), fields.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_class_instance_callables = self
+            .local_class_instance_callables
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, callables)| (target.clone(), callables.clone()))
+            .collect::<Vec<_>>();
+        let outer_open_local_class_instance_fields = self
+            .open_local_class_instance_fields
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
         let outer_local_bound_callables = self
             .local_bound_callables
             .iter()
@@ -15438,6 +15595,34 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_class_instances
             .extend(outer_local_class_instances);
+        let binding_owner_depths = &self.binding_owner_depths;
+        self.local_class_instance_fields.retain(|target, _| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.local_class_instance_fields
+            .extend(outer_local_class_instance_fields);
+        self.local_class_instance_callables.retain(|target, _| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.local_class_instance_callables
+            .extend(outer_local_class_instance_callables);
+        self.open_local_class_instance_fields.retain(|target| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.open_local_class_instance_fields
+            .extend(outer_open_local_class_instance_fields);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
@@ -15504,6 +15689,24 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         let outer_local_class_instances = self
             .local_class_instances
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        let outer_local_class_instance_fields = self
+            .local_class_instance_fields
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, fields)| (target.clone(), fields.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_class_instance_callables = self
+            .local_class_instance_callables
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, callables)| (target.clone(), callables.clone()))
+            .collect::<Vec<_>>();
+        let outer_open_local_class_instance_fields = self
+            .open_local_class_instance_fields
             .iter()
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
@@ -15581,6 +15784,34 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_class_instances
             .extend(outer_local_class_instances);
+        let binding_owner_depths = &self.binding_owner_depths;
+        self.local_class_instance_fields.retain(|target, _| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.local_class_instance_fields
+            .extend(outer_local_class_instance_fields);
+        self.local_class_instance_callables.retain(|target, _| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.local_class_instance_callables
+            .extend(outer_local_class_instance_callables);
+        self.open_local_class_instance_fields.retain(|target| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.open_local_class_instance_fields
+            .extend(outer_open_local_class_instance_fields);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
