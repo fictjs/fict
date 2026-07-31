@@ -3876,6 +3876,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "class Helper { inspect = function* () { values.forEach = null; }; } const helper = new Helper();",
             "const iterator = helper.inspect();",
         ),
+        (
+            "unadvanced aliased generator instance capture",
+            "class Helper { *inspect() { values.forEach = null; } } const helper = new Helper(); const alias = helper;",
+            "alias.inspect();",
+        ),
+        (
+            "unadvanced aliased generator instance field capture",
+            "class Helper { inspect = function* () { values.forEach = null; }; } const helper = new Helper(); const alias = helper;",
+            "alias.inspect();",
+        ),
+        (
+            "unadvanced chained generator instance alias capture",
+            "class Helper { *inspect() { values.forEach = null; } } const helper = new Helper(); const first = helper; const second = first;",
+            "second.inspect();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -4023,6 +4038,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "class instance generator field parameter default",
             "class Helper { mutate = function* (unused = (values.forEach = null)) {}; } const helper = new Helper();",
             "helper.mutate();",
+        ),
+        (
+            "aliased class instance generator capture advance",
+            "class Helper { *mutate() { values.forEach = null; } } const helper = new Helper(); const alias = helper;",
+            "alias.mutate().next();",
+        ),
+        (
+            "aliased class instance generator field capture advance",
+            "class Helper { mutate = function* () { values.forEach = null; }; } const helper = new Helper(); const alias = helper;",
+            "alias.mutate().next();",
         ),
     ] {
         let source = format!(

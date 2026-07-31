@@ -9907,6 +9907,7 @@ struct GeneratorExecutionCollector<'semantic> {
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<((u32, u32), StaticAliasPath)>,
     class_instance_generator_bodies: BTreeMap<StaticAliasPath, BTreeMap<String, (u32, u32)>>,
+    instance_generator_bodies: BTreeMap<StaticAliasPath, BTreeMap<String, (u32, u32)>>,
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
 }
@@ -9921,6 +9922,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
             class_instance_generator_bodies: BTreeMap::new(),
+            instance_generator_bodies: BTreeMap::new(),
             directly_unexecuted_body_spans: BTreeSet::new(),
             discarded_invocation_spans: BTreeSet::new(),
         }
@@ -10135,20 +10137,48 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .get(&class)
             .cloned()
             .unwrap_or_default();
-        for (name, span) in bodies {
+        for (name, span) in &bodies {
             let source = class
                 .clone()
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
-            let instance_method = target.clone().with_property(name);
+            let instance_method = target.clone().with_property(name.clone());
             self.generator_body_targets
-                .push((span, instance_method.clone()));
+                .push((*span, instance_method.clone()));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
                 source,
                 source_span,
                 target: instance_method,
             });
         }
+        self.instance_generator_bodies.insert(target, bodies);
+    }
+
+    fn record_forwarded_instance_generator_bodies(
+        &mut self,
+        target: StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let Some((source, source_span)) = self.callable_reference(initializer) else {
+            return;
+        };
+        let bodies = self
+            .instance_generator_bodies
+            .get(&source)
+            .cloned()
+            .unwrap_or_default();
+        for (name, span) in &bodies {
+            let source_method = source.clone().with_property(name.clone());
+            let target_method = target.clone().with_property(name.clone());
+            self.generator_body_targets
+                .push((*span, target_method.clone()));
+            self.forwarded_callable_reads.push(ForwardedCallableRead {
+                source: source_method,
+                source_span,
+                target: target_method,
+            });
+        }
+        self.instance_generator_bodies.insert(target, bodies);
     }
 
     fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
@@ -10408,6 +10438,8 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
             self.record_forwarded_callable(target.clone(), initializer);
             if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
                 self.record_constructed_class_generator_bodies(target, expression);
+            } else {
+                self.record_forwarded_instance_generator_bodies(target, initializer);
             }
             if !self
                 .scoping
