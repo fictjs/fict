@@ -5672,6 +5672,30 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "run(values);",
         ),
         (
+            "inline bound class",
+            "",
+            "const Bound = (class { constructor(target) { target.forEach = null; } }).bind(null);",
+            "new Bound(values);",
+        ),
+        (
+            "inline bound class with prebound argument",
+            "",
+            "const Bound = (class { constructor(_prefix, target) { target.forEach = null; } }).bind(null, 0);",
+            "new Bound(values);",
+        ),
+        (
+            "computed inline class bind",
+            "",
+            "const Bound = (class { constructor(target) { target.forEach = null; } })['bind'](null);",
+            "new Bound(values);",
+        ),
+        (
+            "Reflect.construct inline bound class",
+            "",
+            "const Bound = (class { constructor(target) { target.forEach = null; } }).bind(null);",
+            "Reflect.construct(Bound, [values]);",
+        ),
+        (
             "aliased target",
             "",
             "function mutate(target) { target.forEach = null; } const alias = mutate; const run = alias.bind(null);",
@@ -5791,6 +5815,12 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "",
             "function inspect(target) { return target.length; } const run = inspect.bind(null);",
             "run(values);",
+        ),
+        (
+            "read-only inline class",
+            "",
+            "const Bound = (class { constructor(target) { this.length = target.length; } }).bind(null);",
+            "new Bound(values);",
         ),
         (
             "detached target",

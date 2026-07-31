@@ -11326,6 +11326,9 @@ impl StaticHookAliasCollector<'_> {
             Expression::ArrowFunctionExpression(function) => {
                 Some(Self::local_callable_parameters(&function.params))
             }
+            Expression::ClassExpression(class) if expected_method == "bind" => {
+                Some(Self::class_constructor_parameters(class))
+            }
             _ => None,
         }
     }
@@ -11354,7 +11357,10 @@ impl StaticHookAliasCollector<'_> {
         if method != expected_method {
             return None;
         }
-        self.returned_function_paths(object)
+        match unwrap_transparent_call_expression(object) {
+            Expression::ClassExpression(_) if expected_method == "bind" => Some(BTreeSet::new()),
+            _ => self.returned_function_paths(object),
+        }
     }
 
     fn intact_function_call_target(
