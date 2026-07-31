@@ -9875,7 +9875,14 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         parameters: &FormalParameters<'_>,
     ) {
-        let bindings = Self::local_callable_parameters(parameters);
+        self.record_local_callable_signature(target, Self::local_callable_parameters(parameters));
+    }
+
+    fn record_local_callable_signature(
+        &mut self,
+        target: StaticAliasPath,
+        bindings: Vec<LocalCallableParameter>,
+    ) {
         self.local_callable_parameter_history
             .insert(target.clone(), bindings.clone());
         self.local_callable_parameters.insert(target, bindings);
@@ -9901,6 +9908,21 @@ impl StaticHookAliasCollector<'_> {
         bindings
     }
 
+    fn class_constructor_parameters(class: &Class<'_>) -> Vec<LocalCallableParameter> {
+        class
+            .body
+            .body
+            .iter()
+            .find_map(|element| {
+                let ClassElement::MethodDefinition(method) = element else {
+                    return None;
+                };
+                (method.kind == MethodDefinitionKind::Constructor)
+                    .then(|| Self::local_callable_parameters(&method.value.params))
+            })
+            .unwrap_or_default()
+    }
+
     fn inline_callable_parameters(
         expression: &Expression<'_>,
     ) -> Option<Vec<LocalCallableParameter>> {
@@ -9911,6 +9933,7 @@ impl StaticHookAliasCollector<'_> {
             Expression::ArrowFunctionExpression(function) => {
                 Some(Self::local_callable_parameters(&function.params))
             }
+            Expression::ClassExpression(class) => Some(Self::class_constructor_parameters(class)),
             _ => None,
         }
     }
@@ -9933,6 +9956,33 @@ impl StaticHookAliasCollector<'_> {
                 })
             })
             .collect()
+    }
+
+    fn local_invocation_fact(
+        &self,
+        callee: &Expression<'_>,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) -> Option<LocalInvocationFact> {
+        if let Some(callee) = static_alias_source_path(self.scoping, callee) {
+            let resolved_callee = resolve_static_alias_path(&self.aliases, &callee);
+            return Some(LocalInvocationFact {
+                parameters: self
+                    .local_callable_parameters
+                    .get(&resolved_callee)
+                    .cloned(),
+                arguments: self.collect_local_invocation_arguments(arguments),
+                raw_callee: Some(callee),
+                callee: Some(resolved_callee),
+                function_depth: self.function_depth,
+            });
+        }
+        Self::inline_callable_parameters(callee).map(|parameters| LocalInvocationFact {
+            parameters: Some(parameters),
+            arguments: self.collect_local_invocation_arguments(arguments),
+            raw_callee: None,
+            callee: None,
+            function_depth: self.function_depth,
+        })
     }
 
     fn collect_local_callable_parameter_bindings(
@@ -10351,11 +10401,16 @@ impl StaticHookAliasCollector<'_> {
         value: &Expression<'_>,
     ) -> bool {
         let parameters = match value.get_inner_expression() {
-            Expression::FunctionExpression(function) => &function.params,
-            Expression::ArrowFunctionExpression(function) => &function.params,
+            Expression::FunctionExpression(function) => {
+                Self::local_callable_parameters(&function.params)
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                Self::local_callable_parameters(&function.params)
+            }
+            Expression::ClassExpression(class) => Self::class_constructor_parameters(class),
             _ => return false,
         };
-        self.record_local_callable_parameters(target.clone(), parameters);
+        self.record_local_callable_signature(target.clone(), parameters);
         let Some(paths) = self.returned_function_paths(value) else {
             return true;
         };
@@ -11117,6 +11172,24 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         oxc::ast_visit::walk::walk_formal_parameter_rest(self, parameter);
     }
 
+    fn visit_class(&mut self, class: &Class<'a>) {
+        if class.r#type == ClassType::ClassDeclaration
+            && let Some(symbol) = class
+                .id
+                .as_ref()
+                .and_then(|identifier| identifier.symbol_id.get())
+        {
+            self.binding_owner_depths
+                .entry(symbol)
+                .or_insert(self.function_depth);
+            self.record_local_callable_signature(
+                StaticAliasPath::root(symbol),
+                Self::class_constructor_parameters(class),
+            );
+        }
+        oxc::ast_visit::walk::walk_class(self, class);
+    }
+
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         if function.r#type == FunctionType::FunctionDeclaration
             && let Some(symbol) = function
@@ -11289,29 +11362,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let local_invocation = if let Some(callee) =
-            static_alias_source_path(self.scoping, &call.callee)
-        {
-            let resolved_callee = resolve_static_alias_path(&self.aliases, &callee);
-            Some(LocalInvocationFact {
-                parameters: self
-                    .local_callable_parameters
-                    .get(&resolved_callee)
-                    .cloned(),
-                arguments: self.collect_local_invocation_arguments(&call.arguments),
-                raw_callee: Some(callee),
-                callee: Some(resolved_callee),
-                function_depth: self.function_depth,
-            })
-        } else {
-            Self::inline_callable_parameters(&call.callee).map(|parameters| LocalInvocationFact {
-                parameters: Some(parameters),
-                arguments: self.collect_local_invocation_arguments(&call.arguments),
-                raw_callee: None,
-                callee: None,
-                function_depth: self.function_depth,
-            })
-        };
+        let local_invocation = self.local_invocation_fact(&call.callee, &call.arguments);
         let exposed_arguments = if self.callee_may_mutate_arguments(&call.callee) {
             let exposed = self.collect_invocation_argument_paths(&call.arguments);
             self.prepare_exposed_paths(exposed)
@@ -11357,6 +11408,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
+        let local_invocation =
+            self.local_invocation_fact(&expression.callee, &expression.arguments);
         let exposed_arguments = if self.constructor_may_mutate_arguments(&expression.callee) {
             let exposed = self.collect_invocation_argument_paths(&expression.arguments);
             self.prepare_exposed_paths(exposed)
@@ -11364,6 +11417,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_new_expression(self, expression);
+        if let Some(invocation) = local_invocation {
+            self.local_invocations.push(invocation);
+        }
         for path in exposed_arguments {
             self.invalidate_exposed_path(path);
         }

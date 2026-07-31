@@ -3907,6 +3907,126 @@ fn pure_immediately_invoked_functions_preserve_receiver_methods() {
 }
 
 #[test]
+fn local_constructors_propagate_parameter_invalidations() {
+    for (name, constructor, invocation) in [
+        (
+            "function declaration",
+            "function Mutate(target) { target.forEach = null; }",
+            "new Mutate(values);",
+        ),
+        (
+            "function expression",
+            "const Mutate = function (target) { target.forEach = null; };",
+            "new Mutate(values);",
+        ),
+        (
+            "class declaration",
+            "class Mutate { constructor(target) { target.forEach = null; } }",
+            "new Mutate(values);",
+        ),
+        (
+            "class expression",
+            "const Mutate = class { constructor(target) { target.forEach = null; } };",
+            "new Mutate(values);",
+        ),
+        (
+            "inline class",
+            "",
+            "new (class { constructor(target) { target.forEach = null; } })(values);",
+        ),
+        (
+            "destructured constructor",
+            "const box = { target: values }; class Mutate { constructor({ target }) { target.forEach = null; } }",
+            "new Mutate(box);",
+        ),
+        (
+            "delegated constructor",
+            "function inner(target) { target.forEach = null; } class Mutate { constructor(target) { inner(target); } }",
+            "new Mutate(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {constructor}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn pure_local_constructors_preserve_receiver_methods() {
+    for (name, constructor) in [
+        (
+            "read-only function constructor",
+            "function Inspect(target) { this.length = target.length; }",
+        ),
+        (
+            "detached function constructor",
+            "function Inspect(target) { target = {}; target.forEach = null; }",
+        ),
+        (
+            "read-only class constructor",
+            "class Inspect { constructor(target) { this.length = target.length; } }",
+        ),
+        (
+            "detached class constructor",
+            "class Inspect { constructor(target) { target = {}; target.forEach = null; } }",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {constructor}
+                    new Inspect(values);
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
