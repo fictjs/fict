@@ -5984,6 +5984,140 @@ fn stored_callable_spread_initializers_preserve_unmodified_values() {
 }
 
 #[test]
+fn stored_callable_spread_initializers_propagate_returned_exposures() {
+    for (name, setup, exposure) in [
+        (
+            "object factory property",
+            "const source = { expose: () => values }; const wrapper = { ...source };",
+            "configure(wrapper.expose);",
+        ),
+        (
+            "object factory container",
+            "const source = { expose: () => values }; const wrapper = { ...source };",
+            "configure(wrapper);",
+        ),
+        (
+            "nested object factory",
+            "const source = { nested: { expose: () => values } }; const wrapper = { ...source };",
+            "configure(wrapper.nested);",
+        ),
+        (
+            "array factory element",
+            "const source = [() => values]; const wrapper = [...source];",
+            "configure(wrapper[0]);",
+        ),
+        (
+            "array factory container",
+            "const source = [() => values]; const wrapper = [...source];",
+            "configure(wrapper);",
+        ),
+        (
+            "prefixed array factory",
+            "const source = [() => values]; const wrapper = [0, ...source];",
+            "configure(wrapper[1]);",
+        ),
+        (
+            "conditional object factory",
+            "const exposures = { expose: () => values }; const hidden = { expose: () => [] }; const source = choose ? exposures : hidden; const wrapper = { ...source };",
+            "configure(wrapper.expose);",
+        ),
+        (
+            "generator method",
+            "const source = { *expose() { yield values; } }; const wrapper = { ...source };",
+            "configure(wrapper.expose);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {exposure}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn stored_callable_spread_initializers_preserve_hidden_exposures() {
+    for (name, setup, exposure) in [
+        (
+            "later object factory",
+            "const source = { expose: () => values }; const wrapper = { ...source, expose: () => [] };",
+            "configure(wrapper.expose);",
+        ),
+        (
+            "spread overwrites earlier factory",
+            "const source = { expose: () => [] }; const wrapper = { expose: () => values, ...source };",
+            "configure(wrapper.expose);",
+        ),
+        (
+            "unselected array factory",
+            "const source = [() => [], () => values]; const wrapper = [...source];",
+            "configure(wrapper[0]);",
+        ),
+        (
+            "unrelated returned receiver",
+            "const other = []; const source = { expose: () => other }; const wrapper = { ...source };",
+            "configure(wrapper.expose);",
+        ),
+        (
+            "uninvoked deferred replacement",
+            "const source = { expose: () => [] }; function replace() { source.expose = () => values; } const wrapper = { ...source };",
+            "configure(wrapper.expose);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(configure) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {exposure}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (
