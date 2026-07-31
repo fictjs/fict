@@ -2714,6 +2714,163 @@ fn builtin_escape_exemptions_reject_overridden_methods() {
 }
 
 #[test]
+fn assigned_builtin_aliases_invalidate_escape_exemptions() {
+    for (name, source) in [
+        (
+            "plain assignment alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    let prototype;
+                    prototype = Array.prototype;
+                    prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "reassigned alias after mutation",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    let prototype = Array.prototype;
+                    prototype.forEach = sink;
+                    prototype = {};
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "object destructuring alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    const { prototype } = Array;
+                    prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "defaulted destructuring alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    const { prototype = {} } = Array;
+                    prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "destructuring assignment alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    let prototype;
+                    ({ prototype } = Array);
+                    prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "assigned member alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    const holder = {};
+                    holder.prototype = Array.prototype;
+                    holder.prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "assigned reflective mutator alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    let define;
+                    define = Object.defineProperty;
+                    define(Array.prototype, 'forEach', { value: sink });
+                    define = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn reassigned_builtin_aliases_do_not_invalidate_previous_targets() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(sink) {
+            const count = $state(0);
+            let prototype = Array.prototype;
+            prototype = {};
+            prototype.forEach = sink;
+            const values = [];
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "mutating a reassigned local alias must not invalidate its former target: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn safe_global_escape_exemptions_reject_overridden_calls() {
     for (name, source, expected_span, expected_code) in [
         (

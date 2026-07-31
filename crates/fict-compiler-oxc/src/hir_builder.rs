@@ -8141,36 +8141,43 @@ struct StaticHookAliases {
     member_invalidated: BTreeSet<StaticAliasPath>,
 }
 
+fn resolve_static_alias_path(
+    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
+    original: &StaticAliasPath,
+) -> StaticAliasPath {
+    let mut current = original.clone().canonicalized();
+    let mut visited = BTreeSet::new();
+    visited.insert(current.clone());
+
+    while visited.len() <= aliases.len() {
+        let replacement = (0..=current.properties.len()).rev().find_map(|length| {
+            let prefix = StaticAliasPath {
+                root: current.root.clone(),
+                properties: current.properties[..length].to_vec(),
+            };
+            aliases.get(&prefix).map(|source| {
+                let mut resolved = source.clone();
+                resolved
+                    .properties
+                    .extend_from_slice(&current.properties[length..]);
+                resolved.canonicalized()
+            })
+        });
+        let Some(replacement) = replacement else {
+            break;
+        };
+        if !visited.insert(replacement.clone()) {
+            break;
+        }
+        current = replacement;
+    }
+
+    current
+}
+
 impl StaticHookAliases {
     fn resolve(&self, original: &StaticAliasPath) -> StaticAliasPath {
-        let mut current = original.clone().canonicalized();
-        let mut visited = BTreeSet::new();
-        visited.insert(current.clone());
-
-        while visited.len() <= self.aliases.len() {
-            let replacement = (0..=current.properties.len()).rev().find_map(|length| {
-                let prefix = StaticAliasPath {
-                    root: current.root.clone(),
-                    properties: current.properties[..length].to_vec(),
-                };
-                self.aliases.get(&prefix).map(|source| {
-                    let mut resolved = source.clone();
-                    resolved
-                        .properties
-                        .extend_from_slice(&current.properties[length..]);
-                    resolved.canonicalized()
-                })
-            });
-            let Some(replacement) = replacement else {
-                break;
-            };
-            if !visited.insert(replacement.clone()) {
-                break;
-            }
-            current = replacement;
-        }
-
-        current
+        resolve_static_alias_path(&self.aliases, original)
     }
 
     fn path_is_intact(&self, path: &StaticAliasPath) -> bool {
@@ -9601,6 +9608,119 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn collect_pattern_initializer(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        source: &StaticAliasPath,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                if let Some(target) = binding.symbol_id.get() {
+                    self.insert_alias(StaticAliasPath::root(target), source.clone());
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    let Some(property_name) = property.key.static_name() else {
+                        continue;
+                    };
+                    self.collect_pattern_initializer(
+                        &property.value,
+                        &source.with_property(property_name.into_owned()),
+                    );
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for (index, element) in array.elements.iter().enumerate() {
+                    if let Some(element) = element {
+                        self.collect_pattern_initializer(
+                            element,
+                            &source.with_property(index.to_string()),
+                        );
+                    }
+                }
+            }
+            BindingPattern::AssignmentPattern(default) => {
+                self.collect_pattern_initializer(&default.left, source);
+            }
+        }
+    }
+
+    fn collect_assignment_target_initializer(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+        source: &StaticAliasPath,
+    ) {
+        if let Some(identifier) = direct_assignment_target_identifier(target) {
+            if let Some(symbol) = identifier_symbol(self.scoping, identifier) {
+                self.insert_alias(StaticAliasPath::root(symbol), source.clone());
+            }
+            return;
+        }
+        match target {
+            AssignmentTarget::ArrayAssignmentTarget(array) => {
+                for (index, element) in array.elements.iter().enumerate() {
+                    if let Some(element) = element {
+                        self.collect_assignment_maybe_default_initializer(
+                            element,
+                            &source.with_property(index.to_string()),
+                        );
+                    }
+                }
+            }
+            AssignmentTarget::ObjectAssignmentTarget(object) => {
+                for property in &object.properties {
+                    match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                            if let Some(symbol) = identifier_symbol(self.scoping, &property.binding)
+                            {
+                                self.insert_alias(
+                                    StaticAliasPath::root(symbol),
+                                    source.with_property(property.binding.name.to_string()),
+                                );
+                            }
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                            if let Some(property_name) = property.name.static_name() {
+                                self.collect_assignment_maybe_default_initializer(
+                                    &property.binding,
+                                    &source.with_property(property_name.into_owned()),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            AssignmentTarget::StaticMemberExpression(_)
+            | AssignmentTarget::ComputedMemberExpression(_)
+            | AssignmentTarget::TSAsExpression(_)
+            | AssignmentTarget::TSSatisfiesExpression(_)
+            | AssignmentTarget::TSNonNullExpression(_)
+            | AssignmentTarget::TSTypeAssertion(_) => {
+                if let Some(path) = planned_assignment_target_place(self.scoping, target)
+                    .as_ref()
+                    .and_then(static_alias_invalidation_path)
+                {
+                    self.insert_alias(path, source.clone());
+                }
+            }
+            AssignmentTarget::AssignmentTargetIdentifier(_)
+            | AssignmentTarget::PrivateFieldExpression(_) => {}
+        }
+    }
+
+    fn collect_assignment_maybe_default_initializer(
+        &mut self,
+        target: &AssignmentTargetMaybeDefault<'_>,
+        source: &StaticAliasPath,
+    ) {
+        if let AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) = target {
+            self.collect_assignment_target_initializer(&default.binding, source);
+        } else if let Some(target) = target.as_assignment_target() {
+            self.collect_assignment_target_initializer(target, source);
+        }
+    }
+
     fn collect_object(
         &mut self,
         target: &StaticAliasPath,
@@ -9634,13 +9754,16 @@ impl StaticHookAliasCollector<'_> {
         if let Some(place) = place.as_ref()
             && let Some(path) = static_alias_invalidation_path(place)
         {
+            let resolved = resolve_static_alias_path(&self.aliases, &path);
             if !place.projections.is_empty()
                 || matches!(&place.base,
                     PlannedPlaceBase::UnresolvedGlobal { name, .. } if name != "globalThis")
             {
                 self.member_invalidated.insert(path.clone());
+                self.member_invalidated.insert(resolved.clone());
             }
             self.invalidated.insert(path);
+            self.invalidated.insert(resolved);
         }
     }
 
@@ -9689,21 +9812,31 @@ impl StaticHookAliasCollector<'_> {
 
 impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
-        if let BindingPattern::BindingIdentifier(binding) = &declarator.id
-            && let Some(root) = binding.symbol_id.get()
-            && let Some(initializer) = &declarator.init
-        {
-            self.collect_initializer(StaticAliasPath::root(root), initializer);
+        if let Some(initializer) = &declarator.init {
+            if let BindingPattern::BindingIdentifier(binding) = &declarator.id
+                && let Some(root) = binding.symbol_id.get()
+            {
+                self.collect_initializer(StaticAliasPath::root(root), initializer);
+            } else if let Some(source) = static_alias_source_path(self.scoping, initializer) {
+                self.collect_pattern_initializer(&declarator.id, &source);
+            }
         }
         walk_variable_declarator(self, declarator);
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-        self.invalidate_place(planned_assignment_target_place(
-            self.scoping,
-            &assignment.left,
-        ));
+        let place = planned_assignment_target_place(self.scoping, &assignment.left);
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+        self.invalidate_place(place.clone());
+        if assignment.operator == OxcAssignmentOperator::Assign
+            && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
+        {
+            self.collect_initializer(path, &assignment.right);
+        } else if assignment.operator == OxcAssignmentOperator::Assign
+            && let Some(source) = static_alias_source_path(self.scoping, &assignment.right)
+        {
+            self.collect_assignment_target_initializer(&assignment.left, &source);
+        }
     }
 
     fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
@@ -9725,7 +9858,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        if let Some(callee) = static_alias_source_path(self.scoping, &call.callee)
+        let reflective_mutation = if let Some(callee) =
+            static_alias_source_path(self.scoping, &call.callee)
             && let Some(target) = call
                 .arguments
                 .first()
@@ -9737,14 +9871,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .get(1)
                 .and_then(|argument| argument.as_expression())
                 .and_then(static_member_name);
-            self.reflective_mutations
-                .push(ReflectiveMemberMutationFact {
-                    callee,
-                    target,
-                    key,
-                });
-        }
+            Some(ReflectiveMemberMutationFact {
+                callee: resolve_static_alias_path(&self.aliases, &callee),
+                target: resolve_static_alias_path(&self.aliases, &target),
+                key,
+            })
+        } else {
+            None
+        };
         walk_call_expression(self, call);
+        if let Some(mutation) = reflective_mutation {
+            self.reflective_mutations.push(mutation);
+        }
     }
 }
 
