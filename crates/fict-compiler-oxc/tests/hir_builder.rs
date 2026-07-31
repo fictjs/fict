@@ -4424,6 +4424,16 @@ fn class_instance_method_invocations_propagate_local_effects() {
             "helper.mutate(values);",
         ),
         (
+            "dynamic class instance field",
+            "const method = 'mutate'; class Helper { [method] = target => { target.forEach = null; }; } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "dynamic class instance method",
+            "const method = 'mutate'; class Helper { [method](target) { target.forEach = null; } } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
             "conditional replacement constructor result",
             "class Helper { constructor(choose) { if (choose) return { mutate(target) { target.forEach = null; } }; return { mutate(target) { return target.length; } }; } } const helper = new Helper(true);",
             "helper.mutate(values);",

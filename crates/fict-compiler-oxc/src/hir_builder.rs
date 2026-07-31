@@ -2060,6 +2060,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_class_instance_fields: BTreeMap::new(),
             local_class_instance_callables: BTreeMap::new(),
             open_local_class_instance_fields: BTreeSet::new(),
+            closed_replacement_class_instances: BTreeSet::new(),
             transient_callable_alias_targets: BTreeSet::new(),
             local_bound_callables: BTreeMap::new(),
             local_bound_callable_history: BTreeMap::new(),
@@ -10816,6 +10817,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_class_instance_callables:
         BTreeMap<StaticAliasPath, BTreeMap<String, LocalClassInstanceCallable>>,
     open_local_class_instance_fields: BTreeSet<StaticAliasPath>,
+    closed_replacement_class_instances: BTreeSet<StaticAliasPath>,
     transient_callable_alias_targets: BTreeSet<StaticAliasPath>,
     local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
     local_bound_callable_history: BTreeMap<StaticAliasPath, Vec<LocalBoundCallable>>,
@@ -11635,6 +11637,7 @@ impl StaticHookAliasCollector<'_> {
         self.local_class_instance_fields.remove(target);
         self.local_class_instance_callables.remove(target);
         self.open_local_class_instance_fields.remove(target);
+        self.closed_replacement_class_instances.remove(target);
         let replacement_object = class_guaranteed_returned_object(class);
         let preserves_instance = Self::class_preserves_instance_prototype(class);
         if preserves_instance || replacement_object.is_some() {
@@ -11644,6 +11647,10 @@ impl StaticHookAliasCollector<'_> {
         }
         if replacement_object.is_some() || !preserves_instance {
             self.open_local_class_instance_fields.insert(target.clone());
+        }
+        if replacement_object.is_some() {
+            self.closed_replacement_class_instances
+                .insert(target.clone());
         }
         if replacement_object.is_none()
             && let Some(super_class) = &class.super_class
@@ -11692,6 +11699,9 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             let Some(name) = method.key.static_name() else {
+                if !method.r#static {
+                    self.open_local_class_instance_fields.insert(target.clone());
+                }
                 continue;
             };
             let method_target = if method.r#static {
@@ -11795,6 +11805,9 @@ impl StaticHookAliasCollector<'_> {
             .cloned()
             .unwrap_or_default();
         let open_fields = self.open_local_class_instance_fields.contains(&class);
+        if open_fields && !self.closed_replacement_class_instances.contains(&class) {
+            self.open_structured_containers.insert(target.clone());
+        }
         let methods = self
             .local_callable_parameters
             .keys()
@@ -13601,6 +13614,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.starts_with(path));
         self.open_local_class_instance_fields
             .retain(|target| !target.starts_with(path));
+        self.closed_replacement_class_instances
+            .retain(|target| !target.starts_with(path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(path));
         self.default_derived_constructors
@@ -13623,6 +13638,8 @@ impl StaticHookAliasCollector<'_> {
         self.local_class_instance_callables
             .retain(|target, _| !target.starts_with(&path));
         self.open_local_class_instance_fields
+            .retain(|target| !target.starts_with(&path));
+        self.closed_replacement_class_instances
             .retain(|target| !target.starts_with(&path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(&path));
@@ -16043,6 +16060,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
             .collect::<Vec<_>>();
+        let outer_closed_replacement_class_instances = self
+            .closed_replacement_class_instances
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
         let outer_local_bound_callables = self
             .local_bound_callables
             .iter()
@@ -16147,6 +16170,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         });
         self.open_local_class_instance_fields
             .extend(outer_open_local_class_instance_fields);
+        self.closed_replacement_class_instances.retain(|target| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.closed_replacement_class_instances
+            .extend(outer_closed_replacement_class_instances);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
@@ -16231,6 +16263,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         let outer_open_local_class_instance_fields = self
             .open_local_class_instance_fields
+            .iter()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        let outer_closed_replacement_class_instances = self
+            .closed_replacement_class_instances
             .iter()
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
@@ -16336,6 +16374,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         });
         self.open_local_class_instance_fields
             .extend(outer_open_local_class_instance_fields);
+        self.closed_replacement_class_instances.retain(|target| {
+            target
+                .binding_root()
+                .and_then(|root| binding_owner_depths.get(&root).copied())
+                .unwrap_or(0)
+                >= depth
+        });
+        self.closed_replacement_class_instances
+            .extend(outer_closed_replacement_class_instances);
         let changed_outer_targets = self
             .local_bound_callables
             .keys()
