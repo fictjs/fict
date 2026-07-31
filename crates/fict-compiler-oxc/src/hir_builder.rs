@@ -12069,7 +12069,7 @@ impl StaticHookAliasCollector<'_> {
             let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
             let (raw_target, target) = self.intact_function_apply_target(&raw_callee, &callee)?;
             let invocation = LocalInvocationFact {
-                parameters: self.local_callable_parameters.get(&target).cloned(),
+                parameters: self.current_invocation_parameters(&raw_target, &target),
                 arguments: local_arguments,
                 argument_offset: 0,
                 raw_callee: Some(raw_target),
@@ -12126,6 +12126,16 @@ impl StaticHookAliasCollector<'_> {
             .unwrap_or_default()
     }
 
+    fn current_invocation_parameters(
+        &self,
+        raw_callee: &StaticAliasPath,
+        callee: &StaticAliasPath,
+    ) -> Option<Vec<LocalCallableParameter>> {
+        (!self.path_requires_historical_aliases(raw_callee, self.function_depth))
+            .then(|| self.local_callable_parameters.get(callee).cloned())
+            .flatten()
+    }
+
     fn local_invocation_fact_from_arguments(
         &self,
         callee: &Expression<'_>,
@@ -12158,7 +12168,7 @@ impl StaticHookAliasCollector<'_> {
                 self.intact_function_call_target(&raw_callee, &resolved_callee)
             {
                 let invocation = LocalInvocationFact {
-                    parameters: self.local_callable_parameters.get(&target).cloned(),
+                    parameters: self.current_invocation_parameters(&raw_target, &target),
                     arguments,
                     argument_offset: 1,
                     raw_callee: Some(raw_target),
@@ -12174,10 +12184,7 @@ impl StaticHookAliasCollector<'_> {
                 return Some(self.with_current_bound_callable(invocation, &target));
             }
             let invocation = LocalInvocationFact {
-                parameters: self
-                    .local_callable_parameters
-                    .get(&resolved_callee)
-                    .cloned(),
+                parameters: self.current_invocation_parameters(&raw_callee, &resolved_callee),
                 arguments,
                 argument_offset: 0,
                 raw_callee: Some(raw_callee),
@@ -12215,6 +12222,11 @@ impl StaticHookAliasCollector<'_> {
         invocation: LocalInvocationFact,
         target: &StaticAliasPath,
     ) -> LocalInvocationFact {
+        if invocation.raw_callee.as_ref().is_some_and(|raw_callee| {
+            self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
+        }) {
+            return invocation;
+        }
         if let Some(bound) = self.local_bound_callables.get(target) {
             return Self::with_bound_callable(invocation, bound);
         }

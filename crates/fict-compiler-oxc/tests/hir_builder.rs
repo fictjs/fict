@@ -4051,6 +4051,101 @@ fn class_method_invocations_propagate_local_effects() {
 }
 
 #[test]
+fn invoked_callable_replacements_propagate_local_effects() {
+    for (name, helper, invocation) in [
+        (
+            "ordinary callable",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run = inspect; function replace() { run = mutate; } replace();",
+            "run(values);",
+        ),
+        (
+            "arrow replacement",
+            "const inspect = target => target.length; const mutate = target => { target.forEach = null; }; let run = inspect; const replace = () => { run = mutate; }; replace();",
+            "run(values);",
+        ),
+        (
+            "aliased replacement invocation",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run = inspect; function replace() { run = mutate; } const configure = replace; configure();",
+            "run(values);",
+        ),
+        (
+            "call indirection",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run = inspect; function replace() { run = mutate; } replace();",
+            "run.call(null, values);",
+        ),
+        (
+            "apply indirection",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run = inspect; function replace() { run = mutate; } replace();",
+            "run.apply(null, [values]);",
+        ),
+        (
+            "Reflect.apply indirection",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run = inspect; function replace() { run = mutate; } replace();",
+            "Reflect.apply(run, null, [values]);",
+        ),
+        (
+            "bound callable",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run = inspect.bind(null); function replace() { run = mutate.bind(null); } replace();",
+            "run(values);",
+        ),
+        (
+            "dynamic receiver",
+            "function inspect() { return this.length; } function mutate() { this.forEach = null; } let run = inspect; function replace() { run = mutate; } replace();",
+            "run.call(values);",
+        ),
+        (
+            "constructor",
+            "function Inspect(target) { this.length = target.length; } function Mutate(target) { target.forEach = null; } let Make = Inspect; function replace() { Make = Mutate; } replace();",
+            "new Make(values);",
+        ),
+        (
+            "template tag",
+            "function inspect(strings, target) { return target.length; } function mutate(strings, target) { target.forEach = null; } let run = inspect; function replace() { run = mutate; } replace();",
+            "run`${values}`;",
+        ),
+        (
+            "generator replaced by eager callable",
+            "function* inspect(target) { target.forEach = null; } function mutate(target) { target.forEach = null; } let run = inspect; function replace() { run = mutate; } replace();",
+            "run(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: diagnostics={:?}",
+            output.diagnostics
+        );
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn alias_slot_replacements_preserve_previous_receiver_methods() {
     for (name, operation) in [
         ("direct assignment", "box.target = [];"),
