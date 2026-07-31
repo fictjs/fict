@@ -2714,6 +2714,68 @@ fn builtin_escape_exemptions_reject_overridden_methods() {
 }
 
 #[test]
+fn safe_global_escape_exemptions_reject_overridden_calls() {
+    for (name, source, expected_span, expected_code) in [
+        (
+            "overridden global converter",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    String = sink;
+                    return String(() => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "overridden array factory",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    Array.from = sink;
+                    return Array.from([1], () => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "reflectively overridden serializer",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const rows = $state([{ done: false }]);
+                    Reflect.set(JSON, 'stringify', sink);
+                    return JSON.stringify(rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == expected_code
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected {expected_code} on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn state_method_proofs_reject_authored_builtin_overrides() {
     for (name, source, expected_span) in [
         (

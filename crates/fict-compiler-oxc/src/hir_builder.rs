@@ -10336,7 +10336,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if store
             || macro_kind.is_some()
             || fact.runtime_creation_kind == Some(RuntimeReactiveCreationKind::NamespaceMemo)
-            || is_safe_global_call(self.scoping, &call.callee)
+            || is_safe_global_call(self.scoping, self.callback_aliases, &call.callee)
         {
             return;
         }
@@ -11033,14 +11033,18 @@ impl<'a> Visit<'a> for RetainedReactiveIdentityCollector<'_, '_> {
     }
 }
 
-fn is_safe_global_call(scoping: &Scoping, callee: &Expression<'_>) -> bool {
+fn is_safe_global_call(
+    scoping: &Scoping,
+    aliases: &StaticHookAliases,
+    callee: &Expression<'_>,
+) -> bool {
     let unresolved = |identifier: &IdentifierReference<'_>| {
         identifier
             .reference_id
             .get()
             .is_some_and(|reference| scoping.get_reference(reference).symbol_id().is_none())
     };
-    match unwrap_transparent_call_expression(callee) {
+    let safe = match unwrap_transparent_call_expression(callee) {
         Expression::Identifier(identifier) => {
             unresolved(identifier)
                 && matches!(
@@ -11104,7 +11108,10 @@ fn is_safe_global_call(scoping: &Scoping, callee: &Expression<'_>) -> bool {
             )
         }
         _ => false,
-    }
+    };
+    safe
+        && static_alias_source_path(scoping, callee)
+            .is_some_and(|path| aliases.path_is_intact(&path))
 }
 
 struct DynamicReactivePropertyCollector<'semantic, 'reactive> {
