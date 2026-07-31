@@ -3891,6 +3891,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "class Helper { *inspect() { values.forEach = null; } } const helper = new Helper(); const first = helper; const second = first;",
             "second.inspect();",
         ),
+        (
+            "unadvanced aliased class constructor generator capture",
+            "class Helper { *inspect() { values.forEach = null; } } const Alias = Helper; const helper = new Alias();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced aliased class constructor generator field capture",
+            "class Helper { inspect = function* () { values.forEach = null; }; } const Alias = Helper; const helper = new Alias();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced chained class constructor alias capture",
+            "class Helper { *inspect() { values.forEach = null; } } const First = Helper; const Second = First;",
+            "new Second().inspect();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -4048,6 +4063,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "aliased class instance generator field capture advance",
             "class Helper { mutate = function* () { values.forEach = null; }; } const helper = new Helper(); const alias = helper;",
             "alias.mutate().next();",
+        ),
+        (
+            "aliased class constructor generator capture advance",
+            "class Helper { *mutate() { values.forEach = null; } } const Alias = Helper; const helper = new Alias();",
+            "helper.mutate().next();",
+        ),
+        (
+            "aliased class constructor generator field capture advance",
+            "class Helper { mutate = function* () { values.forEach = null; }; } const Alias = Helper;",
+            "new Alias().mutate().next();",
+        ),
+        (
+            "mixed original and aliased class constructors",
+            "class Helper { *mutate() { values.forEach = null; } } const Alias = Helper; const first = new Helper(); const second = new Alias(); first.mutate();",
+            "second.mutate().next();",
         ),
     ] {
         let source = format!(

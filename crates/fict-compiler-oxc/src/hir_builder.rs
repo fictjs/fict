@@ -10181,6 +10181,39 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.instance_generator_bodies.insert(target, bodies);
     }
 
+    fn record_forwarded_class_generator_bodies(
+        &mut self,
+        target: StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let Some((source, source_span)) = self.callable_reference(initializer) else {
+            return;
+        };
+        let bodies = self
+            .class_instance_generator_bodies
+            .get(&source)
+            .cloned()
+            .unwrap_or_default();
+        for (name, span) in &bodies {
+            let source_method = source
+                .clone()
+                .with_property("prototype".to_string())
+                .with_property(name.clone());
+            let target_method = target
+                .clone()
+                .with_property("prototype".to_string())
+                .with_property(name.clone());
+            self.generator_body_targets
+                .push((*span, target_method.clone()));
+            self.forwarded_callable_reads.push(ForwardedCallableRead {
+                source: source_method,
+                source_span,
+                target: target_method,
+            });
+        }
+        self.class_instance_generator_bodies.insert(target, bodies);
+    }
+
     fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
         if let Some((path, span)) = self.callable_reference(expression) {
             self.discarded_invocation_reads
@@ -10439,6 +10472,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
             if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
                 self.record_constructed_class_generator_bodies(target, expression);
             } else {
+                self.record_forwarded_class_generator_bodies(target.clone(), initializer);
                 self.record_forwarded_instance_generator_bodies(target, initializer);
             }
             if !self
