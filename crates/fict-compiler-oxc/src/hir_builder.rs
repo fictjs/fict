@@ -2050,6 +2050,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_callable_parameter_history: BTreeMap::new(),
             local_bound_callables: BTreeMap::new(),
             local_bound_callable_history: BTreeMap::new(),
+            default_derived_constructors: BTreeMap::new(),
+            default_derived_constructor_history: BTreeMap::new(),
             unreferenced_callable_spans: BTreeSet::new(),
             local_invocations: Vec::new(),
             attached_callable_parameters: BTreeSet::new(),
@@ -9914,6 +9916,10 @@ struct StaticHookAliasCollector<'semantic> {
     local_callable_parameter_history: BTreeMap<StaticAliasPath, Vec<Vec<LocalCallableParameter>>>,
     local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
     local_bound_callable_history: BTreeMap<StaticAliasPath, Vec<LocalBoundCallable>>,
+    default_derived_constructors:
+        BTreeMap<StaticAliasPath, Vec<DefaultDerivedConstructorAlternative>>,
+    default_derived_constructor_history:
+        BTreeMap<StaticAliasPath, Vec<Vec<DefaultDerivedConstructorAlternative>>>,
     unreferenced_callable_spans: BTreeSet<(u32, u32)>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
@@ -9986,6 +9992,19 @@ struct LocalBoundCallable {
     arguments: Vec<LocalInvocationArgumentSegment>,
     receiver: Vec<LocalInvocationArgument>,
     unknown: bool,
+}
+
+#[derive(Clone)]
+enum DefaultDerivedConstructorAlternative {
+    Resolved(LocalBoundCallable),
+    Pending {
+        source: StaticAliasPath,
+        arguments: Vec<LocalInvocationArgumentSegment>,
+        parameter_history_offset: usize,
+        bound_history_offset: usize,
+        historical: bool,
+        unknown: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -10512,6 +10531,241 @@ impl StaticHookAliasCollector<'_> {
                     .then(|| Self::local_callable_parameters(&method.value.params))
             })
             .unwrap_or_default()
+    }
+
+    fn class_has_explicit_constructor(class: &Class<'_>) -> bool {
+        class.body.body.iter().any(|element| {
+            matches!(
+                element,
+                ClassElement::MethodDefinition(method)
+                    if method.kind == MethodDefinitionKind::Constructor
+            )
+        })
+    }
+
+    fn default_derived_path_alternatives(
+        &self,
+        raw_source: StaticAliasPath,
+    ) -> Vec<DefaultDerivedConstructorAlternative> {
+        let resolved_source = resolve_static_alias_path(&self.aliases, &raw_source);
+        let historical = [&raw_source, &resolved_source]
+            .into_iter()
+            .any(|path| self.path_requires_historical_aliases(path, self.function_depth));
+        let sources = if historical {
+            resolve_historical_alias_paths(&self.alias_history, &raw_source)
+        } else {
+            BTreeSet::from([resolved_source])
+        };
+        let mut alternatives = Vec::new();
+        for source in sources {
+            let mut resolved = false;
+            if historical {
+                if let Some(bound) = self.local_bound_callable_history.get(&source) {
+                    alternatives.extend(
+                        bound
+                            .iter()
+                            .cloned()
+                            .map(DefaultDerivedConstructorAlternative::Resolved),
+                    );
+                    resolved = true;
+                } else if let Some(signatures) = self.local_callable_parameter_history.get(&source)
+                {
+                    alternatives.extend(signatures.iter().cloned().map(|parameters| {
+                        DefaultDerivedConstructorAlternative::Resolved(LocalBoundCallable {
+                            parameters,
+                            arguments: Vec::new(),
+                            receiver: Vec::new(),
+                            unknown: false,
+                        })
+                    }));
+                    resolved = true;
+                }
+            } else if let Some(bound) = self.local_bound_callables.get(&source) {
+                alternatives.push(DefaultDerivedConstructorAlternative::Resolved(
+                    bound.clone(),
+                ));
+                resolved = true;
+            } else if let Some(parameters) = self.local_callable_parameters.get(&source) {
+                alternatives.push(DefaultDerivedConstructorAlternative::Resolved(
+                    LocalBoundCallable {
+                        parameters: parameters.clone(),
+                        arguments: Vec::new(),
+                        receiver: Vec::new(),
+                        unknown: false,
+                    },
+                ));
+                resolved = true;
+            }
+            let aliased = self.alias_history.contains_key(&source);
+            let track_future = historical || (!resolved && !aliased);
+            if track_future {
+                alternatives.push(DefaultDerivedConstructorAlternative::Pending {
+                    parameter_history_offset: self
+                        .local_callable_parameter_history
+                        .get(&source)
+                        .map_or(0, Vec::len),
+                    bound_history_offset: self
+                        .local_bound_callable_history
+                        .get(&source)
+                        .map_or(0, Vec::len),
+                    unknown: self.constructor_path_may_mutate_arguments(&source),
+                    source,
+                    arguments: Vec::new(),
+                    historical,
+                });
+            }
+        }
+        alternatives
+    }
+
+    fn default_derived_bind_alternatives(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<Vec<DefaultDerivedConstructorAlternative>> {
+        if call.optional {
+            return None;
+        }
+        let mut alternatives =
+            if let Some(raw_callee) = static_alias_source_path(self.scoping, &call.callee) {
+                let resolved_callee = resolve_static_alias_path(&self.aliases, &raw_callee);
+                let (raw_source, _) =
+                    self.intact_function_bind_target(&raw_callee, &resolved_callee)?;
+                self.default_derived_path_alternatives(raw_source)
+            } else {
+                if !self.path_is_currently_intact(
+                    &StaticAliasPath::unresolved_global("Function".to_string())
+                        .with_property("prototype".to_string())
+                        .with_property("bind".to_string()),
+                ) {
+                    return None;
+                }
+                let (object, method) = match unwrap_transparent_call_expression(&call.callee) {
+                    Expression::StaticMemberExpression(member) => {
+                        (&member.object, member.property.name.to_string())
+                    }
+                    Expression::ComputedMemberExpression(member) => {
+                        (&member.object, static_member_name(&member.expression)?)
+                    }
+                    _ => return None,
+                };
+                if method != "bind" {
+                    return None;
+                }
+                self.default_derived_constructor_alternatives(object)
+            };
+        if alternatives.is_empty() {
+            return None;
+        }
+        let added_arguments =
+            self.collect_local_invocation_arguments(call.arguments.get(1..).unwrap_or_default());
+        for alternative in &mut alternatives {
+            match alternative {
+                DefaultDerivedConstructorAlternative::Resolved(callable) => {
+                    callable.arguments.extend(added_arguments.clone());
+                }
+                DefaultDerivedConstructorAlternative::Pending { arguments, .. } => {
+                    arguments.extend(added_arguments.clone());
+                }
+            }
+        }
+        Some(alternatives)
+    }
+
+    fn default_derived_constructor_alternatives(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Vec<DefaultDerivedConstructorAlternative> {
+        if let Some(source) = static_alias_source_path(self.scoping, expression) {
+            return self.default_derived_path_alternatives(source);
+        }
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) if !function.generator => {
+                vec![DefaultDerivedConstructorAlternative::Resolved(
+                    LocalBoundCallable {
+                        parameters: Self::local_callable_parameters(&function.params),
+                        arguments: Vec::new(),
+                        receiver: Vec::new(),
+                        unknown: false,
+                    },
+                )]
+            }
+            Expression::ClassExpression(class) => {
+                if Self::class_has_explicit_constructor(class) {
+                    vec![DefaultDerivedConstructorAlternative::Resolved(
+                        LocalBoundCallable {
+                            parameters: Self::class_constructor_parameters(class),
+                            arguments: Vec::new(),
+                            receiver: Vec::new(),
+                            unknown: false,
+                        },
+                    )]
+                } else {
+                    class
+                        .super_class
+                        .as_ref()
+                        .map_or_else(Vec::new, |super_class| {
+                            self.default_derived_constructor_alternatives(super_class)
+                        })
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                let mut alternatives =
+                    self.default_derived_constructor_alternatives(&expression.consequent);
+                alternatives
+                    .extend(self.default_derived_constructor_alternatives(&expression.alternate));
+                alternatives
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut alternatives =
+                    self.default_derived_constructor_alternatives(&expression.left);
+                alternatives
+                    .extend(self.default_derived_constructor_alternatives(&expression.right));
+                alternatives
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .map_or_else(Vec::new, |value| {
+                    self.default_derived_constructor_alternatives(value)
+                }),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.default_derived_constructor_alternatives(&expression.right)
+            }
+            Expression::CallExpression(call) => self
+                .default_derived_bind_alternatives(call)
+                .unwrap_or_else(|| {
+                    vec![DefaultDerivedConstructorAlternative::Resolved(
+                        LocalBoundCallable {
+                            parameters: Vec::new(),
+                            arguments: Vec::new(),
+                            receiver: Vec::new(),
+                            unknown: true,
+                        },
+                    )]
+                }),
+            _ => Vec::new(),
+        }
+    }
+
+    fn record_default_derived_constructor(&mut self, target: StaticAliasPath, class: &Class<'_>) {
+        if Self::class_has_explicit_constructor(class) {
+            return;
+        }
+        let Some(super_class) = &class.super_class else {
+            return;
+        };
+        let alternatives = self.default_derived_constructor_alternatives(super_class);
+        if alternatives.is_empty() {
+            return;
+        }
+        self.default_derived_constructor_history
+            .entry(target.clone())
+            .or_default()
+            .push(alternatives.clone());
+        self.default_derived_constructors
+            .insert(target, alternatives);
     }
 
     fn inline_callable_parameters(
@@ -11838,12 +12092,16 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(path));
+        self.default_derived_constructors
+            .retain(|target, _| !target.overlaps(path));
     }
 
     fn mark_alias_target_ambiguous(&mut self, path: StaticAliasPath) {
         self.local_callable_parameters
             .retain(|target, _| !target.overlaps(&path));
         self.local_bound_callables
+            .retain(|target, _| !target.overlaps(&path));
+        self.default_derived_constructors
             .retain(|target, _| !target.overlaps(&path));
         self.ambiguous_alias_targets.insert(path);
     }
@@ -12008,7 +12266,8 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         value: &Expression<'_>,
     ) -> bool {
-        let parameters = match value.get_inner_expression() {
+        let inner = value.get_inner_expression();
+        let parameters = match inner {
             Expression::FunctionExpression(function) => {
                 Self::local_callable_parameters(&function.params)
             }
@@ -12020,6 +12279,9 @@ impl StaticHookAliasCollector<'_> {
         };
         self.record_unreferenced_callable_initializer(&target, value);
         self.record_local_callable_signature(target.clone(), parameters);
+        if let Expression::ClassExpression(class) = inner {
+            self.record_default_derived_constructor(target.clone(), class);
+        }
         let Some(paths) = self.returned_function_paths(value) else {
             return true;
         };
@@ -13135,16 +13397,23 @@ impl StaticHookAliasCollector<'_> {
         let Some(path) = static_alias_source_path(self.scoping, callee) else {
             return false;
         };
-        let resolved = resolve_static_alias_path(&self.aliases, &path);
+        self.constructor_path_may_mutate_arguments(&path)
+    }
+
+    fn constructor_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
+        let resolved = resolve_static_alias_path(&self.aliases, path);
         if matches!(
             (&resolved.root, resolved.properties.as_slice()),
             (StaticAliasRoot::UnresolvedGlobal(root), [])
                 if classify_builtin_state_receiver_name(root).is_some()
-        ) && self.path_is_currently_intact(&path)
+        ) && self.path_is_currently_intact(path)
         {
             return false;
         }
-        self.callee_may_mutate_arguments(callee)
+        if self.intact_function_bind_target(path, &resolved).is_some() {
+            return false;
+        }
+        self.callable_path_may_mutate_arguments(path)
     }
 
     fn collect_exposed_argument_paths(
@@ -13400,12 +13669,114 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn materialize_default_derived_alternative(
+        &self,
+        alternative: &DefaultDerivedConstructorAlternative,
+    ) -> Vec<LocalBoundCallable> {
+        let (
+            source,
+            arguments,
+            parameter_history_offset,
+            bound_history_offset,
+            historical,
+            unknown,
+        ) = match alternative {
+            DefaultDerivedConstructorAlternative::Resolved(callable) => {
+                return vec![callable.clone()];
+            }
+            DefaultDerivedConstructorAlternative::Pending {
+                source,
+                arguments,
+                parameter_history_offset,
+                bound_history_offset,
+                historical,
+                unknown,
+            } => (
+                source,
+                arguments,
+                parameter_history_offset,
+                bound_history_offset,
+                historical,
+                unknown,
+            ),
+        };
+        let sources = if *historical {
+            resolve_historical_alias_paths(&self.alias_history, source)
+        } else {
+            BTreeSet::from([source.clone()])
+        };
+        let mut callables = Vec::new();
+        for source in sources {
+            let bound_offset = if *historical {
+                0
+            } else {
+                *bound_history_offset
+            };
+            if let Some(bound) = self.local_bound_callable_history.get(&source) {
+                callables.extend(bound.iter().skip(bound_offset).cloned());
+            }
+            let parameter_offset = if *historical {
+                0
+            } else {
+                *parameter_history_offset
+            };
+            if let Some(signatures) = self.local_callable_parameter_history.get(&source) {
+                callables.extend(signatures.iter().skip(parameter_offset).cloned().map(
+                    |parameters| LocalBoundCallable {
+                        parameters,
+                        arguments: Vec::new(),
+                        receiver: Vec::new(),
+                        unknown: false,
+                    },
+                ));
+            }
+        }
+        if callables.is_empty() && *unknown {
+            callables.push(LocalBoundCallable {
+                parameters: Vec::new(),
+                arguments: Vec::new(),
+                receiver: Vec::new(),
+                unknown: true,
+            });
+        }
+        for callable in &mut callables {
+            callable.arguments.extend(arguments.clone());
+        }
+        callables
+    }
+
+    fn default_derived_invocation_variants(
+        &self,
+        invocation: &LocalInvocationFact,
+    ) -> Vec<LocalInvocationFact> {
+        let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
+            self.path_requires_historical_aliases(callee, invocation.function_depth)
+        });
+        let mut alternatives = Vec::new();
+        for callee in self.invocation_callees(invocation) {
+            if historical {
+                if let Some(history) = self.default_derived_constructor_history.get(&callee) {
+                    alternatives.extend(history.iter().flatten().cloned());
+                }
+            } else if let Some(current) = self.default_derived_constructors.get(&callee) {
+                alternatives.extend(current.iter().cloned());
+            }
+        }
+        alternatives
+            .iter()
+            .flat_map(|alternative| self.materialize_default_derived_alternative(alternative))
+            .map(|callable| Self::with_bound_callable(invocation.clone(), &callable))
+            .collect()
+    }
+
     fn bound_invocation_variants(
         &self,
         invocation: LocalInvocationFact,
     ) -> Vec<LocalInvocationFact> {
+        let mut variants = self.default_derived_invocation_variants(&invocation);
         if invocation.parameters.is_some() {
-            return vec![invocation];
+            variants.push(invocation);
+            return variants;
         }
         let alternatives = self
             .invocation_callees(&invocation)
@@ -13418,12 +13789,15 @@ impl StaticHookAliasCollector<'_> {
             })
             .collect::<Vec<_>>();
         if alternatives.is_empty() {
-            return vec![invocation];
+            variants.push(invocation);
+            return variants;
         }
-        alternatives
-            .iter()
-            .map(|bound| Self::with_bound_callable(invocation.clone(), bound))
-            .collect()
+        variants.extend(
+            alternatives
+                .iter()
+                .map(|bound| Self::with_bound_callable(invocation.clone(), bound)),
+        );
+        variants
     }
 
     fn propagate_local_invocation_invalidations(&mut self) {
@@ -13827,6 +14201,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 StaticAliasPath::root(symbol),
                 Self::class_constructor_parameters(class),
             );
+            self.record_default_derived_constructor(StaticAliasPath::root(symbol), class);
         }
         oxc::ast_visit::walk::walk_class(self, class);
     }

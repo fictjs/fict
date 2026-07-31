@@ -4841,6 +4841,86 @@ fn local_constructors_propagate_parameter_invalidations() {
             "function inner(target) { target.forEach = null; } class Mutate { constructor(target) { inner(target); } }",
             "new Mutate(values);",
         ),
+        (
+            "default derived constructor",
+            "function Base(target) { target.forEach = null; } class Mutate extends Base {}",
+            "new Mutate(values);",
+        ),
+        (
+            "default derived class constructor",
+            "class Base { constructor(target) { target.forEach = null; } } class Mutate extends Base {}",
+            "new Mutate(values);",
+        ),
+        (
+            "aliased default derived constructor",
+            "function Base(target) { target.forEach = null; } const Alias = Base; class Mutate extends Alias {}",
+            "new Mutate(values);",
+        ),
+        (
+            "default derived class expression",
+            "function Base(target) { target.forEach = null; } const Mutate = class extends Base {};",
+            "new Mutate(values);",
+        ),
+        (
+            "inline default derived base",
+            "const Mutate = class extends (class { constructor(target) { target.forEach = null; } }) {};",
+            "new Mutate(values);",
+        ),
+        (
+            "nested inline default derived base",
+            "function Base(target) { target.forEach = null; } const Mutate = class extends (class extends Base {}) {};",
+            "new Mutate(values);",
+        ),
+        (
+            "bound default derived base",
+            "function Base(prefix, target) { target.forEach = null; } const Partial = Base.bind(null, 0); class Mutate extends Partial {}",
+            "new Mutate(values);",
+        ),
+        (
+            "inline bound default derived base",
+            "function Base(prefix, target) { target.forEach = null; } class Mutate extends Base.bind(null, 0) {}",
+            "new Mutate(values);",
+        ),
+        (
+            "computed inline bound default derived base",
+            "function Base(prefix, target) { target.forEach = null; } class Mutate extends Base['bind'](null, 0) {}",
+            "new Mutate(values);",
+        ),
+        (
+            "forward default derived base",
+            "class Mutate extends Base {} function Base(target) { target.forEach = null; }",
+            "new Mutate(values);",
+        ),
+        (
+            "captured default derived base",
+            "let Base = function (target) { target.forEach = null; }; class Mutate extends Base {} Base = function (target) { return target.length; };",
+            "new Mutate(values);",
+        ),
+        (
+            "rest default derived base",
+            "function Base(...targets) { targets[0].forEach = null; } class Mutate extends Base {}",
+            "new Mutate(...[values]);",
+        ),
+        (
+            "conditional default derived base",
+            "function MutateBase(target) { target.forEach = null; } function InspectBase(target) { return target.length; } const Base = choose ? MutateBase : InspectBase; class Mutate extends Base {}",
+            "new Mutate(values);",
+        ),
+        (
+            "inline conditional default derived base",
+            "function MutateBase(target) { target.forEach = null; } function InspectBase(target) { return target.length; } class Mutate extends (choose ? MutateBase : InspectBase) {}",
+            "new Mutate(values);",
+        ),
+        (
+            "reflect construct default derived constructor",
+            "function Base(target) { target.forEach = null; } class Mutate extends Base {}",
+            "Reflect.construct(Mutate, [values]);",
+        ),
+        (
+            "dynamic default derived base",
+            "class Mutate extends getBase() {}",
+            "new Mutate(values);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -4921,6 +5001,91 @@ fn pure_local_constructors_preserve_receiver_methods() {
             output.diagnostics
         );
     }
+}
+
+#[test]
+fn pure_default_derived_constructors_preserve_receiver_methods() {
+    for (name, constructor) in [
+        (
+            "read-only base",
+            "function Base(target) { return target.length; } class Inspect extends Base {}",
+        ),
+        (
+            "forward read-only base",
+            "class Inspect extends Base {} function Base(target) { return target.length; }",
+        ),
+        (
+            "captured read-only base",
+            "let Base = function (target) { return target.length; }; class Inspect extends Base {} Base = function (target) { target.forEach = null; };",
+        ),
+        (
+            "base class without constructor",
+            "class Base {} class Inspect extends Base {}",
+        ),
+        ("safe builtin base", "class Inspect extends Array {}"),
+        (
+            "explicit derived constructor",
+            "function Base(target) { target.forEach = null; } class Inspect extends Base { constructor(target) { super([]); this.length = target.length; } }",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {constructor}
+                    new Inspect(values);
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn external_default_derived_constructors_expose_forwarded_arguments() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(External) {
+            const count = $state(0);
+            const values = [];
+            class Mutate extends External {}
+            new Mutate(values);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_none(), "expected a hard diagnostic");
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
+                && diagnostic.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize] == "() => count"
+                })
+        }),
+        "expected FICT-R005 on callback, got {:?}",
+        output.diagnostics
+    );
 }
 
 #[test]
