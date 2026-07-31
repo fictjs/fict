@@ -9889,18 +9889,18 @@ struct GeneratorExecutionProof {
 }
 
 struct ForwardedCallableRead {
-    source: SymbolId,
+    source: StaticAliasPath,
     source_span: (u32, u32),
-    target: SymbolId,
+    target: StaticAliasPath,
 }
 
 struct GeneratorExecutionCollector<'semantic> {
     scoping: &'semantic Scoping,
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
-    discarded_invocation_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    discarded_invocation_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
-    forwarding_targets: BTreeSet<SymbolId>,
-    generator_body_targets: Vec<((u32, u32), SymbolId)>,
+    forwarding_targets: BTreeSet<StaticAliasPath>,
+    generator_body_targets: Vec<((u32, u32), StaticAliasPath)>,
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
 }
@@ -9919,10 +9919,30 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
-    fn identifier_symbol(&self, identifier: &IdentifierReference<'_>) -> Option<SymbolId> {
-        self.scoping
-            .get_reference(identifier.reference_id.get()?)
-            .symbol_id()
+    fn callable_reference(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<(StaticAliasPath, (u32, u32))> {
+        let path = static_alias_source_path(self.scoping, expression)?;
+        Some((path, Self::root_identifier_span(expression)?))
+    }
+
+    fn root_identifier_span(expression: &Expression<'_>) -> Option<(u32, u32)> {
+        match unwrap_transparent_call_expression(expression) {
+            Expression::Identifier(identifier) => {
+                Some((identifier.span.start, identifier.span.end))
+            }
+            Expression::StaticMemberExpression(member) => {
+                Self::root_identifier_span(&member.object)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                Self::root_identifier_span(&member.object)
+            }
+            Expression::PrivateFieldExpression(member) => {
+                Self::root_identifier_span(&member.object)
+            }
+            _ => None,
+        }
     }
 
     fn generator_body_span(function: &Function<'_>) -> Option<(u32, u32)> {
@@ -9933,16 +9953,64 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .map(|body| (body.span.start, body.span.end))
     }
 
-    fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
-        match expression {
-            Expression::Identifier(identifier) => {
-                if let Some(symbol) = self.identifier_symbol(identifier) {
-                    self.discarded_invocation_reads
-                        .entry(symbol)
-                        .or_default()
-                        .insert((identifier.span.start, identifier.span.end));
+    fn record_class_generator_bodies(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
+        if !class.decorators.is_empty() {
+            return;
+        }
+        for element in &class.body.body {
+            match element {
+                ClassElement::MethodDefinition(method)
+                    if method.kind == MethodDefinitionKind::Method
+                        && method.decorators.is_empty()
+                        && !matches!(&method.key, OxcPropertyKey::PrivateIdentifier(_)) =>
+                {
+                    let (Some(name), Some(span)) = (
+                        method.key.static_name(),
+                        Self::generator_body_span(&method.value),
+                    ) else {
+                        continue;
+                    };
+                    let method_target = if method.r#static {
+                        target.clone()
+                    } else {
+                        target.clone().with_property("prototype".to_string())
+                    }
+                    .with_property(name.into_owned());
+                    self.generator_body_targets.push((span, method_target));
                 }
+                ClassElement::PropertyDefinition(property)
+                    if property.r#static
+                        && property.decorators.is_empty()
+                        && !matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) =>
+                {
+                    let (Some(name), Some(value)) = (property.key.static_name(), &property.value)
+                    else {
+                        continue;
+                    };
+                    let Expression::FunctionExpression(function) = value.get_inner_expression()
+                    else {
+                        continue;
+                    };
+                    let Some(span) = Self::generator_body_span(function) else {
+                        continue;
+                    };
+                    self.generator_body_targets
+                        .push((span, target.clone().with_property(name.into_owned())));
+                }
+                _ => {}
             }
+        }
+    }
+
+    fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
+        if let Some((path, span)) = self.callable_reference(expression) {
+            self.discarded_invocation_reads
+                .entry(path)
+                .or_default()
+                .insert(span);
+            return;
+        }
+        match expression {
             Expression::FunctionExpression(function) => {
                 if let Some(span) = Self::generator_body_span(function) {
                     self.directly_unexecuted_body_spans.insert(span);
@@ -10043,29 +10111,31 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
-    fn record_forwarded_callable(&mut self, target: SymbolId, expression: &Expression<'_>) {
-        self.forwarding_targets.insert(target);
+    fn record_forwarded_callable(&mut self, target: StaticAliasPath, expression: &Expression<'_>) {
+        self.forwarding_targets.insert(target.clone());
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            self.forwarded_callable_reads.push(ForwardedCallableRead {
+                source,
+                source_span,
+                target,
+            });
+            return;
+        }
         match expression {
-            Expression::Identifier(identifier) => {
-                if let Some(source) = self.identifier_symbol(identifier) {
-                    self.forwarded_callable_reads.push(ForwardedCallableRead {
-                        source,
-                        source_span: (identifier.span.start, identifier.span.end),
-                        target,
-                    });
-                }
-            }
             Expression::FunctionExpression(function) => {
                 if let Some(span) = Self::generator_body_span(function) {
                     self.generator_body_targets.push((span, target));
                 }
             }
+            Expression::ClassExpression(class) => {
+                self.record_class_generator_bodies(&target, class);
+            }
             Expression::ConditionalExpression(conditional) => {
-                self.record_forwarded_callable(target, &conditional.consequent);
+                self.record_forwarded_callable(target.clone(), &conditional.consequent);
                 self.record_forwarded_callable(target, &conditional.alternate);
             }
             Expression::LogicalExpression(logical) => {
-                self.record_forwarded_callable(target, &logical.left);
+                self.record_forwarded_callable(target.clone(), &logical.left);
                 self.record_forwarded_callable(target, &logical.right);
             }
             Expression::ParenthesizedExpression(parenthesized) => {
@@ -10100,36 +10170,39 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         candidates.extend(
             self.generator_body_targets
                 .iter()
-                .map(|(_, target)| *target),
+                .map(|(_, target)| target.clone()),
         );
         candidates.extend(
             self.forwarded_callable_reads
                 .iter()
-                .map(|forwarding| forwarding.source),
+                .map(|forwarding| forwarding.source.clone()),
         );
         let mut unexecuted = BTreeSet::new();
         loop {
             let mut changed = false;
-            for symbol in &candidates {
-                if unexecuted.contains(symbol) {
+            for path in &candidates {
+                if unexecuted.contains(path) {
                     continue;
                 }
-                let discarded = self.discarded_invocation_reads.get(symbol);
+                let Some(root) = path.binding_root() else {
+                    continue;
+                };
+                let discarded = self.discarded_invocation_reads.get(path);
                 let all_reads_are_nonexecuting = self
                     .binding_reads
-                    .get(symbol)
+                    .get(&root)
                     .into_iter()
                     .flatten()
                     .all(|span| {
                         discarded.is_some_and(|discarded| discarded.contains(span))
                             || self.forwarded_callable_reads.iter().any(|forwarding| {
-                                forwarding.source == *symbol
+                                forwarding.source == *path
                                     && forwarding.source_span == *span
                                     && unexecuted.contains(&forwarding.target)
                             })
                     });
                 if all_reads_are_nonexecuting {
-                    changed |= unexecuted.insert(*symbol);
+                    changed |= unexecuted.insert(path.clone());
                 }
             }
             if !changed {
@@ -10170,7 +10243,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
             && let BindingPattern::BindingIdentifier(binding) = &declarator.id
             && let Some(target) = binding.symbol_id.get()
         {
-            self.record_forwarded_callable(target, initializer);
+            self.record_forwarded_callable(StaticAliasPath::root(target), initializer);
             if !self
                 .scoping
                 .get_resolved_references(target)
@@ -10200,9 +10273,22 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                 .as_ref()
                 .and_then(|identifier| identifier.symbol_id.get())
         {
-            self.generator_body_targets.push((span, target));
+            self.generator_body_targets
+                .push((span, StaticAliasPath::root(target)));
         }
         walk_function(self, function, flags);
+    }
+
+    fn visit_class(&mut self, class: &Class<'a>) {
+        if class.r#type == ClassType::ClassDeclaration
+            && let Some(target) = class
+                .id
+                .as_ref()
+                .and_then(|identifier| identifier.symbol_id.get())
+        {
+            self.record_class_generator_bodies(&StaticAliasPath::root(target), class);
+        }
+        oxc::ast_visit::walk::walk_class(self, class);
     }
 }
 

@@ -3752,6 +3752,36 @@ fn pure_local_calls_preserve_receiver_methods() {
             "Helper.prototype.inspect.call(values);",
         ),
         (
+            "unadvanced class generator method capture",
+            "class Helper { *inspect() { values.forEach = null; } }",
+            "Helper.prototype.inspect();",
+        ),
+        (
+            "unadvanced class expression generator capture",
+            "const Helper = class { *inspect() { values.forEach = null; } };",
+            "Helper.prototype.inspect();",
+        ),
+        (
+            "unadvanced static generator method capture",
+            "class Helper { static *inspect() { values.forEach = null; } }",
+            "Helper.inspect();",
+        ),
+        (
+            "unadvanced aliased class generator capture",
+            "class Helper { *inspect() { values.forEach = null; } } const inspect = Helper.prototype.inspect;",
+            "inspect();",
+        ),
+        (
+            "unread class generator iterator capture",
+            "class Helper { *inspect() { values.forEach = null; } }",
+            "const iterator = Helper.prototype.inspect();",
+        ),
+        (
+            "unadvanced static field generator capture",
+            "class Helper { static inspect = function* () { values.forEach = null; }; }",
+            "Helper.inspect();",
+        ),
+        (
             "static field overrides mutating method",
             "class Helper { static inspect(target) { target.forEach = null; } static inspect = target => target.length; }",
             "Helper.inspect(values);",
@@ -3858,6 +3888,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "generator parameter default",
             "function* mutate(unused = (values.forEach = null)) {}",
             "mutate();",
+        ),
+        (
+            "class generator capture advance",
+            "class Helper { *mutate() { values.forEach = null; } }",
+            "Helper.prototype.mutate().next();",
+        ),
+        (
+            "class generator parameter default",
+            "class Helper { *mutate(unused = (values.forEach = null)) {} }",
+            "Helper.prototype.mutate();",
         ),
     ] {
         let source = format!(
