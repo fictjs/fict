@@ -5245,6 +5245,177 @@ fn local_spread_element_mutations_preserve_container_methods() {
 }
 
 #[test]
+fn nested_local_spread_invocations_propagate_element_invalidations() {
+    for (name, setup, helpers, invocation) in [
+        (
+            "inline array",
+            "",
+            "function inner(target) { target.forEach = null; } function outer(args) { inner(...args); }",
+            "outer([values]);",
+        ),
+        (
+            "stored array",
+            "const args = [values];",
+            "function inner(target) { target.forEach = null; } function outer(args) { inner(...args); }",
+            "outer(args);",
+        ),
+        (
+            "nested array property",
+            "",
+            "function inner(target) { target.forEach = null; } function outer(wrapper) { inner(...wrapper.args); }",
+            "outer({ args: [values] });",
+        ),
+        (
+            "delegated spread",
+            "",
+            "function inner(target) { target.forEach = null; } function middle(args) { inner(...args); } function outer(args) { middle(args); }",
+            "outer([values]);",
+        ),
+        (
+            "spread exposure",
+            "",
+            "function inner(target) { external(target); } function outer(args) { inner(...args); }",
+            "outer([values]);",
+        ),
+        (
+            "spread after uncertain stored spread",
+            "const args = [values];",
+            "function inner(_prefix, target) { target.forEach = null; } function outer(prefix, args) { inner(...prefix, ...args); }",
+            "outer([0], args);",
+        ),
+        (
+            "aliased element after uncertain spread",
+            "const alias = values; const args = [alias];",
+            "function inner(_prefix, target) { target.forEach = null; } function outer(prefix, args) { inner(...prefix, ...args); }",
+            "outer([0], args);",
+        ),
+        (
+            "exposure after uncertain spread",
+            "",
+            "function inner(_prefix, target) { external(target); } function outer(prefix, args) { inner(...prefix, ...args); }",
+            "outer([0], [values]);",
+        ),
+        (
+            "formal rest exposure",
+            "",
+            "function inner(target) { external(target); } function outer(...args) { inner(...args); }",
+            "outer(values);",
+        ),
+        (
+            "formal rest root mutation",
+            "",
+            "function inner(target) { Object.assign(target, {}); } function outer(...args) { inner(...args); }",
+            "outer(values);",
+        ),
+        (
+            "array rest exposure",
+            "",
+            "function inner(target) { external(target); } function outer([_prefix, ...args]) { inner(...args); }",
+            "outer([0, values]);",
+        ),
+        (
+            "object rest exposure",
+            "",
+            "function inner(target) { external(target); } function outer({ _skip, ...rest }) { inner(rest.target); }",
+            "outer({ target: values });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helpers}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn nested_local_spread_invocations_preserve_container_methods() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const args = [values];
+            function inner(target) { target.forEach = null; }
+            function outer(values) { inner(...values); }
+            outer(args);
+            args.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")),
+        "expected the outer spread container method to stay intact, got {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn nested_local_spread_invocations_preserve_unselected_elements() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const first = [];
+            const values = [];
+            function inner(target) { target.forEach = null; }
+            function outer(args) { inner(...args); }
+            outer([first, values]);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")),
+        "expected the unselected spread element to stay intact, got {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (

@@ -9888,19 +9888,29 @@ enum LocalCallableParameterSource {
 }
 
 impl LocalCallableParameter {
-    fn map_invalidation(&self, invalidated: &StaticAliasPath) -> Option<(usize, Vec<String>)> {
-        match &self.source {
+    fn map_invalidation(
+        &self,
+        invalidated: &StaticAliasPath,
+        kind: LocalParameterInvalidationKind,
+    ) -> Option<(usize, Vec<String>, bool)> {
+        let (index, properties) = match &self.source {
             LocalCallableParameterSource::Direct => {
                 let mut properties = self.properties.clone();
                 properties.extend(invalidated.properties.clone());
                 Some((self.index, properties))
             }
             LocalCallableParameterSource::FormalRest => {
-                let (offset, properties) = indexed_rest_invalidation(&invalidated.properties)?;
+                let (offset, properties) = indexed_rest_invalidation(
+                    &invalidated.properties,
+                    kind != LocalParameterInvalidationKind::Slot,
+                )?;
                 Some((self.index.checked_add(offset)?, properties.to_vec()))
             }
             LocalCallableParameterSource::ArrayRest { offset } => {
-                let (element, remaining) = indexed_rest_invalidation(&invalidated.properties)?;
+                let (element, remaining) = indexed_rest_invalidation(
+                    &invalidated.properties,
+                    kind != LocalParameterInvalidationKind::Slot,
+                )?;
                 let mut properties = self.properties.clone();
                 properties.push(offset.checked_add(element)?.to_string());
                 properties.extend_from_slice(remaining);
@@ -9910,7 +9920,9 @@ impl LocalCallableParameter {
                 let [property, remaining @ ..] = invalidated.properties.as_slice() else {
                     return None;
                 };
-                if remaining.is_empty() || excluded.contains(property) {
+                if (remaining.is_empty() && kind == LocalParameterInvalidationKind::Slot)
+                    || excluded.contains(property)
+                {
                     return None;
                 }
                 let mut properties = self.properties.clone();
@@ -9918,15 +9930,19 @@ impl LocalCallableParameter {
                 properties.extend_from_slice(remaining);
                 Some((self.index, properties))
             }
-        }
+        }?;
+        Some((index, properties, invalidated.element_wildcard))
     }
 }
 
-fn indexed_rest_invalidation(properties: &[String]) -> Option<(usize, &[String])> {
+fn indexed_rest_invalidation(
+    properties: &[String],
+    allow_empty: bool,
+) -> Option<(usize, &[String])> {
     let [index, remaining @ ..] = properties else {
         return None;
     };
-    if remaining.is_empty() {
+    if remaining.is_empty() && !allow_empty {
         return None;
     }
     let parsed = index.parse::<usize>().ok()?;
@@ -9966,18 +9982,41 @@ enum LocalInvocationSourceComponent {
 }
 
 impl LocalInvocationArgument {
+    fn at_spread_index(&self, index: usize) -> Self {
+        if !self.coarse {
+            return self.clone();
+        }
+        let mut raw = self.raw.clone();
+        raw.element_wildcard = false;
+        raw = raw.with_property(index.to_string());
+        let mut resolved = self.resolved.clone();
+        resolved.element_wildcard = false;
+        resolved = resolved.with_property(index.to_string());
+        Self {
+            raw,
+            resolved,
+            parameter_attached: self.parameter_attached,
+            coarse: false,
+            source_projection: self.source_projection.clone(),
+        }
+    }
+
     fn map_properties(
         &self,
         properties: &[String],
+        element_wildcard: bool,
         kind: LocalParameterInvalidationKind,
-    ) -> Option<Vec<String>> {
+    ) -> Option<(Vec<String>, bool)> {
+        if element_wildcard {
+            return self.map_element_wildcard_properties(properties, kind);
+        }
         let slot = kind == LocalParameterInvalidationKind::Slot;
         let mapped = match &self.source_projection {
             LocalInvocationSourceProjection::Value(prefix) => {
                 if kind == LocalParameterInvalidationKind::Exposure
                     && invocation_source_prefix_contains_effect(prefix, properties)
                 {
-                    return Some(Vec::new());
+                    return Some((Vec::new(), false));
                 }
                 let remaining = match_invocation_source_prefix(prefix, properties)?;
                 if slot && !prefix.is_empty() && remaining.is_empty() {
@@ -9999,7 +10038,43 @@ impl LocalInvocationArgument {
                 Some(remaining.to_vec())
             }
         }?;
-        self.coarse.then(Vec::new).or(Some(mapped))
+        Some((self.coarse.then(Vec::new).unwrap_or(mapped), false))
+    }
+
+    fn map_element_wildcard_properties(
+        &self,
+        properties: &[String],
+        kind: LocalParameterInvalidationKind,
+    ) -> Option<(Vec<String>, bool)> {
+        match &self.source_projection {
+            LocalInvocationSourceProjection::Value(prefix) => {
+                if let Some(remaining) = match_invocation_source_prefix(prefix, properties) {
+                    return Some((
+                        self.coarse.then(Vec::new).unwrap_or(remaining.to_vec()),
+                        true,
+                    ));
+                }
+                if !invocation_source_prefix_contains_effect(prefix, properties) {
+                    return None;
+                }
+                let element = prefix.get(properties.len())?;
+                if !invocation_source_component_may_be_index(element)
+                    || (kind != LocalParameterInvalidationKind::Exposure
+                        && prefix.len() != properties.len() + 1)
+                {
+                    return None;
+                }
+                Some((Vec::new(), false))
+            }
+            LocalInvocationSourceProjection::ObjectSpread { prefix, excluded } => {
+                let remaining = match_invocation_source_prefix(prefix, properties)?;
+                let property = remaining.first()?;
+                if excluded.contains(property) {
+                    return None;
+                }
+                Some((remaining.to_vec(), true))
+            }
+        }
     }
 
     fn exclude_overwritten_property(
@@ -10029,6 +10104,16 @@ fn invocation_source_prefix_contains_effect(
 ) -> bool {
     properties.len() <= prefix.len()
         && match_invocation_source_prefix(&prefix[..properties.len()], properties).is_some()
+}
+
+fn invocation_source_component_may_be_index(component: &LocalInvocationSourceComponent) -> bool {
+    match component {
+        LocalInvocationSourceComponent::Exact(property) => property
+            .parse::<usize>()
+            .is_ok_and(|index| index.to_string() == *property),
+        LocalInvocationSourceComponent::Dynamic(_)
+        | LocalInvocationSourceComponent::DynamicIndex { .. } => true,
+    }
 }
 
 fn match_invocation_source_prefix<'a>(
@@ -10126,7 +10211,7 @@ struct LocalInvocationFact {
 }
 
 impl LocalInvocationFact {
-    fn arguments_for_parameter(&self, index: usize) -> Vec<&LocalInvocationArgument> {
+    fn arguments_for_parameter(&self, index: usize) -> Vec<LocalInvocationArgument> {
         let Some(target) = index.checked_add(self.argument_offset) else {
             return Vec::new();
         };
@@ -10137,7 +10222,7 @@ impl LocalInvocationFact {
             match segment {
                 LocalInvocationArgumentSegment::Fixed(arguments) => {
                     if (!uncertain && target == position) || (uncertain && target >= position) {
-                        matches.extend(arguments);
+                        matches.extend(arguments.iter().cloned());
                     }
                     position = position.saturating_add(1);
                 }
@@ -10147,13 +10232,24 @@ impl LocalInvocationFact {
                     minimum_length,
                 } => {
                     if target >= position {
-                        matches.extend(ambiguous);
-                    }
-                    for (offset, argument) in indexed {
-                        let candidate = position.saturating_add(*offset);
-                        if (!uncertain && target == candidate) || (uncertain && target >= candidate)
-                        {
-                            matches.push(argument);
+                        if uncertain {
+                            matches.extend(ambiguous.iter().cloned());
+                            for (offset, argument) in indexed {
+                                if target >= position.saturating_add(*offset) {
+                                    matches.push(argument.clone());
+                                }
+                            }
+                        } else {
+                            let offset = target - position;
+                            if let Some(argument) = indexed.get(&offset) {
+                                matches.push(argument.clone());
+                            } else {
+                                matches.extend(
+                                    ambiguous
+                                        .iter()
+                                        .map(|argument| argument.at_spread_index(offset)),
+                                );
+                            }
                         }
                     }
                     position = position.saturating_add(*minimum_length);
@@ -11952,12 +12048,70 @@ impl StaticHookAliasCollector<'_> {
         self.invalidate_path(path, true);
     }
 
+    fn historical_element_sources(
+        &self,
+        path: &StaticAliasPath,
+        include_descendants: bool,
+    ) -> BTreeSet<StaticAliasPath> {
+        if !path.element_wildcard {
+            return BTreeSet::new();
+        }
+        let mut base = path.clone();
+        base.element_wildcard = false;
+        let bases = resolve_historical_alias_paths(&self.alias_history, &base);
+        let mut sources = BTreeSet::new();
+        for base in bases {
+            for (target, candidates) in &self.alias_history {
+                if !target.starts_with(&base) || target.properties.len() <= base.properties.len() {
+                    continue;
+                }
+                let relative = &target.properties[base.properties.len()..];
+                if !relative.first().is_some_and(|property| {
+                    property
+                        .parse::<usize>()
+                        .is_ok_and(|index| index.to_string() == *property)
+                }) || (!include_descendants && relative.len() != 1)
+                {
+                    continue;
+                }
+                for candidate in candidates {
+                    sources.extend(resolve_historical_alias_paths(
+                        &self.alias_history,
+                        candidate,
+                    ));
+                }
+            }
+            if include_descendants {
+                for (target, candidates) in &self.callable_exposure_history {
+                    if target.starts_with(&base)
+                        && target.properties.len() > base.properties.len()
+                        && target.properties[base.properties.len()]
+                            .parse::<usize>()
+                            .is_ok_and(|index| {
+                                index.to_string() == target.properties[base.properties.len()]
+                            })
+                    {
+                        sources.extend(candidates.iter().cloned());
+                    }
+                }
+            }
+        }
+        sources
+    }
+
     fn insert_propagated_exposure(&mut self, path: StaticAliasPath, parameter_attached: bool) {
-        let exposed = resolve_historical_exposed_paths(
+        let mut exposed = resolve_historical_exposed_paths(
             &self.alias_history,
             &self.callable_exposure_history,
             &path,
         );
+        for source in self.historical_element_sources(&path, true) {
+            exposed.extend(resolve_historical_exposed_paths(
+                &self.alias_history,
+                &self.callable_exposure_history,
+                &source,
+            ));
+        }
         for exposed_path in exposed {
             if parameter_attached
                 && exposed_path
@@ -12026,16 +12180,20 @@ impl StaticHookAliasCollector<'_> {
                             if invalidated.root != StaticAliasRoot::Binding(parameter.symbol) {
                                 continue;
                             }
-                            let Some((argument_index, properties)) =
-                                parameter.map_invalidation(invalidated)
+                            let Some((argument_index, properties, element_wildcard)) =
+                                parameter.map_invalidation(invalidated, *kind)
                             else {
                                 continue;
                             };
                             for invocation_argument in
                                 invocation.arguments_for_parameter(argument_index)
                             {
-                                let Some(mapped_properties) =
-                                    invocation_argument.map_properties(&properties, *kind)
+                                let Some((mapped_properties, mapped_element_wildcard)) =
+                                    invocation_argument.map_properties(
+                                        &properties,
+                                        element_wildcard,
+                                        *kind,
+                                    )
                                 else {
                                     continue;
                                 };
@@ -12053,6 +12211,7 @@ impl StaticHookAliasCollector<'_> {
                                 for argument_path in &arguments {
                                     let mut mapped = argument_path.clone();
                                     mapped.properties.extend(mapped_properties.clone());
+                                    mapped.element_wildcard |= mapped_element_wildcard;
                                     additions
                                         .entry(mapped.canonicalized())
                                         .and_modify(|(existing_kind, attached_kind)| {
@@ -12092,10 +12251,18 @@ impl StaticHookAliasCollector<'_> {
                 }
                 match kind {
                     LocalParameterInvalidationKind::Slot => {
+                        let sources = self.historical_element_sources(&path, false);
                         self.insert_slot_invalidation_path(path, true);
+                        for source in sources {
+                            self.insert_slot_invalidation_path(source, true);
+                        }
                     }
                     LocalParameterInvalidationKind::Member => {
+                        let sources = self.historical_element_sources(&path, false);
                         self.insert_invalidation_path(path, true);
+                        for source in sources {
+                            self.insert_invalidation_path(source, true);
+                        }
                     }
                     LocalParameterInvalidationKind::Exposure => {
                         self.insert_propagated_exposure(
