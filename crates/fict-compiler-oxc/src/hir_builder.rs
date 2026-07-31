@@ -2027,9 +2027,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut static_hook_aliases = StaticHookAliasCollector {
             scoping: self.semantic.scoping(),
             aliases: BTreeMap::new(),
+            alias_history: BTreeMap::new(),
+            binding_owner_depths: BTreeMap::new(),
+            cross_scope_alias_targets: BTreeSet::new(),
             invalidated: BTreeSet::new(),
             member_invalidated: BTreeSet::new(),
+            deferred_invalidated: BTreeSet::new(),
+            deferred_member_invalidated: BTreeSet::new(),
             reflective_mutations: Vec::new(),
+            function_depth: 0,
         };
         static_hook_aliases.visit_program(program);
         let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
@@ -8175,6 +8181,36 @@ fn resolve_static_alias_path(
     current
 }
 
+fn resolve_historical_alias_paths(
+    aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    original: &StaticAliasPath,
+) -> BTreeSet<StaticAliasPath> {
+    let mut resolved = BTreeSet::new();
+    let mut pending = VecDeque::from([original.clone().canonicalized()]);
+    while let Some(current) = pending.pop_front() {
+        if !resolved.insert(current.clone()) {
+            continue;
+        }
+        for length in (0..=current.properties.len()).rev() {
+            let prefix = StaticAliasPath {
+                root: current.root.clone(),
+                properties: current.properties[..length].to_vec(),
+            };
+            let Some(sources) = aliases.get(&prefix) else {
+                continue;
+            };
+            for source in sources {
+                let mut candidate = source.clone();
+                candidate
+                    .properties
+                    .extend_from_slice(&current.properties[length..]);
+                pending.push_back(candidate.canonicalized());
+            }
+        }
+    }
+    resolved
+}
+
 impl StaticHookAliases {
     fn resolve(&self, original: &StaticAliasPath) -> StaticAliasPath {
         resolve_static_alias_path(&self.aliases, original)
@@ -9576,25 +9612,74 @@ fn static_member_name(expression: &Expression<'_>) -> Option<String> {
 struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    binding_owner_depths: BTreeMap<SymbolId, usize>,
+    cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
     invalidated: BTreeSet<StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
+    deferred_invalidated: BTreeSet<StaticAliasPath>,
+    deferred_member_invalidated: BTreeSet<StaticAliasPath>,
     reflective_mutations: Vec<ReflectiveMemberMutationFact>,
+    function_depth: usize,
 }
 
+#[derive(Clone)]
 struct ReflectiveMemberMutationFact {
     callee: StaticAliasPath,
     target: StaticAliasPath,
+    raw_callee: StaticAliasPath,
+    raw_target: StaticAliasPath,
     key: Option<String>,
+    function_depth: usize,
 }
 
 impl StaticHookAliasCollector<'_> {
+    fn path_owner_depth(&self, path: &StaticAliasPath) -> usize {
+        path.binding_root()
+            .and_then(|root| self.binding_owner_depths.get(&root).copied())
+            .unwrap_or(0)
+    }
+
+    fn path_requires_historical_aliases(
+        &self,
+        path: &StaticAliasPath,
+        function_depth: usize,
+    ) -> bool {
+        self.path_owner_depth(path) < function_depth
+            || self
+                .cross_scope_alias_targets
+                .iter()
+                .any(|target| target.overlaps(path))
+    }
+
+    fn record_pattern_owner(&mut self, pattern: &BindingPattern<'_>) {
+        let mut bindings = PatternBindingCollector::default();
+        bindings.visit_binding_pattern(pattern);
+        for symbol in bindings.symbols {
+            self.binding_owner_depths
+                .entry(symbol)
+                .or_insert(self.function_depth);
+        }
+    }
+
+    fn record_cross_scope_target(&mut self, target: &StaticAliasPath) {
+        if self.path_owner_depth(target) < self.function_depth {
+            self.cross_scope_alias_targets.insert(target.clone());
+        }
+    }
+
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
+        self.record_cross_scope_target(path);
         self.aliases.retain(|target, _| !target.overlaps(path));
     }
 
     fn insert_alias(&mut self, target: StaticAliasPath, source: StaticAliasPath) {
         self.clear_overlapping_aliases(&target);
         if target != source {
+            self.alias_history
+                .entry(target.clone())
+                .or_default()
+                .insert(source.clone());
             self.aliases.insert(target, source);
         }
     }
@@ -9755,12 +9840,19 @@ impl StaticHookAliasCollector<'_> {
             && let Some(path) = static_alias_invalidation_path(place)
         {
             let resolved = resolve_static_alias_path(&self.aliases, &path);
+            let deferred = self.path_requires_historical_aliases(&path, self.function_depth);
             if !place.projections.is_empty()
                 || matches!(&place.base,
                     PlannedPlaceBase::UnresolvedGlobal { name, .. } if name != "globalThis")
             {
                 self.member_invalidated.insert(path.clone());
                 self.member_invalidated.insert(resolved.clone());
+                if deferred {
+                    self.deferred_member_invalidated.insert(path.clone());
+                }
+            }
+            if deferred {
+                self.deferred_invalidated.insert(path.clone());
             }
             self.invalidated.insert(path);
             self.invalidated.insert(resolved);
@@ -9768,21 +9860,47 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
+        for path in self.deferred_invalidated.clone() {
+            self.invalidated
+                .extend(resolve_historical_alias_paths(&self.alias_history, &path));
+        }
+        for path in self.deferred_member_invalidated.clone() {
+            self.member_invalidated
+                .extend(resolve_historical_alias_paths(&self.alias_history, &path));
+        }
         let resolver = StaticHookAliases {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
         };
-        for mutation in &self.reflective_mutations {
-            let callee = resolver.resolve(&mutation.callee);
-            let Some(keyed) = reflective_member_mutator_kind(&callee) else {
-                continue;
+        for mutation in self.reflective_mutations.clone() {
+            let callees = if self
+                .path_requires_historical_aliases(&mutation.raw_callee, mutation.function_depth)
+            {
+                resolve_historical_alias_paths(&self.alias_history, &mutation.raw_callee)
+            } else {
+                BTreeSet::from([mutation.callee])
             };
-            let mut target = resolver.resolve(&mutation.target);
-            if keyed && let Some(key) = &mutation.key {
-                target = target.with_property(key.clone());
+            let targets = if self
+                .path_requires_historical_aliases(&mutation.raw_target, mutation.function_depth)
+            {
+                resolve_historical_alias_paths(&self.alias_history, &mutation.raw_target)
+            } else {
+                BTreeSet::from([mutation.target])
+            };
+            for callee in callees {
+                let callee = resolver.resolve(&callee);
+                let Some(keyed) = reflective_member_mutator_kind(&callee) else {
+                    continue;
+                };
+                for target in &targets {
+                    let mut target = resolver.resolve(target);
+                    if keyed && let Some(key) = &mutation.key {
+                        target = target.with_property(key.clone());
+                    }
+                    self.invalidated.insert(target.clone());
+                    self.member_invalidated.insert(target);
+                }
             }
-            self.invalidated.insert(target.clone());
-            self.member_invalidated.insert(target);
         }
         let mut invalidated = self.invalidated.clone();
         invalidated.extend(self.invalidated.iter().map(|path| resolver.resolve(path)));
@@ -9812,6 +9930,7 @@ impl StaticHookAliasCollector<'_> {
 
 impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        self.record_pattern_owner(&declarator.id);
         if let Some(initializer) = &declarator.init {
             if let BindingPattern::BindingIdentifier(binding) = &declarator.id
                 && let Some(root) = binding.symbol_id.get()
@@ -9822,6 +9941,70 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             }
         }
         walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
+        if let Some(symbol) = identifier.symbol_id.get() {
+            self.binding_owner_depths
+                .entry(symbol)
+                .or_insert(self.function_depth);
+        }
+    }
+
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if function.r#type == FunctionType::FunctionDeclaration
+            && let Some(symbol) = function
+                .id
+                .as_ref()
+                .and_then(|identifier| identifier.symbol_id.get())
+        {
+            self.binding_owner_depths
+                .entry(symbol)
+                .or_insert(self.function_depth);
+        }
+        let depth = self.function_depth + 1;
+        let outer_aliases = self
+            .aliases
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, source)| (target.clone(), source.clone()))
+            .collect::<Vec<_>>();
+        self.function_depth = depth;
+        walk_function(self, function, flags);
+        let changed_outer_targets = self
+            .aliases
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.aliases.remove(&target);
+        }
+        self.aliases.extend(outer_aliases);
+        self.function_depth = depth - 1;
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        let depth = self.function_depth + 1;
+        let outer_aliases = self
+            .aliases
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, source)| (target.clone(), source.clone()))
+            .collect::<Vec<_>>();
+        self.function_depth = depth;
+        walk_arrow_function_expression(self, function);
+        let changed_outer_targets = self
+            .aliases
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.aliases.remove(&target);
+        }
+        self.aliases.extend(outer_aliases);
+        self.function_depth = depth - 1;
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
@@ -9874,7 +10057,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             Some(ReflectiveMemberMutationFact {
                 callee: resolve_static_alias_path(&self.aliases, &callee),
                 target: resolve_static_alias_path(&self.aliases, &target),
+                raw_callee: callee,
+                raw_target: target,
                 key,
+                function_depth: self.function_depth,
             })
         } else {
             None

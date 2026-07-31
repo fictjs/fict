@@ -2871,6 +2871,84 @@ fn reassigned_builtin_aliases_do_not_invalidate_previous_targets() {
 }
 
 #[test]
+fn deferred_builtin_alias_mutations_invalidate_escape_exemptions() {
+    for (name, source) in [
+        (
+            "deferred mutation called before reassignment",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    let prototype;
+                    prototype = Array.prototype;
+                    mutate();
+                    prototype = {};
+                    function mutate() {
+                        prototype.forEach = sink;
+                    }
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "nested reassignment must not erase outer alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    let prototype = Array.prototype;
+                    function reset() {
+                        prototype = {};
+                    }
+                    prototype.forEach = sink;
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+        (
+            "deferred reflective mutator alias",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    let define;
+                    define = Object.defineProperty;
+                    mutate();
+                    define = sink;
+                    function mutate() {
+                        define(Array.prototype, 'forEach', { value: sink });
+                    }
+                    const values = [];
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn safe_global_escape_exemptions_reject_overridden_calls() {
     for (name, source, expected_span, expected_code) in [
         (
