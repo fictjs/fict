@@ -8098,6 +8098,7 @@ enum StaticAliasRoot {
 struct StaticAliasPath {
     root: StaticAliasRoot,
     properties: Vec<String>,
+    element_wildcard: bool,
 }
 
 impl StaticAliasPath {
@@ -8105,6 +8106,7 @@ impl StaticAliasPath {
         Self {
             root: StaticAliasRoot::Binding(root),
             properties: Vec::new(),
+            element_wildcard: false,
         }
     }
 
@@ -8112,6 +8114,7 @@ impl StaticAliasPath {
         Self {
             root: StaticAliasRoot::UnresolvedGlobal(name),
             properties: Vec::new(),
+            element_wildcard: false,
         }
     }
 
@@ -8126,6 +8129,12 @@ impl StaticAliasPath {
         let mut path = self.clone();
         path.properties.push(property);
         path.canonicalized()
+    }
+
+    fn with_element_wildcard(&self) -> Self {
+        let mut path = self.clone();
+        path.element_wildcard = true;
+        path
     }
 
     fn canonicalized(mut self) -> Self {
@@ -8144,11 +8153,32 @@ impl StaticAliasPath {
     }
 
     fn starts_with(&self, prefix: &Self) -> bool {
-        self.root == prefix.root && self.properties.starts_with(&prefix.properties)
+        self.root == prefix.root
+            && self.properties.starts_with(&prefix.properties)
+            && (!prefix.element_wildcard
+                || (self.element_wildcard && self.properties == prefix.properties))
     }
 
     fn overlaps(&self, other: &Self) -> bool {
-        self.starts_with(other) || other.starts_with(self)
+        self.starts_with(other)
+            || other.starts_with(self)
+            || self.element_wildcard_matches(other)
+            || other.element_wildcard_matches(self)
+    }
+
+    fn element_wildcard_matches(&self, candidate: &Self) -> bool {
+        if !self.element_wildcard
+            || candidate.element_wildcard
+            || self.root != candidate.root
+            || candidate.properties.len() <= self.properties.len()
+            || !candidate.properties.starts_with(&self.properties)
+        {
+            return false;
+        }
+        let property = &candidate.properties[self.properties.len()];
+        property
+            .parse::<usize>()
+            .is_ok_and(|index| index.to_string() == *property)
     }
 }
 
@@ -8171,12 +8201,14 @@ fn resolve_static_alias_path(
             let prefix = StaticAliasPath {
                 root: current.root.clone(),
                 properties: current.properties[..length].to_vec(),
+                element_wildcard: false,
             };
             aliases.get(&prefix).map(|source| {
                 let mut resolved = source.clone();
                 resolved
                     .properties
                     .extend_from_slice(&current.properties[length..]);
+                resolved.element_wildcard |= current.element_wildcard;
                 resolved.canonicalized()
             })
         });
@@ -8206,6 +8238,7 @@ fn resolve_historical_alias_paths(
             let prefix = StaticAliasPath {
                 root: current.root.clone(),
                 properties: current.properties[..length].to_vec(),
+                element_wildcard: false,
             };
             let Some(sources) = aliases.get(&prefix) else {
                 continue;
@@ -8215,6 +8248,7 @@ fn resolve_historical_alias_paths(
                 candidate
                     .properties
                     .extend_from_slice(&current.properties[length..]);
+                candidate.element_wildcard |= current.element_wildcard;
                 pending.push_back(candidate.canonicalized());
             }
         }
@@ -8270,6 +8304,7 @@ fn prototype_sensitive_invalidation_paths(path: &StaticAliasPath) -> BTreeSet<St
             paths.insert(StaticAliasPath {
                 root: path.root.clone(),
                 properties: path.properties[..index].to_vec(),
+                element_wildcard: false,
             });
             let member_index = index + prototype_length;
             if path.properties.len() == member_index + 1 {
@@ -9850,6 +9885,17 @@ struct LocalInvocationArgument {
     raw: StaticAliasPath,
     resolved: StaticAliasPath,
     parameter_attached: bool,
+    coarse: bool,
+}
+
+#[derive(Clone)]
+enum LocalInvocationArgumentSegment {
+    Fixed(Option<LocalInvocationArgument>),
+    Spread {
+        indexed: BTreeMap<usize, LocalInvocationArgument>,
+        ambiguous: Vec<LocalInvocationArgument>,
+        minimum_length: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -9857,8 +9903,68 @@ struct LocalInvocationFact {
     raw_callee: Option<StaticAliasPath>,
     callee: Option<StaticAliasPath>,
     parameters: Option<Vec<LocalCallableParameter>>,
-    arguments: Vec<Option<LocalInvocationArgument>>,
+    arguments: Vec<LocalInvocationArgumentSegment>,
+    argument_offset: usize,
     function_depth: usize,
+}
+
+impl LocalInvocationFact {
+    fn arguments_for_parameter(&self, index: usize) -> Vec<&LocalInvocationArgument> {
+        let Some(target) = index.checked_add(self.argument_offset) else {
+            return Vec::new();
+        };
+        let mut position = 0usize;
+        let mut uncertain = false;
+        let mut matches = Vec::new();
+        for segment in &self.arguments {
+            match segment {
+                LocalInvocationArgumentSegment::Fixed(argument) => {
+                    if ((!uncertain && target == position) || (uncertain && target >= position))
+                        && let Some(argument) = argument
+                    {
+                        matches.push(argument);
+                    }
+                    position = position.saturating_add(1);
+                }
+                LocalInvocationArgumentSegment::Spread {
+                    indexed,
+                    ambiguous,
+                    minimum_length,
+                } => {
+                    if target >= position {
+                        matches.extend(ambiguous);
+                    }
+                    for (offset, argument) in indexed {
+                        let candidate = position.saturating_add(*offset);
+                        if (!uncertain && target == candidate) || (uncertain && target >= candidate)
+                        {
+                            matches.push(argument);
+                        }
+                    }
+                    position = position.saturating_add(*minimum_length);
+                    uncertain = true;
+                }
+            }
+        }
+        matches
+    }
+
+    fn all_arguments(&self) -> Vec<&LocalInvocationArgument> {
+        let mut arguments = Vec::new();
+        for segment in &self.arguments {
+            match segment {
+                LocalInvocationArgumentSegment::Fixed(Some(argument)) => arguments.push(argument),
+                LocalInvocationArgumentSegment::Fixed(None) => {}
+                LocalInvocationArgumentSegment::Spread {
+                    indexed, ambiguous, ..
+                } => {
+                    arguments.extend(indexed.values());
+                    arguments.extend(ambiguous);
+                }
+            }
+        }
+        arguments
+    }
 }
 
 impl StaticHookAliasCollector<'_> {
@@ -9941,15 +10047,24 @@ impl StaticHookAliasCollector<'_> {
     fn collect_local_invocation_arguments(
         &self,
         arguments: &[oxc::ast::ast::Argument<'_>],
-    ) -> Vec<Option<LocalInvocationArgument>> {
-        arguments
-            .iter()
-            .map(|argument| {
-                argument
-                    .as_expression()
-                    .and_then(|argument| self.collect_local_invocation_argument(argument))
-            })
-            .collect()
+    ) -> Vec<LocalInvocationArgumentSegment> {
+        let mut collected = Vec::new();
+        for argument in arguments {
+            if let Some(argument) = argument.as_expression() {
+                collected.push(LocalInvocationArgumentSegment::Fixed(
+                    self.collect_local_invocation_argument(argument),
+                ));
+            } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
+                if let Some(arguments) =
+                    self.collect_exact_spread_invocation_arguments(&spread.argument)
+                {
+                    collected.extend(arguments);
+                } else {
+                    collected.push(self.collect_spread_invocation_argument(&spread.argument));
+                }
+            }
+        }
+        collected
     }
 
     fn collect_local_invocation_argument(
@@ -9961,36 +10076,66 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn collect_local_invocation_path(&self, raw: StaticAliasPath) -> LocalInvocationArgument {
+        self.collect_local_invocation_path_with_precision(raw, false)
+    }
+
+    fn collect_local_invocation_path_with_precision(
+        &self,
+        mut raw: StaticAliasPath,
+        coarse: bool,
+    ) -> LocalInvocationArgument {
+        if coarse {
+            raw = raw.with_element_wildcard();
+        }
         let resolved = resolve_static_alias_path(&self.aliases, &raw);
         LocalInvocationArgument {
             parameter_attached: self.attached_parameter_path(&raw, &resolved).is_some(),
             resolved,
             raw,
+            coarse,
         }
     }
 
-    fn collect_apply_invocation_arguments(
+    fn collect_exact_array_invocation_arguments(
         &self,
-        argument_list: &Expression<'_>,
-    ) -> Option<Vec<Option<LocalInvocationArgument>>> {
-        if let Expression::ArrayExpression(array) = argument_list.get_inner_expression() {
-            return array
-                .elements
-                .iter()
-                .map(|element| match element {
-                    ArrayExpressionElement::Elision(_) => Some(None),
-                    ArrayExpressionElement::SpreadElement(_) => None,
-                    element => {
-                        Some(self.collect_local_invocation_argument(element.to_expression()))
-                    }
-                })
-                .collect();
+        array: &oxc::ast::ast::ArrayExpression<'_>,
+    ) -> Option<Vec<LocalInvocationArgumentSegment>> {
+        let mut arguments = Vec::new();
+        for element in &array.elements {
+            match element {
+                ArrayExpressionElement::Elision(_) => {
+                    arguments.push(LocalInvocationArgumentSegment::Fixed(None));
+                }
+                ArrayExpressionElement::SpreadElement(spread) => {
+                    arguments
+                        .extend(self.collect_exact_spread_invocation_arguments(&spread.argument)?);
+                }
+                element => arguments.push(LocalInvocationArgumentSegment::Fixed(
+                    self.collect_local_invocation_argument(element.to_expression()),
+                )),
+            }
         }
-        let raw = self.alias_source_path(argument_list)?;
-        let resolved = resolve_static_alias_path(&self.aliases, &raw);
-        let mut indices = BTreeSet::new();
+        Some(arguments)
+    }
+
+    fn collect_exact_spread_invocation_arguments(
+        &self,
+        spread: &Expression<'_>,
+    ) -> Option<Vec<LocalInvocationArgumentSegment>> {
+        let Expression::ArrayExpression(array) = spread.get_inner_expression() else {
+            return None;
+        };
+        self.collect_exact_array_invocation_arguments(array)
+    }
+
+    fn collect_indexed_spread_invocation_arguments(
+        &self,
+        raw: &StaticAliasPath,
+    ) -> BTreeMap<usize, LocalInvocationArgument> {
+        let resolved = resolve_static_alias_path(&self.aliases, raw);
+        let mut indexed = BTreeMap::new();
         for target in self.aliases.keys() {
-            for base in [&raw, &resolved] {
+            for base in [raw, &resolved] {
                 if !target.starts_with(base) || target.properties.len() <= base.properties.len() {
                     continue;
                 }
@@ -9999,23 +10144,54 @@ impl StaticHookAliasCollector<'_> {
                     continue;
                 };
                 if index.to_string() == *property {
-                    indices.insert(index);
+                    indexed.entry(index).or_insert_with(|| {
+                        self.collect_local_invocation_path(raw.with_property(index.to_string()))
+                    });
                 }
             }
         }
-        let length = indices.last().copied()?.checked_add(1)?;
-        if length > 4096 {
-            return None;
+        indexed
+    }
+
+    fn collect_spread_invocation_argument(
+        &self,
+        spread: &Expression<'_>,
+    ) -> LocalInvocationArgumentSegment {
+        let mut indexed = BTreeMap::new();
+        let mut ambiguous = Vec::new();
+        if let Some(raw) = self.alias_source_path(spread) {
+            indexed = self.collect_indexed_spread_invocation_arguments(&raw);
+            ambiguous.push(self.collect_local_invocation_path_with_precision(raw, true));
+        } else {
+            let mut paths = BTreeSet::new();
+            self.collect_spread_exposed_argument_paths(spread, &mut paths);
+            ambiguous.extend(
+                paths
+                    .into_iter()
+                    .map(|path| self.collect_local_invocation_path(path)),
+            );
         }
-        Some(
-            (0..length)
-                .map(|index| {
-                    indices.contains(&index).then(|| {
-                        self.collect_local_invocation_path(raw.with_property(index.to_string()))
-                    })
-                })
-                .collect(),
-        )
+        let minimum_length = indexed
+            .last_key_value()
+            .and_then(|(index, _)| index.checked_add(1))
+            .unwrap_or(0);
+        LocalInvocationArgumentSegment::Spread {
+            indexed,
+            ambiguous,
+            minimum_length,
+        }
+    }
+
+    fn collect_apply_invocation_arguments(
+        &self,
+        argument_list: &Expression<'_>,
+    ) -> Vec<LocalInvocationArgumentSegment> {
+        if let Expression::ArrayExpression(array) = argument_list.get_inner_expression()
+            && let Some(arguments) = self.collect_exact_array_invocation_arguments(array)
+        {
+            return arguments;
+        }
+        vec![self.collect_spread_invocation_argument(argument_list)]
     }
 
     fn local_apply_invocation_fact(
@@ -10024,13 +10200,14 @@ impl StaticHookAliasCollector<'_> {
         arguments: &[oxc::ast::ast::Argument<'_>],
     ) -> Option<LocalInvocationFact> {
         let argument_list = arguments.get(1)?.as_expression()?;
-        let arguments = self.collect_apply_invocation_arguments(argument_list)?;
+        let arguments = self.collect_apply_invocation_arguments(argument_list);
         if let Some(raw_callee) = static_alias_source_path(self.scoping, callee) {
             let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
             let (raw_target, target) = self.intact_function_apply_target(&raw_callee, &callee)?;
             return Some(LocalInvocationFact {
                 parameters: self.local_callable_parameters.get(&target).cloned(),
                 arguments,
+                argument_offset: 0,
                 raw_callee: Some(raw_target),
                 callee: Some(target),
                 function_depth: self.function_depth,
@@ -10040,6 +10217,7 @@ impl StaticHookAliasCollector<'_> {
         Some(LocalInvocationFact {
             parameters: Some(parameters),
             arguments,
+            argument_offset: 0,
             raw_callee: None,
             callee: None,
             function_depth: self.function_depth,
@@ -10049,12 +10227,13 @@ impl StaticHookAliasCollector<'_> {
     fn local_invocation_fact_from_arguments(
         &self,
         callee: &Expression<'_>,
-        arguments: Vec<Option<LocalInvocationArgument>>,
+        arguments: Vec<LocalInvocationArgumentSegment>,
     ) -> Option<LocalInvocationFact> {
         if let Some(parameters) = self.inline_function_indirection_parameters(callee, "call") {
             return Some(LocalInvocationFact {
                 parameters: Some(parameters),
-                arguments: arguments.into_iter().skip(1).collect(),
+                arguments,
+                argument_offset: 1,
                 raw_callee: None,
                 callee: None,
                 function_depth: self.function_depth,
@@ -10067,7 +10246,8 @@ impl StaticHookAliasCollector<'_> {
             {
                 return Some(LocalInvocationFact {
                     parameters: self.local_callable_parameters.get(&target).cloned(),
-                    arguments: arguments.into_iter().skip(1).collect(),
+                    arguments,
+                    argument_offset: 1,
                     raw_callee: Some(raw_target),
                     callee: Some(target),
                     function_depth: self.function_depth,
@@ -10079,6 +10259,7 @@ impl StaticHookAliasCollector<'_> {
                     .get(&resolved_callee)
                     .cloned(),
                 arguments,
+                argument_offset: 0,
                 raw_callee: Some(callee),
                 callee: Some(resolved_callee),
                 function_depth: self.function_depth,
@@ -10087,6 +10268,7 @@ impl StaticHookAliasCollector<'_> {
         Self::inline_callable_parameters(callee).map(|parameters| LocalInvocationFact {
             parameters: Some(parameters),
             arguments,
+            argument_offset: 0,
             raw_callee: None,
             callee: None,
             function_depth: self.function_depth,
@@ -11157,11 +11339,11 @@ impl StaticHookAliasCollector<'_> {
             let invalidated = self.parameter_member_invalidated.clone();
             let mut additions = BTreeMap::new();
             for invocation in self.local_invocations.clone() {
-                let parameter_sets = if let Some(parameters) = invocation.parameters {
-                    vec![parameters]
+                let parameter_sets = if let Some(parameters) = &invocation.parameters {
+                    vec![parameters.clone()]
                 } else {
                     let (Some(raw_callee), Some(callee)) =
-                        (&invocation.raw_callee, invocation.callee)
+                        (&invocation.raw_callee, &invocation.callee)
                     else {
                         continue;
                     };
@@ -11170,7 +11352,7 @@ impl StaticHookAliasCollector<'_> {
                     {
                         resolve_historical_alias_paths(&self.alias_history, raw_callee)
                     } else {
-                        BTreeSet::from([callee])
+                        BTreeSet::from([callee.clone()])
                     };
                     callees
                         .iter()
@@ -11190,31 +11372,32 @@ impl StaticHookAliasCollector<'_> {
                             else {
                                 continue;
                             };
-                            let Some(Some(invocation_argument)) =
-                                invocation.arguments.get(argument_index)
-                            else {
-                                continue;
-                            };
-                            let arguments = if self.path_requires_historical_aliases(
-                                &invocation_argument.raw,
-                                invocation.function_depth,
-                            ) {
-                                resolve_historical_alias_paths(
-                                    &self.alias_history,
+                            for invocation_argument in
+                                invocation.arguments_for_parameter(argument_index)
+                            {
+                                let arguments = if self.path_requires_historical_aliases(
                                     &invocation_argument.raw,
-                                )
-                            } else {
-                                BTreeSet::from([invocation_argument.resolved.clone()])
-                            };
-                            for argument_path in &arguments {
-                                let mut mapped = argument_path.clone();
-                                mapped.properties.extend(properties.clone());
-                                additions
-                                    .entry(mapped.canonicalized())
-                                    .and_modify(|attached| {
-                                        *attached |= invocation_argument.parameter_attached;
-                                    })
-                                    .or_insert(invocation_argument.parameter_attached);
+                                    invocation.function_depth,
+                                ) {
+                                    resolve_historical_alias_paths(
+                                        &self.alias_history,
+                                        &invocation_argument.raw,
+                                    )
+                                } else {
+                                    BTreeSet::from([invocation_argument.resolved.clone()])
+                                };
+                                for argument_path in &arguments {
+                                    let mut mapped = argument_path.clone();
+                                    if !invocation_argument.coarse {
+                                        mapped.properties.extend(properties.clone());
+                                    }
+                                    additions
+                                        .entry(mapped.canonicalized())
+                                        .and_modify(|attached| {
+                                            *attached |= invocation_argument.parameter_attached;
+                                        })
+                                        .or_insert(invocation_argument.parameter_attached);
+                                }
                             }
                         }
                     }
@@ -11239,7 +11422,7 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         for invocation in self.local_invocations.clone() {
-            for argument in invocation.arguments.into_iter().flatten() {
+            for argument in invocation.all_arguments() {
                 if argument.parameter_attached
                     && argument
                         .resolved
@@ -11249,7 +11432,7 @@ impl StaticHookAliasCollector<'_> {
                     self.parameter_member_invalidated
                         .insert(argument.resolved.clone());
                 }
-                self.insert_invalidation_path(argument.resolved, true);
+                self.insert_invalidation_path(argument.resolved.clone(), true);
             }
         }
     }
@@ -11642,14 +11825,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
         let mut local_arguments = Vec::with_capacity(expression.quasi.expressions.len() + 1);
-        local_arguments.push(None);
-        local_arguments.extend(
-            expression
-                .quasi
-                .expressions
-                .iter()
-                .map(|argument| self.collect_local_invocation_argument(argument)),
-        );
+        local_arguments.push(LocalInvocationArgumentSegment::Fixed(None));
+        local_arguments.extend(expression.quasi.expressions.iter().map(|argument| {
+            LocalInvocationArgumentSegment::Fixed(self.collect_local_invocation_argument(argument))
+        }));
         let local_invocation =
             self.local_invocation_fact_from_arguments(&expression.tag, local_arguments);
         let exposed_arguments = if self.callee_may_mutate_arguments(&expression.tag) {
@@ -13774,7 +13953,14 @@ fn static_alias_path_from_place(
             PlannedProjection::Computed { .. } => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(StaticAliasPath { root, properties }.canonicalized())
+    Some(
+        StaticAliasPath {
+            root,
+            properties,
+            element_wildcard: false,
+        }
+        .canonicalized(),
+    )
 }
 
 fn static_alias_source_path(
@@ -13797,6 +13983,7 @@ fn static_alias_invalidation_path(place: &PlannedPlace) -> Option<StaticAliasPat
     let mut path = StaticAliasPath {
         root,
         properties: Vec::new(),
+        element_wildcard: false,
     };
     for projection in &place.projections {
         match projection {
