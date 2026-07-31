@@ -5553,6 +5553,185 @@ fn stored_ambiguous_structured_arguments_preserve_unmodified_values() {
 }
 
 #[test]
+fn stored_spread_initializers_propagate_nested_invalidations() {
+    for (name, setup, helper, invocation) in [
+        (
+            "object spread",
+            "const source = { target: values }; const wrapper = { ...source };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "array spread",
+            "const source = [values]; const wrapper = [...source];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "nested object spread",
+            "const source = { target: values }; const wrapper = { payload: { ...source } };",
+            "function mutate(wrapper) { wrapper.payload.target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "conditional object spread",
+            "const source = { target: values }; const wrapper = { ...(true ? source : {}) };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "prefixed array spread",
+            "const source = [values]; const wrapper = [0, ...source];",
+            "function mutate([_prefix, target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "nested array spread",
+            "const source = [values]; const wrapper = [[...source]];",
+            "function mutate(wrapper) { wrapper[0][0].forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "ambiguous array spread source",
+            "const source = true ? [values] : []; const wrapper = [...source];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "runtime array spread offset",
+            "const prefix = [0, 0]; const wrapper = [...prefix, values];",
+            "function mutate([_first, _second, target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "aliased array spread length",
+            "const prefix = [0, 0]; const alias = prefix; const wrapper = [...alias, values];",
+            "function mutate([_first, _second, target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "inline nested array spread",
+            "const wrapper = [...[values]];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "value after unknown spread length",
+            "const prefix = true ? [] : [0]; const wrapper = [...prefix, values];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "chained unknown-length spread",
+            "const prefix = getPrefix(); const first = [...prefix, values]; const wrapper = [...first];",
+            "function mutate(target) { target.forEach = null; }",
+            "mutate(...wrapper);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn stored_spread_initializers_preserve_unmodified_values() {
+    for (name, setup, helper, invocation) in [
+        (
+            "later object property",
+            "const source = { target: values }; const wrapper = { ...source, target: [] };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "inline empty object spread",
+            "const wrapper = { target: values, ...{} };",
+            "function replace(wrapper) { wrapper.target = []; }",
+            "replace(wrapper);",
+        ),
+        (
+            "object spread source container",
+            "const wrapper = { ...values };",
+            "function mutate(wrapper) { wrapper.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "array spread source container",
+            "const wrapper = [...values];",
+            "function mutate(wrapper) { wrapper.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "stored source overwrites earlier property",
+            "const source = { target: [] }; const wrapper = { target: values, ...source };",
+            "function mutate({ target }) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+        (
+            "unselected value after finite spread lengths",
+            "const prefix = true ? [] : [0]; const wrapper = [...prefix, [], values];",
+            "function mutate([target]) { target.forEach = null; }",
+            "mutate(wrapper);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (

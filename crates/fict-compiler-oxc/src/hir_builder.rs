@@ -2028,6 +2028,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             scoping: self.semantic.scoping(),
             aliases: BTreeMap::new(),
             alias_history: BTreeMap::new(),
+            array_lengths: BTreeMap::new(),
+            array_length_history: BTreeMap::new(),
+            structured_own_properties: BTreeMap::new(),
+            open_structured_containers: BTreeSet::new(),
             binding_owner_depths: BTreeMap::new(),
             cross_scope_alias_targets: BTreeSet::new(),
             ambiguous_alias_targets: BTreeSet::new(),
@@ -8222,23 +8226,37 @@ fn resolve_static_alias_path_with_mode(
         let max_length = allow_exact_alias
             .then_some(current.properties.len())
             .or_else(|| current.properties.len().checked_sub(1));
-        let replacement = max_length.and_then(|max_length| {
-            (0..=max_length).rev().find_map(|length| {
-                let prefix = StaticAliasPath {
-                    root: current.root.clone(),
-                    properties: current.properties[..length].to_vec(),
-                    element_wildcard: false,
-                };
-                aliases.get(&prefix).map(|source| {
-                    let mut resolved = source.clone();
-                    resolved
-                        .properties
-                        .extend_from_slice(&current.properties[length..]);
-                    resolved.element_wildcard |= current.element_wildcard;
-                    resolved.canonicalized()
+        let replacement = max_length
+            .and_then(|max_length| {
+                (0..=max_length).rev().find_map(|length| {
+                    let prefix = StaticAliasPath {
+                        root: current.root.clone(),
+                        properties: current.properties[..length].to_vec(),
+                        element_wildcard: false,
+                    };
+                    aliases.get(&prefix).map(|source| {
+                        let mut resolved = source.clone();
+                        resolved
+                            .properties
+                            .extend_from_slice(&current.properties[length..]);
+                        resolved.element_wildcard |= current.element_wildcard;
+                        resolved.canonicalized()
+                    })
                 })
             })
-        });
+            .or_else(|| {
+                aliases
+                    .iter()
+                    .filter_map(|(target, source)| {
+                        let remaining =
+                            element_wildcard_alias_remainder(target, &current, allow_exact_alias)?;
+                        let mut resolved = source.clone();
+                        resolved.properties.extend_from_slice(remaining);
+                        Some((target.properties.len(), resolved.canonicalized()))
+                    })
+                    .max_by_key(|(length, _)| *length)
+                    .map(|(_, resolved)| resolved)
+            });
         let Some(replacement) = replacement else {
             break;
         };
@@ -8300,8 +8318,45 @@ fn resolve_historical_alias_paths_with_mode(
                 pending.push_back(candidate.canonicalized());
             }
         }
+        for (target, sources) in aliases {
+            let Some(remaining) =
+                element_wildcard_alias_remainder(target, &current, allow_exact_alias)
+            else {
+                continue;
+            };
+            for source in sources {
+                let mut candidate = source.clone();
+                candidate.properties.extend_from_slice(remaining);
+                pending.push_back(candidate.canonicalized());
+            }
+        }
     }
     resolved
+}
+
+fn element_wildcard_alias_remainder<'a>(
+    target: &StaticAliasPath,
+    candidate: &'a StaticAliasPath,
+    allow_exact_alias: bool,
+) -> Option<&'a [String]> {
+    if !target.element_wildcard
+        || target.root != candidate.root
+        || !candidate.properties.starts_with(&target.properties)
+    {
+        return None;
+    }
+    if candidate.element_wildcard {
+        return (allow_exact_alias && candidate.properties == target.properties)
+            .then_some(&candidate.properties[candidate.properties.len()..]);
+    }
+    let element_index = target.properties.len();
+    let element = candidate.properties.get(element_index)?;
+    let index = element.parse::<usize>().ok()?;
+    if index.to_string() != *element {
+        return None;
+    }
+    let remaining = &candidate.properties[element_index + 1..];
+    (allow_exact_alias || !remaining.is_empty()).then_some(remaining)
 }
 
 fn resolve_historical_exposed_paths(
@@ -9834,6 +9889,10 @@ struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    array_lengths: BTreeMap<StaticAliasPath, usize>,
+    array_length_history: BTreeMap<StaticAliasPath, BTreeSet<usize>>,
+    structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    open_structured_containers: BTreeSet<StaticAliasPath>,
     binding_owner_depths: BTreeMap<SymbolId, usize>,
     cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
     ambiguous_alias_targets: BTreeSet<StaticAliasPath>,
@@ -9871,6 +9930,18 @@ struct ReflectiveMemberMutationFact {
     parameter_target: Option<StaticAliasPath>,
     key: Option<String>,
     function_depth: usize,
+}
+
+struct StoredSpreadAliasSources {
+    historical: bool,
+    entries: BTreeSet<StoredSpreadAliasSource>,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct StoredSpreadAliasSource {
+    properties: Vec<String>,
+    element_wildcard: bool,
+    source: StaticAliasPath,
 }
 
 #[derive(Clone)]
@@ -11428,6 +11499,12 @@ impl StaticHookAliasCollector<'_> {
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
         self.record_cross_scope_target(path);
         self.aliases.retain(|target, _| !target.overlaps(path));
+        self.array_lengths
+            .retain(|target, _| !target.starts_with(path));
+        self.structured_own_properties
+            .retain(|target, _| !target.starts_with(path));
+        self.open_structured_containers
+            .retain(|target| !target.starts_with(path));
         self.callable_exposures
             .retain(|target, _| !target.overlaps(path));
         self.local_callable_parameters
@@ -11435,14 +11512,53 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn insert_alias(&mut self, target: StaticAliasPath, source: StaticAliasPath) {
+        let array_length = self.known_array_length(&source);
         self.clear_overlapping_aliases(&target);
         if target != source {
             self.alias_history
                 .entry(target.clone())
                 .or_default()
                 .insert(source.clone());
-            self.aliases.insert(target, source);
+            self.aliases.insert(target.clone(), source);
         }
+        if let Some(length) = array_length {
+            self.array_lengths.insert(target, length);
+        }
+    }
+
+    fn known_array_length(&self, path: &StaticAliasPath) -> Option<usize> {
+        if self
+            .ambiguous_alias_targets
+            .iter()
+            .any(|target| target.overlaps(path))
+        {
+            return None;
+        }
+        self.array_lengths.get(path).copied().or_else(|| {
+            let resolved = resolve_static_alias_path(&self.aliases, path);
+            self.array_lengths.get(&resolved).copied()
+        })
+    }
+
+    fn known_structured_own_properties(&self, path: &StaticAliasPath) -> Option<BTreeSet<String>> {
+        if !self.path_is_currently_intact(path)
+            || self
+                .ambiguous_alias_targets
+                .iter()
+                .any(|target| target.overlaps(path))
+        {
+            return None;
+        }
+        let resolved = resolve_static_alias_path(&self.aliases, path);
+        for candidate in [path, &resolved] {
+            if self.open_structured_containers.contains(candidate) {
+                return None;
+            }
+            if let Some(properties) = self.structured_own_properties.get(candidate) {
+                return Some(properties.clone());
+            }
+        }
+        None
     }
 
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
@@ -11451,17 +11567,25 @@ impl StaticHookAliasCollector<'_> {
             return;
         }
         match value.get_inner_expression() {
-            Expression::ObjectExpression(object) => self.collect_object(&target, object),
-            Expression::ArrayExpression(array) => self.collect_array(&target, array),
+            Expression::ObjectExpression(object) => {
+                self.structured_own_properties
+                    .insert(target.clone(), BTreeSet::new());
+                self.collect_object(&target, object);
+            }
+            Expression::ArrayExpression(array) => {
+                self.structured_own_properties
+                    .insert(target.clone(), BTreeSet::new());
+                self.collect_array(&target, array);
+            }
             Expression::ConditionalExpression(expression) => {
-                self.ambiguous_alias_targets.insert(target.clone());
                 self.collect_initializer(target.clone(), &expression.consequent);
-                self.collect_initializer(target, &expression.alternate);
+                self.collect_initializer(target.clone(), &expression.alternate);
+                self.ambiguous_alias_targets.insert(target);
             }
             Expression::LogicalExpression(expression) => {
-                self.ambiguous_alias_targets.insert(target.clone());
                 self.collect_initializer(target.clone(), &expression.left);
-                self.collect_initializer(target, &expression.right);
+                self.collect_initializer(target.clone(), &expression.right);
+                self.ambiguous_alias_targets.insert(target);
             }
             Expression::SequenceExpression(expression) => {
                 if let Some(value) = expression.expressions.last() {
@@ -11725,6 +11849,370 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn stored_spread_alias_sources(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<StoredSpreadAliasSources> {
+        let raw = self.alias_source_path(expression)?;
+        let historical = self.path_requires_historical_aliases(&raw, self.function_depth);
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        let bases = if historical {
+            resolve_historical_alias_paths(&self.alias_history, &raw)
+        } else {
+            BTreeSet::from([raw, resolved])
+        };
+        let mut sources = BTreeSet::new();
+        if historical {
+            for base in &bases {
+                for (candidate, candidate_sources) in &self.alias_history {
+                    if candidate.starts_with(base)
+                        && (candidate.properties.len() > base.properties.len()
+                            || (candidate.element_wildcard
+                                && candidate.properties.len() == base.properties.len()))
+                    {
+                        let properties = candidate.properties[base.properties.len()..].to_vec();
+                        sources.extend(candidate_sources.iter().cloned().map(|source| {
+                            StoredSpreadAliasSource {
+                                properties: properties.clone(),
+                                element_wildcard: candidate.element_wildcard,
+                                source,
+                            }
+                        }));
+                    }
+                }
+            }
+        } else {
+            for base in &bases {
+                for (candidate, source) in &self.aliases {
+                    if candidate.starts_with(base)
+                        && (candidate.properties.len() > base.properties.len()
+                            || (candidate.element_wildcard
+                                && candidate.properties.len() == base.properties.len()))
+                    {
+                        sources.insert(StoredSpreadAliasSource {
+                            properties: candidate.properties[base.properties.len()..].to_vec(),
+                            element_wildcard: candidate.element_wildcard,
+                            source: source.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        Some(StoredSpreadAliasSources {
+            historical,
+            entries: sources,
+        })
+    }
+
+    fn collect_object_spread_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        expression: &Expression<'_>,
+    ) {
+        if let Some(StoredSpreadAliasSources {
+            historical,
+            entries: sources,
+        }) = self.stored_spread_alias_sources(expression)
+        {
+            let own_properties = self
+                .alias_source_path(expression)
+                .and_then(|source| self.known_structured_own_properties(&source));
+            if let Some(own_properties) = own_properties {
+                for property in own_properties {
+                    let property_target = target.with_property(property.clone());
+                    self.ambiguous_alias_targets
+                        .retain(|candidate| !candidate.overlaps(&property_target));
+                    self.clear_overlapping_aliases(&property_target);
+                    self.structured_own_properties
+                        .entry(target.clone())
+                        .or_default()
+                        .insert(property);
+                }
+            } else {
+                let known_properties = self
+                    .structured_own_properties
+                    .get(target)
+                    .cloned()
+                    .unwrap_or_default();
+                self.ambiguous_alias_targets.extend(
+                    self.aliases
+                        .keys()
+                        .filter(|candidate| candidate.starts_with(target))
+                        .cloned(),
+                );
+                self.clear_overlapping_aliases(target);
+                self.structured_own_properties
+                    .insert(target.clone(), known_properties);
+                self.open_structured_containers.insert(target.clone());
+            }
+            for source in sources {
+                let mut property_target = target.clone();
+                property_target.properties.extend(source.properties);
+                property_target.element_wildcard |= source.element_wildcard;
+                let property_target = property_target.canonicalized();
+                if historical {
+                    self.ambiguous_alias_targets.insert(property_target.clone());
+                }
+                self.insert_alias(property_target, source.source);
+            }
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ObjectExpression(object) => self.collect_object(target, object),
+            Expression::ConditionalExpression(expression) => {
+                self.collect_object_spread_initializer(target, &expression.consequent);
+                self.collect_object_spread_initializer(target, &expression.alternate);
+                self.ambiguous_alias_targets.extend(
+                    self.alias_history
+                        .keys()
+                        .filter(|candidate| candidate.starts_with(target))
+                        .cloned(),
+                );
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_object_spread_initializer(target, &expression.left);
+                self.collect_object_spread_initializer(target, &expression.right);
+                self.ambiguous_alias_targets.extend(
+                    self.alias_history
+                        .keys()
+                        .filter(|candidate| candidate.starts_with(target))
+                        .cloned(),
+                );
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_object_spread_initializer(target, value);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_object_spread_initializer(target, &expression.right);
+            }
+            _ => {
+                self.ambiguous_alias_targets.extend(
+                    self.aliases
+                        .keys()
+                        .filter(|candidate| candidate.starts_with(target))
+                        .cloned(),
+                );
+                self.clear_overlapping_aliases(target);
+            }
+        }
+    }
+
+    fn collect_array_spread_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        offset: usize,
+        expression: &Expression<'_>,
+    ) {
+        if let Some(StoredSpreadAliasSources {
+            historical,
+            entries: sources,
+        }) = self.stored_spread_alias_sources(expression)
+        {
+            for source in sources {
+                if source.element_wildcard {
+                    let property_target = target.with_element_wildcard();
+                    if historical {
+                        self.ambiguous_alias_targets.insert(property_target.clone());
+                    }
+                    self.insert_alias(property_target, source.source);
+                    continue;
+                }
+                let Some((index_name, remaining)) = source.properties.split_first() else {
+                    continue;
+                };
+                let Ok(index) = index_name.parse::<usize>() else {
+                    continue;
+                };
+                if index.to_string() != *index_name {
+                    continue;
+                }
+                let mut property_target =
+                    target.with_property(offset.saturating_add(index).to_string());
+                self.structured_own_properties
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(offset.saturating_add(index).to_string());
+                property_target.properties.extend_from_slice(remaining);
+                let property_target = property_target.canonicalized();
+                if historical {
+                    self.ambiguous_alias_targets.insert(property_target.clone());
+                }
+                self.insert_alias(property_target, source.source);
+            }
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(array) => {
+                self.collect_array_at(target, array, BTreeSet::from([offset]));
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_array_spread_initializer(target, offset, &expression.consequent);
+                self.collect_array_spread_initializer(target, offset, &expression.alternate);
+                self.ambiguous_alias_targets.extend(
+                    self.alias_history
+                        .keys()
+                        .filter(|candidate| candidate.starts_with(target))
+                        .cloned(),
+                );
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_array_spread_initializer(target, offset, &expression.left);
+                self.collect_array_spread_initializer(target, offset, &expression.right);
+                self.ambiguous_alias_targets.extend(
+                    self.alias_history
+                        .keys()
+                        .filter(|candidate| candidate.starts_with(target))
+                        .cloned(),
+                );
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_array_spread_initializer(target, offset, value);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_array_spread_initializer(target, offset, &expression.right);
+            }
+            _ => {}
+        }
+    }
+
+    fn possible_array_initializer_lengths(&self, expression: &Expression<'_>) -> BTreeSet<usize> {
+        if let Some(path) = self.alias_source_path(expression) {
+            if self.path_requires_historical_aliases(&path, self.function_depth) {
+                let mut lengths = BTreeSet::new();
+                for candidate in resolve_historical_alias_paths(&self.alias_history, &path) {
+                    if let Some(candidate_lengths) = self.array_length_history.get(&candidate) {
+                        lengths.extend(candidate_lengths);
+                    }
+                    if let Some(length) = self.array_lengths.get(&candidate) {
+                        lengths.insert(*length);
+                    }
+                }
+                return lengths;
+            }
+            return self.known_array_length(&path).into_iter().collect();
+        }
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(array) => {
+                let mut lengths = BTreeSet::from([0usize]);
+                for element in &array.elements {
+                    let additions = if let ArrayExpressionElement::SpreadElement(spread) = element {
+                        self.possible_array_initializer_lengths(&spread.argument)
+                    } else {
+                        BTreeSet::from([1usize])
+                    };
+                    if additions.is_empty() {
+                        return BTreeSet::new();
+                    }
+                    lengths = lengths
+                        .iter()
+                        .flat_map(|left| {
+                            additions
+                                .iter()
+                                .filter_map(|right| left.checked_add(*right))
+                        })
+                        .collect();
+                }
+                lengths
+            }
+            Expression::ConditionalExpression(expression) => {
+                let mut lengths = self.possible_array_initializer_lengths(&expression.consequent);
+                lengths.extend(self.possible_array_initializer_lengths(&expression.alternate));
+                lengths
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut lengths = self.possible_array_initializer_lengths(&expression.left);
+                lengths.extend(self.possible_array_initializer_lengths(&expression.right));
+                lengths
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .map(|value| self.possible_array_initializer_lengths(value))
+                .unwrap_or_default(),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.possible_array_initializer_lengths(&expression.right)
+            }
+            _ => BTreeSet::new(),
+        }
+    }
+
+    fn collect_uncertain_array_value_sources(
+        &self,
+        expression: &Expression<'_>,
+        sources: &mut BTreeSet<StaticAliasPath>,
+    ) {
+        if let Some(source) = self.alias_source_path(expression) {
+            sources.insert(source);
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                self.collect_uncertain_array_value_sources(&expression.consequent, sources);
+                self.collect_uncertain_array_value_sources(&expression.alternate, sources);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_uncertain_array_value_sources(&expression.left, sources);
+                self.collect_uncertain_array_value_sources(&expression.right, sources);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_uncertain_array_value_sources(value, sources);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_uncertain_array_value_sources(&expression.right, sources);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_uncertain_array_suffix(
+        &mut self,
+        target: &StaticAliasPath,
+        elements: &[ArrayExpressionElement<'_>],
+    ) {
+        let mut sources = BTreeSet::new();
+        for element in elements {
+            match element {
+                ArrayExpressionElement::Elision(_) => {}
+                ArrayExpressionElement::SpreadElement(spread) => {
+                    if let Some(StoredSpreadAliasSources {
+                        entries: spread_sources,
+                        ..
+                    }) = self.stored_spread_alias_sources(&spread.argument)
+                    {
+                        sources.extend(spread_sources.into_iter().filter_map(|source| {
+                            (source.element_wildcard || source.properties.len() == 1)
+                                .then_some(source.source)
+                        }));
+                    }
+                }
+                element => self
+                    .collect_uncertain_array_value_sources(element.to_expression(), &mut sources),
+            }
+        }
+        if sources.is_empty() {
+            return;
+        }
+        self.ambiguous_alias_targets.insert(target.clone());
+        let wildcard = target.with_element_wildcard();
+        for source in sources {
+            self.insert_alias(wildcard.clone(), source);
+        }
+    }
+
     fn collect_object(
         &mut self,
         target: &StaticAliasPath,
@@ -11732,16 +12220,31 @@ impl StaticHookAliasCollector<'_> {
     ) {
         for property in &object.properties {
             let OxcObjectPropertyKind::ObjectProperty(property) = property else {
-                self.aliases
-                    .retain(|candidate, _| !candidate.starts_with(target));
+                if let OxcObjectPropertyKind::SpreadProperty(spread) = property {
+                    self.collect_object_spread_initializer(target, &spread.argument);
+                }
                 continue;
             };
             let Some(name) = property.key.static_name() else {
+                self.ambiguous_alias_targets.extend(
+                    self.aliases
+                        .keys()
+                        .filter(|candidate| candidate.starts_with(target))
+                        .cloned(),
+                );
                 self.aliases
                     .retain(|candidate, _| !candidate.starts_with(target));
+                self.open_structured_containers.insert(target.clone());
                 continue;
             };
-            let property_target = target.with_property(name.into_owned());
+            let name = name.into_owned();
+            self.structured_own_properties
+                .entry(target.clone())
+                .or_default()
+                .insert(name.clone());
+            let property_target = target.with_property(name);
+            self.ambiguous_alias_targets
+                .retain(|candidate| !candidate.overlaps(&property_target));
             self.clear_overlapping_aliases(&property_target);
             if self.collect_callable_initializer(property_target.clone(), &property.value) {
                 continue;
@@ -11758,21 +12261,87 @@ impl StaticHookAliasCollector<'_> {
         target: &StaticAliasPath,
         array: &oxc::ast::ast::ArrayExpression<'_>,
     ) {
-        for (index, element) in array.elements.iter().enumerate() {
-            let property_target = target.with_property(index.to_string());
-            self.clear_overlapping_aliases(&property_target);
-            if matches!(
-                element,
-                ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_)
-            ) {
+        if let Some(lengths) = self.collect_array_at(target, array, BTreeSet::from([0])) {
+            self.array_length_history
+                .entry(target.clone())
+                .or_default()
+                .extend(&lengths);
+            if lengths.len() == 1 {
+                self.array_lengths.insert(
+                    target.clone(),
+                    *lengths.first().expect("single array length"),
+                );
+            } else {
+                self.array_lengths.remove(target);
+                self.ambiguous_alias_targets.insert(target.clone());
+            }
+        } else {
+            self.array_lengths.remove(target);
+        }
+    }
+
+    fn collect_array_at(
+        &mut self,
+        target: &StaticAliasPath,
+        array: &oxc::ast::ast::ArrayExpression<'_>,
+        mut positions: BTreeSet<usize>,
+    ) -> Option<BTreeSet<usize>> {
+        for (element_index, element) in array.elements.iter().enumerate() {
+            if let ArrayExpressionElement::SpreadElement(spread) = element {
+                for position in &positions {
+                    self.collect_array_spread_initializer(target, *position, &spread.argument);
+                }
+                let lengths = self.possible_array_initializer_lengths(&spread.argument);
+                if lengths.is_empty() {
+                    self.collect_uncertain_array_suffix(
+                        target,
+                        &array.elements[element_index + 1..],
+                    );
+                    return None;
+                }
+                positions = positions
+                    .iter()
+                    .flat_map(|position| {
+                        lengths
+                            .iter()
+                            .filter_map(|length| position.checked_add(*length))
+                    })
+                    .collect();
+                continue;
+            }
+            if matches!(element, ArrayExpressionElement::Elision(_)) {
+                positions = positions
+                    .iter()
+                    .filter_map(|position| position.checked_add(1))
+                    .collect();
                 continue;
             }
             let value = element.to_expression();
-            if self.collect_callable_initializer(property_target.clone(), value) {
-                continue;
+            let ambiguous_position = positions.len() > 1;
+            for position in &positions {
+                let property_target = target.with_property(position.to_string());
+                self.clear_overlapping_aliases(&property_target);
+                self.structured_own_properties
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(position.to_string());
+                if self.collect_callable_initializer(property_target.clone(), value) {
+                    if ambiguous_position {
+                        self.ambiguous_alias_targets.insert(property_target);
+                    }
+                    continue;
+                }
+                self.collect_initializer(property_target.clone(), value);
+                if ambiguous_position {
+                    self.ambiguous_alias_targets.insert(property_target);
+                }
             }
-            self.collect_initializer(property_target, value);
+            positions = positions
+                .iter()
+                .filter_map(|position| position.checked_add(1))
+                .collect();
         }
+        Some(positions)
     }
 
     fn invalidate_path(&mut self, path: StaticAliasPath, member: bool) {
