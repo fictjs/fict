@@ -8214,17 +8214,31 @@ fn resolve_historical_alias_paths(
 fn prototype_sensitive_invalidation_paths(path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
     let mut paths = BTreeSet::from([path.clone()]);
     for (index, property) in path.properties.iter().enumerate() {
-        if property == "__proto__"
-            || (property == "constructor"
-                && path
-                    .properties
-                    .get(index + 1)
-                    .is_some_and(|next| next == "prototype"))
+        let prototype_length = if property == "__proto__" {
+            Some(1)
+        } else if property == "constructor"
+            && path
+                .properties
+                .get(index + 1)
+                .is_some_and(|next| next == "prototype")
         {
+            Some(2)
+        } else {
+            None
+        };
+        if let Some(prototype_length) = prototype_length {
             paths.insert(StaticAliasPath {
                 root: path.root.clone(),
                 properties: path.properties[..index].to_vec(),
             });
+            let member_index = index + prototype_length;
+            if path.properties.len() == member_index + 1 {
+                paths.insert(
+                    StaticAliasPath::unresolved_global("Object".to_string())
+                        .with_property("prototype".to_string())
+                        .with_property(path.properties[member_index].clone()),
+                );
+            }
         }
     }
     paths
