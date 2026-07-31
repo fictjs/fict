@@ -3842,6 +3842,11 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect(values);",
         ),
         (
+            "unadvanced replacement constructor generator capture",
+            "class Helper { constructor() { return { inspect: function* () { values.forEach = null; } }; } } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
             "read-only class instance field",
             "class Helper { inspect = target => target.length; } const helper = new Helper();",
             "helper.inspect(values);",
@@ -4108,6 +4113,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "class instance generator field parameter default",
             "class Helper { mutate = function* (unused = (values.forEach = null)) {}; } const helper = new Helper();",
             "helper.mutate();",
+        ),
+        (
+            "replacement constructor generator capture advance",
+            "class Helper { constructor() { return { mutate: function* () { values.forEach = null; } }; } } const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "replacement constructor generator parameter default",
+            "class Helper { constructor() { return { mutate: function* (unused = (values.forEach = null)) {} }; } } const helper = new Helper();",
+            "helper.mutate();",
+        ),
+        (
+            "mixed replacement constructor generator instances",
+            "class Helper { constructor() { return { mutate: function* () { values.forEach = null; } }; } } const first = new Helper(); const second = new Helper(); first.mutate();",
+            "second.mutate().next();",
         ),
         (
             "aliased class instance generator capture advance",

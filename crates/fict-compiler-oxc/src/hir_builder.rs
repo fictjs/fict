@@ -10072,70 +10072,97 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 _ => {}
             }
         }
-        if !class_preserves_instance_prototype(class) {
+        let replacement_object = class_guaranteed_returned_object(class);
+        if !class_preserves_instance_prototype(class) && replacement_object.is_none() {
             self.class_instance_generator_bodies.remove(target);
             return;
         }
-        let inherited_bodies = class.super_class.as_ref().and_then(|super_class| {
-            let source = static_alias_source_path(self.scoping, super_class)?;
-            let source_span = Self::root_identifier_span(super_class)?;
-            let bodies = self
-                .class_instance_generator_bodies
-                .get(&source)
-                .cloned()
-                .unwrap_or_default();
-            Some((source, source_span, bodies))
-        });
+        let inherited_bodies = replacement_object
+            .is_none()
+            .then(|| {
+                class.super_class.as_ref().and_then(|super_class| {
+                    let source = static_alias_source_path(self.scoping, super_class)?;
+                    let source_span = Self::root_identifier_span(super_class)?;
+                    let bodies = self
+                        .class_instance_generator_bodies
+                        .get(&source)
+                        .cloned()
+                        .unwrap_or_default();
+                    Some((source, source_span, bodies))
+                })
+            })
+            .flatten();
         let mut instance_bodies = inherited_bodies
             .as_ref()
             .map(|(_, _, bodies)| bodies.clone())
             .unwrap_or_default();
-        for element in &class.body.body {
-            match element {
-                ClassElement::MethodDefinition(method)
-                    if !method.r#static
-                        && !matches!(&method.key, OxcPropertyKey::PrivateIdentifier(_)) =>
-                {
-                    let Some(name) = method.key.static_name() else {
-                        instance_bodies.clear();
-                        continue;
-                    };
-                    let name = name.into_owned();
-                    if method.kind == MethodDefinitionKind::Method
-                        && method.decorators.is_empty()
-                        && let Some(span) = Self::generator_body_span(&method.value)
-                    {
-                        instance_bodies.insert(name, span);
-                    } else {
-                        instance_bodies.remove(&name);
-                    }
+        if let Some(object) = replacement_object {
+            for property in &object.properties {
+                let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                    continue;
+                };
+                let Some(name) = property.key.static_name() else {
+                    continue;
+                };
+                let name = name.into_owned();
+                let body = match property.value.get_inner_expression() {
+                    Expression::FunctionExpression(function) => Self::generator_body_span(function),
+                    _ => None,
+                };
+                if let Some(body) = body {
+                    instance_bodies.insert(name, body);
+                } else {
+                    instance_bodies.remove(&name);
                 }
-                ClassElement::PropertyDefinition(property)
-                    if !property.r#static
-                        && !matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) =>
-                {
-                    let Some(name) = property.key.static_name() else {
-                        instance_bodies.clear();
-                        continue;
-                    };
-                    let name = name.into_owned();
-                    let body = property.value.as_ref().and_then(|value| {
-                        match value.get_inner_expression() {
-                            Expression::FunctionExpression(function) => {
-                                Self::generator_body_span(function)
-                            }
-                            _ => None,
+            }
+        } else {
+            for element in &class.body.body {
+                match element {
+                    ClassElement::MethodDefinition(method)
+                        if !method.r#static
+                            && !matches!(&method.key, OxcPropertyKey::PrivateIdentifier(_)) =>
+                    {
+                        let Some(name) = method.key.static_name() else {
+                            instance_bodies.clear();
+                            continue;
+                        };
+                        let name = name.into_owned();
+                        if method.kind == MethodDefinitionKind::Method
+                            && method.decorators.is_empty()
+                            && let Some(span) = Self::generator_body_span(&method.value)
+                        {
+                            instance_bodies.insert(name, span);
+                        } else {
+                            instance_bodies.remove(&name);
                         }
-                    });
-                    if property.decorators.is_empty()
-                        && let Some(body) = body
-                    {
-                        instance_bodies.insert(name, body);
-                    } else {
-                        instance_bodies.remove(&name);
                     }
+                    ClassElement::PropertyDefinition(property)
+                        if !property.r#static
+                            && !matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) =>
+                    {
+                        let Some(name) = property.key.static_name() else {
+                            instance_bodies.clear();
+                            continue;
+                        };
+                        let name = name.into_owned();
+                        let body = property.value.as_ref().and_then(|value| {
+                            match value.get_inner_expression() {
+                                Expression::FunctionExpression(function) => {
+                                    Self::generator_body_span(function)
+                                }
+                                _ => None,
+                            }
+                        });
+                        if property.decorators.is_empty()
+                            && let Some(body) = body
+                        {
+                            instance_bodies.insert(name, body);
+                        } else {
+                            instance_bodies.remove(&name);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         for (name, body) in &instance_bodies {
