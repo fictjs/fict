@@ -9787,6 +9787,7 @@ struct ReflectiveMemberMutationFact {
 struct LocalCallableParameter {
     index: usize,
     symbol: SymbolId,
+    properties: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -9819,23 +9820,72 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         parameters: &FormalParameters<'_>,
     ) {
-        let bindings = parameters
-            .items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, parameter)| {
-                let BindingPattern::BindingIdentifier(binding) = &parameter.pattern else {
-                    return None;
-                };
-                Some(LocalCallableParameter {
-                    index,
-                    symbol: binding.symbol_id.get()?,
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut bindings = Vec::new();
+        for (index, parameter) in parameters.items.iter().enumerate() {
+            Self::collect_local_callable_parameter_bindings(
+                &parameter.pattern,
+                index,
+                &[],
+                &mut bindings,
+            );
+        }
         self.local_callable_parameter_history
             .insert(target.clone(), bindings.clone());
         self.local_callable_parameters.insert(target, bindings);
+    }
+
+    fn collect_local_callable_parameter_bindings(
+        pattern: &BindingPattern<'_>,
+        index: usize,
+        properties: &[String],
+        bindings: &mut Vec<LocalCallableParameter>,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                if let Some(symbol) = binding.symbol_id.get() {
+                    bindings.push(LocalCallableParameter {
+                        index,
+                        symbol,
+                        properties: properties.to_vec(),
+                    });
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    let Some(property_name) = property.key.static_name() else {
+                        continue;
+                    };
+                    let mut nested = properties.to_vec();
+                    nested.push(property_name.into_owned());
+                    Self::collect_local_callable_parameter_bindings(
+                        &property.value,
+                        index,
+                        &nested,
+                        bindings,
+                    );
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for (element_index, element) in array.elements.iter().enumerate() {
+                    let Some(element) = element else {
+                        continue;
+                    };
+                    let mut nested = properties.to_vec();
+                    nested.push(element_index.to_string());
+                    Self::collect_local_callable_parameter_bindings(
+                        element, index, &nested, bindings,
+                    );
+                }
+            }
+            BindingPattern::AssignmentPattern(default) => {
+                Self::collect_local_callable_parameter_bindings(
+                    &default.left,
+                    index,
+                    properties,
+                    bindings,
+                );
+            }
+        }
     }
 
     fn path_owner_depth(&self, path: &StaticAliasPath) -> usize {
@@ -10553,6 +10603,7 @@ impl StaticHookAliasCollector<'_> {
                             }
                             for argument_path in &arguments {
                                 let mut mapped = argument_path.clone();
+                                mapped.properties.extend(parameter.properties.clone());
                                 mapped.properties.extend(invalidated.properties.clone());
                                 additions
                                     .entry(mapped.canonicalized())
