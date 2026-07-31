@@ -10914,6 +10914,8 @@ struct LocalClassInstanceCallable {
     lexical_receiver: bool,
     generator: bool,
     unknown: bool,
+    bound_callables: Vec<LocalBoundCallable>,
+    bound_historical: bool,
     exposures: BTreeSet<StaticAliasPath>,
 }
 
@@ -11570,6 +11572,21 @@ impl StaticHookAliasCollector<'_> {
         value: &Expression<'_>,
         lexical_receiver_span: Span,
     ) -> LocalClassInstanceCallable {
+        if let Some((bound_callables, exposures, bound_historical)) =
+            self.local_bound_callable_initializer(value)
+        {
+            return LocalClassInstanceCallable {
+                source: None,
+                parameters: Vec::new(),
+                dynamic_receiver: None,
+                lexical_receiver: false,
+                generator: false,
+                unknown: false,
+                bound_callables,
+                bound_historical,
+                exposures,
+            };
+        }
         let (source, parameters, dynamic_receiver, lexical_receiver, generator, unknown) =
             match value.get_inner_expression() {
                 Expression::FunctionExpression(function) => (
@@ -11604,6 +11621,8 @@ impl StaticHookAliasCollector<'_> {
             lexical_receiver,
             generator,
             unknown,
+            bound_callables: Vec::new(),
+            bound_historical: false,
             exposures: self.returned_function_paths(value).unwrap_or_default(),
         }
     }
@@ -11840,6 +11859,16 @@ impl StaticHookAliasCollector<'_> {
             if let Some(source) = callable.source.clone() {
                 self.insert_alias(instance_field.clone(), source);
                 self.transient_callable_alias_targets.insert(instance_field);
+                continue;
+            }
+            if !callable.bound_callables.is_empty() {
+                for bound in callable.bound_callables {
+                    self.record_local_bound_callable(instance_field.clone(), bound);
+                }
+                if callable.bound_historical {
+                    self.mark_alias_target_ambiguous(instance_field.clone());
+                }
+                self.record_callable_exposures(instance_field, callable.exposures);
                 continue;
             }
             self.record_local_callable_signature(
@@ -13857,16 +13886,15 @@ impl StaticHookAliasCollector<'_> {
         true
     }
 
-    fn collect_bound_callable_initializer(
-        &mut self,
-        target: StaticAliasPath,
+    fn local_bound_callable_initializer(
+        &self,
         value: &Expression<'_>,
-    ) -> bool {
+    ) -> Option<(Vec<LocalBoundCallable>, BTreeSet<StaticAliasPath>, bool)> {
         let Expression::CallExpression(call) = value.get_inner_expression() else {
-            return false;
+            return None;
         };
         if call.optional {
-            return false;
+            return None;
         }
         let added_arguments =
             self.collect_local_invocation_arguments(call.arguments.get(1..).unwrap_or_default());
@@ -13881,11 +13909,8 @@ impl StaticHookAliasCollector<'_> {
         let mut historical = false;
         if let Some(raw_callee) = static_alias_source_path(self.scoping, &call.callee) {
             let resolved_callee = resolve_static_alias_path(&self.aliases, &raw_callee);
-            let Some((raw_source, source)) =
-                self.intact_function_bind_target(&raw_callee, &resolved_callee)
-            else {
-                return false;
-            };
+            let (raw_source, source) =
+                self.intact_function_bind_target(&raw_callee, &resolved_callee)?;
             historical = [&raw_source, &source].into_iter().any(|path| {
                 self.path_owner_depth(path) < self.function_depth
                     || self
@@ -13962,9 +13987,9 @@ impl StaticHookAliasCollector<'_> {
                     });
                 }
             }
-        } else if let Some(inline_exposures) =
-            self.inline_function_indirection_exposures(&call.callee, "bind")
-        {
+        } else {
+            let inline_exposures =
+                self.inline_function_indirection_exposures(&call.callee, "bind")?;
             let parameters = self
                 .inline_function_indirection_parameters(&call.callee, "bind")
                 .unwrap_or_default();
@@ -13977,14 +14002,27 @@ impl StaticHookAliasCollector<'_> {
                 generator: self.inline_function_indirection_is_generator(&call.callee, "bind"),
                 unknown: false,
             });
-        } else {
-            return false;
         }
         if alternatives.is_empty() {
-            return false;
+            return None;
         }
-        for mut alternative in alternatives {
+        for alternative in &mut alternatives {
             alternative.arguments.extend(added_arguments.clone());
+        }
+        Some((alternatives, exposures, historical))
+    }
+
+    fn collect_bound_callable_initializer(
+        &mut self,
+        target: StaticAliasPath,
+        value: &Expression<'_>,
+    ) -> bool {
+        let Some((alternatives, exposures, historical)) =
+            self.local_bound_callable_initializer(value)
+        else {
+            return false;
+        };
+        for alternative in alternatives {
             self.record_local_bound_callable(target.clone(), alternative);
         }
         if !exposures.is_empty() {

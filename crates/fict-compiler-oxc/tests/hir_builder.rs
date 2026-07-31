@@ -3837,6 +3837,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect(values);",
         ),
         (
+            "replacement constructor bound callable",
+            "function inspect(target) { return target.length; } class Helper { constructor() { return { inspect: inspect.bind(null) }; } } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
+            "replacement constructor inline bound callable",
+            "class Helper { constructor() { return { inspect: (target => target.length).bind(null) }; } } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
             "replacement constructor shadows instance field",
             "class Helper { constructor() { return { inspect: target => target.length }; } inspect = target => { target.forEach = null; }; } const helper = new Helper();",
             "helper.inspect(values);",
@@ -4417,6 +4427,16 @@ fn class_instance_method_invocations_propagate_local_effects() {
             "replacement constructor callable alias",
             "function mutate(target) { target.forEach = null; } class Helper { constructor() { return { mutate }; } } const helper = new Helper();",
             "helper.mutate(values);",
+        ),
+        (
+            "replacement constructor bound callable",
+            "function mutate(target) { target.forEach = null; } class Helper { constructor() { return { mutate: mutate.bind(null) }; } } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "replacement constructor bound receiver",
+            "function mutate() { this.forEach = null; } class Helper { constructor() { return { mutate: mutate.bind(values) }; } } const helper = new Helper();",
+            "helper.mutate();",
         ),
         (
             "replacement constructor unknown callable",
