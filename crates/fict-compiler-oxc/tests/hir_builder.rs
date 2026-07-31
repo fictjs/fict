@@ -2829,6 +2829,151 @@ fn synchronous_builtin_callback_hosts_do_not_escape_reactive_captures() {
 }
 
 #[test]
+fn synchronous_string_replacers_do_not_escape_reactive_captures() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const text = $state('a');
+            const replace = () => count;
+            return [
+                text.replace('a', () => count),
+                text.replaceAll('a', replace),
+                'a'.replace('a', () => count),
+                text.replace(/a/, () => count),
+                text.replaceAll(/a/g, replace),
+            ].join('');
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") }),
+        "standard string replacers run synchronously: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn string_replacer_proof_rejects_async_and_unknown_boundaries() {
+    for (name, source, expected_span, expected_code) in [
+        (
+            "async replacer",
+            r#"
+                import { $state } from 'fict';
+                async function pause() {}
+                function App() {
+                    const count = $state(0);
+                    const text = $state('a');
+                    return text.replace('a', async () => { await pause(); return count; });
+                }
+            "#,
+            "async () => { await pause(); return count; }",
+            "FICT-R005",
+        ),
+        (
+            "unknown receiver",
+            r#"
+                import { $state } from 'fict';
+                function useRun(custom) {
+                    const count = $state(0);
+                    custom.replace('a', () => count);
+                    return count;
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "overridden string prototype",
+            r#"
+                import { $state } from 'fict';
+                function App(sink) {
+                    const count = $state(0);
+                    const text = $state('a');
+                    String.prototype.replace = sink;
+                    return text.replace('a', () => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "search protocol callback",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const count = $state(0);
+                    const text = $state('a');
+                    const search = {
+                        [Symbol.replace]() { return count; },
+                    };
+                    return text.replace(search, 'x');
+                }
+            "#,
+            "search",
+            "FICT-R005",
+        ),
+        (
+            "search protocol retains replacer",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const count = $state(0);
+                    const text = $state('a');
+                    const search = {
+                        [Symbol.replace](_text, replacer) {
+                            globalThis.saved = replacer;
+                            return '';
+                        },
+                    };
+                    return text.replace(search, () => count);
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "non-callback replacement",
+            r#"
+                import { $state } from 'fict';
+                function App() {
+                    const rows = $state([{ done: false }]);
+                    const text = $state('a');
+                    return text.replace('a', rows[0]);
+                }
+            "#,
+            "rows[0]",
+            "FICT-R002",
+        ),
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == expected_code
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected {expected_code} on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn synchronous_callback_host_proof_rejects_unknown_and_async_boundaries() {
     for (name, source) in [
         (

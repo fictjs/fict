@@ -10353,6 +10353,12 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 if (configured && index == 0)
                     || self.direct_state_symbol(*argument).is_some()
                     || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
+                    || self.is_non_escaping_string_replacer(
+                        &call.callee,
+                        index,
+                        *argument,
+                        arguments,
+                    )
                 {
                     continue;
                 }
@@ -10368,6 +10374,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         for (index, argument) in arguments.iter().enumerate() {
             if (configured && index == 0)
                 || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
+                || self.is_non_escaping_string_replacer(&call.callee, index, *argument, arguments)
             {
                 continue;
             }
@@ -10652,6 +10659,55 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 "get" | "has"
             ) | (StateReceiverKind::Set | StateReceiverKind::WeakSet, "has")
         )
+    }
+
+    fn is_non_escaping_string_replacer(
+        &self,
+        callee: &Expression<'_>,
+        index: usize,
+        argument: EscapeArgument<'_, '_>,
+        arguments: &[EscapeArgument<'_, '_>],
+    ) -> bool {
+        if index != 1 || argument.spread || self.callback_captures(argument).is_empty() {
+            return false;
+        }
+        let Some(search) = arguments.first().filter(|search| !search.spread) else {
+            return false;
+        };
+        let builtin_search_dispatch = match search.expression.get_inner_expression() {
+            Expression::StringLiteral(_) | Expression::TemplateLiteral(_) => true,
+            Expression::RegExpLiteral(_) => self.callback_aliases.path_is_intact(
+                &StaticAliasPath::unresolved_global("RegExp".to_string())
+                    .with_property("prototype".to_string()),
+            ),
+            _ => false,
+        };
+        if !builtin_search_dispatch {
+            return false;
+        }
+        let (receiver, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.as_str())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Expression::StringLiteral(property) = member.expression.get_inner_expression()
+                else {
+                    return false;
+                };
+                (&member.object, property.value.as_str())
+            }
+            _ => return false,
+        };
+        if !matches!(method, "replace" | "replaceAll") {
+            return false;
+        }
+        let receiver_kind =
+            classify_state_receiver_assignment(self.scoping, receiver, self.proven_receivers);
+        receiver_kind == StateReceiverKind::String
+            && self.builtin_method_is_intact(receiver, receiver_kind, method)
+            && self
+                .callback_timing(argument.expression)
+                .is_some_and(|timing| !timing.may_suspend)
     }
 
     fn is_non_escaping_hook_accumulator(
