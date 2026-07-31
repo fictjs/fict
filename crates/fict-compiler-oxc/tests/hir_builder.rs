@@ -3565,6 +3565,125 @@ fn detached_and_sibling_destructured_parameters_preserve_receiver_methods() {
 }
 
 #[test]
+fn local_calls_propagate_formal_rest_element_invalidations() {
+    for (name, helper, call) in [
+        (
+            "direct rest binding",
+            "function mutate(...targets) { targets[0].forEach = null; }",
+            "mutate(values);",
+        ),
+        (
+            "rest after positional parameter",
+            "function mutate(prefix, ...targets) { targets[0].forEach = null; }",
+            "mutate(null, values);",
+        ),
+        (
+            "destructured rest binding",
+            "function mutate(...[target]) { target.forEach = null; }",
+            "mutate(values);",
+        ),
+        (
+            "nested destructured rest binding",
+            "const box = { target: values }; function mutate(...[{ target }]) { target.forEach = null; }",
+            "mutate(box);",
+        ),
+        (
+            "delegated rest element",
+            "function inner(target) { target.forEach = null; } function mutate(...targets) { inner(targets[0]); }",
+            "mutate(values);",
+        ),
+        (
+            "reflective rest element",
+            "function mutate(...targets) { Object.defineProperty(targets[0], 'forEach', { value: null }); }",
+            "mutate(values);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {call}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn formal_rest_container_mutations_preserve_arguments() {
+    for (name, helper, call) in [
+        (
+            "rest container property",
+            "function mutate(...targets) { targets.forEach = null; }",
+            "mutate(values);",
+        ),
+        (
+            "rest slot replacement",
+            "function mutate(...targets) { targets[0] = []; }",
+            "mutate(values);",
+        ),
+        (
+            "detached destructured rest binding",
+            "function mutate(...[target]) { target = {}; target.forEach = null; }",
+            "mutate(values);",
+        ),
+        (
+            "sibling rest element",
+            "function mutate(...targets) { targets[1].forEach = null; }",
+            "mutate(values, []);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {call}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn assigned_builtin_aliases_invalidate_escape_exemptions() {
     for (name, source) in [
         (

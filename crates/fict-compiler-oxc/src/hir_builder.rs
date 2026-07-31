@@ -9788,6 +9788,7 @@ struct LocalCallableParameter {
     index: usize,
     symbol: SymbolId,
     properties: Vec<String>,
+    rest: bool,
 }
 
 #[derive(Clone)]
@@ -9829,6 +9830,13 @@ impl StaticHookAliasCollector<'_> {
                 &mut bindings,
             );
         }
+        if let Some(rest) = &parameters.rest {
+            Self::collect_local_callable_rest_bindings(
+                &rest.rest.argument,
+                parameters.items.len(),
+                &mut bindings,
+            );
+        }
         self.local_callable_parameter_history
             .insert(target.clone(), bindings.clone());
         self.local_callable_parameters.insert(target, bindings);
@@ -9847,6 +9855,7 @@ impl StaticHookAliasCollector<'_> {
                         index,
                         symbol,
                         properties: properties.to_vec(),
+                        rest: false,
                     });
                 }
             }
@@ -9884,6 +9893,63 @@ impl StaticHookAliasCollector<'_> {
                     properties,
                     bindings,
                 );
+            }
+        }
+    }
+
+    fn collect_local_callable_rest_bindings(
+        pattern: &BindingPattern<'_>,
+        start: usize,
+        bindings: &mut Vec<LocalCallableParameter>,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                if let Some(symbol) = binding.symbol_id.get() {
+                    bindings.push(LocalCallableParameter {
+                        index: start,
+                        symbol,
+                        properties: Vec::new(),
+                        rest: true,
+                    });
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for (offset, element) in array.elements.iter().enumerate() {
+                    let (Some(element), Some(index)) = (element, start.checked_add(offset)) else {
+                        continue;
+                    };
+                    Self::collect_local_callable_parameter_bindings(element, index, &[], bindings);
+                }
+                if let Some(rest) = &array.rest
+                    && let Some(start) = start.checked_add(array.elements.len())
+                {
+                    Self::collect_local_callable_rest_bindings(&rest.argument, start, bindings);
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    let Some(name) = property.key.static_name() else {
+                        continue;
+                    };
+                    let Ok(offset) = name.parse::<usize>() else {
+                        continue;
+                    };
+                    if offset.to_string() != name {
+                        continue;
+                    }
+                    let Some(index) = start.checked_add(offset) else {
+                        continue;
+                    };
+                    Self::collect_local_callable_parameter_bindings(
+                        &property.value,
+                        index,
+                        &[],
+                        bindings,
+                    );
+                }
+            }
+            BindingPattern::AssignmentPattern(default) => {
+                Self::collect_local_callable_rest_bindings(&default.left, start, bindings);
             }
         }
     }
@@ -10581,30 +10647,53 @@ impl StaticHookAliasCollector<'_> {
                 };
                 for parameters in parameter_sets {
                     for parameter in parameters {
-                        let Some(Some(invocation_argument)) =
-                            invocation.arguments.get(parameter.index)
-                        else {
-                            continue;
-                        };
-                        let arguments = if self.path_requires_historical_aliases(
-                            &invocation_argument.raw,
-                            invocation.function_depth,
-                        ) {
-                            resolve_historical_alias_paths(
-                                &self.alias_history,
-                                &invocation_argument.raw,
-                            )
-                        } else {
-                            BTreeSet::from([invocation_argument.resolved.clone()])
-                        };
                         for invalidated in &invalidated {
                             if invalidated.root != StaticAliasRoot::Binding(parameter.symbol) {
                                 continue;
                             }
+                            let (argument_index, properties) = if parameter.rest {
+                                let [offset_property, properties @ ..] =
+                                    invalidated.properties.as_slice()
+                                else {
+                                    continue;
+                                };
+                                if properties.is_empty() {
+                                    continue;
+                                }
+                                let Ok(offset) = offset_property.parse::<usize>() else {
+                                    continue;
+                                };
+                                if offset.to_string() != *offset_property {
+                                    continue;
+                                }
+                                let Some(index) = parameter.index.checked_add(offset) else {
+                                    continue;
+                                };
+                                (index, properties.to_vec())
+                            } else {
+                                let mut properties = parameter.properties.clone();
+                                properties.extend(invalidated.properties.clone());
+                                (parameter.index, properties)
+                            };
+                            let Some(Some(invocation_argument)) =
+                                invocation.arguments.get(argument_index)
+                            else {
+                                continue;
+                            };
+                            let arguments = if self.path_requires_historical_aliases(
+                                &invocation_argument.raw,
+                                invocation.function_depth,
+                            ) {
+                                resolve_historical_alias_paths(
+                                    &self.alias_history,
+                                    &invocation_argument.raw,
+                                )
+                            } else {
+                                BTreeSet::from([invocation_argument.resolved.clone()])
+                            };
                             for argument_path in &arguments {
                                 let mut mapped = argument_path.clone();
-                                mapped.properties.extend(parameter.properties.clone());
-                                mapped.properties.extend(invalidated.properties.clone());
+                                mapped.properties.extend(properties.clone());
                                 additions
                                     .entry(mapped.canonicalized())
                                     .and_modify(|attached| {
