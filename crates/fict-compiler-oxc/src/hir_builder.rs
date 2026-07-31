@@ -9906,6 +9906,7 @@ struct GeneratorExecutionCollector<'semantic> {
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<((u32, u32), StaticAliasPath)>,
+    class_instance_generator_bodies: BTreeMap<StaticAliasPath, BTreeMap<String, (u32, u32)>>,
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
 }
@@ -9919,6 +9920,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             forwarded_callable_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
+            class_instance_generator_bodies: BTreeMap::new(),
             directly_unexecuted_body_spans: BTreeSet::new(),
             discarded_invocation_spans: BTreeSet::new(),
         }
@@ -9956,6 +9958,31 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .then_some(function.body.as_ref())
             .flatten()
             .map(|body| (body.span.start, body.span.end))
+    }
+
+    fn constructed_instance_callable_reference(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<(StaticAliasPath, (u32, u32))> {
+        let (object, name) = match expression.get_inner_expression() {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        let Expression::NewExpression(instance) = object.get_inner_expression() else {
+            return None;
+        };
+        let (class, source_span) = self.callable_reference(&instance.callee)?;
+        Some((
+            class
+                .with_property("prototype".to_string())
+                .with_property(name),
+            source_span,
+        ))
     }
 
     fn record_class_generator_bodies(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
@@ -10005,10 +10032,134 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 _ => {}
             }
         }
+        if !class_preserves_instance_prototype(class) {
+            self.class_instance_generator_bodies.remove(target);
+            return;
+        }
+        let inherited_bodies = class.super_class.as_ref().and_then(|super_class| {
+            let source = static_alias_source_path(self.scoping, super_class)?;
+            let source_span = Self::root_identifier_span(super_class)?;
+            let bodies = self
+                .class_instance_generator_bodies
+                .get(&source)
+                .cloned()
+                .unwrap_or_default();
+            Some((source, source_span, bodies))
+        });
+        let mut instance_bodies = inherited_bodies
+            .as_ref()
+            .map(|(_, _, bodies)| bodies.clone())
+            .unwrap_or_default();
+        for element in &class.body.body {
+            match element {
+                ClassElement::MethodDefinition(method)
+                    if !method.r#static
+                        && !matches!(&method.key, OxcPropertyKey::PrivateIdentifier(_)) =>
+                {
+                    let Some(name) = method.key.static_name() else {
+                        instance_bodies.clear();
+                        continue;
+                    };
+                    let name = name.into_owned();
+                    if method.kind == MethodDefinitionKind::Method
+                        && method.decorators.is_empty()
+                        && let Some(span) = Self::generator_body_span(&method.value)
+                    {
+                        instance_bodies.insert(name, span);
+                    } else {
+                        instance_bodies.remove(&name);
+                    }
+                }
+                ClassElement::PropertyDefinition(property)
+                    if !property.r#static
+                        && !matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) =>
+                {
+                    let Some(name) = property.key.static_name() else {
+                        instance_bodies.clear();
+                        continue;
+                    };
+                    let name = name.into_owned();
+                    let body = property.value.as_ref().and_then(|value| {
+                        match value.get_inner_expression() {
+                            Expression::FunctionExpression(function) => {
+                                Self::generator_body_span(function)
+                            }
+                            _ => None,
+                        }
+                    });
+                    if property.decorators.is_empty()
+                        && let Some(body) = body
+                    {
+                        instance_bodies.insert(name, body);
+                    } else {
+                        instance_bodies.remove(&name);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (name, body) in &instance_bodies {
+            let target_method = target
+                .clone()
+                .with_property("prototype".to_string())
+                .with_property(name.clone());
+            self.generator_body_targets
+                .push((*body, target_method.clone()));
+            if let Some((source, source_span, inherited)) = &inherited_bodies
+                && inherited.get(name) == Some(body)
+            {
+                self.forwarded_callable_reads.push(ForwardedCallableRead {
+                    source: source
+                        .clone()
+                        .with_property("prototype".to_string())
+                        .with_property(name.clone()),
+                    source_span: *source_span,
+                    target: target_method,
+                });
+            }
+        }
+        self.class_instance_generator_bodies
+            .insert(target.clone(), instance_bodies);
+    }
+
+    fn record_constructed_class_generator_bodies(
+        &mut self,
+        target: StaticAliasPath,
+        expression: &NewExpression<'_>,
+    ) {
+        let Some((class, source_span)) = self.callable_reference(&expression.callee) else {
+            return;
+        };
+        let bodies = self
+            .class_instance_generator_bodies
+            .get(&class)
+            .cloned()
+            .unwrap_or_default();
+        for (name, span) in bodies {
+            let source = class
+                .clone()
+                .with_property("prototype".to_string())
+                .with_property(name.clone());
+            let instance_method = target.clone().with_property(name);
+            self.generator_body_targets
+                .push((span, instance_method.clone()));
+            self.forwarded_callable_reads.push(ForwardedCallableRead {
+                source,
+                source_span,
+                target: instance_method,
+            });
+        }
     }
 
     fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
         if let Some((path, span)) = self.callable_reference(expression) {
+            self.discarded_invocation_reads
+                .entry(path)
+                .or_default()
+                .insert(span);
+            return;
+        }
+        if let Some((path, span)) = self.constructed_instance_callable_reference(expression) {
             self.discarded_invocation_reads
                 .entry(path)
                 .or_default()
@@ -10214,12 +10365,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 break;
             }
         }
+        let mut targets_by_body = BTreeMap::<_, BTreeSet<_>>::new();
+        for (span, target) in self.generator_body_targets {
+            targets_by_body.entry(span).or_default().insert(target);
+        }
         let mut unexecuted_body_spans = self.directly_unexecuted_body_spans;
-        unexecuted_body_spans.extend(
-            self.generator_body_targets
-                .into_iter()
-                .filter_map(|(span, target)| unexecuted.contains(&target).then_some(span)),
-        );
+        unexecuted_body_spans.extend(targets_by_body.into_iter().filter_map(|(span, targets)| {
+            targets
+                .iter()
+                .all(|target| unexecuted.contains(target))
+                .then_some(span)
+        }));
         GeneratorExecutionProof {
             discarded_invocation_spans: self.discarded_invocation_spans,
             unexecuted_body_spans,
@@ -10246,12 +10402,16 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
         if let Some(initializer) = &declarator.init
             && let BindingPattern::BindingIdentifier(binding) = &declarator.id
-            && let Some(target) = binding.symbol_id.get()
+            && let Some(target_symbol) = binding.symbol_id.get()
         {
-            self.record_forwarded_callable(StaticAliasPath::root(target), initializer);
+            let target = StaticAliasPath::root(target_symbol);
+            self.record_forwarded_callable(target.clone(), initializer);
+            if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
+                self.record_constructed_class_generator_bodies(target, expression);
+            }
             if !self
                 .scoping
-                .get_resolved_references(target)
+                .get_resolved_references(target_symbol)
                 .any(|reference| reference.is_read())
             {
                 self.record_discarded_expression(initializer);
@@ -10310,6 +10470,23 @@ impl<'a> Visit<'a> for ConstructorValueReturnCollector {
     fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
         self.found |= statement.argument.is_some();
     }
+}
+
+fn class_preserves_instance_prototype(class: &Class<'_>) -> bool {
+    let constructor = class.body.body.iter().find_map(|element| {
+        let ClassElement::MethodDefinition(method) = element else {
+            return None;
+        };
+        (method.kind == MethodDefinitionKind::Constructor).then_some(&method.value)
+    });
+    let Some(body) = constructor.and_then(|constructor| constructor.body.as_ref()) else {
+        return true;
+    };
+    let mut returns = ConstructorValueReturnCollector::default();
+    for statement in &body.statements {
+        returns.visit_statement(statement);
+    }
+    !returns.found
 }
 
 struct EscapedFunctionValueCollector<'collector, 'semantic> {
@@ -11117,20 +11294,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn class_preserves_instance_prototype(class: &Class<'_>) -> bool {
-        let constructor = class.body.body.iter().find_map(|element| {
-            let ClassElement::MethodDefinition(method) = element else {
-                return None;
-            };
-            (method.kind == MethodDefinitionKind::Constructor).then_some(&method.value)
-        });
-        let Some(body) = constructor.and_then(|constructor| constructor.body.as_ref()) else {
-            return true;
-        };
-        let mut returns = ConstructorValueReturnCollector::default();
-        for statement in &body.statements {
-            returns.visit_statement(statement);
-        }
-        !returns.found
+        class_preserves_instance_prototype(class)
     }
 
     fn record_class_callables(&mut self, target: &StaticAliasPath, class: &Class<'_>) {

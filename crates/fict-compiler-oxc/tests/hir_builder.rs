@@ -3836,6 +3836,46 @@ fn pure_local_calls_preserve_receiver_methods() {
             "class Helper { inspect = function* (target) { target.forEach = null; }; } const helper = new Helper();",
             "helper.inspect(values);",
         ),
+        (
+            "unadvanced generator instance field capture",
+            "class Helper { inspect = function* () { values.forEach = null; }; } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced generator instance method capture",
+            "class Helper { *inspect() { values.forEach = null; } } const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced inherited generator instance method capture",
+            "class Parent { *inspect() { values.forEach = null; } } class Helper extends Parent {} const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced inherited generator instance field capture",
+            "class Parent { inspect = function* () { values.forEach = null; }; } class Helper extends Parent {} const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced class expression generator instance method capture",
+            "const Helper = class { *inspect() { values.forEach = null; } }; const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced class expression generator instance field capture",
+            "const Helper = class { inspect = function* () { values.forEach = null; }; }; const helper = new Helper();",
+            "helper.inspect();",
+        ),
+        (
+            "unadvanced direct class instance generator capture",
+            "class Helper { *inspect() { values.forEach = null; } }",
+            "new Helper().inspect();",
+        ),
+        (
+            "unread generator instance field iterator capture",
+            "class Helper { inspect = function* () { values.forEach = null; }; } const helper = new Helper();",
+            "const iterator = helper.inspect();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -3948,6 +3988,41 @@ fn observed_generator_iterators_propagate_local_effects() {
             "class generator parameter default",
             "class Helper { *mutate(unused = (values.forEach = null)) {} }",
             "Helper.prototype.mutate();",
+        ),
+        (
+            "class instance generator method capture advance",
+            "class Helper { *mutate() { values.forEach = null; } } const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "class instance generator field capture advance",
+            "class Helper { mutate = function* () { values.forEach = null; }; } const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "inherited class instance generator capture advance",
+            "class Parent { *mutate() { values.forEach = null; } } class Helper extends Parent {} const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "inherited class instance generator field capture advance",
+            "class Parent { mutate = function* () { values.forEach = null; }; } class Helper extends Parent {} const helper = new Helper();",
+            "helper.mutate().next();",
+        ),
+        (
+            "direct class instance generator capture advance",
+            "class Helper { *mutate() { values.forEach = null; } }",
+            "new Helper().mutate().next();",
+        ),
+        (
+            "mixed advanced and unadvanced class instances",
+            "class Helper { *mutate() { values.forEach = null; } } const first = new Helper(); const second = new Helper(); first.mutate();",
+            "second.mutate().next();",
+        ),
+        (
+            "class instance generator field parameter default",
+            "class Helper { mutate = function* (unused = (values.forEach = null)) {}; } const helper = new Helper();",
+            "helper.mutate();",
         ),
     ] {
         let source = format!(
