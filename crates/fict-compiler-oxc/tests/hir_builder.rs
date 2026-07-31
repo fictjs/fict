@@ -3832,6 +3832,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect(values);",
         ),
         (
+            "replacement constructor callable alias",
+            "function inspect(target) { return target.length; } class Helper { constructor() { return { inspect }; } inspect(target) { target.forEach = null; } } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
+            "replacement constructor shadows instance field",
+            "class Helper { constructor() { return { inspect: target => target.length }; } inspect = target => { target.forEach = null; }; } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
             "read-only class instance field",
             "class Helper { inspect = target => target.length; } const helper = new Helper();",
             "helper.inspect(values);",
@@ -4341,6 +4351,26 @@ fn class_instance_method_invocations_propagate_local_effects() {
         (
             "replaced prototype method",
             "class Helper { mutate(target) { return target.length; } } const helper = new Helper(); Helper.prototype.mutate = function (target) { target.forEach = null; };",
+            "helper.mutate(values);",
+        ),
+        (
+            "replacement constructor result",
+            "class Helper { constructor() { return { mutate(target) { target.forEach = null; } }; } mutate(target) { return target.length; } } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "replacement constructor arrow",
+            "class Helper { constructor() { return { mutate: target => { target.forEach = null; } }; } } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "replacement constructor callable alias",
+            "function mutate(target) { target.forEach = null; } class Helper { constructor() { return { mutate }; } } const helper = new Helper();",
+            "helper.mutate(values);",
+        ),
+        (
+            "replacement constructor unknown callable",
+            "class Helper { constructor(factory) { return { mutate: factory() }; } } const helper = new Helper(() => null);",
             "helper.mutate(values);",
         ),
     ] {

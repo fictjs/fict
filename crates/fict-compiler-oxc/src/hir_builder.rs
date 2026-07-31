@@ -10625,6 +10625,39 @@ fn class_preserves_instance_prototype(class: &Class<'_>) -> bool {
     !returns.found
 }
 
+fn class_guaranteed_returned_object<'a, 'b>(
+    class: &'b Class<'a>,
+) -> Option<&'b oxc::ast::ast::ObjectExpression<'a>> {
+    let constructor = class.body.body.iter().find_map(|element| {
+        let ClassElement::MethodDefinition(method) = element else {
+            return None;
+        };
+        (method.kind == MethodDefinitionKind::Constructor).then_some(&method.value)
+    })?;
+    let [Statement::ReturnStatement(statement)] = constructor.body.as_ref()?.statements.as_slice()
+    else {
+        return None;
+    };
+    let Expression::ObjectExpression(object) = statement.argument.as_ref()?.get_inner_expression()
+    else {
+        return None;
+    };
+    object
+        .properties
+        .iter()
+        .all(|property| {
+            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                return false;
+            };
+            property.kind == PropertyKind::Init
+                && property
+                    .key
+                    .static_name()
+                    .is_some_and(|name| name != "__proto__")
+        })
+        .then_some(object)
+}
+
 struct EscapedFunctionValueCollector<'collector, 'semantic> {
     owner: &'collector StaticHookAliasCollector<'semantic>,
     paths: BTreeSet<StaticAliasPath>,
@@ -10778,10 +10811,12 @@ struct LocalBoundCallable {
 
 #[derive(Clone)]
 struct LocalClassInstanceCallable {
+    source: Option<StaticAliasPath>,
     parameters: Vec<LocalCallableParameter>,
     dynamic_receiver: Option<StaticAliasPath>,
     lexical_receiver: bool,
     generator: bool,
+    unknown: bool,
     exposures: BTreeSet<StaticAliasPath>,
 }
 
@@ -11433,16 +11468,89 @@ impl StaticHookAliasCollector<'_> {
         class_preserves_instance_prototype(class)
     }
 
+    fn local_class_instance_callable(
+        &self,
+        value: &Expression<'_>,
+        lexical_receiver_span: Span,
+    ) -> LocalClassInstanceCallable {
+        let (source, parameters, dynamic_receiver, lexical_receiver, generator, unknown) =
+            match value.get_inner_expression() {
+                Expression::FunctionExpression(function) => (
+                    None,
+                    Self::local_callable_parameters(&function.params),
+                    Some(StaticAliasPath::dynamic_this(function.span)),
+                    false,
+                    function.generator,
+                    false,
+                ),
+                Expression::ArrowFunctionExpression(function) => (
+                    None,
+                    Self::local_callable_parameters(&function.params),
+                    Some(StaticAliasPath::dynamic_this(lexical_receiver_span)),
+                    true,
+                    false,
+                    false,
+                ),
+                _ => (
+                    self.alias_source_path(value),
+                    Vec::new(),
+                    None,
+                    false,
+                    false,
+                    true,
+                ),
+            };
+        LocalClassInstanceCallable {
+            source,
+            parameters,
+            dynamic_receiver,
+            lexical_receiver,
+            generator,
+            unknown,
+            exposures: self.returned_function_paths(value).unwrap_or_default(),
+        }
+    }
+
+    fn record_replacement_object_callables(
+        &mut self,
+        target: &StaticAliasPath,
+        object: &oxc::ast::ast::ObjectExpression<'_>,
+    ) {
+        for property in &object.properties {
+            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                continue;
+            };
+            let Some(name) = property.key.static_name() else {
+                continue;
+            };
+            let name = name.into_owned();
+            self.local_class_instance_fields
+                .entry(target.clone())
+                .or_default()
+                .insert(name.clone());
+            let callable = self.local_class_instance_callable(&property.value, property.span);
+            self.local_class_instance_callables
+                .entry(target.clone())
+                .or_default()
+                .insert(name, callable);
+        }
+    }
+
     fn record_class_callables(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
         self.local_class_instance_fields.remove(target);
         self.local_class_instance_callables.remove(target);
         self.open_local_class_instance_fields.remove(target);
-        if Self::class_preserves_instance_prototype(class) {
+        let replacement_object = class_guaranteed_returned_object(class);
+        if Self::class_preserves_instance_prototype(class) || replacement_object.is_some() {
             self.local_class_instances.insert(target.clone());
         } else {
             self.local_class_instances.remove(target);
         }
-        if let Some(super_class) = &class.super_class
+        if replacement_object.is_some() {
+            self.open_local_class_instance_fields.insert(target.clone());
+        }
+        if replacement_object.is_none()
+            && let Some(super_class) = &class.super_class
             && let Some(raw_super) = static_alias_source_path(self.scoping, super_class)
         {
             let super_class = resolve_static_alias_path(&self.aliases, &raw_super);
@@ -11536,6 +11644,9 @@ impl StaticHookAliasCollector<'_> {
                 }
                 continue;
             }
+            if replacement_object.is_some() {
+                continue;
+            }
             self.local_class_instance_fields
                 .entry(target.clone())
                 .or_default()
@@ -11546,36 +11657,20 @@ impl StaticHookAliasCollector<'_> {
             let Some(value) = &property.value else {
                 continue;
             };
-            let (parameters, dynamic_receiver, lexical_receiver, generator) =
-                match value.get_inner_expression() {
-                    Expression::FunctionExpression(function) => (
-                        Self::local_callable_parameters(&function.params),
-                        Some(StaticAliasPath::dynamic_this(function.span)),
-                        false,
-                        function.generator,
-                    ),
-                    Expression::ArrowFunctionExpression(function) => (
-                        Self::local_callable_parameters(&function.params),
-                        Some(StaticAliasPath::dynamic_this(property.span)),
-                        true,
-                        false,
-                    ),
-                    _ => continue,
-                };
-            let exposures = self.returned_function_paths(value).unwrap_or_default();
+            if !matches!(
+                value.get_inner_expression(),
+                Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
+            ) {
+                continue;
+            }
+            let callable = self.local_class_instance_callable(value, property.span);
             self.local_class_instance_callables
                 .entry(target.clone())
                 .or_default()
-                .insert(
-                    name,
-                    LocalClassInstanceCallable {
-                        parameters,
-                        dynamic_receiver,
-                        lexical_receiver,
-                        generator,
-                        exposures,
-                    },
-                );
+                .insert(name, callable);
+        }
+        if let Some(object) = replacement_object {
+            self.record_replacement_object_callables(target, object);
         }
     }
 
@@ -11629,7 +11724,15 @@ impl StaticHookAliasCollector<'_> {
         for (name, callable) in callables {
             let instance_field = target.clone().with_property(name);
             self.clear_overlapping_aliases(&instance_field);
-            self.record_local_callable_signature(instance_field.clone(), callable.parameters);
+            if let Some(source) = callable.source.clone() {
+                self.insert_alias(instance_field.clone(), source);
+                self.transient_callable_alias_targets.insert(instance_field);
+                continue;
+            }
+            self.record_local_callable_signature(
+                instance_field.clone(),
+                callable.parameters.clone(),
+            );
             if let Some(receiver) = callable.dynamic_receiver {
                 self.record_local_callable_receiver(instance_field.clone(), receiver.clone());
                 if callable.lexical_receiver {
@@ -11652,6 +11755,19 @@ impl StaticHookAliasCollector<'_> {
             }
             if callable.generator {
                 self.record_local_generator(instance_field.clone());
+            }
+            if callable.unknown {
+                self.record_local_bound_callable(
+                    instance_field.clone(),
+                    LocalBoundCallable {
+                        parameters: callable.parameters,
+                        arguments: Vec::new(),
+                        receiver: Vec::new(),
+                        dynamic_receiver: None,
+                        generator: false,
+                        unknown: true,
+                    },
+                );
             }
             self.record_callable_exposures(instance_field, callable.exposures);
         }
