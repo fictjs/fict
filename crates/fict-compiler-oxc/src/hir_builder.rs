@@ -2047,6 +2047,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             attached_callable_parameters: BTreeSet::new(),
             parameter_member_invalidated: BTreeSet::new(),
             parameter_slot_invalidated: BTreeSet::new(),
+            parameter_exposed: BTreeSet::new(),
             reflective_mutations: Vec::new(),
             external_callable_parameters: BTreeSet::new(),
             control_depth: 0,
@@ -9851,6 +9852,7 @@ struct StaticHookAliasCollector<'semantic> {
     attached_callable_parameters: BTreeSet<SymbolId>,
     parameter_member_invalidated: BTreeSet<StaticAliasPath>,
     parameter_slot_invalidated: BTreeSet<StaticAliasPath>,
+    parameter_exposed: BTreeSet<StaticAliasPath>,
     reflective_mutations: Vec<ReflectiveMemberMutationFact>,
     external_callable_parameters: BTreeSet<SymbolId>,
     control_depth: usize,
@@ -9940,6 +9942,13 @@ struct LocalInvocationArgument {
     source_projection: LocalInvocationSourceProjection,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LocalParameterInvalidationKind {
+    Slot,
+    Member,
+    Exposure,
+}
+
 #[derive(Clone)]
 enum LocalInvocationSourceProjection {
     Value(Vec<LocalInvocationSourceComponent>),
@@ -9957,9 +9966,19 @@ enum LocalInvocationSourceComponent {
 }
 
 impl LocalInvocationArgument {
-    fn map_properties(&self, properties: &[String], slot: bool) -> Option<Vec<String>> {
+    fn map_properties(
+        &self,
+        properties: &[String],
+        kind: LocalParameterInvalidationKind,
+    ) -> Option<Vec<String>> {
+        let slot = kind == LocalParameterInvalidationKind::Slot;
         let mapped = match &self.source_projection {
             LocalInvocationSourceProjection::Value(prefix) => {
+                if kind == LocalParameterInvalidationKind::Exposure
+                    && invocation_source_prefix_contains_effect(prefix, properties)
+                {
+                    return Some(Vec::new());
+                }
                 let remaining = match_invocation_source_prefix(prefix, properties)?;
                 if slot && !prefix.is_empty() && remaining.is_empty() {
                     return None;
@@ -9967,6 +9986,11 @@ impl LocalInvocationArgument {
                 Some(remaining.to_vec())
             }
             LocalInvocationSourceProjection::ObjectSpread { prefix, excluded } => {
+                if kind == LocalParameterInvalidationKind::Exposure
+                    && invocation_source_prefix_contains_effect(prefix, properties)
+                {
+                    return None;
+                }
                 let remaining = match_invocation_source_prefix(prefix, properties)?;
                 let property = remaining.first()?;
                 if excluded.contains(property) || (slot && remaining.len() == 1) {
@@ -9997,6 +10021,14 @@ impl LocalInvocationArgument {
             }
         }
     }
+}
+
+fn invocation_source_prefix_contains_effect(
+    prefix: &[LocalInvocationSourceComponent],
+    properties: &[String],
+) -> bool {
+    properties.len() <= prefix.len()
+        && match_invocation_source_prefix(&prefix[..properties.len()], properties).is_some()
 }
 
 fn match_invocation_source_prefix<'a>(
@@ -10404,6 +10436,19 @@ impl StaticHookAliasCollector<'_> {
         arguments: &mut Vec<LocalInvocationArgument>,
     ) {
         if let Some(raw) = self.alias_source_path(spread) {
+            let resolved = resolve_static_alias_path(&self.aliases, &raw);
+            let mut nested = BTreeSet::new();
+            for target in self.aliases.keys().chain(self.callable_exposures.keys()) {
+                for base in [&raw, &resolved] {
+                    if target.starts_with(base) && target.properties.len() > base.properties.len() {
+                        nested.insert((
+                            target.clone(),
+                            target.properties[base.properties.len()..].to_vec(),
+                        ));
+                        break;
+                    }
+                }
+            }
             arguments.push(self.collect_local_invocation_path_with_projection(
                 raw,
                 false,
@@ -10412,6 +10457,19 @@ impl StaticHookAliasCollector<'_> {
                     excluded: BTreeSet::new(),
                 },
             ));
+            arguments.extend(nested.into_iter().map(|(path, properties)| {
+                let mut source_prefix = prefix.to_vec();
+                source_prefix.extend(
+                    properties
+                        .into_iter()
+                        .map(LocalInvocationSourceComponent::Exact),
+                );
+                self.collect_local_invocation_path_with_projection(
+                    path,
+                    false,
+                    LocalInvocationSourceProjection::Value(source_prefix),
+                )
+            }));
             return;
         }
         match spread.get_inner_expression() {
@@ -11879,6 +11937,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn invalidate_exposed_path(&mut self, path: StaticAliasPath) {
         let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if let Some(parameter) = self.attached_parameter_path(&path, &resolved) {
+            self.parameter_exposed.insert(parameter);
+        }
         if path_may_reference_shared_prototype(&path)
             || path_may_reference_shared_prototype(&resolved)
         {
@@ -11891,23 +11952,51 @@ impl StaticHookAliasCollector<'_> {
         self.invalidate_path(path, true);
     }
 
+    fn insert_propagated_exposure(&mut self, path: StaticAliasPath, parameter_attached: bool) {
+        let exposed = resolve_historical_exposed_paths(
+            &self.alias_history,
+            &self.callable_exposure_history,
+            &path,
+        );
+        for exposed_path in exposed {
+            if parameter_attached
+                && exposed_path
+                    .binding_root()
+                    .is_some_and(|root| self.external_callable_parameters.contains(&root))
+            {
+                self.parameter_exposed.insert(exposed_path.clone());
+            }
+            self.invalidate_exposed_path(exposed_path);
+        }
+    }
+
     fn propagate_local_invocation_invalidations(&mut self) {
         for _ in 0..=self.local_invocations.len() {
             let previous_len = (
                 self.member_invalidated.len(),
                 self.parameter_member_invalidated.len(),
                 self.parameter_slot_invalidated.len(),
+                self.parameter_exposed.len(),
             );
             let mut invalidated = self
                 .parameter_slot_invalidated
                 .iter()
                 .cloned()
-                .map(|path| (path, true))
+                .map(|path| (path, LocalParameterInvalidationKind::Slot))
                 .collect::<BTreeMap<_, _>>();
             for path in &self.parameter_member_invalidated {
-                invalidated.insert(path.clone(), false);
+                invalidated.insert(path.clone(), LocalParameterInvalidationKind::Member);
             }
-            let mut additions = BTreeMap::<StaticAliasPath, (bool, bool)>::new();
+            for path in &self.parameter_exposed {
+                invalidated.insert(path.clone(), LocalParameterInvalidationKind::Exposure);
+            }
+            let mut additions = BTreeMap::<
+                StaticAliasPath,
+                (
+                    LocalParameterInvalidationKind,
+                    Option<LocalParameterInvalidationKind>,
+                ),
+            >::new();
             for invocation in self.local_invocations.clone() {
                 let parameter_sets = if let Some(parameters) = &invocation.parameters {
                     vec![parameters.clone()]
@@ -11933,7 +12022,7 @@ impl StaticHookAliasCollector<'_> {
                 };
                 for parameters in parameter_sets {
                     for parameter in parameters {
-                        for (invalidated, slot) in &invalidated {
+                        for (invalidated, kind) in &invalidated {
                             if invalidated.root != StaticAliasRoot::Binding(parameter.symbol) {
                                 continue;
                             }
@@ -11946,7 +12035,7 @@ impl StaticHookAliasCollector<'_> {
                                 invocation.arguments_for_parameter(argument_index)
                             {
                                 let Some(mapped_properties) =
-                                    invocation_argument.map_properties(&properties, *slot)
+                                    invocation_argument.map_properties(&properties, *kind)
                                 else {
                                     continue;
                                 };
@@ -11966,39 +12055,61 @@ impl StaticHookAliasCollector<'_> {
                                     mapped.properties.extend(mapped_properties.clone());
                                     additions
                                         .entry(mapped.canonicalized())
-                                        .and_modify(|(attached, slot_only)| {
-                                            *attached |= invocation_argument.parameter_attached;
-                                            *slot_only &= *slot;
+                                        .and_modify(|(existing_kind, attached_kind)| {
+                                            *existing_kind = (*existing_kind).max(*kind);
+                                            if invocation_argument.parameter_attached {
+                                                *attached_kind =
+                                                    Some(attached_kind.unwrap_or(*kind).max(*kind));
+                                            }
                                         })
-                                        .or_insert((invocation_argument.parameter_attached, *slot));
+                                        .or_insert((
+                                            *kind,
+                                            invocation_argument.parameter_attached.then_some(*kind),
+                                        ));
                                 }
                             }
                         }
                     }
                 }
             }
-            for (path, (parameter_attached, slot)) in additions {
-                if parameter_attached
+            for (path, (kind, attached_kind)) in additions {
+                if let Some(attached_kind) = attached_kind
                     && path
                         .binding_root()
                         .is_some_and(|root| self.external_callable_parameters.contains(&root))
                 {
-                    if slot {
-                        self.parameter_slot_invalidated.insert(path.clone());
-                    } else {
-                        self.parameter_member_invalidated.insert(path.clone());
+                    match attached_kind {
+                        LocalParameterInvalidationKind::Slot => {
+                            self.parameter_slot_invalidated.insert(path.clone());
+                        }
+                        LocalParameterInvalidationKind::Member => {
+                            self.parameter_member_invalidated.insert(path.clone());
+                        }
+                        LocalParameterInvalidationKind::Exposure => {
+                            self.parameter_exposed.insert(path.clone());
+                        }
                     }
                 }
-                if slot {
-                    self.insert_slot_invalidation_path(path, true);
-                } else {
-                    self.insert_invalidation_path(path, true);
+                match kind {
+                    LocalParameterInvalidationKind::Slot => {
+                        self.insert_slot_invalidation_path(path, true);
+                    }
+                    LocalParameterInvalidationKind::Member => {
+                        self.insert_invalidation_path(path, true);
+                    }
+                    LocalParameterInvalidationKind::Exposure => {
+                        self.insert_propagated_exposure(
+                            path,
+                            attached_kind == Some(LocalParameterInvalidationKind::Exposure),
+                        );
+                    }
                 }
             }
             if (
                 self.member_invalidated.len(),
                 self.parameter_member_invalidated.len(),
                 self.parameter_slot_invalidated.len(),
+                self.parameter_exposed.len(),
             ) == previous_len
             {
                 return;
@@ -12006,16 +12117,10 @@ impl StaticHookAliasCollector<'_> {
         }
         for invocation in self.local_invocations.clone() {
             for argument in invocation.all_arguments() {
-                if argument.parameter_attached
-                    && argument
-                        .resolved
-                        .binding_root()
-                        .is_some_and(|root| self.external_callable_parameters.contains(&root))
-                {
-                    self.parameter_member_invalidated
-                        .insert(argument.resolved.clone());
-                }
-                self.insert_invalidation_path(argument.resolved.clone(), true);
+                self.insert_propagated_exposure(
+                    argument.resolved.clone(),
+                    argument.parameter_attached,
+                );
             }
         }
     }

@@ -3998,6 +3998,161 @@ fn spread_array_positions_and_fresh_slots_preserve_values() {
 }
 
 #[test]
+fn local_wrapper_exposures_invalidate_nested_values() {
+    for (name, setup, helper, invocation) in [
+        (
+            "stored object wrapper",
+            "const wrapper = { target: values };",
+            "function expose(value) { external(value); }",
+            "expose(wrapper);",
+        ),
+        (
+            "inline object wrapper",
+            "",
+            "function expose(value) { external(value); }",
+            "expose({ target: values });",
+        ),
+        (
+            "stored array wrapper",
+            "const wrapper = [values];",
+            "function expose(value) { external(value); }",
+            "expose(wrapper);",
+        ),
+        (
+            "inline array wrapper",
+            "",
+            "function expose(value) { external(value); }",
+            "expose([values]);",
+        ),
+        (
+            "object spread nested value",
+            "const wrapper = { target: values };",
+            "function expose(value) { external(value); }",
+            "expose({ ...wrapper });",
+        ),
+        (
+            "array spread nested value",
+            "const wrapper = [values];",
+            "function expose(value) { external(value); }",
+            "expose([...wrapper]);",
+        ),
+        (
+            "nested wrapper property",
+            "",
+            "function expose(value) { external(value.payload); }",
+            "expose({ payload: { target: values } });",
+        ),
+        (
+            "delegated wrapper exposure",
+            "const wrapper = { target: values };",
+            "function inner(value) { external(value); } function expose(value) { inner(value); }",
+            "expose(wrapper);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn local_wrapper_mutations_preserve_unexposed_nested_values() {
+    for (name, setup, helper, invocation) in [
+        (
+            "wrapper member assignment",
+            "",
+            "function mutate(value) { value.other = []; }",
+            "mutate({ target: values });",
+        ),
+        (
+            "wrapper Object.assign",
+            "",
+            "function mutate(value) { Object.assign(value, { other: [] }); }",
+            "mutate({ target: values });",
+        ),
+        (
+            "sibling property exposure",
+            "",
+            "function expose(value) { external(value.other); }",
+            "expose({ target: values, other: [] });",
+        ),
+        (
+            "object spread source",
+            "",
+            "function expose(value) { external(value); }",
+            "expose({ ...values });",
+        ),
+        (
+            "array spread source",
+            "",
+            "function expose(value) { external(value); }",
+            "expose([...values]);",
+        ),
+        (
+            "overwritten object spread property",
+            "const source = { target: values };",
+            "function expose(value) { external(value); }",
+            "expose({ ...source, target: [] });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output.diagnostics.iter().all(|diagnostic| {
+                !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+            }),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_calls_propagate_destructured_parameter_invalidations() {
     for (name, setup, helper) in [
         (
