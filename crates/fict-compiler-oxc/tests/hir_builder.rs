@@ -3932,6 +3932,11 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); void identity(iterator);",
         ),
         (
+            "initial generator next ignores iterator argument",
+            "function* inspect() { values.forEach = null; } function* empty() { yield 1; }",
+            "const iterator = inspect(); const outer = empty(); outer.next(iterator);",
+        ),
+        (
             "unadvanced inline generator iterator argument",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); (function* (value) { value.next(); })(iterator);",
@@ -4823,6 +4828,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "reassigned local no-op consumes iterator",
             "function* mutate() { values.forEach = null; } function consume(value) { void value; } consume = function (value) { return value.next(); };",
             "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "second generator next consumes iterator argument",
+            "function* mutate() { values.forEach = null; } function* consume() { const value = yield; value.next(); }",
+            "const iterator = mutate(); const outer = consume(); outer.next(); outer.next(iterator);",
+        ),
+        (
+            "overridden initial generator next consumes iterator argument",
+            "function* mutate() { values.forEach = null; } function* empty() {}",
+            "const iterator = mutate(); const outer = empty(); outer.next = function (value) { return value.next(); }; outer.next(iterator);",
         ),
         (
             "generator argument spread advances iterator",

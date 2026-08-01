@@ -9923,6 +9923,13 @@ struct PendingCallableArgumentRead {
     result_discarded: bool,
 }
 
+struct InitialGeneratorNextArgumentRead {
+    source: StaticAliasPath,
+    source_span: (u32, u32),
+    iterator: StaticAliasPath,
+    iterator_span: (u32, u32),
+}
+
 struct NonConsumingParameterCollector<'semantic> {
     scoping: &'semantic Scoping,
     parameter_indices: BTreeMap<SymbolId, usize>,
@@ -10038,6 +10045,7 @@ struct GeneratorExecutionCollector<'semantic> {
     terminal_method_alias_reads: Vec<ForwardedCallableRead>,
     local_non_consuming_parameters: BTreeMap<StaticAliasPath, BTreeMap<usize, bool>>,
     pending_callable_argument_reads: Vec<PendingCallableArgumentRead>,
+    initial_generator_next_argument_reads: Vec<InitialGeneratorNextArgumentRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
     generator_callable_targets: BTreeSet<StaticAliasPath>,
@@ -10072,6 +10080,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             terminal_method_alias_reads: Vec::new(),
             local_non_consuming_parameters: BTreeMap::new(),
             pending_callable_argument_reads: Vec::new(),
+            initial_generator_next_argument_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
             generator_callable_targets: BTreeSet::new(),
@@ -11405,6 +11414,28 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.callable_reference(object)
     }
 
+    fn record_initial_generator_next_arguments(&mut self, call: &CallExpression<'_>) {
+        let Some((iterator, iterator_span)) = self.direct_generator_method_call(call, "next")
+        else {
+            return;
+        };
+        for argument in &call.arguments {
+            let Some(argument) = argument.as_expression() else {
+                continue;
+            };
+            let Some((source, source_span)) = self.callable_reference(argument) else {
+                continue;
+            };
+            self.initial_generator_next_argument_reads
+                .push(InitialGeneratorNextArgumentRead {
+                    source,
+                    source_span,
+                    iterator: iterator.clone(),
+                    iterator_span,
+                });
+        }
+    }
+
     fn terminal_throw_argument_guards(
         &self,
         call: &CallExpression<'_>,
@@ -12191,6 +12222,30 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.escaped_callable_paths.insert(read.source);
             }
         }
+        for read in std::mem::take(&mut self.initial_generator_next_argument_reads) {
+            let direct_generator_result = self.generator_result_reads.iter().any(|result| {
+                result.target == read.iterator
+                    && result.method_guard.is_none()
+                    && self.generator_callable_targets.contains(&result.source)
+                    && !self.non_generator_callable_targets.contains(&result.source)
+            });
+            let sole_iterator_read = read
+                .iterator
+                .binding_root()
+                .and_then(|root| self.binding_reads.get(&root))
+                .is_some_and(|spans| spans.len() == 1 && spans.contains(&read.iterator_span));
+            if direct_generator_result
+                && sole_iterator_read
+                && self.method_path_is_intact(&read.iterator, "next")
+            {
+                self.discarded_value_reads
+                    .entry(read.source)
+                    .or_default()
+                    .insert(read.source_span);
+            } else {
+                self.escaped_callable_paths.insert(read.source);
+            }
+        }
         let trusted_method_forwardings = self
             .forwarded_callable_reads
             .iter()
@@ -12633,6 +12688,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_generator_invocation_arguments(call);
         self.record_terminal_generator_method_read(call);
         self.record_indirect_terminal_generator_method_read(call);
+        self.record_initial_generator_next_arguments(call);
         let callee = self
             .callable_reference(&call.callee)
             .map(|(callee, _)| callee);
@@ -12658,6 +12714,10 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                 || self
                     .non_escaping_callable_reads
                     .contains(&(source.clone(), source_span))
+                || self
+                    .initial_generator_next_argument_reads
+                    .iter()
+                    .any(|read| read.source == source && read.source_span == source_span)
             {
                 continue;
             }
