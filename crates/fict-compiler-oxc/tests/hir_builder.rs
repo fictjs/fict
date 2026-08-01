@@ -4117,6 +4117,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const fail = iterator['throw']['bind'](iterator); try { fail(new Error()); } catch {}",
         ),
         (
+            "generator return retains itself before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); iterator.return(iterator);",
+        ),
+        (
+            "generator throw retains itself before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); try { iterator.throw(iterator); } catch {}",
+        ),
+        (
             "async generator return before start",
             "async function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); iterator.return();",
@@ -4728,6 +4738,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden generator prototype bind advances terminal receiver",
             "function* mutate() { values.forEach = null; } Function.prototype.bind = function (receiver) { return function () { return receiver.next(); }; };",
             "const iterator = mutate(); const close = iterator.return.bind(iterator); close();",
+        ),
+        (
+            "overridden generator return consumes retained iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return = function (value) { return value.next(); }; iterator.return(iterator);",
+        ),
+        (
+            "generator return spread advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return(...iterator);",
         ),
         (
             "advanced tagged generator consumes retained iterator",

@@ -11184,15 +11184,31 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let Some((source, source_span)) = self.callable_reference(source) else {
             return;
         };
-        self.guarded_discarded_invocation_reads.push((
-            source.clone(),
-            source_span,
-            GeneratorMethodGuard {
-                source: None,
-                owner: source,
-                method,
-            },
-        ));
+        let guard = GeneratorMethodGuard {
+            source: None,
+            owner: source.clone(),
+            method,
+        };
+        self.guarded_discarded_invocation_reads
+            .push((source.clone(), source_span, guard.clone()));
+        for argument in &call.arguments {
+            let Some(argument) = argument.as_expression() else {
+                continue;
+            };
+            let Some((argument_source, argument_span)) = self.callable_reference(argument) else {
+                continue;
+            };
+            if argument_source != source {
+                continue;
+            }
+            self.guarded_discarded_invocation_reads.push((
+                argument_source.clone(),
+                argument_span,
+                guard.clone(),
+            ));
+            self.non_escaping_callable_reads
+                .insert((argument_source, argument_span));
+        }
     }
 
     fn terminal_generator_method_reference(
