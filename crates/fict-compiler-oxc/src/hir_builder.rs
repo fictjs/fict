@@ -9920,6 +9920,12 @@ enum GeneratorBindForwarding {
     },
 }
 
+#[derive(Clone, Copy)]
+enum RetainedCallableReadKind {
+    Bind,
+    GeneratorInvocation,
+}
+
 type GeneratorBodySpan = (u32, u32);
 type InstanceGeneratorBodies = BTreeMap<String, BTreeSet<GeneratorBodySpan>>;
 
@@ -9931,6 +9937,7 @@ struct GeneratorExecutionCollector<'semantic> {
     discarded_value_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
     retained_callable_reads: Vec<ForwardedCallableRead>,
+    generator_argument_reads: Vec<ForwardedCallableRead>,
     generator_result_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
@@ -9957,6 +9964,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             discarded_value_reads: BTreeMap::new(),
             forwarded_callable_reads: Vec::new(),
             retained_callable_reads: Vec::new(),
+            generator_argument_reads: Vec::new(),
             generator_result_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
@@ -10634,15 +10642,22 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &mut self,
         target: StaticAliasPath,
         expression: &Expression<'_>,
-        guard: &GeneratorMethodGuard,
+        guard: Option<&GeneratorMethodGuard>,
+        kind: RetainedCallableReadKind,
     ) -> bool {
         if let Some((source, source_span)) = self.callable_reference(expression) {
-            self.retained_callable_reads.push(ForwardedCallableRead {
+            let read = ForwardedCallableRead {
                 source,
                 source_span,
                 target,
-                method_guard: Some(guard.clone()),
-            });
+                method_guard: guard.cloned(),
+            };
+            match kind {
+                RetainedCallableReadKind::Bind => self.retained_callable_reads.push(read),
+                RetainedCallableReadKind::GeneratorInvocation => {
+                    self.generator_argument_reads.push(read);
+                }
+            }
             return true;
         }
         match expression.get_inner_expression() {
@@ -10651,26 +10666,70 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     target.clone(),
                     &expression.consequent,
                     guard,
+                    kind,
                 );
-                let alternate =
-                    self.record_retained_callable_source(target, &expression.alternate, guard);
+                let alternate = self.record_retained_callable_source(
+                    target,
+                    &expression.alternate,
+                    guard,
+                    kind,
+                );
                 consequent || alternate
             }
             Expression::LogicalExpression(expression) => {
-                let left =
-                    self.record_retained_callable_source(target.clone(), &expression.left, guard);
-                let right = self.record_retained_callable_source(target, &expression.right, guard);
+                let left = self.record_retained_callable_source(
+                    target.clone(),
+                    &expression.left,
+                    guard,
+                    kind,
+                );
+                let right =
+                    self.record_retained_callable_source(target, &expression.right, guard, kind);
                 left || right
             }
             Expression::SequenceExpression(expression) => {
                 expression.expressions.last().is_some_and(|expression| {
-                    self.record_retained_callable_source(target, expression, guard)
+                    self.record_retained_callable_source(target, expression, guard, kind)
                 })
             }
             Expression::AssignmentExpression(expression)
                 if expression.operator == OxcAssignmentOperator::Assign =>
             {
-                self.record_retained_callable_source(target, &expression.right, guard)
+                self.record_retained_callable_source(target, &expression.right, guard, kind)
+            }
+            Expression::ArrayExpression(expression) => {
+                let mut found = false;
+                for element in &expression.elements {
+                    if matches!(
+                        element,
+                        ArrayExpressionElement::Elision(_)
+                            | ArrayExpressionElement::SpreadElement(_)
+                    ) {
+                        continue;
+                    }
+                    found |= self.record_retained_callable_source(
+                        target.clone(),
+                        element.to_expression(),
+                        guard,
+                        kind,
+                    );
+                }
+                found
+            }
+            Expression::ObjectExpression(expression) => {
+                let mut found = false;
+                for property in &expression.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        continue;
+                    };
+                    found |= self.record_retained_callable_source(
+                        target.clone(),
+                        &property.value,
+                        guard,
+                        kind,
+                    );
+                }
+                found
             }
             _ => false,
         }
@@ -10687,7 +10746,108 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         };
         for argument in &call.arguments {
             if let Some(argument) = argument.as_expression() {
-                self.record_retained_callable_source(target.clone(), argument, guard);
+                self.record_retained_callable_source(
+                    target.clone(),
+                    argument,
+                    Some(guard),
+                    RetainedCallableReadKind::Bind,
+                );
+            } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument
+                && matches!(
+                    spread.argument.get_inner_expression(),
+                    Expression::ArrayExpression(_)
+                )
+            {
+                self.record_retained_callable_source(
+                    target.clone(),
+                    &spread.argument,
+                    Some(guard),
+                    RetainedCallableReadKind::Bind,
+                );
+            }
+        }
+    }
+
+    fn generator_invocation_target(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(StaticAliasPath, Option<GeneratorMethodGuard>, usize)> {
+        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        if static_alias_source_path(self.scoping, &call.callee)
+            .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
+        {
+            let source = call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .and_then(|source| self.callable_reference(source))?
+                .0;
+            return Some((
+                source,
+                Some(GeneratorMethodGuard {
+                    source: None,
+                    owner: reflect,
+                    method: "apply",
+                }),
+                1,
+            ));
+        }
+        let (source, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, Some(member.property.name.to_string()))
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression))
+            }
+            _ => (&call.callee, None),
+        };
+        let method = match method.as_deref() {
+            Some("call") => "call",
+            Some("apply") => "apply",
+            _ => {
+                return self
+                    .callable_reference(&call.callee)
+                    .map(|(source, _)| (source, None, 0));
+            }
+        };
+        let source = self.callable_reference(source)?.0;
+        let function_prototype = StaticAliasPath::unresolved_global("Function".to_string())
+            .with_property("prototype".to_string());
+        Some((
+            source.clone(),
+            Some(GeneratorMethodGuard {
+                source: Some(source),
+                owner: function_prototype,
+                method,
+            }),
+            0,
+        ))
+    }
+
+    fn record_generator_invocation_arguments(&mut self, call: &CallExpression<'_>) {
+        let Some((target, guard, skip)) = self.generator_invocation_target(call) else {
+            return;
+        };
+        for argument in call.arguments.iter().skip(skip) {
+            if let Some(argument) = argument.as_expression() {
+                self.record_retained_callable_source(
+                    target.clone(),
+                    argument,
+                    guard.as_ref(),
+                    RetainedCallableReadKind::GeneratorInvocation,
+                );
+            } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument
+                && matches!(
+                    spread.argument.get_inner_expression(),
+                    Expression::ArrayExpression(_)
+                )
+            {
+                self.record_retained_callable_source(
+                    target.clone(),
+                    &spread.argument,
+                    guard.as_ref(),
+                    RetainedCallableReadKind::GeneratorInvocation,
+                );
             }
         }
     }
@@ -11142,6 +11302,16 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .is_none_or(|guard| self.method_guard_is_intact(guard))
             })
             .collect::<Vec<_>>();
+        let trusted_generator_argument_reads = self
+            .generator_argument_reads
+            .iter()
+            .map(|forwarding| {
+                forwarding
+                    .method_guard
+                    .as_ref()
+                    .is_none_or(|guard| self.method_guard_is_intact(guard))
+            })
+            .collect::<Vec<_>>();
         let trusted_guarded_reads = self
             .guarded_discarded_invocation_reads
             .iter()
@@ -11182,6 +11352,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         );
         candidates.extend(
             self.retained_callable_reads
+                .iter()
+                .flat_map(|forwarding| [forwarding.source.clone(), forwarding.target.clone()]),
+        );
+        candidates.extend(
+            self.generator_argument_reads
                 .iter()
                 .flat_map(|forwarding| [forwarding.source.clone(), forwarding.target.clone()]),
         );
@@ -11323,6 +11498,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                                 && unexecuted.contains(&forwarding.target)))
                                 },
                             )
+                            || self.generator_argument_reads.iter().enumerate().any(
+                                |(index, forwarding)| {
+                                    trusted_generator_argument_reads[index]
+                                        && forwarding.source.starts_with(path)
+                                        && forwarding.source_span == *span
+                                        && definite_generator_callables.contains(&forwarding.target)
+                                        && unexecuted.contains(&forwarding.target)
+                                },
+                            )
                             || self.generator_result_reads.iter().enumerate().any(
                                 |(index, forwarding)| {
                                     trusted_generator_result_reads[index]
@@ -11418,6 +11602,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_assignment_callable_read(call, false);
+        self.record_generator_invocation_arguments(call);
         for argument in &call.arguments {
             if let Some(argument) = argument.as_expression() {
                 if self

@@ -3847,6 +3847,46 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const run = ignore.bind(null, iterator); run();",
         ),
         (
+            "unadvanced generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
+            "voided outer generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); const outer = ignore(iterator); void outer;",
+        ),
+        (
+            "unadvanced optional generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); ignore?.(iterator);",
+        ),
+        (
+            "unadvanced generator call iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); ignore.call(null, iterator);",
+        ),
+        (
+            "unadvanced generator apply iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); ignore.apply(null, [iterator]);",
+        ),
+        (
+            "unadvanced generator Reflect.apply iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); Reflect.apply(ignore, null, [iterator]);",
+        ),
+        (
+            "unadvanced generator nested iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.iterator.next(); }",
+            "const iterator = inspect(); ignore({ iterator });",
+        ),
+        (
+            "unadvanced generator inline spread iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); ignore(...[iterator]);",
+        ),
+        (
             "unadvanced aliased bound generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); } const alias = ignore;",
             "const iterator = inspect(); const run = alias.bind(null, iterator); run();",
@@ -4265,6 +4305,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate(); const run = consume.bind(null, iterator); const outer = run(); outer.next();",
         ),
         (
+            "advanced generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) { value.next(); }",
+            "const iterator = mutate(); const outer = consume(iterator); outer.next();",
+        ),
+        (
+            "eager callable consumes iterator argument",
+            "function* mutate() { values.forEach = null; } function consume(value) { value.next(); }",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "generator argument spread advances iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) {}",
+            "const iterator = mutate(); consume(...iterator);",
+        ),
+        (
             "mixed bound callable may consume retained iterator",
             "function* mutate() { values.forEach = null; } function* deferred(value) { value.next(); } function eager(value) { value.next(); } const consume = choose ? deferred : eager;",
             "const iterator = mutate(); const run = consume.bind(null, iterator); run();",
@@ -4338,6 +4393,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden generator prototype call executes receiver",
             "function* mutate() { values.forEach = null; } Function.prototype.call = function () { this().next(); return {}; };",
             "mutate.call(null);",
+        ),
+        (
+            "overridden generator call consumes iterator argument",
+            "function* mutate() { values.forEach = null; } function* consume(value) {} consume.call = function (_receiver, iterator) { iterator.next(); return {}; };",
+            "const iterator = mutate(); consume.call(null, iterator);",
         ),
         (
             "overridden optional receiver call executes receiver",
