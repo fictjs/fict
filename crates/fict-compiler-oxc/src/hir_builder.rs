@@ -10879,6 +10879,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         {
             return;
         }
+        if let Expression::TaggedTemplateExpression(tagged) = expression.get_inner_expression()
+            && self.record_generator_result_source(target.clone(), &tagged.tag, None)
+        {
+            return;
+        }
         if let Some((source, source_span)) = self.callable_reference(expression) {
             self.forwarded_callable_reads.push(ForwardedCallableRead {
                 source,

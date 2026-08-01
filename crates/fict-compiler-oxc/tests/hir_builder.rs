@@ -3817,6 +3817,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = Reflect.apply(inspect, null, []); void iterator;",
         ),
         (
+            "voided tagged captured generator iterator",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect``; void iterator;",
+        ),
+        (
+            "voided inline tagged captured generator iterator",
+            "",
+            "const iterator = (function* () { values.forEach = null; })``; void iterator;",
+        ),
+        (
+            "voided bound tagged captured generator iterator",
+            "function* inspect() { values.forEach = null; } const run = inspect.bind(null);",
+            "const iterator = run``; void iterator;",
+        ),
+        (
             "generator used as constructor",
             "function* inspect(target) { target.forEach = null; }",
             "new inspect(values);",
@@ -4248,6 +4263,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "stored capturing generator advance",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); iterator.next();",
+        ),
+        (
+            "tagged capturing generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate``; iterator.next();",
         ),
         (
             "assigned capturing generator advance",
