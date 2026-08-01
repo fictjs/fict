@@ -4127,6 +4127,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); try { iterator.throw(iterator); } catch {}",
         ),
         (
+            "generator return closes before next",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); iterator.return(); iterator.next();",
+        ),
+        (
+            "generator throw closes before next",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); try { iterator.throw(new Error()); } catch {} iterator.next();",
+        ),
+        (
             "async generator return before start",
             "async function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); iterator.return();",
@@ -4748,6 +4758,26 @@ fn observed_generator_iterators_propagate_local_effects() {
             "generator return spread advances iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); iterator.return(...iterator);",
+        ),
+        (
+            "conditional generator return does not dominate next",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); if (choose) iterator.return(); iterator.next();",
+        ),
+        (
+            "throwing generator return argument leaves iterator open",
+            "function* mutate() { values.forEach = null; } function fail() { throw new Error(); }",
+            "const iterator = mutate(); try { iterator.return(fail()); } catch {} iterator.next();",
+        ),
+        (
+            "overridden Error leaves thrown generator open",
+            "function* mutate() { values.forEach = null; } Error = function () { throw 1; };",
+            "const iterator = mutate(); try { iterator.throw(new Error()); } catch {} iterator.next();",
+        ),
+        (
+            "overridden next runs after generator return",
+            "function* mutate() {}",
+            "const iterator = mutate(); iterator.next = function () { values.forEach = null; }; iterator.return(); iterator.next();",
         ),
         (
             "advanced tagged generator consumes retained iterator",

@@ -28,7 +28,7 @@ use fict_metadata::{
     ResolvedMetadataInput,
 };
 use oxc::{
-    allocator::Allocator,
+    allocator::{Allocator, Vec as ArenaVec},
     ast::{
         ast::{
             AccessorProperty, ArrayAssignmentTarget, ArrayExpressionElement,
@@ -57,7 +57,7 @@ use oxc::{
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
             walk_call_expression, walk_expression, walk_expression_statement, walk_function,
-            walk_function_body, walk_jsx_element, walk_return_statement,
+            walk_function_body, walk_jsx_element, walk_return_statement, walk_statements,
             walk_ts_import_equals_declaration, walk_variable_declaration, walk_variable_declarator,
         },
     },
@@ -11242,6 +11242,144 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         Some((source, source_span, method_path, method))
     }
 
+    fn direct_call_statement<'node, 'ast>(
+        statement: &'node Statement<'ast>,
+    ) -> Option<&'node CallExpression<'ast>> {
+        let Statement::ExpressionStatement(statement) = statement else {
+            return None;
+        };
+        let Expression::CallExpression(call) = statement.expression.get_inner_expression() else {
+            return None;
+        };
+        Some(call)
+    }
+
+    fn direct_generator_method_call(
+        &self,
+        call: &CallExpression<'_>,
+        expected_method: &str,
+    ) -> Option<(StaticAliasPath, (u32, u32))> {
+        if call.optional {
+            return None;
+        }
+        let object = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member)
+                if !member.optional && member.property.name == expected_method =>
+            {
+                &member.object
+            }
+            Expression::ComputedMemberExpression(member)
+                if !member.optional
+                    && static_member_name(&member.expression).as_deref()
+                        == Some(expected_method) =>
+            {
+                &member.object
+            }
+            _ => return None,
+        };
+        self.callable_reference(object)
+    }
+
+    fn terminal_throw_argument_guards(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<Vec<GeneratorMethodGuard>> {
+        if call.arguments.is_empty() {
+            return Some(Vec::new());
+        }
+        let [argument] = call.arguments.as_slice() else {
+            return None;
+        };
+        let Expression::NewExpression(error) = argument.as_expression()?.get_inner_expression()
+        else {
+            return None;
+        };
+        let error_constructor = StaticAliasPath::unresolved_global("Error".to_string());
+        if !error.arguments.is_empty()
+            || static_alias_source_path(self.scoping, &error.callee)
+                != Some(error_constructor.clone())
+        {
+            return None;
+        }
+        Some(vec![GeneratorMethodGuard {
+            source: None,
+            owner: error_constructor,
+            method: "prototype",
+        }])
+    }
+
+    fn definite_terminal_statement(
+        &self,
+        statement: &Statement<'_>,
+    ) -> Option<(StaticAliasPath, Vec<GeneratorMethodGuard>)> {
+        if let Some(call) = Self::direct_call_statement(statement) {
+            let (source, _) = self.direct_generator_method_call(call, "return")?;
+            if !call.arguments.is_empty() {
+                return None;
+            }
+            return Some((
+                source.clone(),
+                vec![GeneratorMethodGuard {
+                    source: None,
+                    owner: source,
+                    method: "return",
+                }],
+            ));
+        }
+        let Statement::TryStatement(statement) = statement else {
+            return None;
+        };
+        let handler = statement.handler.as_ref()?;
+        if statement.finalizer.is_some()
+            || !handler.body.body.is_empty()
+            || statement.block.body.len() != 1
+        {
+            return None;
+        }
+        let call = Self::direct_call_statement(&statement.block.body[0])?;
+        let (source, _) = self.direct_generator_method_call(call, "throw")?;
+        let mut guards = self.terminal_throw_argument_guards(call)?;
+        guards.push(GeneratorMethodGuard {
+            source: None,
+            owner: source.clone(),
+            method: "throw",
+        });
+        Some((source, guards))
+    }
+
+    fn record_terminal_before_advance_reads(&mut self, statements: &ArenaVec<'_, Statement<'_>>) {
+        for pair in statements.windows(2) {
+            let Some((source, mut method_guards)) = self.definite_terminal_statement(&pair[0])
+            else {
+                continue;
+            };
+            let Some(call) = Self::direct_call_statement(&pair[1]) else {
+                continue;
+            };
+            if !call.arguments.is_empty() {
+                continue;
+            }
+            let Some((advanced, source_span)) = self.direct_generator_method_call(call, "next")
+            else {
+                continue;
+            };
+            if advanced != source {
+                continue;
+            }
+            method_guards.push(GeneratorMethodGuard {
+                source: None,
+                owner: source.clone(),
+                method: "next",
+            });
+            self.composite_guarded_reads.push(CompositeGuardedRead {
+                source,
+                source_span,
+                target: None,
+                method_guards,
+            });
+        }
+    }
+
     fn record_indirect_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         let (source, source_span, receiver, receiver_span, guards, target_argument) =
@@ -12288,6 +12426,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
 }
 
 impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
+    fn visit_statements(&mut self, statements: &ArenaVec<'a, Statement<'a>>) {
+        self.record_terminal_before_advance_reads(statements);
+        walk_statements(self, statements);
+    }
+
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
         let Some(reference_id) = identifier.reference_id.get() else {
             return;
