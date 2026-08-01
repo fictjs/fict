@@ -10634,10 +10634,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 });
         }
         let (source, method) = match unwrap_transparent_call_expression(&call.callee) {
-            Expression::StaticMemberExpression(member) if !member.optional => {
+            Expression::StaticMemberExpression(member) => {
                 (&member.object, member.property.name.as_str())
             }
-            Expression::ComputedMemberExpression(member) if !member.optional => {
+            Expression::ComputedMemberExpression(member) => {
                 let Some(method) = static_member_name(&member.expression) else {
                     return false;
                 };

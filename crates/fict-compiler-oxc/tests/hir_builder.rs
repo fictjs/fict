@@ -3827,6 +3827,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect.call(null); void iterator;",
         ),
         (
+            "voided optional receiver call captured generator iterator",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect?.call(null); void iterator;",
+        ),
+        (
+            "voided computed optional receiver call captured generator iterator",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect?.['call'](null); void iterator;",
+        ),
+        (
+            "voided optional receiver apply captured generator iterator",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect?.apply(null, []); void iterator;",
+        ),
+        (
             "voided Reflect.apply captured generator iterator",
             "function* inspect() { values.forEach = null; }",
             "const iterator = Reflect.apply(inspect, null, []); void iterator;",
@@ -4225,6 +4240,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "mutate.call(null).next();",
         ),
         (
+            "optional receiver call generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate?.call(null); iterator?.next();",
+        ),
+        (
             "apply iterator advance",
             "function* mutate(target) { target.forEach = null; }",
             "const iterator = mutate.apply(null, [values]); iterator.next();",
@@ -4248,6 +4268,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden generator prototype call executes receiver",
             "function* mutate() { values.forEach = null; } Function.prototype.call = function () { this().next(); return {}; };",
             "mutate.call(null);",
+        ),
+        (
+            "overridden optional receiver call executes receiver",
+            "function* mutate() { values.forEach = null; } mutate.call = function () { this().next(); return {}; };",
+            "const iterator = mutate?.call(null); void iterator;",
         ),
         (
             "replaced generator prototype call executes receiver",
