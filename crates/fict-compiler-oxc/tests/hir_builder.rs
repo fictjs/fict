@@ -3922,6 +3922,26 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "local arrow no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const ignore = value => void value;",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
+            "local arrow unused generator iterator argument",
+            "function* inspect() { values.forEach = null; } const ignore = value => {};",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
+            "discarded local arrow identity generator iterator result",
+            "function* inspect() { values.forEach = null; } const identity = value => value;",
+            "const iterator = inspect(); void identity(iterator);",
+        ),
+        (
+            "local function expression no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const ignore = function (value) { void value; };",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
             "unused local generator iterator argument",
             "function* inspect() { values.forEach = null; } function ignore(value) {}",
             "const iterator = inspect(); ignore(iterator);",
@@ -4955,8 +4975,18 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate(); consume(iterator);",
         ),
         (
+            "eager arrow consumes iterator argument",
+            "function* mutate() { values.forEach = null; } const consume = value => value.next();",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
             "observed local identity iterator result",
             "function* mutate() { values.forEach = null; } function identity(value) { return value; }",
+            "const iterator = mutate(); const result = identity(iterator); result.next();",
+        ),
+        (
+            "observed local arrow identity iterator result",
+            "function* mutate() { values.forEach = null; } const identity = value => value;",
             "const iterator = mutate(); const result = identity(iterator); result.next();",
         ),
         (
@@ -4968,6 +4998,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "reassigned local no-op consumes iterator",
             "function* mutate() { values.forEach = null; } function consume(value) { void value; } consume = function (value) { return value.next(); };",
             "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "reassigned local arrow no-op consumes iterator",
+            "function* mutate() { values.forEach = null; } let consume = value => void value; consume = value => value.next();",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "nested local arrow capture consumes iterator",
+            "function* mutate() { values.forEach = null; } const capture = value => () => value.next();",
+            "const iterator = mutate(); capture(iterator)();",
         ),
         (
             "direct eval may consume iterator argument",

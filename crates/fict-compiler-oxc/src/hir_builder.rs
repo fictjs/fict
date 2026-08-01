@@ -10360,15 +10360,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .map(|body| (body.span.start, body.span.end))
     }
 
-    fn local_non_consuming_parameters(
+    fn analyze_local_non_consuming_parameters(
         &self,
-        function: &Function<'_>,
+        parameters: &FormalParameters<'_>,
+        body: &FunctionBody<'_>,
+        concise_return: Option<&Expression<'_>>,
     ) -> Option<BTreeMap<usize, bool>> {
-        if function.generator || function.r#async || function.params.rest.is_some() {
+        if parameters.rest.is_some() {
             return None;
         }
         let mut parameter_indices = BTreeMap::new();
-        for (index, parameter) in function.params.items.iter().enumerate() {
+        for (index, parameter) in parameters.items.iter().enumerate() {
             if parameter.initializer.is_some()
                 || parameter.optional
                 || !parameter.decorators.is_empty()
@@ -10383,7 +10385,6 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             };
             parameter_indices.insert(binding.symbol_id.get()?, index);
         }
-        let body = function.body.as_ref()?;
         let mut collector = NonConsumingParameterCollector {
             scoping: self.scoping,
             parameter_indices: parameter_indices.clone(),
@@ -10391,13 +10392,45 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             unsafe_uses: BTreeSet::new(),
             nested_function_depth: 0,
         };
-        collector.visit_function_body(body);
+        if let Some(returned) = concise_return {
+            if let Some(index) = collector.direct_parameter_index(returned) {
+                collector.returned.insert(index);
+            } else {
+                collector.visit_expression(returned);
+            }
+        } else {
+            collector.visit_function_body(body);
+        }
         Some(
             parameter_indices
                 .into_values()
                 .filter(|index| !collector.unsafe_uses.contains(index))
                 .map(|index| (index, collector.returned.contains(&index)))
                 .collect(),
+        )
+    }
+
+    fn local_non_consuming_parameters(
+        &self,
+        function: &Function<'_>,
+    ) -> Option<BTreeMap<usize, bool>> {
+        if function.generator || function.r#async {
+            return None;
+        }
+        self.analyze_local_non_consuming_parameters(&function.params, function.body.as_ref()?, None)
+    }
+
+    fn local_non_consuming_arrow_parameters(
+        &self,
+        function: &ArrowFunctionExpression<'_>,
+    ) -> Option<BTreeMap<usize, bool>> {
+        if function.r#async {
+            return None;
+        }
+        self.analyze_local_non_consuming_parameters(
+            &function.params,
+            &function.body,
+            function.get_expression(),
         )
     }
 
@@ -12118,11 +12151,43 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         )
     }
 
+    fn record_local_non_consuming_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let Some(root) = target.binding_root() else {
+            return;
+        };
+        if *target != StaticAliasPath::root(root)
+            || self
+                .scoping
+                .get_resolved_references(root)
+                .any(|reference| reference.is_write())
+        {
+            return;
+        }
+        let parameters = match initializer.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                self.local_non_consuming_parameters(function)
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                self.local_non_consuming_arrow_parameters(function)
+            }
+            _ => return,
+        };
+        if let Some(parameters) = parameters {
+            self.local_non_consuming_parameters
+                .insert(target.clone(), parameters);
+        }
+    }
+
     fn record_callable_initializer(
         &mut self,
         target: StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
+        self.record_local_non_consuming_initializer(&target, initializer);
         self.record_terminal_generator_method_alias(target.clone(), initializer);
         self.record_bound_terminal_generator_method_alias(target.clone(), initializer);
         if matches!(
