@@ -3827,6 +3827,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const advance = iterator['next']; void advance;",
         ),
         (
+            "discarded optional generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const advance = iterator?.next; void advance;",
+        ),
+        (
+            "discarded optional computed generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const advance = iterator?.['next']; const later = advance; void later;",
+        ),
+        (
             "discarded bound generator iterator method",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); const advance = iterator.next.bind(iterator); void advance;",
@@ -4473,6 +4483,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "detached iterator advance",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); const advance = iterator.next; advance.call(iterator);",
+        ),
+        (
+            "optional detached iterator advance",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const advance = iterator?.next; advance?.call(iterator);",
         ),
         (
             "bound iterator advance",

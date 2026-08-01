@@ -9997,8 +9997,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &self,
         expression: &Expression<'_>,
     ) -> Option<(StaticAliasPath, (u32, u32))> {
-        let path = static_alias_source_path(self.scoping, expression)?;
-        Some((path, Self::root_identifier_span(expression)?))
+        if let Some(path) = static_alias_source_path(self.scoping, expression) {
+            return Some((path, Self::root_identifier_span(expression)?));
+        }
+        let expression = unwrap_transparent_call_expression(expression);
+        let place = planned_expression_place(self.scoping, expression)?;
+        let path = static_alias_path_from_place(&place, true)?;
+        let span = place.root_reference_span?;
+        Some((path, (span.start(), span.end())))
     }
 
     fn generator_bind_forwarding(
