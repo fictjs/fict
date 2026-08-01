@@ -11075,6 +11075,45 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .iter()
                 .flat_map(|forwarding| [forwarding.source.clone(), forwarding.target.clone()]),
         );
+        let mut merely_observed = BTreeSet::new();
+        loop {
+            let mut changed = false;
+            for path in &candidates {
+                if merely_observed.contains(path) {
+                    continue;
+                }
+                let Some(root) = path.binding_root() else {
+                    continue;
+                };
+                let all_reads_are_observations = self
+                    .binding_reads
+                    .get(&root)
+                    .into_iter()
+                    .flatten()
+                    .chain(self.direct_callable_reads.get(path).into_iter().flatten())
+                    .all(|span| {
+                        self.discarded_value_reads
+                            .iter()
+                            .any(|(observed, observed_spans)| {
+                                observed.starts_with(path) && observed_spans.contains(span)
+                            })
+                            || self.forwarded_callable_reads.iter().enumerate().any(
+                                |(index, forwarding)| {
+                                    trusted_method_forwardings[index]
+                                        && forwarding.source == *path
+                                        && forwarding.source_span == *span
+                                        && merely_observed.contains(&forwarding.target)
+                                },
+                            )
+                    });
+                if all_reads_are_observations {
+                    changed |= merely_observed.insert(path.clone());
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         let mut unexecuted = BTreeSet::new();
         loop {
             let mut changed = false;
@@ -11114,6 +11153,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                         && forwarding.source == *path
                                         && forwarding.source_span == *span
                                         && unexecuted.contains(&forwarding.target)
+                                },
+                            )
+                            || self.forwarded_callable_reads.iter().enumerate().any(
+                                |(index, forwarding)| {
+                                    trusted_method_forwardings[index]
+                                        && forwarding.source != *path
+                                        && forwarding.source.starts_with(path)
+                                        && forwarding.source_span == *span
+                                        && merely_observed.contains(&forwarding.target)
                                 },
                             )
                             || self.generator_result_reads.iter().enumerate().any(

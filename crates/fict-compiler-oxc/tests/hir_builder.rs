@@ -3812,6 +3812,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); void iterator.next;",
         ),
         (
+            "discarded detached generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const advance = iterator.next; void advance;",
+        ),
+        (
+            "discarded chained generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const advance = iterator.next; const later = advance; void later;",
+        ),
+        (
+            "discarded computed generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const advance = iterator['next']; void advance;",
+        ),
+        (
             "voided inline captured generator iterator",
             "",
             "const iterator = (function* () { values.forEach = null; })(); void iterator;",
@@ -4205,7 +4220,17 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate(values); iterator.next();",
         ),
         (
+            "detached iterator advance",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const advance = iterator.next; advance.call(iterator);",
+        ),
+        (
             "bound iterator advance",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const advance = iterator.next.bind(iterator); advance();",
+        ),
+        (
+            "bound generator iterator advance",
             "function* mutate(target) { target.forEach = null; } const run = mutate.bind(null);",
             "const iterator = run(values); iterator.next();",
         ),
