@@ -9946,6 +9946,7 @@ struct GeneratorExecutionCollector<'semantic> {
     retained_callable_reads: Vec<ForwardedCallableRead>,
     generator_argument_reads: Vec<ForwardedCallableRead>,
     generator_body_argument_reads: Vec<GeneratorBodyArgumentRead>,
+    assigned_generator_result_reads: Vec<ForwardedCallableRead>,
     generator_result_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
@@ -9974,6 +9975,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             retained_callable_reads: Vec::new(),
             generator_argument_reads: Vec::new(),
             generator_body_argument_reads: Vec::new(),
+            assigned_generator_result_reads: Vec::new(),
             generator_result_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
@@ -10818,6 +10820,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &self,
         call: &CallExpression<'_>,
     ) -> Option<(StaticAliasPath, Option<GeneratorMethodGuard>, usize)> {
+        if let Some(source) = self.assignment_callable_target(&call.callee) {
+            return Some((source, None, 0));
+        }
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         if static_alias_source_path(self.scoping, &call.callee)
             .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
@@ -10986,6 +10991,19 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: StaticAliasPath,
         call: &CallExpression<'_>,
     ) -> bool {
+        if let Some(source) = self.assignment_callable_target(&call.callee) {
+            let recorded = self.record_generator_result_source(target.clone(), &call.callee, None);
+            if recorded {
+                self.assigned_generator_result_reads
+                    .push(ForwardedCallableRead {
+                        source,
+                        source_span: (call.span.start, call.span.end),
+                        target,
+                        method_guard: None,
+                    });
+            }
+            return recorded;
+        }
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         if static_alias_source_path(self.scoping, &call.callee)
             .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
@@ -11503,6 +11521,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .iter()
                 .map(|read| read.source.clone()),
         );
+        candidates.extend(
+            self.assigned_generator_result_reads
+                .iter()
+                .flat_map(|read| [read.source.clone(), read.target.clone()]),
+        );
         let mut targets_by_body = BTreeMap::<_, BTreeSet<_>>::new();
         for (span, target) in &self.generator_body_targets {
             targets_by_body
@@ -11683,6 +11706,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                         && unexecuted.contains(&forwarding.target)
                                 },
                             )
+                            || self.assigned_generator_result_reads.iter().any(|read| {
+                                read.source == *path
+                                    && read.source_span == *span
+                                    && definite_generator_callables.contains(&read.source)
+                                    && unexecuted.contains(&read.target)
+                            })
                     });
                 if all_reads_are_nonexecuting {
                     changed |= unexecuted.insert(path.clone());

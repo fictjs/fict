@@ -3912,6 +3912,26 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const outer = (choose ? function* (_strings, value) { value.next(); } : function* (_strings, value) { value.next(); })`${iterator}`; void outer;",
         ),
         (
+            "unadvanced assigned generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = inspect(); const outer = (run = consume)(iterator); void outer;",
+        ),
+        (
+            "unadvanced assigned inline generator iterator argument",
+            "function* inspect() { values.forEach = null; } let consume;",
+            "const iterator = inspect(); const outer = (consume = function* (value) { value.next(); })(iterator); void outer;",
+        ),
+        (
+            "unadvanced optional assigned generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = inspect(); const outer = (run = consume)?.(iterator); void outer;",
+        ),
+        (
+            "unadvanced conditional assigned generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* consumeA(value) { value.next(); } function* consumeB(value) { value.next(); } let run;",
+            "const iterator = inspect(); const outer = (run = choose ? consumeA : consumeB)(iterator); void outer;",
+        ),
+        (
             "voided outer generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
             "const iterator = inspect(); const outer = ignore(iterator); void outer;",
@@ -4398,6 +4418,26 @@ fn observed_generator_iterators_propagate_local_effects() {
             "mixed conditional inline callable consumes iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); const outer = (choose ? function* (value) { value.next(); } : function (value) { value.next(); })(iterator); void outer;",
+        ),
+        (
+            "advanced assigned generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = mutate(); const outer = (run = consume)(iterator); outer.next();",
+        ),
+        (
+            "advanced assigned inline generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; } let consume;",
+            "const iterator = mutate(); const outer = (consume = function* (value) { value.next(); })(iterator); outer.next();",
+        ),
+        (
+            "assigned eager callable consumes iterator",
+            "function* mutate() { values.forEach = null; } function consume(value) { value.next(); } let run;",
+            "const iterator = mutate(); const outer = (run = consume)(iterator); void outer;",
+        ),
+        (
+            "mixed assigned callable consumes iterator",
+            "function* mutate() { values.forEach = null; } function* deferred(value) { value.next(); } function eager(value) { value.next(); } let run;",
+            "const iterator = mutate(); const outer = (run = choose ? deferred : eager)(iterator); void outer;",
         ),
         (
             "advanced tagged generator consumes retained iterator",
