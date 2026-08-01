@@ -9934,6 +9934,8 @@ struct GeneratorExecutionCollector<'semantic> {
     generator_result_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
+    generator_callable_targets: BTreeSet<StaticAliasPath>,
+    non_generator_callable_targets: BTreeSet<StaticAliasPath>,
     class_instance_generator_bodies: BTreeMap<StaticAliasPath, InstanceGeneratorBodies>,
     instance_generator_bodies: BTreeMap<StaticAliasPath, InstanceGeneratorBodies>,
     member_invalidated: BTreeSet<StaticAliasPath>,
@@ -9958,6 +9960,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             generator_result_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
+            generator_callable_targets: BTreeSet::new(),
+            non_generator_callable_targets: BTreeSet::new(),
             class_instance_generator_bodies: BTreeMap::new(),
             instance_generator_bodies: BTreeMap::new(),
             member_invalidated: BTreeSet::new(),
@@ -10175,6 +10179,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         target.clone().with_property("prototype".to_string())
                     }
                     .with_property(name.into_owned());
+                    self.generator_callable_targets
+                        .insert(method_target.clone());
                     self.generator_body_targets.push((span, method_target));
                 }
                 ClassElement::PropertyDefinition(property)
@@ -10193,8 +10199,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     let Some(span) = Self::generator_body_span(function) else {
                         continue;
                     };
-                    self.generator_body_targets
-                        .push((span, target.clone().with_property(name.into_owned())));
+                    let method_target = target.clone().with_property(name.into_owned());
+                    self.generator_callable_targets
+                        .insert(method_target.clone());
+                    self.generator_body_targets.push((span, method_target));
                 }
                 _ => {}
             }
@@ -10298,6 +10306,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .clone()
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
+            self.generator_callable_targets
+                .insert(target_method.clone());
             self.generator_body_targets
                 .extend(bodies.iter().map(|body| (*body, target_method.clone())));
             if let Some((source, source_span, inherited)) = &inherited_bodies
@@ -10337,6 +10347,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
             let instance_method = target.clone().with_property(name.clone());
+            self.generator_callable_targets
+                .insert(instance_method.clone());
             self.generator_body_targets
                 .extend(spans.iter().map(|span| (*span, instance_method.clone())));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
@@ -10365,6 +10377,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         for (name, spans) in &bodies {
             let source_method = source.clone().with_property(name.clone());
             let target_method = target.clone().with_property(name.clone());
+            self.generator_callable_targets
+                .insert(target_method.clone());
             self.generator_body_targets
                 .extend(spans.iter().map(|span| (*span, target_method.clone())));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
@@ -10399,6 +10413,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .clone()
                 .with_property("prototype".to_string())
                 .with_property(name.clone());
+            self.generator_callable_targets
+                .insert(target_method.clone());
             self.generator_body_targets
                 .extend(spans.iter().map(|span| (*span, target_method.clone())));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
@@ -10932,6 +10948,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 }
                 GeneratorBindForwarding::Inline { body_span, guard } => {
                     self.record_retained_bind_arguments(&target, expression, &guard);
+                    self.generator_callable_targets.insert(target.clone());
                     self.generator_body_targets
                         .push((body_span, target.clone()));
                     self.guarded_generator_targets.push((target, guard));
@@ -10953,11 +10970,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         if let Some(call) = call
             && self.record_generator_result_forwarding(target.clone(), call)
         {
+            self.non_generator_callable_targets.insert(target);
             return;
         }
         if let Expression::TaggedTemplateExpression(tagged) = expression.get_inner_expression()
             && self.record_generator_result_source(target.clone(), &tagged.tag, None)
         {
+            self.non_generator_callable_targets.insert(target);
             return;
         }
         if let Some((source, source_span)) = self.callable_reference(expression) {
@@ -10972,10 +10991,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         match expression {
             Expression::FunctionExpression(function) => {
                 if let Some(span) = Self::generator_body_span(function) {
+                    self.generator_callable_targets.insert(target.clone());
                     self.generator_body_targets.push((span, target));
+                } else {
+                    self.non_generator_callable_targets.insert(target);
                 }
             }
             Expression::ClassExpression(class) => {
+                self.non_generator_callable_targets.insert(target.clone());
                 self.record_class_generator_bodies(&target, class);
             }
             Expression::ConditionalExpression(conditional) => {
@@ -10992,6 +11015,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Expression::SequenceExpression(sequence) => {
                 if let Some(last) = sequence.expressions.last() {
                     self.record_forwarded_callable(target, last);
+                } else {
+                    self.non_generator_callable_targets.insert(target);
                 }
             }
             Expression::AssignmentExpression(assignment)
@@ -11014,7 +11039,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Expression::TSInstantiationExpression(expression) => {
                 self.record_forwarded_callable(target, &expression.expression);
             }
-            _ => {}
+            _ => {
+                self.non_generator_callable_targets.insert(target);
+            }
         }
     }
 
@@ -11158,6 +11185,36 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .iter()
                 .flat_map(|forwarding| [forwarding.source.clone(), forwarding.target.clone()]),
         );
+        let mut definite_generator_callables = BTreeSet::new();
+        loop {
+            let mut changed = false;
+            for path in &candidates {
+                if definite_generator_callables.contains(path)
+                    || forced_executed_targets.contains(path)
+                    || self.non_generator_callable_targets.contains(path)
+                {
+                    continue;
+                }
+                let dependencies = self
+                    .forwarded_callable_reads
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, forwarding)| forwarding.target == *path)
+                    .collect::<Vec<_>>();
+                if !self.generator_callable_targets.contains(path) && dependencies.is_empty() {
+                    continue;
+                }
+                if dependencies.iter().all(|(index, forwarding)| {
+                    trusted_method_forwardings[*index]
+                        && definite_generator_callables.contains(&forwarding.source)
+                }) {
+                    changed |= definite_generator_callables.insert(path.clone());
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         let mut merely_observed = BTreeSet::new();
         loop {
             let mut changed = false;
@@ -11260,7 +11317,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                     trusted_retained_reads[index]
                                         && forwarding.source.starts_with(path)
                                         && forwarding.source_span == *span
-                                        && merely_observed.contains(&forwarding.target)
+                                        && (merely_observed.contains(&forwarding.target)
+                                            || (definite_generator_callables
+                                                .contains(&forwarding.target)
+                                                && unexecuted.contains(&forwarding.target)))
                                 },
                             )
                             || self.generator_result_reads.iter().enumerate().any(
@@ -11432,8 +11492,9 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                 .as_ref()
                 .and_then(|identifier| identifier.symbol_id.get())
         {
-            self.generator_body_targets
-                .push((span, StaticAliasPath::root(target)));
+            let target = StaticAliasPath::root(target);
+            self.generator_callable_targets.insert(target.clone());
+            self.generator_body_targets.push((span, target));
         }
         walk_function(self, function, flags);
     }

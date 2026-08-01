@@ -3842,6 +3842,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const run = ignore.bind(null, iterator); void run;",
         ),
         (
+            "unadvanced bound generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); const run = ignore.bind(null, iterator); run();",
+        ),
+        (
+            "unadvanced aliased bound generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); } const alias = ignore;",
+            "const iterator = inspect(); const run = alias.bind(null, iterator); run();",
+        ),
+        (
+            "unadvanced inline bound generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const run = (function* (value) { value.next(); }).bind(null, iterator); run();",
+        ),
+        (
             "voided inline captured generator iterator",
             "",
             "const iterator = (function* () { values.forEach = null; })(); void iterator;",
@@ -4243,6 +4258,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "bound iterator advance",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); const advance = iterator.next.bind(iterator); advance();",
+        ),
+        (
+            "advanced bound generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) { value.next(); }",
+            "const iterator = mutate(); const run = consume.bind(null, iterator); const outer = run(); outer.next();",
+        ),
+        (
+            "mixed bound callable may consume retained iterator",
+            "function* mutate() { values.forEach = null; } function* deferred(value) { value.next(); } function eager(value) { value.next(); } const consume = choose ? deferred : eager;",
+            "const iterator = mutate(); const run = consume.bind(null, iterator); run();",
         ),
         (
             "bound generator iterator advance",
