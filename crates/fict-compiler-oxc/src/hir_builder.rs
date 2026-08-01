@@ -12156,15 +12156,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: &StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
-        let Some(root) = target.binding_root() else {
-            return;
-        };
-        if *target != StaticAliasPath::root(root)
-            || self
-                .scoping
-                .get_resolved_references(root)
-                .any(|reference| reference.is_write())
-        {
+        if !self.is_immutable_local_callable_target(target) {
             return;
         }
         let parameters = match initializer.get_inner_expression() {
@@ -12179,6 +12171,73 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         if let Some(parameters) = parameters {
             self.local_non_consuming_parameters
                 .insert(target.clone(), parameters);
+        }
+    }
+
+    fn is_immutable_local_callable_target(&self, target: &StaticAliasPath) -> bool {
+        target.binding_root().is_some_and(|root| {
+            *target == StaticAliasPath::root(root)
+                && !self
+                    .scoping
+                    .get_resolved_references(root)
+                    .any(|reference| reference.is_write())
+        })
+    }
+
+    fn propagate_local_non_consuming_parameters(&mut self) {
+        loop {
+            let mut additions = Vec::new();
+            let targets = self
+                .forwarded_callable_reads
+                .iter()
+                .map(|read| read.target.clone())
+                .collect::<BTreeSet<_>>();
+            for target in targets {
+                if self.local_non_consuming_parameters.contains_key(&target)
+                    || !self.is_immutable_local_callable_target(&target)
+                {
+                    continue;
+                }
+                let dependencies = self
+                    .forwarded_callable_reads
+                    .iter()
+                    .filter(|read| read.target == target)
+                    .collect::<Vec<_>>();
+                if dependencies.is_empty()
+                    || dependencies.iter().any(|read| read.method_guard.is_some())
+                {
+                    continue;
+                }
+                let Some(mut parameters) = dependencies
+                    .first()
+                    .and_then(|read| self.local_non_consuming_parameters.get(&read.source))
+                    .cloned()
+                else {
+                    continue;
+                };
+                let mut complete = true;
+                for dependency in dependencies.iter().skip(1) {
+                    let Some(source_parameters) =
+                        self.local_non_consuming_parameters.get(&dependency.source)
+                    else {
+                        complete = false;
+                        break;
+                    };
+                    parameters.retain(|index, returned| {
+                        source_parameters.get(index).is_some_and(|source_returned| {
+                            *returned |= *source_returned;
+                            true
+                        })
+                    });
+                }
+                if complete {
+                    additions.push((target, parameters));
+                }
+            }
+            if additions.is_empty() {
+                break;
+            }
+            self.local_non_consuming_parameters.extend(additions);
         }
     }
 
@@ -12629,6 +12688,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     }
 
     fn finish(mut self) -> GeneratorExecutionProof {
+        self.propagate_local_non_consuming_parameters();
         for read in std::mem::take(&mut self.pending_callable_argument_reads) {
             let non_consuming = read
                 .callee

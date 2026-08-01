@@ -3942,6 +3942,31 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "aliased local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } const later = ignore;",
+            "const iterator = inspect(); later(iterator);",
+        ),
+        (
+            "aliased local arrow no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const ignore = value => void value; const later = ignore;",
+            "const iterator = inspect(); later(iterator);",
+        ),
+        (
+            "hoisted aliased local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const later = ignore; function ignore(value) { void value; }",
+            "const iterator = inspect(); later(iterator);",
+        ),
+        (
+            "chained local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const ignore = value => void value; const first = ignore; const later = first;",
+            "const iterator = inspect(); later(iterator);",
+        ),
+        (
+            "conditional local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const first = value => void value; const second = value => {}; const ignore = choose ? first : second;",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
             "unused local generator iterator argument",
             "function* inspect() { values.forEach = null; } function ignore(value) {}",
             "const iterator = inspect(); ignore(iterator);",
@@ -5023,6 +5048,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "nested local arrow capture consumes iterator",
             "function* mutate() { values.forEach = null; } const capture = value => () => value.next();",
             "const iterator = mutate(); capture(iterator)();",
+        ),
+        (
+            "mixed local callable alias consumes iterator",
+            "function* mutate() { values.forEach = null; } const ignore = value => void value; const consume = value => value.next(); const run = choose ? ignore : consume;",
+            "const iterator = mutate(); run(iterator);",
+        ),
+        (
+            "reassigned local callable alias consumes iterator",
+            "function* mutate() { values.forEach = null; } const ignore = value => void value; let run = ignore; run = value => value.next();",
+            "const iterator = mutate(); run(iterator);",
+        ),
+        (
+            "observed mixed local identity alias exposes iterator",
+            "function* mutate() { values.forEach = null; } const identity = value => value; const ignore = value => {}; const run = choose ? identity : ignore;",
+            "const iterator = mutate(); const result = run(iterator); result.next();",
         ),
         (
             "direct eval may consume iterator argument",
