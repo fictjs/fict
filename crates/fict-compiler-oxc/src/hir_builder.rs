@@ -10011,21 +10011,20 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &self,
         expression: &Expression<'_>,
     ) -> Option<GeneratorBindForwarding> {
-        let Expression::CallExpression(call) = expression.get_inner_expression() else {
-            return None;
+        let call = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                _ => return None,
+            },
+            _ => return None,
         };
-        if call.optional {
-            return None;
-        }
         let object = match unwrap_transparent_call_expression(&call.callee) {
-            Expression::StaticMemberExpression(member)
-                if !member.optional && member.property.name == "bind" =>
-            {
+            Expression::StaticMemberExpression(member) if member.property.name == "bind" => {
                 &member.object
             }
             Expression::ComputedMemberExpression(member)
-                if !member.optional
-                    && static_member_name(&member.expression).as_deref() == Some("bind") =>
+                if static_member_name(&member.expression).as_deref() == Some("bind") =>
             {
                 &member.object
             }
@@ -10874,8 +10873,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         expression: &Expression<'_>,
         guard: &GeneratorMethodGuard,
     ) {
-        let Expression::CallExpression(call) = expression.get_inner_expression() else {
-            return;
+        let call = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                _ => return,
+            },
+            _ => return,
         };
         for argument in &call.arguments {
             if let Some(argument) = argument.as_expression() {

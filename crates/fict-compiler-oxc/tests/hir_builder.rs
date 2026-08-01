@@ -3747,6 +3747,36 @@ fn pure_local_calls_preserve_receiver_methods() {
             "run();",
         ),
         (
+            "unadvanced optional bound generator capture",
+            "function* inspect() { values.forEach = null; } const run = inspect.bind?.(null);",
+            "const iterator = run?.(); void iterator;",
+        ),
+        (
+            "unadvanced optional receiver bound generator capture",
+            "function* inspect() { values.forEach = null; } const run = inspect?.bind(null);",
+            "const iterator = run?.(); void iterator;",
+        ),
+        (
+            "unadvanced optional computed bound generator capture",
+            "function* inspect() { values.forEach = null; } const run = inspect?.['bind']?.(null);",
+            "const iterator = run?.(); void iterator;",
+        ),
+        (
+            "unadvanced optional inline bound generator capture",
+            "const run = (function* () { values.forEach = null; }).bind?.(null);",
+            "const iterator = run?.(); void iterator;",
+        ),
+        (
+            "discarded optional bound generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) {}",
+            "const iterator = inspect(); const run = ignore.bind?.(null, iterator); void run;",
+        ),
+        (
+            "unadvanced optional bound generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
+            "const iterator = inspect(); const run = ignore.bind?.(null, iterator); const outer = run?.(); void outer;",
+        ),
+        (
             "unadvanced generator call indirection",
             "function* inspect(target) { target.forEach = null; }",
             "inspect.call(null, values);",
@@ -4618,6 +4648,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "bound capturing generator advance",
             "function* mutate() { values.forEach = null; } const run = mutate.bind(null);",
             "run().next();",
+        ),
+        (
+            "optional bound capturing generator advance",
+            "function* mutate() { values.forEach = null; } const run = mutate.bind?.(null);",
+            "run?.().next();",
+        ),
+        (
+            "advanced optional bound generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) { value.next(); }",
+            "const iterator = mutate(); const run = consume.bind?.(null, iterator); const outer = run?.(); outer?.next();",
+        ),
+        (
+            "overridden optional generator bind executes receiver",
+            "function* mutate() {} mutate.bind = function () { values.forEach = null; return () => {}; }; const run = mutate.bind?.(null);",
+            "void run;",
         ),
         (
             "overridden generator bind executes receiver",
