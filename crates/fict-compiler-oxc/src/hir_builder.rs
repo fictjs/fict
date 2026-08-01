@@ -11584,6 +11584,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
 
     fn record_indirect_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        let completion_reads;
         let (source, source_span, receiver, receiver_span, guards, target_argument) =
             if static_alias_source_path(self.scoping, &call.callee)
                 .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
@@ -11617,6 +11618,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 let Some(target_argument) = self.callable_reference(target) else {
                     return;
                 };
+                completion_reads = call
+                    .arguments
+                    .get(2)
+                    .and_then(|argument| argument.as_expression())
+                    .map(|arguments| self.direct_array_source_reads(arguments, &source))
+                    .unwrap_or_default();
                 (
                     source.clone(),
                     source_span,
@@ -11674,6 +11681,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 if receiver != source {
                     return;
                 }
+                completion_reads = if indirect_method == "call" {
+                    call.arguments
+                        .iter()
+                        .skip(1)
+                        .filter_map(|argument| argument.as_expression())
+                        .filter_map(|argument| self.callable_reference(argument))
+                        .filter(|(argument_source, _)| *argument_source == source)
+                        .collect()
+                } else {
+                    call.arguments
+                        .get(1)
+                        .and_then(|argument| argument.as_expression())
+                        .map(|arguments| self.direct_array_source_reads(arguments, &source))
+                        .unwrap_or_default()
+                };
                 (
                     source.clone(),
                     source_span,
@@ -11705,13 +11727,44 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             source,
             source_span: receiver_span,
             target: None,
-            method_guards: guards,
+            method_guards: guards.clone(),
         });
         self.non_escaping_callable_reads
             .insert((receiver, receiver_span));
         if let Some(target_argument) = target_argument {
             self.non_escaping_callable_reads.insert(target_argument);
         }
+        for (completion_source, completion_span) in completion_reads {
+            self.composite_guarded_reads.push(CompositeGuardedRead {
+                source: completion_source.clone(),
+                source_span: completion_span,
+                target: None,
+                method_guards: guards.clone(),
+            });
+            self.non_escaping_callable_reads
+                .insert((completion_source, completion_span));
+        }
+    }
+
+    fn direct_array_source_reads(
+        &self,
+        expression: &Expression<'_>,
+        source: &StaticAliasPath,
+    ) -> Vec<(StaticAliasPath, (u32, u32))> {
+        let Expression::ArrayExpression(array) = expression.get_inner_expression() else {
+            return Vec::new();
+        };
+        array
+            .elements
+            .iter()
+            .filter_map(|element| match element {
+                ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_) => {
+                    None
+                }
+                _ => self.callable_reference(element.to_expression()),
+            })
+            .filter(|(argument_source, _)| argument_source == source)
+            .collect()
     }
 
     fn record_terminal_generator_method_alias(
@@ -11790,6 +11843,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 method: "bind",
             },
         ];
+        let completion_reads = call
+            .arguments
+            .iter()
+            .skip(1)
+            .filter_map(|argument| argument.as_expression())
+            .filter_map(|argument| self.callable_reference(argument))
+            .filter(|(argument_source, _)| *argument_source == source)
+            .collect::<Vec<_>>();
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source: source.clone(),
             source_span,
@@ -11799,11 +11860,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source,
             source_span: receiver_span,
-            target: Some(target),
-            method_guards,
+            target: Some(target.clone()),
+            method_guards: method_guards.clone(),
         });
         self.non_escaping_callable_reads
             .insert((receiver, receiver_span));
+        for (completion_source, completion_span) in completion_reads {
+            self.composite_guarded_reads.push(CompositeGuardedRead {
+                source: completion_source.clone(),
+                source_span: completion_span,
+                target: Some(target.clone()),
+                method_guards: method_guards.clone(),
+            });
+            self.non_escaping_callable_reads
+                .insert((completion_source, completion_span));
+        }
     }
 
     fn record_generator_result_forwarding(

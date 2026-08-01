@@ -4122,14 +4122,29 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); iterator.return.call(iterator);",
         ),
         (
+            "generator return call self value before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); iterator.return.call(iterator, iterator);",
+        ),
+        (
             "generator return apply before start",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); iterator.return.apply(iterator, []);",
         ),
         (
+            "generator return apply self value before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); iterator.return.apply(iterator, [iterator]);",
+        ),
+        (
             "generator return Reflect.apply before start",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); Reflect.apply(iterator.return, iterator, []);",
+        ),
+        (
+            "generator return Reflect.apply self value before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); Reflect.apply(iterator.return, iterator, [iterator]);",
         ),
         (
             "generator throw call before start",
@@ -4150,6 +4165,11 @@ fn pure_local_calls_preserve_receiver_methods() {
             "bound generator return before start",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); const close = iterator.return.bind(iterator); close();",
+        ),
+        (
+            "bound generator return self value before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const close = iterator.return.bind(iterator, iterator); close();",
         ),
         (
             "computed bound generator throw before start",
@@ -4745,6 +4765,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate(); iterator.return = function () { return iterator.next(); }; iterator.return.call(iterator);",
         ),
         (
+            "overridden generator return call consumes completion value",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return = function (value) { return value.next(); }; iterator.return.call(iterator, iterator);",
+        ),
+        (
             "overridden terminal call advances iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); iterator.return.call = function (receiver) { return receiver.next(); }; iterator.return.call(iterator);",
@@ -4765,6 +4790,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate(); Reflect.apply(iterator.return, iterator, []);",
         ),
         (
+            "overridden Reflect.apply consumes terminal completion value",
+            "function* mutate() { values.forEach = null; } Reflect.apply = function (_target, _receiver, args) { return args[0].next(); };",
+            "const iterator = mutate(); Reflect.apply(iterator.return, iterator, [iterator]);",
+        ),
+        (
             "overridden detached generator return advances iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); iterator.return = function () { return iterator.next(); }; const close = iterator.return; close();",
@@ -4778,6 +4808,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden bound generator return advances iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); iterator.return = function () { return iterator.next(); }; const close = iterator.return.bind(iterator); close();",
+        ),
+        (
+            "overridden bound generator return consumes completion value",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return = function (value) { return value.next(); }; const close = iterator.return.bind(iterator, iterator); close();",
         ),
         (
             "overridden terminal bind advances iterator",
