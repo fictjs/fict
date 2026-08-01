@@ -3882,6 +3882,36 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); (function* (strings, value) { value.next(); })`${iterator}`;",
         ),
         (
+            "unadvanced conditional inline generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const outer = (choose ? function* (value) { value.next(); } : function* (value) { value.next(); })(iterator); void outer;",
+        ),
+        (
+            "unadvanced logical inline generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const outer = (function* (value) { value.next(); } || function* (value) { value.next(); })(iterator); void outer;",
+        ),
+        (
+            "unadvanced sequenced inline generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const outer = (0, function* (value) { value.next(); })(iterator); void outer;",
+        ),
+        (
+            "unadvanced conditional inline generator call iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const outer = (choose ? function* (value) { value.next(); } : function* (value) { value.next(); }).call(null, iterator); void outer;",
+        ),
+        (
+            "unadvanced conditional inline generator Reflect.apply iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const outer = Reflect.apply(choose ? function* (value) { value.next(); } : function* (value) { value.next(); }, null, [iterator]); void outer;",
+        ),
+        (
+            "unadvanced conditional inline tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const outer = (choose ? function* (_strings, value) { value.next(); } : function* (_strings, value) { value.next(); })`${iterator}`; void outer;",
+        ),
+        (
             "voided outer generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
             "const iterator = inspect(); const outer = ignore(iterator); void outer;",
@@ -4358,6 +4388,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "advanced inline generator consumes retained iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); const outer = (function* (value) { value.next(); })(iterator); outer.next();",
+        ),
+        (
+            "advanced conditional inline generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const outer = (choose ? function* (value) { value.next(); } : function* (value) { value.next(); })(iterator); outer.next();",
+        ),
+        (
+            "mixed conditional inline callable consumes iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const outer = (choose ? function* (value) { value.next(); } : function (value) { value.next(); })(iterator); void outer;",
         ),
         (
             "advanced tagged generator consumes retained iterator",

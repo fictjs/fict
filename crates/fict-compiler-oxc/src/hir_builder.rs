@@ -9904,7 +9904,7 @@ struct ForwardedCallableRead {
 struct GeneratorBodyArgumentRead {
     source: StaticAliasPath,
     source_span: (u32, u32),
-    body_span: GeneratorBodySpan,
+    body_spans: BTreeSet<GeneratorBodySpan>,
     method_guard: Option<GeneratorMethodGuard>,
 }
 
@@ -10728,7 +10728,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
 
     fn record_retained_generator_body_source(
         &mut self,
-        body_span: GeneratorBodySpan,
+        body_spans: &BTreeSet<GeneratorBodySpan>,
         expression: &Expression<'_>,
         guard: Option<&GeneratorMethodGuard>,
     ) {
@@ -10741,10 +10741,44 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .map(|(source, source_span)| GeneratorBodyArgumentRead {
                         source,
                         source_span,
-                        body_span,
+                        body_spans: body_spans.clone(),
                         method_guard: guard.cloned(),
                     }),
             );
+    }
+
+    fn collect_inline_generator_body_spans(
+        expression: &Expression<'_>,
+        body_spans: &mut BTreeSet<GeneratorBodySpan>,
+    ) -> bool {
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                let Some(span) = Self::generator_body_span(function) else {
+                    return false;
+                };
+                body_spans.insert(span);
+                true
+            }
+            Expression::ConditionalExpression(expression) => {
+                let consequent =
+                    Self::collect_inline_generator_body_spans(&expression.consequent, body_spans);
+                let alternate =
+                    Self::collect_inline_generator_body_spans(&expression.alternate, body_spans);
+                consequent && alternate
+            }
+            Expression::LogicalExpression(expression) => {
+                let left = Self::collect_inline_generator_body_spans(&expression.left, body_spans);
+                let right =
+                    Self::collect_inline_generator_body_spans(&expression.right, body_spans);
+                left && right
+            }
+            Expression::SequenceExpression(expression) => {
+                expression.expressions.last().is_some_and(|expression| {
+                    Self::collect_inline_generator_body_spans(expression, body_spans)
+                })
+            }
+            _ => false,
+        }
     }
 
     fn record_retained_bind_arguments(
@@ -10839,21 +10873,25 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     fn inline_generator_invocation_target(
         &self,
         call: &CallExpression<'_>,
-    ) -> Option<(GeneratorBodySpan, Option<GeneratorMethodGuard>, usize)> {
+    ) -> Option<(
+        BTreeSet<GeneratorBodySpan>,
+        Option<GeneratorMethodGuard>,
+        usize,
+    )> {
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         if static_alias_source_path(self.scoping, &call.callee)
             .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
         {
-            let Expression::FunctionExpression(function) = call
+            let target = call
                 .arguments
                 .first()
-                .and_then(|argument| argument.as_expression())?
-                .get_inner_expression()
-            else {
+                .and_then(|argument| argument.as_expression())?;
+            let mut body_spans = BTreeSet::new();
+            if !Self::collect_inline_generator_body_spans(target, &mut body_spans) {
                 return None;
-            };
+            }
             return Some((
-                Self::generator_body_span(function)?,
+                body_spans,
                 Some(GeneratorMethodGuard {
                     source: None,
                     owner: reflect,
@@ -10877,16 +10915,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Some(_) => return None,
             None => None,
         };
-        let Expression::FunctionExpression(function) = source.get_inner_expression() else {
+        let mut body_spans = BTreeSet::new();
+        if !Self::collect_inline_generator_body_spans(source, &mut body_spans) {
             return None;
-        };
+        }
         let guard = guard.map(|method| GeneratorMethodGuard {
             source: None,
             owner: StaticAliasPath::unresolved_global("Function".to_string())
                 .with_property("prototype".to_string()),
             method,
         });
-        Some((Self::generator_body_span(function)?, guard, 0))
+        Some((body_spans, guard, 0))
     }
 
     fn record_generator_invocation_arguments(&mut self, call: &CallExpression<'_>) {
@@ -10911,9 +10950,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         guard.as_ref(),
                         RetainedCallableReadKind::GeneratorInvocation,
                     );
-                } else if let Some((body_span, guard, _)) = &body_target {
+                } else if let Some((body_spans, guard, _)) = &body_target {
                     self.record_retained_generator_body_source(
-                        *body_span,
+                        body_spans,
                         argument,
                         guard.as_ref(),
                     );
@@ -10931,9 +10970,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         guard.as_ref(),
                         RetainedCallableReadKind::GeneratorInvocation,
                     );
-                } else if let Some((body_span, guard, _)) = &body_target {
+                } else if let Some((body_spans, guard, _)) = &body_target {
                     self.record_retained_generator_body_source(
-                        *body_span,
+                        body_spans,
                         &spread.argument,
                         guard.as_ref(),
                     );
@@ -11623,17 +11662,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                     trusted_generator_body_argument_reads[index]
                                         && read.source.starts_with(path)
                                         && read.source_span == *span
-                                        && (self
-                                            .directly_unexecuted_body_spans
-                                            .contains(&read.body_span)
-                                            || trusted_guarded_body_spans.contains(&read.body_span)
-                                            || targets_by_body.get(&read.body_span).is_some_and(
-                                                |targets| {
-                                                    targets
-                                                        .iter()
-                                                        .all(|target| unexecuted.contains(target))
-                                                },
-                                            ))
+                                        && read.body_spans.iter().all(|body_span| {
+                                            self.directly_unexecuted_body_spans.contains(body_span)
+                                                || trusted_guarded_body_spans.contains(body_span)
+                                                || targets_by_body.get(body_span).is_some_and(
+                                                    |targets| {
+                                                        targets.iter().all(|target| {
+                                                            unexecuted.contains(target)
+                                                        })
+                                                    },
+                                                )
+                                        })
                                 },
                             )
                             || self.generator_result_reads.iter().enumerate().any(
@@ -11756,12 +11795,12 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                     RetainedCallableReadKind::GeneratorInvocation,
                 );
             }
-        } else if let Expression::FunctionExpression(function) =
-            expression.tag.get_inner_expression()
-            && let Some(body_span) = Self::generator_body_span(function)
-        {
-            for substitution in &expression.quasi.expressions {
-                self.record_retained_generator_body_source(body_span, substitution, None);
+        } else {
+            let mut body_spans = BTreeSet::new();
+            if Self::collect_inline_generator_body_spans(&expression.tag, &mut body_spans) {
+                for substitution in &expression.quasi.expressions {
+                    self.record_retained_generator_body_source(&body_spans, substitution, None);
+                }
             }
         }
         oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
