@@ -9928,6 +9928,7 @@ struct GeneratorExecutionCollector<'semantic> {
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     direct_callable_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     discarded_invocation_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
+    discarded_value_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
     generator_result_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
@@ -9950,6 +9951,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             binding_reads: BTreeMap::new(),
             direct_callable_reads: BTreeMap::new(),
             discarded_invocation_reads: BTreeMap::new(),
+            discarded_value_reads: BTreeMap::new(),
             forwarded_callable_reads: Vec::new(),
             generator_result_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
@@ -10737,6 +10739,50 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_discarded_value_read(&mut self, expression: &Expression<'_>) {
+        if let Some((path, span)) = self.callable_reference(expression) {
+            self.discarded_value_reads
+                .entry(path)
+                .or_default()
+                .insert(span);
+            return;
+        }
+        match expression {
+            Expression::ConditionalExpression(conditional) => {
+                self.record_discarded_value_read(&conditional.consequent);
+                self.record_discarded_value_read(&conditional.alternate);
+            }
+            Expression::LogicalExpression(logical) => {
+                self.record_discarded_value_read(&logical.left);
+                self.record_discarded_value_read(&logical.right);
+            }
+            Expression::ParenthesizedExpression(parenthesized) => {
+                self.record_discarded_value_read(&parenthesized.expression);
+            }
+            Expression::SequenceExpression(sequence) => {
+                if let Some(last) = sequence.expressions.last() {
+                    self.record_discarded_value_read(last);
+                }
+            }
+            Expression::TSAsExpression(expression) => {
+                self.record_discarded_value_read(&expression.expression);
+            }
+            Expression::TSSatisfiesExpression(expression) => {
+                self.record_discarded_value_read(&expression.expression);
+            }
+            Expression::TSTypeAssertion(expression) => {
+                self.record_discarded_value_read(&expression.expression);
+            }
+            Expression::TSNonNullExpression(expression) => {
+                self.record_discarded_value_read(&expression.expression);
+            }
+            Expression::TSInstantiationExpression(expression) => {
+                self.record_discarded_value_read(&expression.expression);
+            }
+            _ => {}
+        }
+    }
+
     fn record_discarded_expression(&mut self, expression: &Expression<'_>) {
         match expression {
             Expression::CallExpression(call) => {
@@ -10799,7 +10845,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Expression::TSInstantiationExpression(expression) => {
                 self.record_discarded_expression(&expression.expression);
             }
-            _ => self.record_nonexecuting_callable(expression),
+            _ => {
+                self.record_nonexecuting_callable(expression);
+                self.record_discarded_value_read(expression);
+            }
         }
     }
 
@@ -11032,6 +11081,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .chain(self.direct_callable_reads.get(path).into_iter().flatten())
                     .all(|span| {
                         discarded.is_some_and(|discarded| discarded.contains(span))
+                            || self.discarded_value_reads.iter().any(
+                                |(observed, observed_spans)| {
+                                    observed.starts_with(path) && observed_spans.contains(span)
+                                },
+                            )
                             || self
                                 .guarded_discarded_invocation_reads
                                 .iter()

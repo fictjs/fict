@@ -3792,6 +3792,11 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); void iterator;",
         ),
         (
+            "observed generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); void iterator.next;",
+        ),
+        (
             "voided inline captured generator iterator",
             "",
             "const iterator = (function* () { values.forEach = null; })(); void iterator;",
