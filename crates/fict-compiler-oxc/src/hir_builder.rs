@@ -12182,6 +12182,25 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn has_retained_callable_container(expression: &Expression<'_>) -> bool {
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(_) | Expression::ObjectExpression(_) => true,
+            Expression::ConditionalExpression(expression) => {
+                Self::has_retained_callable_container(&expression.consequent)
+                    || Self::has_retained_callable_container(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                Self::has_retained_callable_container(&expression.left)
+                    || Self::has_retained_callable_container(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_some_and(Self::has_retained_callable_container),
+            _ => false,
+        }
+    }
+
     fn record_callable_initializer(
         &mut self,
         target: StaticAliasPath,
@@ -12190,10 +12209,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.record_local_non_consuming_initializer(&target, initializer);
         self.record_terminal_generator_method_alias(target.clone(), initializer);
         self.record_bound_terminal_generator_method_alias(target.clone(), initializer);
-        if matches!(
-            initializer.get_inner_expression(),
-            Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
-        ) {
+        if Self::has_retained_callable_container(initializer) {
             self.record_retained_callable_source(
                 target.clone(),
                 initializer,

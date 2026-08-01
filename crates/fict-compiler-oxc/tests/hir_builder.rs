@@ -3977,6 +3977,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const holder = [{ value: iterator }]; void holder;",
         ),
         (
+            "iterator stored in discarded conditional containers",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const holder = choose ? [iterator] : { iterator }; void holder;",
+        ),
+        (
+            "iterator stored in discarded logical container",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const holder = choose && [iterator]; void holder;",
+        ),
+        (
+            "iterator stored in discarded sequenced container",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const holder = (0, { iterator }); void holder;",
+        ),
+        (
             "unadvanced inline generator iterator argument",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); (function* (value) { value.next(); })(iterator);",
@@ -5040,9 +5055,24 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate(); const holder = { iterator }; holder.iterator.next();",
         ),
         (
+            "stored conditional container advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const holder = choose ? [iterator] : { iterator }; (choose ? holder[0] : holder.iterator).next();",
+        ),
+        (
+            "assigned container remains retained outside discarded result",
+            "function* mutate() { values.forEach = null; } let retained;",
+            "const iterator = mutate(); const holder = (retained = [iterator]); void holder; retained[0].next();",
+        ),
+        (
             "array spread advances iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); const holder = [...iterator]; void holder;",
+        ),
+        (
+            "conditional array spread advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const holder = choose ? [...iterator] : []; void holder;",
         ),
         (
             "generator argument spread advances iterator",
