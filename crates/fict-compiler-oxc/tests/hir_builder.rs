@@ -3852,6 +3852,36 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "unadvanced inline generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function* (value) { value.next(); })(iterator);",
+        ),
+        (
+            "voided inline generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const outer = (function* (value) { value.next(); })(iterator); void outer;",
+        ),
+        (
+            "unadvanced inline generator call iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function* (value) { value.next(); }).call(null, iterator);",
+        ),
+        (
+            "unadvanced inline generator apply iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function* (value) { value.next(); }).apply(null, [iterator]);",
+        ),
+        (
+            "unadvanced inline generator Reflect.apply iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); Reflect.apply(function* (value) { value.next(); }, null, [iterator]);",
+        ),
+        (
+            "unadvanced inline tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function* (strings, value) { value.next(); })`${iterator}`;",
+        ),
+        (
             "voided outer generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
             "const iterator = inspect(); const outer = ignore(iterator); void outer;",
@@ -4323,6 +4353,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "advanced generator consumes retained iterator",
             "function* mutate() { values.forEach = null; } function* consume(value) { value.next(); }",
             "const iterator = mutate(); const outer = consume(iterator); outer.next();",
+        ),
+        (
+            "advanced inline generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const outer = (function* (value) { value.next(); })(iterator); outer.next();",
         ),
         (
             "advanced tagged generator consumes retained iterator",
