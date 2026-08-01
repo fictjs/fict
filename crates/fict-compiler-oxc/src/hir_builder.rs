@@ -9930,6 +9930,7 @@ struct GeneratorExecutionCollector<'semantic> {
     discarded_invocation_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     discarded_value_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
+    retained_callable_reads: Vec<ForwardedCallableRead>,
     generator_result_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
@@ -9953,6 +9954,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             discarded_invocation_reads: BTreeMap::new(),
             discarded_value_reads: BTreeMap::new(),
             forwarded_callable_reads: Vec::new(),
+            retained_callable_reads: Vec::new(),
             generator_result_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
@@ -10612,6 +10614,68 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_retained_callable_source(
+        &mut self,
+        target: StaticAliasPath,
+        expression: &Expression<'_>,
+        guard: &GeneratorMethodGuard,
+    ) -> bool {
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            self.retained_callable_reads.push(ForwardedCallableRead {
+                source,
+                source_span,
+                target,
+                method_guard: Some(guard.clone()),
+            });
+            return true;
+        }
+        match expression.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let consequent = self.record_retained_callable_source(
+                    target.clone(),
+                    &expression.consequent,
+                    guard,
+                );
+                let alternate =
+                    self.record_retained_callable_source(target, &expression.alternate, guard);
+                consequent || alternate
+            }
+            Expression::LogicalExpression(expression) => {
+                let left =
+                    self.record_retained_callable_source(target.clone(), &expression.left, guard);
+                let right = self.record_retained_callable_source(target, &expression.right, guard);
+                left || right
+            }
+            Expression::SequenceExpression(expression) => {
+                expression.expressions.last().is_some_and(|expression| {
+                    self.record_retained_callable_source(target, expression, guard)
+                })
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.record_retained_callable_source(target, &expression.right, guard)
+            }
+            _ => false,
+        }
+    }
+
+    fn record_retained_bind_arguments(
+        &mut self,
+        target: &StaticAliasPath,
+        expression: &Expression<'_>,
+        guard: &GeneratorMethodGuard,
+    ) {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return;
+        };
+        for argument in &call.arguments {
+            if let Some(argument) = argument.as_expression() {
+                self.record_retained_callable_source(target.clone(), argument, guard);
+            }
+        }
+    }
+
     fn record_generator_result_forwarding(
         &mut self,
         target: StaticAliasPath,
@@ -10857,13 +10921,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     source,
                     source_span,
                     guard,
-                } => self.forwarded_callable_reads.push(ForwardedCallableRead {
-                    source,
-                    source_span,
-                    target,
-                    method_guard: Some(guard),
-                }),
+                } => {
+                    self.record_retained_bind_arguments(&target, expression, &guard);
+                    self.forwarded_callable_reads.push(ForwardedCallableRead {
+                        source,
+                        source_span,
+                        target,
+                        method_guard: Some(guard),
+                    });
+                }
                 GeneratorBindForwarding::Inline { body_span, guard } => {
+                    self.record_retained_bind_arguments(&target, expression, &guard);
                     self.generator_body_targets
                         .push((body_span, target.clone()));
                     self.guarded_generator_targets.push((target, guard));
@@ -11037,6 +11105,16 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .is_none_or(|guard| self.method_guard_is_intact(guard))
             })
             .collect::<Vec<_>>();
+        let trusted_retained_reads = self
+            .retained_callable_reads
+            .iter()
+            .map(|forwarding| {
+                forwarding
+                    .method_guard
+                    .as_ref()
+                    .is_none_or(|guard| self.method_guard_is_intact(guard))
+            })
+            .collect::<Vec<_>>();
         let trusted_guarded_reads = self
             .guarded_discarded_invocation_reads
             .iter()
@@ -11075,6 +11153,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .iter()
                 .flat_map(|forwarding| [forwarding.source.clone(), forwarding.target.clone()]),
         );
+        candidates.extend(
+            self.retained_callable_reads
+                .iter()
+                .flat_map(|forwarding| [forwarding.source.clone(), forwarding.target.clone()]),
+        );
         let mut merely_observed = BTreeSet::new();
         loop {
             let mut changed = false;
@@ -11101,6 +11184,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                 |(index, forwarding)| {
                                     trusted_method_forwardings[index]
                                         && forwarding.source == *path
+                                        && forwarding.source_span == *span
+                                        && merely_observed.contains(&forwarding.target)
+                                },
+                            )
+                            || self.retained_callable_reads.iter().enumerate().any(
+                                |(index, forwarding)| {
+                                    trusted_retained_reads[index]
+                                        && forwarding.source.starts_with(path)
                                         && forwarding.source_span == *span
                                         && merely_observed.contains(&forwarding.target)
                                 },
@@ -11159,6 +11250,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                 |(index, forwarding)| {
                                     trusted_method_forwardings[index]
                                         && forwarding.source != *path
+                                        && forwarding.source.starts_with(path)
+                                        && forwarding.source_span == *span
+                                        && merely_observed.contains(&forwarding.target)
+                                },
+                            )
+                            || self.retained_callable_reads.iter().enumerate().any(
+                                |(index, forwarding)| {
+                                    trusted_retained_reads[index]
                                         && forwarding.source.starts_with(path)
                                         && forwarding.source_span == *span
                                         && merely_observed.contains(&forwarding.target)
@@ -11261,6 +11360,16 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_assignment_callable_read(call, false);
         for argument in &call.arguments {
             if let Some(argument) = argument.as_expression() {
+                if self
+                    .callable_reference(argument)
+                    .is_some_and(|(source, source_span)| {
+                        self.retained_callable_reads.iter().any(|retained| {
+                            retained.source == source && retained.source_span == source_span
+                        })
+                    })
+                {
+                    continue;
+                }
                 self.record_escaped_callable_path(argument);
             }
         }

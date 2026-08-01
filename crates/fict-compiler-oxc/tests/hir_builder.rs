@@ -3827,6 +3827,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const advance = iterator['next']; void advance;",
         ),
         (
+            "discarded bound generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const advance = iterator.next.bind(iterator); void advance;",
+        ),
+        (
+            "discarded computed bound generator iterator method",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const advance = iterator.next['bind'](iterator); void advance;",
+        ),
+        (
+            "discarded bound generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) {}",
+            "const iterator = inspect(); const run = ignore.bind(null, iterator); void run;",
+        ),
+        (
             "voided inline captured generator iterator",
             "",
             "const iterator = (function* () { values.forEach = null; })(); void iterator;",
@@ -4253,6 +4268,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden generator prototype bind executes receiver",
             "function* mutate() { values.forEach = null; } Function.prototype.bind = function () { this().next(); return () => {}; }; const run = mutate.bind(null);",
             "run();",
+        ),
+        (
+            "overridden bind consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function ignore() {} ignore.bind = function (_receiver, iterator) { iterator.next(); return () => {}; };",
+            "const iterator = mutate(); const run = ignore.bind(null, iterator); void run;",
         ),
         (
             "call iterator advance",
