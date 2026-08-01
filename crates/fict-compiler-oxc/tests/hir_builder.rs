@@ -3932,6 +3932,11 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); void identity(iterator);",
         ),
         (
+            "indirect eval local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { (0, eval)('void 0'); void value; }",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
             "initial generator next ignores iterator argument",
             "function* inspect() { values.forEach = null; } function* empty() { yield 1; }",
             "const iterator = inspect(); const outer = empty(); outer.next(iterator);",
@@ -4842,6 +4847,11 @@ fn observed_generator_iterators_propagate_local_effects() {
         (
             "reassigned local no-op consumes iterator",
             "function* mutate() { values.forEach = null; } function consume(value) { void value; } consume = function (value) { return value.next(); };",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "direct eval may consume iterator argument",
+            "function* mutate() { values.forEach = null; } function consume(value) { eval('value.next()'); }",
             "const iterator = mutate(); consume(iterator);",
         ),
         (

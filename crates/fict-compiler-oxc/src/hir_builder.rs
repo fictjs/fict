@@ -9950,9 +9950,43 @@ impl NonConsumingParameterCollector<'_> {
             .and_then(|reference| self.scoping.get_reference(reference).symbol_id())?;
         self.parameter_indices.get(&symbol).copied()
     }
+
+    fn is_direct_eval_callee(&self, expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::Identifier(_) => static_alias_source_path(self.scoping, expression)
+                .is_some_and(|path| path == StaticAliasPath::unresolved_global("eval".to_string())),
+            Expression::ParenthesizedExpression(expression) => {
+                self.is_direct_eval_callee(&expression.expression)
+            }
+            Expression::TSAsExpression(expression) => {
+                self.is_direct_eval_callee(&expression.expression)
+            }
+            Expression::TSSatisfiesExpression(expression) => {
+                self.is_direct_eval_callee(&expression.expression)
+            }
+            Expression::TSTypeAssertion(expression) => {
+                self.is_direct_eval_callee(&expression.expression)
+            }
+            Expression::TSNonNullExpression(expression) => {
+                self.is_direct_eval_callee(&expression.expression)
+            }
+            Expression::TSInstantiationExpression(expression) => {
+                self.is_direct_eval_callee(&expression.expression)
+            }
+            _ => false,
+        }
+    }
 }
 
 impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        if self.is_direct_eval_callee(&call.callee) {
+            self.unsafe_uses
+                .extend(self.parameter_indices.values().copied());
+        }
+        walk_call_expression(self, call);
+    }
+
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
         let Some(index) = identifier
             .reference_id
