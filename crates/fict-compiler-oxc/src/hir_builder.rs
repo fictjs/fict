@@ -9988,10 +9988,19 @@ impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
     }
 
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
-        let Some(index) = identifier
+        let Some(reference) = identifier
             .reference_id
             .get()
-            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            .map(|reference| self.scoping.get_reference(reference))
+        else {
+            return;
+        };
+        if identifier.name == "arguments" && reference.symbol_id().is_none() {
+            self.unsafe_uses
+                .extend(self.parameter_indices.values().copied());
+        }
+        let Some(index) = reference
+            .symbol_id()
             .and_then(|symbol| self.parameter_indices.get(&symbol))
             .copied()
         else {

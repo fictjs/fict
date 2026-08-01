@@ -4855,6 +4855,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "const iterator = mutate(); consume(iterator);",
         ),
         (
+            "arguments alias may consume iterator argument",
+            "function* mutate() { values.forEach = null; } function consume(value) { arguments[0].next(); }",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
             "second generator next consumes iterator argument",
             "function* mutate() { values.forEach = null; } function* consume() { const value = yield; value.next(); }",
             "const iterator = mutate(); const outer = consume(); outer.next(); outer.next(iterator);",
