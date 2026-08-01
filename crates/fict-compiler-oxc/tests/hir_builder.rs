@@ -3917,6 +3917,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
+            "unused local generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) {}",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
+            "discarded local identity generator iterator result",
+            "function* inspect() { values.forEach = null; } function identity(value) { return value; }",
+            "const iterator = inspect(); void identity(iterator);",
+        ),
+        (
             "unadvanced inline generator iterator argument",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); (function* (value) { value.next(); })(iterator);",
@@ -4792,6 +4807,21 @@ fn observed_generator_iterators_propagate_local_effects() {
         (
             "eager callable consumes iterator argument",
             "function* mutate() { values.forEach = null; } function consume(value) { value.next(); }",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "observed local identity iterator result",
+            "function* mutate() { values.forEach = null; } function identity(value) { return value; }",
+            "const iterator = mutate(); const result = identity(iterator); result.next();",
+        ),
+        (
+            "nested local capture consumes iterator",
+            "function* mutate() { values.forEach = null; } function capture(value) { return function () { return value.next(); }; }",
+            "const iterator = mutate(); capture(iterator)();",
+        ),
+        (
+            "reassigned local no-op consumes iterator",
+            "function* mutate() { values.forEach = null; } function consume(value) { void value; } consume = function (value) { return value.next(); };",
             "const iterator = mutate(); consume(iterator);",
         ),
         (

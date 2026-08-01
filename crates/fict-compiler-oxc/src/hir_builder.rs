@@ -9915,6 +9915,86 @@ struct CompositeGuardedRead {
     method_guards: Vec<GeneratorMethodGuard>,
 }
 
+struct PendingCallableArgumentRead {
+    source: StaticAliasPath,
+    source_span: (u32, u32),
+    callee: Option<StaticAliasPath>,
+    parameter_index: usize,
+    result_discarded: bool,
+}
+
+struct NonConsumingParameterCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    parameter_indices: BTreeMap<SymbolId, usize>,
+    returned: BTreeSet<usize>,
+    unsafe_uses: BTreeSet<usize>,
+    nested_function_depth: usize,
+}
+
+impl NonConsumingParameterCollector<'_> {
+    fn direct_parameter_index(&self, expression: &Expression<'_>) -> Option<usize> {
+        let Expression::Identifier(identifier) = unwrap_transparent_call_expression(expression)
+        else {
+            return None;
+        };
+        let symbol = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())?;
+        self.parameter_indices.get(&symbol).copied()
+    }
+}
+
+impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let Some(index) = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            .and_then(|symbol| self.parameter_indices.get(&symbol))
+            .copied()
+        else {
+            return;
+        };
+        self.unsafe_uses.insert(index);
+    }
+
+    fn visit_unary_expression(&mut self, expression: &oxc::ast::ast::UnaryExpression<'a>) {
+        if self.nested_function_depth == 0
+            && expression.operator == OxcUnaryOperator::Void
+            && self.direct_parameter_index(&expression.argument).is_some()
+        {
+            return;
+        }
+        oxc::ast_visit::walk::walk_unary_expression(self, expression);
+    }
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if self.nested_function_depth == 0
+            && let Some(index) = statement
+                .argument
+                .as_ref()
+                .and_then(|argument| self.direct_parameter_index(argument))
+        {
+            self.returned.insert(index);
+            return;
+        }
+        walk_return_statement(self, statement);
+    }
+
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        self.nested_function_depth += 1;
+        walk_function(self, function, flags);
+        self.nested_function_depth -= 1;
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        self.nested_function_depth += 1;
+        walk_arrow_function_expression(self, function);
+        self.nested_function_depth -= 1;
+    }
+}
+
 #[derive(Clone)]
 struct GeneratorMethodGuard {
     source: Option<StaticAliasPath>,
@@ -9956,6 +10036,8 @@ struct GeneratorExecutionCollector<'semantic> {
     assigned_generator_result_reads: Vec<ForwardedCallableRead>,
     generator_result_reads: Vec<ForwardedCallableRead>,
     terminal_method_alias_reads: Vec<ForwardedCallableRead>,
+    local_non_consuming_parameters: BTreeMap<StaticAliasPath, BTreeMap<usize, bool>>,
+    pending_callable_argument_reads: Vec<PendingCallableArgumentRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
     generator_callable_targets: BTreeSet<StaticAliasPath>,
@@ -9988,6 +10070,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             assigned_generator_result_reads: Vec::new(),
             generator_result_reads: Vec::new(),
             terminal_method_alias_reads: Vec::new(),
+            local_non_consuming_parameters: BTreeMap::new(),
+            pending_callable_argument_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
             generator_callable_targets: BTreeSet::new(),
@@ -10214,6 +10298,47 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .then_some(function.body.as_ref())
             .flatten()
             .map(|body| (body.span.start, body.span.end))
+    }
+
+    fn local_non_consuming_parameters(
+        &self,
+        function: &Function<'_>,
+    ) -> Option<BTreeMap<usize, bool>> {
+        if function.generator || function.r#async || function.params.rest.is_some() {
+            return None;
+        }
+        let mut parameter_indices = BTreeMap::new();
+        for (index, parameter) in function.params.items.iter().enumerate() {
+            if parameter.initializer.is_some()
+                || parameter.optional
+                || !parameter.decorators.is_empty()
+                || parameter.accessibility.is_some()
+                || parameter.readonly
+                || parameter.r#override
+            {
+                return None;
+            }
+            let BindingPattern::BindingIdentifier(binding) = &parameter.pattern else {
+                return None;
+            };
+            parameter_indices.insert(binding.symbol_id.get()?, index);
+        }
+        let body = function.body.as_ref()?;
+        let mut collector = NonConsumingParameterCollector {
+            scoping: self.scoping,
+            parameter_indices: parameter_indices.clone(),
+            returned: BTreeSet::new(),
+            unsafe_uses: BTreeSet::new(),
+            nested_function_depth: 0,
+        };
+        collector.visit_function_body(body);
+        Some(
+            parameter_indices
+                .into_values()
+                .filter(|index| !collector.unsafe_uses.contains(index))
+                .map(|index| (index, collector.returned.contains(&index)))
+                .collect(),
+        )
     }
 
     fn generator_body_spans_for_target(
@@ -12049,7 +12174,23 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .is_none_or(|source| self.method_path_is_intact(source, guard.method))
     }
 
-    fn finish(self) -> GeneratorExecutionProof {
+    fn finish(mut self) -> GeneratorExecutionProof {
+        for read in std::mem::take(&mut self.pending_callable_argument_reads) {
+            let non_consuming = read
+                .callee
+                .as_ref()
+                .and_then(|callee| self.local_non_consuming_parameters.get(callee))
+                .and_then(|parameters| parameters.get(&read.parameter_index))
+                .is_some_and(|returned| !returned || read.result_discarded);
+            if non_consuming {
+                self.discarded_value_reads
+                    .entry(read.source)
+                    .or_default()
+                    .insert(read.source_span);
+            } else {
+                self.escaped_callable_paths.insert(read.source);
+            }
+        }
         let trusted_method_forwardings = self
             .forwarded_callable_reads
             .iter()
@@ -12492,26 +12633,42 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_generator_invocation_arguments(call);
         self.record_terminal_generator_method_read(call);
         self.record_indirect_terminal_generator_method_read(call);
-        for argument in &call.arguments {
-            if let Some(argument) = argument.as_expression() {
-                if self
-                    .callable_reference(argument)
-                    .is_some_and(|(source, source_span)| {
-                        self.retained_callable_reads.iter().any(|retained| {
-                            retained.source == source && retained.source_span == source_span
-                        }) || self.generator_argument_reads.iter().any(|retained| {
-                            retained.source == source
-                                && retained.source_span == source_span
-                                && retained.source == retained.target
-                        }) || self
-                            .non_escaping_callable_reads
-                            .contains(&(source, source_span))
-                    })
-                {
-                    continue;
-                }
-                self.record_escaped_callable_path(argument);
+        let callee = self
+            .callable_reference(&call.callee)
+            .map(|(callee, _)| callee);
+        let result_discarded = self
+            .discarded_invocation_spans
+            .contains(&(call.span.start, call.span.end));
+        for (parameter_index, argument) in call.arguments.iter().enumerate() {
+            let Some(argument) = argument.as_expression() else {
+                continue;
+            };
+            let Some((source, source_span)) = self.callable_reference(argument) else {
+                continue;
+            };
+            if self
+                .retained_callable_reads
+                .iter()
+                .any(|retained| retained.source == source && retained.source_span == source_span)
+                || self.generator_argument_reads.iter().any(|retained| {
+                    retained.source == source
+                        && retained.source_span == source_span
+                        && retained.source == retained.target
+                })
+                || self
+                    .non_escaping_callable_reads
+                    .contains(&(source.clone(), source_span))
+            {
+                continue;
             }
+            self.pending_callable_argument_reads
+                .push(PendingCallableArgumentRead {
+                    source,
+                    source_span,
+                    callee: callee.clone(),
+                    parameter_index,
+                    result_discarded,
+                });
         }
         walk_call_expression(self, call);
     }
@@ -12591,6 +12748,21 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if function.r#type == FunctionType::FunctionDeclaration
+            && !function.generator
+            && let Some(target) = function
+                .id
+                .as_ref()
+                .and_then(|identifier| identifier.symbol_id.get())
+            && !self
+                .scoping
+                .get_resolved_references(target)
+                .any(|reference| reference.is_write())
+            && let Some(parameters) = self.local_non_consuming_parameters(function)
+        {
+            self.local_non_consuming_parameters
+                .insert(StaticAliasPath::root(target), parameters);
+        }
         if function.r#type == FunctionType::FunctionDeclaration
             && let Some(span) = Self::generator_body_span(function)
             && let Some(target) = function
