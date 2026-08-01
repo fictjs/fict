@@ -9908,6 +9908,12 @@ struct GeneratorBodyArgumentRead {
     method_guard: Option<GeneratorMethodGuard>,
 }
 
+struct CompositeGuardedRead {
+    source: StaticAliasPath,
+    source_span: (u32, u32),
+    method_guards: Vec<GeneratorMethodGuard>,
+}
+
 #[derive(Clone)]
 struct GeneratorMethodGuard {
     source: Option<StaticAliasPath>,
@@ -9958,6 +9964,8 @@ struct GeneratorExecutionCollector<'semantic> {
     escaped_callable_paths: BTreeSet<StaticAliasPath>,
     guarded_generator_targets: Vec<(StaticAliasPath, GeneratorMethodGuard)>,
     guarded_discarded_invocation_reads: Vec<(StaticAliasPath, (u32, u32), GeneratorMethodGuard)>,
+    composite_guarded_reads: Vec<CompositeGuardedRead>,
+    non_escaping_callable_reads: BTreeSet<(StaticAliasPath, (u32, u32))>,
     guarded_unexecuted_body_spans: Vec<(GeneratorBodySpan, GeneratorMethodGuard)>,
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
@@ -9987,6 +9995,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             escaped_callable_paths: BTreeSet::new(),
             guarded_generator_targets: Vec::new(),
             guarded_discarded_invocation_reads: Vec::new(),
+            composite_guarded_reads: Vec::new(),
+            non_escaping_callable_reads: BTreeSet::new(),
             guarded_unexecuted_body_spans: Vec::new(),
             directly_unexecuted_body_spans: BTreeSet::new(),
             discarded_invocation_spans: BTreeSet::new(),
@@ -11182,6 +11192,167 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         ));
     }
 
+    fn terminal_generator_method_reference(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<(StaticAliasPath, (u32, u32), StaticAliasPath, &'static str)> {
+        let (source, method) = match unwrap_transparent_call_expression(expression) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.as_str())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let method = static_member_name(&member.expression)?;
+                let method = match method.as_str() {
+                    "return" => "return",
+                    "throw" => "throw",
+                    _ => return None,
+                };
+                let (source, source_span) = self.callable_reference(&member.object)?;
+                let method_path = source.clone().with_property(method.to_string());
+                return Some((source, source_span, method_path, method));
+            }
+            _ => return None,
+        };
+        let method = match method {
+            "return" => "return",
+            "throw" => "throw",
+            _ => return None,
+        };
+        let (source, source_span) = self.callable_reference(source)?;
+        let method_path = source.clone().with_property(method.to_string());
+        Some((source, source_span, method_path, method))
+    }
+
+    fn record_indirect_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
+        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        let (source, source_span, receiver, receiver_span, guards, target_argument) =
+            if static_alias_source_path(self.scoping, &call.callee)
+                .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
+            {
+                let Some(target) = call
+                    .arguments
+                    .first()
+                    .and_then(|argument| argument.as_expression())
+                else {
+                    return;
+                };
+                let Some(receiver_expression) = call
+                    .arguments
+                    .get(1)
+                    .and_then(|argument| argument.as_expression())
+                else {
+                    return;
+                };
+                let Some((source, source_span, _, method)) =
+                    self.terminal_generator_method_reference(target)
+                else {
+                    return;
+                };
+                let Some((receiver, receiver_span)) = self.callable_reference(receiver_expression)
+                else {
+                    return;
+                };
+                if receiver != source {
+                    return;
+                }
+                let Some(target_argument) = self.callable_reference(target) else {
+                    return;
+                };
+                (
+                    source.clone(),
+                    source_span,
+                    receiver,
+                    receiver_span,
+                    vec![
+                        GeneratorMethodGuard {
+                            source: None,
+                            owner: source,
+                            method,
+                        },
+                        GeneratorMethodGuard {
+                            source: None,
+                            owner: reflect,
+                            method: "apply",
+                        },
+                    ],
+                    Some(target_argument),
+                )
+            } else {
+                let (target, indirect_method) =
+                    match unwrap_transparent_call_expression(&call.callee) {
+                        Expression::StaticMemberExpression(member) => {
+                            let indirect_method = match member.property.name.as_str() {
+                                "call" => "call",
+                                "apply" => "apply",
+                                _ => return,
+                            };
+                            (&member.object, indirect_method)
+                        }
+                        Expression::ComputedMemberExpression(member) => {
+                            let indirect_method =
+                                match static_member_name(&member.expression).as_deref() {
+                                    Some("call") => "call",
+                                    Some("apply") => "apply",
+                                    _ => return,
+                                };
+                            (&member.object, indirect_method)
+                        }
+                        _ => return,
+                    };
+                let Some((source, source_span, method_path, method)) =
+                    self.terminal_generator_method_reference(target)
+                else {
+                    return;
+                };
+                let Some((receiver, receiver_span)) = call
+                    .arguments
+                    .first()
+                    .and_then(|argument| argument.as_expression())
+                    .and_then(|receiver| self.callable_reference(receiver))
+                else {
+                    return;
+                };
+                if receiver != source {
+                    return;
+                }
+                (
+                    source.clone(),
+                    source_span,
+                    receiver,
+                    receiver_span,
+                    vec![
+                        GeneratorMethodGuard {
+                            source: None,
+                            owner: source,
+                            method,
+                        },
+                        GeneratorMethodGuard {
+                            source: Some(method_path),
+                            owner: StaticAliasPath::unresolved_global("Function".to_string())
+                                .with_property("prototype".to_string()),
+                            method: indirect_method,
+                        },
+                    ],
+                    None,
+                )
+            };
+        self.composite_guarded_reads.push(CompositeGuardedRead {
+            source: source.clone(),
+            source_span,
+            method_guards: guards.clone(),
+        });
+        self.composite_guarded_reads.push(CompositeGuardedRead {
+            source,
+            source_span: receiver_span,
+            method_guards: guards,
+        });
+        self.non_escaping_callable_reads
+            .insert((receiver, receiver_span));
+        if let Some(target_argument) = target_argument {
+            self.non_escaping_callable_reads.insert(target_argument);
+        }
+    }
+
     fn record_generator_result_forwarding(
         &mut self,
         target: StaticAliasPath,
@@ -11689,6 +11860,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .iter()
             .map(|(_, _, guard)| self.method_guard_is_intact(guard))
             .collect::<Vec<_>>();
+        let trusted_composite_guarded_reads = self
+            .composite_guarded_reads
+            .iter()
+            .map(|read| {
+                read.method_guards
+                    .iter()
+                    .all(|guard| self.method_guard_is_intact(guard))
+            })
+            .collect::<Vec<_>>();
         let trusted_guarded_body_spans = self
             .guarded_unexecuted_body_spans
             .iter()
@@ -11741,6 +11921,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.assigned_generator_result_reads
                 .iter()
                 .flat_map(|read| [read.source.clone(), read.target.clone()]),
+        );
+        candidates.extend(
+            self.composite_guarded_reads
+                .iter()
+                .map(|read| read.source.clone()),
         );
         let mut targets_by_body = BTreeMap::<_, BTreeSet<_>>::new();
         for (span, target) in &self.generator_body_targets {
@@ -11859,6 +12044,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                         && source == path
                                         && source_span == span
                                 })
+                            || self.composite_guarded_reads.iter().enumerate().any(
+                                |(index, read)| {
+                                    trusted_composite_guarded_reads[index]
+                                        && read.source == *path
+                                        && read.source_span == *span
+                                },
+                            )
                             || self.forwarded_callable_reads.iter().enumerate().any(
                                 |(index, forwarding)| {
                                     trusted_method_forwardings[index]
@@ -12017,6 +12209,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_assignment_callable_read(call, false);
         self.record_generator_invocation_arguments(call);
         self.record_terminal_generator_method_read(call);
+        self.record_indirect_terminal_generator_method_read(call);
         for argument in &call.arguments {
             if let Some(argument) = argument.as_expression() {
                 if self
@@ -12028,7 +12221,9 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                             retained.source == source
                                 && retained.source_span == source_span
                                 && retained.source == retained.target
-                        })
+                        }) || self
+                            .non_escaping_callable_reads
+                            .contains(&(source, source_span))
                     })
                 {
                     continue;
