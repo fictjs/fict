@@ -3932,6 +3932,26 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const outer = (run = choose ? consumeA : consumeB)(iterator); void outer;",
         ),
         (
+            "unadvanced assigned generator call iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = inspect(); const outer = (run = consume).call(null, iterator); void outer;",
+        ),
+        (
+            "discarded assigned generator call iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = inspect(); (run = consume).call(null, iterator);",
+        ),
+        (
+            "unadvanced assigned generator apply iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = inspect(); const outer = (run = consume).apply(null, [iterator]); void outer;",
+        ),
+        (
+            "unadvanced assigned generator Reflect.apply iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = inspect(); const outer = Reflect.apply(run = consume, null, [iterator]); void outer;",
+        ),
+        (
             "voided outer generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
             "const iterator = inspect(); const outer = ignore(iterator); void outer;",
@@ -4438,6 +4458,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "mixed assigned callable consumes iterator",
             "function* mutate() { values.forEach = null; } function* deferred(value) { value.next(); } function eager(value) { value.next(); } let run;",
             "const iterator = mutate(); const outer = (run = choose ? deferred : eager)(iterator); void outer;",
+        ),
+        (
+            "advanced assigned generator call consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) { value.next(); } let run;",
+            "const iterator = mutate(); const outer = (run = consume).call(null, iterator); outer.next();",
+        ),
+        (
+            "overridden assigned generator call consumes iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) {} consume.call = function (_receiver, value) { value.next(); return {}; }; let run;",
+            "const iterator = mutate(); const outer = (run = consume).call(null, iterator); void outer;",
+        ),
+        (
+            "overridden assigned generator Reflect.apply consumes iterator",
+            "function* mutate() { values.forEach = null; } function* consume(value) {} Reflect.apply = function (_target, _receiver, args) { args[0].next(); return {}; }; let run;",
+            "const iterator = mutate(); const outer = Reflect.apply(run = consume, null, [iterator]); void outer;",
         ),
         (
             "advanced tagged generator consumes retained iterator",

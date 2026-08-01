@@ -10094,8 +10094,61 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.assignment_target_path(assignment)
     }
 
+    fn assignment_invocation_target(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(StaticAliasPath, Option<GeneratorMethodGuard>, usize)> {
+        if let Some(source) = self.assignment_callable_target(&call.callee) {
+            return Some((source, None, 0));
+        }
+        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        if static_alias_source_path(self.scoping, &call.callee)
+            .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
+        {
+            let source = call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .and_then(|source| self.assignment_callable_target(source))?;
+            return Some((
+                source,
+                Some(GeneratorMethodGuard {
+                    source: None,
+                    owner: reflect,
+                    method: "apply",
+                }),
+                1,
+            ));
+        }
+        let (source, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        let method = match method.as_str() {
+            "call" => "call",
+            "apply" => "apply",
+            _ => return None,
+        };
+        let source = self.assignment_callable_target(source)?;
+        Some((
+            source.clone(),
+            Some(GeneratorMethodGuard {
+                source: Some(source),
+                owner: StaticAliasPath::unresolved_global("Function".to_string())
+                    .with_property("prototype".to_string()),
+                method,
+            }),
+            0,
+        ))
+    }
+
     fn record_assignment_callable_read(&mut self, call: &CallExpression<'_>, discarded: bool) {
-        let Some(target) = self.assignment_callable_target(&call.callee) else {
+        let Some((target, guard, _)) = self.assignment_invocation_target(call) else {
             return;
         };
         let span = (call.span.start, call.span.end);
@@ -10104,10 +10157,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .or_default()
             .insert(span);
         if discarded {
-            self.discarded_invocation_reads
-                .entry(target)
-                .or_default()
-                .insert(span);
+            if let Some(guard) = guard {
+                self.guarded_discarded_invocation_reads
+                    .push((target, span, guard));
+            } else {
+                self.discarded_invocation_reads
+                    .entry(target)
+                    .or_default()
+                    .insert(span);
+            }
         }
     }
 
@@ -10820,8 +10878,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &self,
         call: &CallExpression<'_>,
     ) -> Option<(StaticAliasPath, Option<GeneratorMethodGuard>, usize)> {
-        if let Some(source) = self.assignment_callable_target(&call.callee) {
-            return Some((source, None, 0));
+        if let Some(target) = self.assignment_invocation_target(call) {
+            return Some(target);
         }
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         if static_alias_source_path(self.scoping, &call.callee)
@@ -10991,18 +11049,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: StaticAliasPath,
         call: &CallExpression<'_>,
     ) -> bool {
-        if let Some(source) = self.assignment_callable_target(&call.callee) {
-            let recorded = self.record_generator_result_source(target.clone(), &call.callee, None);
-            if recorded {
-                self.assigned_generator_result_reads
-                    .push(ForwardedCallableRead {
-                        source,
-                        source_span: (call.span.start, call.span.end),
-                        target,
-                        method_guard: None,
-                    });
-            }
-            return recorded;
+        if let Some((source, method_guard, _)) = self.assignment_invocation_target(call) {
+            self.assigned_generator_result_reads
+                .push(ForwardedCallableRead {
+                    source,
+                    source_span: (call.span.start, call.span.end),
+                    target: target.clone(),
+                    method_guard,
+                });
         }
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         if static_alias_source_path(self.scoping, &call.callee)
@@ -11468,6 +11522,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .is_none_or(|guard| self.method_guard_is_intact(guard))
             })
             .collect::<Vec<_>>();
+        let trusted_assigned_generator_result_reads = self
+            .assigned_generator_result_reads
+            .iter()
+            .map(|read| {
+                read.method_guard
+                    .as_ref()
+                    .is_none_or(|guard| self.method_guard_is_intact(guard))
+            })
+            .collect::<Vec<_>>();
         let trusted_guarded_reads = self
             .guarded_discarded_invocation_reads
             .iter()
@@ -11706,12 +11769,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                         && unexecuted.contains(&forwarding.target)
                                 },
                             )
-                            || self.assigned_generator_result_reads.iter().any(|read| {
-                                read.source == *path
-                                    && read.source_span == *span
-                                    && definite_generator_callables.contains(&read.source)
-                                    && unexecuted.contains(&read.target)
-                            })
+                            || self.assigned_generator_result_reads.iter().enumerate().any(
+                                |(index, read)| {
+                                    trusted_assigned_generator_result_reads[index]
+                                        && read.source == *path
+                                        && read.source_span == *span
+                                        && definite_generator_callables.contains(&read.source)
+                                        && unexecuted.contains(&read.target)
+                                },
+                            )
                     });
                 if all_reads_are_nonexecuting {
                     changed |= unexecuted.insert(path.clone());
