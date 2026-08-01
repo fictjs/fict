@@ -11790,12 +11790,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             });
     }
 
-    fn record_bound_terminal_generator_method_alias(
+    fn record_bound_terminal_generator_method_read(
         &mut self,
-        target: StaticAliasPath,
+        target: Option<StaticAliasPath>,
         initializer: &Expression<'_>,
+        invocation: Option<&CallExpression<'_>>,
     ) {
-        let call = match initializer.get_inner_expression() {
+        let bind_call = match initializer.get_inner_expression() {
             Expression::CallExpression(call) => call.as_ref(),
             Expression::ChainExpression(chain) => match &chain.expression {
                 ChainElement::CallExpression(call) => call.as_ref(),
@@ -11803,12 +11804,19 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             },
             _ => return,
         };
-        let object = match unwrap_transparent_call_expression(&call.callee) {
-            Expression::StaticMemberExpression(member) if member.property.name == "bind" => {
+        if invocation.is_some() && bind_call.optional {
+            return;
+        }
+        let object = match unwrap_transparent_call_expression(&bind_call.callee) {
+            Expression::StaticMemberExpression(member)
+                if member.property.name == "bind"
+                    && invocation.is_none_or(|_| !member.optional) =>
+            {
                 &member.object
             }
             Expression::ComputedMemberExpression(member)
-                if static_member_name(&member.expression).as_deref() == Some("bind") =>
+                if static_member_name(&member.expression).as_deref() == Some("bind")
+                    && invocation.is_none_or(|_| !member.optional) =>
             {
                 &member.object
             }
@@ -11819,7 +11827,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         else {
             return;
         };
-        let Some((receiver, receiver_span)) = call
+        let Some((receiver, receiver_span)) = bind_call
             .arguments
             .first()
             .and_then(|argument| argument.as_expression())
@@ -11843,10 +11851,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 method: "bind",
             },
         ];
-        let completion_reads = call
+        let completion_reads = bind_call
             .arguments
             .iter()
             .skip(1)
+            .chain(
+                invocation
+                    .into_iter()
+                    .flat_map(|call| call.arguments.iter()),
+            )
             .filter_map(|argument| argument.as_expression())
             .filter_map(|argument| self.callable_reference(argument))
             .filter(|(argument_source, _)| *argument_source == source)
@@ -11854,13 +11867,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source: source.clone(),
             source_span,
-            target: Some(target.clone()),
+            target: target.clone(),
             method_guards: method_guards.clone(),
         });
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source,
             source_span: receiver_span,
-            target: Some(target.clone()),
+            target: target.clone(),
             method_guards: method_guards.clone(),
         });
         self.non_escaping_callable_reads
@@ -11869,11 +11882,25 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.composite_guarded_reads.push(CompositeGuardedRead {
                 source: completion_source.clone(),
                 source_span: completion_span,
-                target: Some(target.clone()),
+                target: target.clone(),
                 method_guards: method_guards.clone(),
             });
             self.non_escaping_callable_reads
                 .insert((completion_source, completion_span));
+        }
+    }
+
+    fn record_bound_terminal_generator_method_alias(
+        &mut self,
+        target: StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        self.record_bound_terminal_generator_method_read(Some(target), initializer, None);
+    }
+
+    fn record_immediate_bound_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
+        if !call.optional {
+            self.record_bound_terminal_generator_method_read(None, &call.callee, Some(call));
         }
     }
 
@@ -12816,6 +12843,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_generator_invocation_arguments(call);
         self.record_terminal_generator_method_read(call);
         self.record_indirect_terminal_generator_method_read(call);
+        self.record_immediate_bound_terminal_generator_method_read(call);
         self.record_initial_generator_next_arguments(call);
         let callee = self
             .callable_reference(&call.callee)
