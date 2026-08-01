@@ -3777,6 +3777,31 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const run = ignore.bind?.(null, iterator); const outer = run?.(); void outer;",
         ),
         (
+            "discarded generator bind",
+            "function* inspect() { values.forEach = null; }",
+            "inspect.bind(null);",
+        ),
+        (
+            "discarded optional generator bind",
+            "function* inspect() { values.forEach = null; }",
+            "inspect.bind?.(null);",
+        ),
+        (
+            "discarded bind iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) {}",
+            "const iterator = inspect(); ignore.bind(null, iterator);",
+        ),
+        (
+            "discarded inline bind iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function ignore(value) {}).bind(null, iterator);",
+        ),
+        (
+            "discarded inline generator bind iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function* ignore(value) { value.next(); }).bind(null, iterator);",
+        ),
+        (
             "unadvanced generator call indirection",
             "function* inspect(target) { target.forEach = null; }",
             "inspect.call(null, values);",
@@ -4683,6 +4708,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden bind consumes retained iterator",
             "function* mutate() { values.forEach = null; } function ignore() {} ignore.bind = function (_receiver, iterator) { iterator.next(); return () => {}; };",
             "const iterator = mutate(); const run = ignore.bind(null, iterator); void run;",
+        ),
+        (
+            "overridden discarded bind consumes iterator",
+            "function* mutate() { values.forEach = null; } function ignore() {} ignore.bind = function (_receiver, iterator) { iterator.next(); return () => {}; };",
+            "const iterator = mutate(); ignore.bind(null, iterator);",
+        ),
+        (
+            "discarded bind spread advances iterator",
+            "function* mutate() { values.forEach = null; } function ignore() {}",
+            "const iterator = mutate(); ignore.bind(null, ...iterator);",
         ),
         (
             "call iterator advance",

@@ -10905,6 +10905,81 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_discarded_bind(&mut self, expression: &Expression<'_>) -> bool {
+        let call = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                _ => return false,
+            },
+            _ => return false,
+        };
+        let object = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) if member.property.name == "bind" => {
+                &member.object
+            }
+            Expression::ComputedMemberExpression(member)
+                if static_member_name(&member.expression).as_deref() == Some("bind") =>
+            {
+                &member.object
+            }
+            _ => return false,
+        };
+        let owner = StaticAliasPath::unresolved_global("Function".to_string())
+            .with_property("prototype".to_string());
+        let (receiver, body_span, guard) =
+            if let Some((source, source_span)) = self.callable_reference(object) {
+                (
+                    Some((source.clone(), source_span)),
+                    None,
+                    GeneratorMethodGuard {
+                        source: Some(source),
+                        owner,
+                        method: "bind",
+                    },
+                )
+            } else if let Expression::FunctionExpression(function) = object.get_inner_expression() {
+                (
+                    None,
+                    Self::generator_body_span(function),
+                    GeneratorMethodGuard {
+                        source: None,
+                        owner,
+                        method: "bind",
+                    },
+                )
+            } else {
+                return false;
+            };
+        if let Some((source, source_span)) = receiver {
+            self.guarded_discarded_invocation_reads
+                .push((source, source_span, guard.clone()));
+        }
+        if let Some(body_span) = body_span {
+            self.guarded_unexecuted_body_spans
+                .push((body_span, guard.clone()));
+        }
+        let mut retained_sources = Vec::new();
+        for argument in &call.arguments {
+            if let Some(argument) = argument.as_expression() {
+                self.collect_retained_callable_sources(argument, &mut retained_sources);
+            } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument
+                && matches!(
+                    spread.argument.get_inner_expression(),
+                    Expression::ArrayExpression(_)
+                )
+            {
+                self.collect_retained_callable_sources(&spread.argument, &mut retained_sources);
+            }
+        }
+        self.guarded_discarded_invocation_reads.extend(
+            retained_sources
+                .into_iter()
+                .map(|(source, source_span)| (source, source_span, guard.clone())),
+        );
+        true
+    }
+
     fn generator_invocation_target(
         &self,
         call: &CallExpression<'_>,
@@ -11290,7 +11365,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.discarded_invocation_spans
                     .insert((call.span.start, call.span.end));
                 self.record_assignment_callable_read(call, true);
-                if !self.record_nonexecuting_indirect_call(call) {
+                if !self.record_discarded_bind(expression)
+                    && !self.record_nonexecuting_indirect_call(call)
+                {
                     self.record_nonexecuting_callable(&call.callee);
                 }
             }
@@ -11308,7 +11385,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     self.discarded_invocation_spans
                         .insert((call.span.start, call.span.end));
                     self.record_assignment_callable_read(call, true);
-                    if !self.record_nonexecuting_indirect_call(call) {
+                    if !self.record_discarded_bind(expression)
+                        && !self.record_nonexecuting_indirect_call(call)
+                    {
                         self.record_nonexecuting_callable(&call.callee);
                     }
                 }
