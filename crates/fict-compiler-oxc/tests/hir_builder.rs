@@ -3987,6 +3987,36 @@ fn pure_local_calls_preserve_receiver_methods() {
             "inspect`${inspect}`;",
         ),
         (
+            "generator return before start",
+            "function* inspect() { try { values.forEach = null; } finally { values.forEach = null; } }",
+            "const iterator = inspect(); iterator.return();",
+        ),
+        (
+            "computed generator return before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const result = iterator['return'](); void result;",
+        ),
+        (
+            "optional generator return before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); iterator.return?.();",
+        ),
+        (
+            "aliased generator return before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const alias = iterator; alias.return();",
+        ),
+        (
+            "generator throw before start",
+            "function* inspect() { try { values.forEach = null; } finally { values.forEach = null; } }",
+            "const iterator = inspect(); try { iterator.throw(new Error()); } catch {}",
+        ),
+        (
+            "async generator return before start",
+            "async function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); iterator.return();",
+        ),
+        (
             "voided outer generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
             "const iterator = inspect(); const outer = ignore(iterator); void outer;",
@@ -4528,6 +4558,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden self-retained generator call",
             "function* mutate(value) { void value; } mutate.call = function () { values.forEach = null; return {}; };",
             "mutate.call(null, mutate);",
+        ),
+        (
+            "advanced generator return executes started body",
+            "function* mutate() { try { values.forEach = null; yield; } finally { values.forEach = null; } }",
+            "const iterator = mutate(); iterator.next(); iterator.return();",
+        ),
+        (
+            "overridden generator return advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return = function () { return iterator.next(); }; iterator.return();",
         ),
         (
             "advanced tagged generator consumes retained iterator",

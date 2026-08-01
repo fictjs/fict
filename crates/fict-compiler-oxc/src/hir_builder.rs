@@ -11065,6 +11065,38 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
+        let (source, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Some(method) = static_member_name(&member.expression) else {
+                    return;
+                };
+                (&member.object, method)
+            }
+            _ => return,
+        };
+        let method = match method.as_str() {
+            "return" => "return",
+            "throw" => "throw",
+            _ => return,
+        };
+        let Some((source, source_span)) = self.callable_reference(source) else {
+            return;
+        };
+        self.guarded_discarded_invocation_reads.push((
+            source.clone(),
+            source_span,
+            GeneratorMethodGuard {
+                source: None,
+                owner: source,
+                method,
+            },
+        ));
+    }
+
     fn record_generator_result_forwarding(
         &mut self,
         target: StaticAliasPath,
@@ -11895,6 +11927,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_assignment_callable_read(call, false);
         self.record_generator_invocation_arguments(call);
+        self.record_terminal_generator_method_read(call);
         for argument in &call.arguments {
             if let Some(argument) = argument.as_expression() {
                 if self
