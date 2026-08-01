@@ -3877,6 +3877,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); Reflect.apply(ignore, null, [iterator]);",
         ),
         (
+            "unadvanced tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(strings, value) { value.next(); }",
+            "const iterator = inspect(); ignore`${iterator}`;",
+        ),
+        (
+            "voided tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(strings, value) { value.next(); }",
+            "const iterator = inspect(); const outer = ignore`${iterator}`; void outer;",
+        ),
+        (
+            "unadvanced bound tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* ignore(strings, value) { value.next(); } const run = ignore.bind(null);",
+            "const iterator = inspect(); run`${iterator}`;",
+        ),
+        (
             "unadvanced generator nested iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.iterator.next(); }",
             "const iterator = inspect(); ignore({ iterator });",
@@ -4308,6 +4323,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "advanced generator consumes retained iterator",
             "function* mutate() { values.forEach = null; } function* consume(value) { value.next(); }",
             "const iterator = mutate(); const outer = consume(iterator); outer.next();",
+        ),
+        (
+            "advanced tagged generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function* consume(strings, value) { value.next(); }",
+            "const iterator = mutate(); const outer = consume`${iterator}`; outer.next();",
+        ),
+        (
+            "eager tagged callable consumes iterator argument",
+            "function* mutate() { values.forEach = null; } function consume(strings, value) { value.next(); }",
+            "const iterator = mutate(); consume`${iterator}`;",
         ),
         (
             "eager callable consumes iterator argument",

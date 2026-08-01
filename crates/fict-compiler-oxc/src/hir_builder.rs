@@ -11621,6 +11621,20 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         walk_call_expression(self, call);
     }
 
+    fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
+        if let Some((target, _)) = self.callable_reference(&expression.tag) {
+            for substitution in &expression.quasi.expressions {
+                self.record_retained_callable_source(
+                    target.clone(),
+                    substitution,
+                    None,
+                    RetainedCallableReadKind::GeneratorInvocation,
+                );
+            }
+        }
+        oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
+    }
+
     fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
         self.record_discarded_expression(&statement.expression);
         walk_expression_statement(self, statement);
