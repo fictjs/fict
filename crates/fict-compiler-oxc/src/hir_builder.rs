@@ -9954,6 +9954,7 @@ struct GeneratorExecutionCollector<'semantic> {
     generator_body_argument_reads: Vec<GeneratorBodyArgumentRead>,
     assigned_generator_result_reads: Vec<ForwardedCallableRead>,
     generator_result_reads: Vec<ForwardedCallableRead>,
+    terminal_method_alias_reads: Vec<ForwardedCallableRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
     generator_callable_targets: BTreeSet<StaticAliasPath>,
@@ -9985,6 +9986,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             generator_body_argument_reads: Vec::new(),
             assigned_generator_result_reads: Vec::new(),
             generator_result_reads: Vec::new(),
+            terminal_method_alias_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
             generator_callable_targets: BTreeSet::new(),
@@ -11353,6 +11355,29 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_terminal_generator_method_alias(
+        &mut self,
+        target: StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let Some((source, source_span, _, method)) =
+            self.terminal_generator_method_reference(initializer)
+        else {
+            return;
+        };
+        self.terminal_method_alias_reads
+            .push(ForwardedCallableRead {
+                source: source.clone(),
+                source_span,
+                target,
+                method_guard: Some(GeneratorMethodGuard {
+                    source: None,
+                    owner: source,
+                    method,
+                }),
+            });
+    }
+
     fn record_generator_result_forwarding(
         &mut self,
         target: StaticAliasPath,
@@ -11421,6 +11446,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
+        self.record_terminal_generator_method_alias(target.clone(), initializer);
         self.record_forwarded_callable(target.clone(), initializer);
         if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
             self.record_constructed_class_generator_bodies(target, expression);
@@ -11817,6 +11843,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .is_none_or(|guard| self.method_guard_is_intact(guard))
             })
             .collect::<Vec<_>>();
+        let trusted_terminal_method_alias_reads = self
+            .terminal_method_alias_reads
+            .iter()
+            .map(|read| {
+                read.method_guard
+                    .as_ref()
+                    .is_some_and(|guard| self.method_guard_is_intact(guard))
+            })
+            .collect::<Vec<_>>();
         let trusted_retained_reads = self
             .retained_callable_reads
             .iter()
@@ -11901,6 +11936,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.generator_result_reads
                 .iter()
                 .flat_map(|forwarding| [forwarding.source.clone(), forwarding.target.clone()]),
+        );
+        candidates.extend(
+            self.terminal_method_alias_reads
+                .iter()
+                .flat_map(|read| [read.source.clone(), read.target.clone()]),
         );
         candidates.extend(
             self.retained_callable_reads
@@ -12049,6 +12089,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                     trusted_composite_guarded_reads[index]
                                         && read.source == *path
                                         && read.source_span == *span
+                                },
+                            )
+                            || self.terminal_method_alias_reads.iter().enumerate().any(
+                                |(index, read)| {
+                                    trusted_terminal_method_alias_reads[index]
+                                        && read.source == *path
+                                        && read.source_span == *span
+                                        && unexecuted.contains(&read.target)
                                 },
                             )
                             || self.forwarded_callable_reads.iter().enumerate().any(

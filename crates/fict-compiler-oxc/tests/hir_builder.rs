@@ -4097,6 +4097,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); try { iterator.throw.call(iterator, new Error()); } catch {}",
         ),
         (
+            "detached generator return before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const close = iterator.return; try { close(); } catch {}",
+        ),
+        (
+            "chained detached generator throw before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const fail = iterator['throw']; const later = fail; try { later(new Error()); } catch {}",
+        ),
+        (
             "async generator return before start",
             "async function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); iterator.return();",
@@ -4683,6 +4693,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden Reflect.apply advances terminal receiver",
             "function* mutate() { values.forEach = null; } Reflect.apply = function (_target, receiver) { return receiver.next(); };",
             "const iterator = mutate(); Reflect.apply(iterator.return, iterator, []);",
+        ),
+        (
+            "overridden detached generator return advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return = function () { return iterator.next(); }; const close = iterator.return; close();",
+        ),
+        (
+            "reassigned detached generator return advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); let close = iterator.return; close = function () { return iterator.next(); }; close();",
         ),
         (
             "advanced tagged generator consumes retained iterator",
