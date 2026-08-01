@@ -10024,6 +10024,7 @@ enum GeneratorBindForwarding {
 #[derive(Clone, Copy)]
 enum RetainedCallableReadKind {
     Bind,
+    Container,
     GeneratorInvocation,
 }
 
@@ -10950,7 +10951,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 method_guard: guard.cloned(),
             };
             match kind {
-                RetainedCallableReadKind::Bind => self.retained_callable_reads.push(read),
+                RetainedCallableReadKind::Bind | RetainedCallableReadKind::Container => {
+                    self.retained_callable_reads.push(read);
+                }
                 RetainedCallableReadKind::GeneratorInvocation => {
                     self.generator_argument_reads.push(read);
                 }
@@ -11830,6 +11833,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     ) {
         self.record_terminal_generator_method_alias(target.clone(), initializer);
         self.record_bound_terminal_generator_method_alias(target.clone(), initializer);
+        if matches!(
+            initializer.get_inner_expression(),
+            Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+        ) {
+            self.record_retained_callable_source(
+                target.clone(),
+                initializer,
+                None,
+                RetainedCallableReadKind::Container,
+            );
+        }
         self.record_forwarded_callable(target.clone(), initializer);
         if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
             self.record_constructed_class_generator_bodies(target, expression);

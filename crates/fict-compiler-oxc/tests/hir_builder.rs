@@ -3937,6 +3937,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const outer = empty(); outer.next(iterator);",
         ),
         (
+            "iterator stored in discarded array",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const holder = [iterator]; void holder;",
+        ),
+        (
+            "iterator stored in discarded object",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const holder = { iterator }; void holder;",
+        ),
+        (
+            "iterator stored in discarded nested container",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const holder = [{ value: iterator }]; void holder;",
+        ),
+        (
             "unadvanced inline generator iterator argument",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); (function* (value) { value.next(); })(iterator);",
@@ -4838,6 +4853,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden initial generator next consumes iterator argument",
             "function* mutate() { values.forEach = null; } function* empty() {}",
             "const iterator = mutate(); const outer = empty(); outer.next = function (value) { return value.next(); }; outer.next(iterator);",
+        ),
+        (
+            "stored array advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const holder = [iterator]; holder[0].next();",
+        ),
+        (
+            "stored object advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const holder = { iterator }; holder.iterator.next();",
+        ),
+        (
+            "array spread advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const holder = [...iterator]; void holder;",
         ),
         (
             "generator argument spread advances iterator",
