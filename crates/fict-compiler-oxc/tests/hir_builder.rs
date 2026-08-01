@@ -4107,6 +4107,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const fail = iterator['throw']; const later = fail; try { later(new Error()); } catch {}",
         ),
         (
+            "bound generator return before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const close = iterator.return.bind(iterator); close();",
+        ),
+        (
+            "computed bound generator throw before start",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const fail = iterator['throw']['bind'](iterator); try { fail(new Error()); } catch {}",
+        ),
+        (
             "async generator return before start",
             "async function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); iterator.return();",
@@ -4703,6 +4713,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "reassigned detached generator return advances iterator",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); let close = iterator.return; close = function () { return iterator.next(); }; close();",
+        ),
+        (
+            "overridden bound generator return advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return = function () { return iterator.next(); }; const close = iterator.return.bind(iterator); close();",
+        ),
+        (
+            "overridden terminal bind advances iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); iterator.return.bind = function (receiver) { return function () { return receiver.next(); }; }; const close = iterator.return.bind(iterator); close();",
+        ),
+        (
+            "overridden generator prototype bind advances terminal receiver",
+            "function* mutate() { values.forEach = null; } Function.prototype.bind = function (receiver) { return function () { return receiver.next(); }; };",
+            "const iterator = mutate(); const close = iterator.return.bind(iterator); close();",
         ),
         (
             "advanced tagged generator consumes retained iterator",

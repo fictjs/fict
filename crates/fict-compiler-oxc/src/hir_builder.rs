@@ -9911,6 +9911,7 @@ struct GeneratorBodyArgumentRead {
 struct CompositeGuardedRead {
     source: StaticAliasPath,
     source_span: (u32, u32),
+    target: Option<StaticAliasPath>,
     method_guards: Vec<GeneratorMethodGuard>,
 }
 
@@ -11341,11 +11342,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source: source.clone(),
             source_span,
+            target: None,
             method_guards: guards.clone(),
         });
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source,
             source_span: receiver_span,
+            target: None,
             method_guards: guards,
         });
         self.non_escaping_callable_reads
@@ -11376,6 +11379,75 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     method,
                 }),
             });
+    }
+
+    fn record_bound_terminal_generator_method_alias(
+        &mut self,
+        target: StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let call = match initializer.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                _ => return,
+            },
+            _ => return,
+        };
+        let object = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) if member.property.name == "bind" => {
+                &member.object
+            }
+            Expression::ComputedMemberExpression(member)
+                if static_member_name(&member.expression).as_deref() == Some("bind") =>
+            {
+                &member.object
+            }
+            _ => return,
+        };
+        let Some((source, source_span, method_path, method)) =
+            self.terminal_generator_method_reference(object)
+        else {
+            return;
+        };
+        let Some((receiver, receiver_span)) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(|receiver| self.callable_reference(receiver))
+        else {
+            return;
+        };
+        if receiver != source {
+            return;
+        }
+        let method_guards = vec![
+            GeneratorMethodGuard {
+                source: None,
+                owner: source.clone(),
+                method,
+            },
+            GeneratorMethodGuard {
+                source: Some(method_path),
+                owner: StaticAliasPath::unresolved_global("Function".to_string())
+                    .with_property("prototype".to_string()),
+                method: "bind",
+            },
+        ];
+        self.composite_guarded_reads.push(CompositeGuardedRead {
+            source: source.clone(),
+            source_span,
+            target: Some(target.clone()),
+            method_guards: method_guards.clone(),
+        });
+        self.composite_guarded_reads.push(CompositeGuardedRead {
+            source,
+            source_span: receiver_span,
+            target: Some(target),
+            method_guards,
+        });
+        self.non_escaping_callable_reads
+            .insert((receiver, receiver_span));
     }
 
     fn record_generator_result_forwarding(
@@ -11447,6 +11519,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         initializer: &Expression<'_>,
     ) {
         self.record_terminal_generator_method_alias(target.clone(), initializer);
+        self.record_bound_terminal_generator_method_alias(target.clone(), initializer);
         self.record_forwarded_callable(target.clone(), initializer);
         if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
             self.record_constructed_class_generator_bodies(target, expression);
@@ -11962,11 +12035,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .iter()
                 .flat_map(|read| [read.source.clone(), read.target.clone()]),
         );
-        candidates.extend(
-            self.composite_guarded_reads
-                .iter()
-                .map(|read| read.source.clone()),
-        );
+        candidates.extend(self.composite_guarded_reads.iter().flat_map(|read| {
+            std::iter::once(read.source.clone()).chain(read.target.iter().cloned())
+        }));
         let mut targets_by_body = BTreeMap::<_, BTreeSet<_>>::new();
         for (span, target) in &self.generator_body_targets {
             targets_by_body
@@ -12089,6 +12160,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                     trusted_composite_guarded_reads[index]
                                         && read.source == *path
                                         && read.source_span == *span
+                                        && read
+                                            .target
+                                            .as_ref()
+                                            .is_none_or(|target| unexecuted.contains(target))
                                 },
                             )
                             || self.terminal_method_alias_reads.iter().enumerate().any(
