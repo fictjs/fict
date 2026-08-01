@@ -10617,9 +10617,6 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: StaticAliasPath,
         call: &CallExpression<'_>,
     ) -> bool {
-        if call.optional {
-            return false;
-        }
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         if static_alias_source_path(self.scoping, &call.callee)
             .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
@@ -10874,7 +10871,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             return;
         }
-        if let Expression::CallExpression(call) = expression.get_inner_expression()
+        let call = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => Some(call.as_ref()),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => Some(call.as_ref()),
+                ChainElement::TSNonNullExpression(_)
+                | ChainElement::ComputedMemberExpression(_)
+                | ChainElement::StaticMemberExpression(_)
+                | ChainElement::PrivateFieldExpression(_) => None,
+            },
+            _ => None,
+        };
+        if let Some(call) = call
             && self.record_generator_result_forwarding(target.clone(), call)
         {
             return;

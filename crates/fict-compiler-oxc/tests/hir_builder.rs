@@ -3792,6 +3792,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); void iterator;",
         ),
         (
+            "voided optional captured generator iterator",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect?.(); void iterator;",
+        ),
+        (
+            "voided inline optional captured generator iterator",
+            "",
+            "const iterator = (function* () { values.forEach = null; })?.(); void iterator;",
+        ),
+        (
+            "voided bound optional captured generator iterator",
+            "function* inspect() { values.forEach = null; } const run = inspect.bind(null);",
+            "const iterator = run?.(); void iterator;",
+        ),
+        (
             "observed generator iterator method",
             "function* inspect() { values.forEach = null; }",
             "const iterator = inspect(); void iterator.next;",
@@ -4263,6 +4278,11 @@ fn observed_generator_iterators_propagate_local_effects() {
             "stored capturing generator advance",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); iterator.next();",
+        ),
+        (
+            "optional capturing generator advance",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate?.(); iterator?.next();",
         ),
         (
             "tagged capturing generator advance",
