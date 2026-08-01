@@ -3967,6 +3967,26 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); (run = consume)`${iterator}`;",
         ),
         (
+            "self-retained generator",
+            "function* inspect(value) { values.forEach = null; void value; }",
+            "inspect(inspect);",
+        ),
+        (
+            "self-retained generator call",
+            "function* inspect(value) { values.forEach = null; void value; }",
+            "inspect.call(inspect, inspect);",
+        ),
+        (
+            "self-retained generator Reflect.apply",
+            "function* inspect() { values.forEach = null; void this; }",
+            "Reflect.apply(inspect, inspect, []);",
+        ),
+        (
+            "self-retained tagged generator",
+            "function* inspect(_strings, value) { values.forEach = null; void value; }",
+            "inspect`${inspect}`;",
+        ),
+        (
             "voided outer generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
             "const iterator = inspect(); const outer = ignore(iterator); void outer;",
@@ -4498,6 +4518,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "assigned eager tagged callable consumes iterator",
             "function* mutate() { values.forEach = null; } function consume(_strings, value) { value.next(); } let run;",
             "const iterator = mutate(); const outer = (run = consume)`${iterator}`; void outer;",
+        ),
+        (
+            "advanced self-retained generator",
+            "function* mutate(value) { values.forEach = null; void value; }",
+            "mutate(mutate).next();",
+        ),
+        (
+            "overridden self-retained generator call",
+            "function* mutate(value) { void value; } mutate.call = function () { values.forEach = null; return {}; };",
+            "mutate.call(null, mutate);",
         ),
         (
             "advanced tagged generator consumes retained iterator",

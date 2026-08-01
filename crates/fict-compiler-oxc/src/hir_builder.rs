@@ -11772,7 +11772,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                                         && forwarding.source.starts_with(path)
                                         && forwarding.source_span == *span
                                         && definite_generator_callables.contains(&forwarding.target)
-                                        && unexecuted.contains(&forwarding.target)
+                                        && (forwarding.source == forwarding.target
+                                            || unexecuted.contains(&forwarding.target))
                                 },
                             )
                             || self.generator_body_argument_reads.iter().enumerate().any(
@@ -11901,6 +11902,10 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                     .is_some_and(|(source, source_span)| {
                         self.retained_callable_reads.iter().any(|retained| {
                             retained.source == source && retained.source_span == source_span
+                        }) || self.generator_argument_reads.iter().any(|retained| {
+                            retained.source == source
+                                && retained.source_span == source_span
+                                && retained.source == retained.target
                         })
                     })
                 {
