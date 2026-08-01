@@ -3952,6 +3952,21 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); const outer = Reflect.apply(run = consume, null, [iterator]); void outer;",
         ),
         (
+            "unadvanced assigned tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(_strings, value) { value.next(); } let run;",
+            "const iterator = inspect(); const outer = (run = consume)`${iterator}`; void outer;",
+        ),
+        (
+            "unadvanced assigned inline tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; } let consume;",
+            "const iterator = inspect(); const outer = (consume = function* (_strings, value) { value.next(); })`${iterator}`; void outer;",
+        ),
+        (
+            "discarded assigned tagged generator iterator argument",
+            "function* inspect() { values.forEach = null; } function* consume(_strings, value) { value.next(); } let run;",
+            "const iterator = inspect(); (run = consume)`${iterator}`;",
+        ),
+        (
             "voided outer generator iterator argument",
             "function* inspect() { values.forEach = null; } function* ignore(value) { value.next(); }",
             "const iterator = inspect(); const outer = ignore(iterator); void outer;",
@@ -4473,6 +4488,16 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden assigned generator Reflect.apply consumes iterator",
             "function* mutate() { values.forEach = null; } function* consume(value) {} Reflect.apply = function (_target, _receiver, args) { args[0].next(); return {}; }; let run;",
             "const iterator = mutate(); const outer = Reflect.apply(run = consume, null, [iterator]); void outer;",
+        ),
+        (
+            "advanced assigned tagged generator consumes retained iterator",
+            "function* mutate() { values.forEach = null; } function* consume(_strings, value) { value.next(); } let run;",
+            "const iterator = mutate(); const outer = (run = consume)`${iterator}`; outer.next();",
+        ),
+        (
+            "assigned eager tagged callable consumes iterator",
+            "function* mutate() { values.forEach = null; } function consume(_strings, value) { value.next(); } let run;",
+            "const iterator = mutate(); const outer = (run = consume)`${iterator}`; void outer;",
         ),
         (
             "advanced tagged generator consumes retained iterator",

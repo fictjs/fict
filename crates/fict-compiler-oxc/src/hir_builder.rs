@@ -10169,6 +10169,27 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_assignment_tagged_read(
+        &mut self,
+        expression: &TaggedTemplateExpression<'_>,
+        discarded: bool,
+    ) {
+        let Some(target) = self.assignment_callable_target(&expression.tag) else {
+            return;
+        };
+        let span = (expression.span.start, expression.span.end);
+        self.direct_callable_reads
+            .entry(target.clone())
+            .or_default()
+            .insert(span);
+        if discarded {
+            self.discarded_invocation_reads
+                .entry(target)
+                .or_default()
+                .insert(span);
+        }
+    }
+
     fn generator_body_span(function: &Function<'_>) -> Option<(u32, u32)> {
         function
             .generator
@@ -11234,6 +11255,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Expression::TaggedTemplateExpression(tagged) => {
                 self.discarded_invocation_spans
                     .insert((tagged.span.start, tagged.span.end));
+                self.record_assignment_tagged_read(tagged, true);
                 self.record_nonexecuting_callable(&tagged.tag);
             }
             Expression::NewExpression(expression) => {
@@ -11334,11 +11356,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.non_generator_callable_targets.insert(target);
             return;
         }
-        if let Expression::TaggedTemplateExpression(tagged) = expression.get_inner_expression()
-            && self.record_generator_result_source(target.clone(), &tagged.tag, None)
-        {
-            self.non_generator_callable_targets.insert(target);
-            return;
+        if let Expression::TaggedTemplateExpression(tagged) = expression.get_inner_expression() {
+            let recorded = self.record_generator_result_source(target.clone(), &tagged.tag, None);
+            if recorded {
+                if let Some(source) = self.assignment_callable_target(&tagged.tag) {
+                    self.assigned_generator_result_reads
+                        .push(ForwardedCallableRead {
+                            source,
+                            source_span: (tagged.span.start, tagged.span.end),
+                            target: target.clone(),
+                            method_guard: None,
+                        });
+                }
+                self.non_generator_callable_targets.insert(target);
+                return;
+            }
         }
         if let Some((source, source_span)) = self.callable_reference(expression) {
             self.forwarded_callable_reads.push(ForwardedCallableRead {
@@ -11881,7 +11913,12 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
-        if let Some((target, _)) = self.callable_reference(&expression.tag) {
+        self.record_assignment_tagged_read(expression, false);
+        if let Some(target) = self
+            .callable_reference(&expression.tag)
+            .map(|(target, _)| target)
+            .or_else(|| self.assignment_callable_target(&expression.tag))
+        {
             for substitution in &expression.quasi.expressions {
                 self.record_retained_callable_source(
                     target.clone(),
