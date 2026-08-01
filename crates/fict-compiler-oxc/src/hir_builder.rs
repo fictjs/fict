@@ -9913,6 +9913,13 @@ struct CompositeGuardedRead {
     source_span: (u32, u32),
     target: Option<StaticAliasPath>,
     method_guards: Vec<GeneratorMethodGuard>,
+    terminal_alias: Option<TerminalAliasGuard>,
+}
+
+#[derive(Clone)]
+struct TerminalAliasGuard {
+    aliases: Vec<StaticAliasPath>,
+    method: &'static str,
 }
 
 struct PendingCallableArgumentRead {
@@ -11578,6 +11585,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span,
                 target: None,
                 method_guards,
+                terminal_alias: None,
             });
         }
     }
@@ -11722,12 +11730,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             source_span,
             target: None,
             method_guards: guards.clone(),
+            terminal_alias: None,
         });
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source,
             source_span: receiver_span,
             target: None,
             method_guards: guards.clone(),
+            terminal_alias: None,
         });
         self.non_escaping_callable_reads
             .insert((receiver, receiver_span));
@@ -11740,6 +11750,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span: completion_span,
                 target: None,
                 method_guards: guards.clone(),
+                terminal_alias: None,
             });
             self.non_escaping_callable_reads
                 .insert((completion_source, completion_span));
@@ -11788,6 +11799,143 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     method,
                 }),
             });
+    }
+
+    fn sole_forwarded_callable_source(&self, target: &StaticAliasPath) -> Option<&StaticAliasPath> {
+        let mut reads = self
+            .forwarded_callable_reads
+            .iter()
+            .filter(|read| read.target == *target);
+        let read = reads.next()?;
+        (reads.next().is_none() && read.method_guard.is_none()).then_some(&read.source)
+    }
+
+    fn sole_terminal_method_alias_read(
+        &self,
+        target: &StaticAliasPath,
+    ) -> Option<&ForwardedCallableRead> {
+        let mut reads = self
+            .terminal_method_alias_reads
+            .iter()
+            .filter(|read| read.target == *target);
+        let read = reads.next()?;
+        reads.next().is_none().then_some(read)
+    }
+
+    fn terminal_method_alias_source(
+        &self,
+        target: &StaticAliasPath,
+    ) -> Option<(
+        StaticAliasPath,
+        (u32, u32),
+        GeneratorMethodGuard,
+        TerminalAliasGuard,
+    )> {
+        let mut current = target.clone();
+        let mut aliases = Vec::new();
+        let mut visited = BTreeSet::new();
+        loop {
+            if !visited.insert(current.clone())
+                || self.non_generator_callable_targets.contains(&current)
+            {
+                return None;
+            }
+            aliases.push(current.clone());
+            if self
+                .terminal_method_alias_reads
+                .iter()
+                .any(|read| read.target == current)
+            {
+                let read = self.sole_terminal_method_alias_read(&current)?;
+                let method_guard = read.method_guard.clone()?;
+                return Some((
+                    read.source.clone(),
+                    read.source_span,
+                    method_guard.clone(),
+                    TerminalAliasGuard {
+                        aliases,
+                        method: method_guard.method,
+                    },
+                ));
+            }
+            current = self.sole_forwarded_callable_source(&current)?.clone();
+        }
+    }
+
+    fn record_indirect_terminal_method_alias_read(&mut self, call: &CallExpression<'_>) {
+        let Some((alias, Some(indirect_guard), receiver_index)) =
+            self.generator_invocation_target(call)
+        else {
+            return;
+        };
+        if !matches!(indirect_guard.method, "call" | "apply") {
+            return;
+        }
+        let Some((receiver, receiver_span)) = call
+            .arguments
+            .get(receiver_index)
+            .and_then(|argument| argument.as_expression())
+            .and_then(|receiver| self.callable_reference(receiver))
+        else {
+            return;
+        };
+        let Some((source, source_span, terminal_guard, alias_guard)) =
+            self.terminal_method_alias_source(&alias)
+        else {
+            return;
+        };
+        if receiver != source {
+            return;
+        }
+        let indirect_method = indirect_guard.method;
+        let method_guards = vec![terminal_guard, indirect_guard];
+        for read_span in [source_span, receiver_span] {
+            self.composite_guarded_reads.push(CompositeGuardedRead {
+                source: source.clone(),
+                source_span: read_span,
+                target: None,
+                method_guards: method_guards.clone(),
+                terminal_alias: Some(alias_guard.clone()),
+            });
+        }
+        self.non_escaping_callable_reads
+            .insert((receiver, receiver_span));
+        if receiver_index == 1
+            && let Some(target_argument) = call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .and_then(|target| self.callable_reference(target))
+        {
+            self.non_escaping_callable_reads.insert(target_argument);
+        }
+        let completion_reads = match indirect_method {
+            "call" => call
+                .arguments
+                .iter()
+                .skip(receiver_index + 1)
+                .filter_map(|argument| argument.as_expression())
+                .filter_map(|argument| self.callable_reference(argument))
+                .filter(|(argument_source, _)| *argument_source == source)
+                .collect(),
+            _ => call
+                .arguments
+                .get(receiver_index + 1)
+                .and_then(|argument| argument.as_expression())
+                .map(|arguments| self.direct_array_source_reads(arguments, &source))
+                .unwrap_or_default(),
+        };
+        for (completion_source, completion_span) in completion_reads {
+            self.composite_guarded_reads.push(CompositeGuardedRead {
+                source: completion_source.clone(),
+                source_span: completion_span,
+                target: None,
+                method_guards: method_guards.clone(),
+                terminal_alias: Some(alias_guard.clone()),
+            });
+            self.non_escaping_callable_reads
+                .insert((completion_source, completion_span));
+        }
     }
 
     fn record_bound_terminal_generator_method_read(
@@ -11869,12 +12017,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             source_span,
             target: target.clone(),
             method_guards: method_guards.clone(),
+            terminal_alias: None,
         });
         self.composite_guarded_reads.push(CompositeGuardedRead {
             source,
             source_span: receiver_span,
             target: target.clone(),
             method_guards: method_guards.clone(),
+            terminal_alias: None,
         });
         self.non_escaping_callable_reads
             .insert((receiver, receiver_span));
@@ -11884,6 +12034,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span: completion_span,
                 target: target.clone(),
                 method_guards: method_guards.clone(),
+                terminal_alias: None,
             });
             self.non_escaping_callable_reads
                 .insert((completion_source, completion_span));
@@ -12360,6 +12511,42 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .is_none_or(|source| self.method_path_is_intact(source, guard.method))
     }
 
+    fn terminal_alias_guard_is_intact(
+        &self,
+        source: &StaticAliasPath,
+        guard: &TerminalAliasGuard,
+    ) -> bool {
+        let Some(terminal_alias) = guard.aliases.last() else {
+            return false;
+        };
+        if guard
+            .aliases
+            .iter()
+            .any(|alias| self.non_generator_callable_targets.contains(alias))
+        {
+            return false;
+        }
+        let Some(terminal_read) = self.sole_terminal_method_alias_read(terminal_alias) else {
+            return false;
+        };
+        if terminal_read.source != *source
+            || !terminal_read
+                .method_guard
+                .as_ref()
+                .is_some_and(|method_guard| method_guard.method == guard.method)
+        {
+            return false;
+        }
+        let terminal_method = source.clone().with_property(guard.method.to_string());
+        if self.sole_forwarded_callable_source(terminal_alias) != Some(&terminal_method) {
+            return false;
+        }
+        guard
+            .aliases
+            .windows(2)
+            .all(|aliases| self.sole_forwarded_callable_source(&aliases[0]) == Some(&aliases[1]))
+    }
+
     fn finish(mut self) -> GeneratorExecutionProof {
         for read in std::mem::take(&mut self.pending_callable_argument_reads) {
             let non_consuming = read
@@ -12480,6 +12667,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 read.method_guards
                     .iter()
                     .all(|guard| self.method_guard_is_intact(guard))
+                    && read.terminal_alias.as_ref().is_none_or(|guard| {
+                        self.terminal_alias_guard_is_intact(&read.source, guard)
+                    })
             })
             .collect::<Vec<_>>();
         let trusted_guarded_body_spans = self
@@ -12843,6 +13033,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_generator_invocation_arguments(call);
         self.record_terminal_generator_method_read(call);
         self.record_indirect_terminal_generator_method_read(call);
+        self.record_indirect_terminal_method_alias_read(call);
         self.record_immediate_bound_terminal_generator_method_read(call);
         self.record_initial_generator_next_arguments(call);
         let callee = self
