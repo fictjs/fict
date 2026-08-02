@@ -5495,6 +5495,132 @@ fn unobserved_inline_generator_values_remain_unexecuted() {
 }
 
 #[test]
+fn discarded_generator_callback_results_remain_unexecuted() {
+    for (name, helper, invocation) in [
+        (
+            "array literal callback",
+            "",
+            "[1].forEach(function* () { values.forEach = null; });",
+        ),
+        (
+            "known array named callback",
+            "const rows = [1]; function* inspect() { values.forEach = null; }",
+            "rows.forEach(inspect);",
+        ),
+        (
+            "local callback invocation",
+            "function invoke(callback) { callback(); }",
+            "invoke(function* () { values.forEach = null; });",
+        ),
+        (
+            "local named callback invocation",
+            "function invoke(callback) { callback(); } function* inspect() { values.forEach = null; }",
+            "invoke(inspect);",
+        ),
+        (
+            "void local callback invocation",
+            "function invoke(callback) { void callback(); }",
+            "invoke(function* () { values.forEach = null; });",
+        ),
+        (
+            "discarded returned callback result",
+            "function invoke(callback) { return callback(); }",
+            "invoke(function* () { values.forEach = null; });",
+        ),
+        (
+            "discarded concise callback result",
+            "const invoke = callback => callback();",
+            "invoke(function* () { values.forEach = null; });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected generator body to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn advanced_or_overridden_generator_callbacks_propagate_local_effects() {
+    for (name, helper, invocation) in [
+        (
+            "local callback result is advanced",
+            "function invoke(callback) { callback().next(); }",
+            "invoke(function* () { values.forEach = null; });",
+        ),
+        (
+            "returned local callback result is advanced",
+            "function invoke(callback) { return callback(); }",
+            "invoke(function* () { values.forEach = null; }).next();",
+        ),
+        (
+            "eager local callback executes",
+            "function invoke(callback) { callback(); }",
+            "invoke(function () { values.forEach = null; });",
+        ),
+        (
+            "overridden Array prototype callback host",
+            "Array.prototype.forEach = function (callback) { callback().next(); };",
+            "[1].forEach(function* () { values.forEach = null; });",
+        ),
+        (
+            "overridden known array callback host",
+            "const rows = [1]; rows.forEach = function (callback) { callback().next(); };",
+            "rows.forEach(function* () { values.forEach = null; });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn consumed_inline_generator_values_propagate_local_effects() {
     for (name, helper, statement) in [
         (

@@ -2025,8 +2025,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter(|binding| binding.mutated)
             .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
             .collect();
+        let mut known_arrays = KnownArrayCollector::default();
+        known_arrays.visit_program(program);
         let mut generator_execution = GeneratorExecutionCollector::new(
             self.semantic.scoping(),
+            &known_arrays.symbols,
             program.source_type.is_module(),
         );
         generator_execution.visit_program(program);
@@ -2090,8 +2093,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             self.functions[function.as_usize()].effect_statements =
                 statements.iter().copied().map(Origin::source).collect();
         }
-        let mut known_arrays = KnownArrayCollector::default();
-        known_arrays.visit_program(program);
         let mut variable_declarations = VariableDeclarationCollector::default();
         variable_declarations.visit_program(program);
         let mut typed_expressions = TypedExpressionCollector {
@@ -10075,6 +10076,7 @@ struct NonConsumingParameterCollector<'semantic> {
     parameter_indices: BTreeMap<SymbolId, usize>,
     returned: BTreeSet<usize>,
     unsafe_uses: BTreeSet<usize>,
+    discarded_invocation_callees: BTreeSet<(u32, u32)>,
     dynamic_arguments: bool,
     nested_function_depth: usize,
 }
@@ -10117,6 +10119,32 @@ impl NonConsumingParameterCollector<'_> {
             _ => false,
         }
     }
+
+    fn direct_parameter_invocation(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<(usize, (u32, u32))> {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        let index = self.direct_parameter_index(&call.callee)?;
+        let Expression::Identifier(identifier) = unwrap_transparent_call_expression(&call.callee)
+        else {
+            return None;
+        };
+        Some((index, (identifier.span.start, identifier.span.end)))
+    }
+
+    fn record_parameter_invocation(&mut self, expression: &Expression<'_>, returned: bool) -> bool {
+        let Some((index, callee_span)) = self.direct_parameter_invocation(expression) else {
+            return false;
+        };
+        self.discarded_invocation_callees.insert(callee_span);
+        if returned {
+            self.returned.insert(index);
+        }
+        true
+    }
 }
 
 impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
@@ -10130,6 +10158,12 @@ impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
     }
 
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if self
+            .discarded_invocation_callees
+            .contains(&(identifier.span.start, identifier.span.end))
+        {
+            return;
+        }
         let Some(reference) = identifier
             .reference_id
             .get()
@@ -10152,12 +10186,19 @@ impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
         self.unsafe_uses.insert(index);
     }
 
+    fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
+        if self.nested_function_depth == 0 {
+            self.record_parameter_invocation(&statement.expression, false);
+        }
+        walk_expression_statement(self, statement);
+    }
+
     fn visit_unary_expression(&mut self, expression: &oxc::ast::ast::UnaryExpression<'a>) {
-        if self.nested_function_depth == 0
-            && expression.operator == OxcUnaryOperator::Void
-            && self.direct_parameter_index(&expression.argument).is_some()
-        {
-            return;
+        if self.nested_function_depth == 0 && expression.operator == OxcUnaryOperator::Void {
+            if self.direct_parameter_index(&expression.argument).is_some() {
+                return;
+            }
+            self.record_parameter_invocation(&expression.argument, false);
         }
         oxc::ast_visit::walk::walk_unary_expression(self, expression);
     }
@@ -10170,6 +10211,15 @@ impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
                 .and_then(|argument| self.direct_parameter_index(argument))
         {
             self.returned.insert(index);
+            return;
+        }
+        if self.nested_function_depth == 0
+            && statement
+                .argument
+                .as_ref()
+                .is_some_and(|argument| self.record_parameter_invocation(argument, true))
+        {
+            walk_return_statement(self, statement);
             return;
         }
         walk_return_statement(self, statement);
@@ -10219,6 +10269,7 @@ type InstanceGeneratorBodies = BTreeMap<String, BTreeSet<GeneratorBodySpan>>;
 
 struct GeneratorExecutionCollector<'semantic> {
     scoping: &'semantic Scoping,
+    known_arrays: &'semantic BTreeSet<SymbolId>,
     strict_program: bool,
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     direct_callable_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
@@ -10254,9 +10305,14 @@ struct GeneratorExecutionCollector<'semantic> {
 }
 
 impl<'semantic> GeneratorExecutionCollector<'semantic> {
-    fn new(scoping: &'semantic Scoping, strict_program: bool) -> Self {
+    fn new(
+        scoping: &'semantic Scoping,
+        known_arrays: &'semantic BTreeSet<SymbolId>,
+        strict_program: bool,
+    ) -> Self {
         Self {
             scoping,
+            known_arrays,
             strict_program,
             binding_reads: BTreeMap::new(),
             direct_callable_reads: BTreeMap::new(),
@@ -10572,6 +10628,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             parameter_indices: parameter_indices.clone(),
             returned: BTreeSet::new(),
             unsafe_uses: BTreeSet::new(),
+            discarded_invocation_callees: BTreeSet::new(),
             dynamic_arguments: false,
             nested_function_depth: 0,
         };
@@ -10579,6 +10636,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             if let Some(index) = collector.direct_parameter_index(returned) {
                 collector.returned.insert(index);
             } else {
+                collector.record_parameter_invocation(returned, true);
                 collector.visit_expression(returned);
             }
         } else {
@@ -12850,10 +12908,63 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         true
     }
 
+    fn discarded_builtin_callback_result_guard(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<GeneratorMethodGuard> {
+        let (receiver, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        if method != "forEach" {
+            return None;
+        }
+        let known_array = match receiver.get_inner_expression() {
+            Expression::ArrayExpression(_) => true,
+            Expression::Identifier(identifier) => identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+                .is_some_and(|symbol| self.known_arrays.contains(&symbol)),
+            _ => false,
+        };
+        known_array.then(|| GeneratorMethodGuard {
+            source: self.callable_reference(receiver).map(|(source, _)| source),
+            owner: StaticAliasPath::unresolved_global("Array".to_string())
+                .with_property("prototype".to_string()),
+            method: "forEach",
+        })
+    }
+
+    fn record_discarded_callback_argument(
+        &mut self,
+        expression: &Expression<'_>,
+        guard: &GeneratorMethodGuard,
+    ) {
+        let parameters = NonConsumingParameters {
+            fixed: BTreeMap::from([(0, false)]),
+            safe_tail_start: Some(1),
+        };
+        self.record_pending_callable_argument(
+            expression,
+            None,
+            Some(&parameters),
+            0,
+            false,
+            Some(guard),
+        );
+    }
+
     fn record_pending_callable_arguments(&mut self, call: &CallExpression<'_>) {
         let result_discarded = self
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
+        let discarded_callback_guard = self.discarded_builtin_callback_result_guard(call);
         if self.record_pending_reflect_construct_arguments(call, result_discarded) {
             return;
         }
@@ -12984,6 +13095,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .enumerate()
         {
             let argument = argument.as_expression().expect("ordinary call argument");
+            if parameter_index == 0
+                && let Some(guard) = discarded_callback_guard.as_ref()
+            {
+                self.record_discarded_callback_argument(argument, guard);
+                continue;
+            }
             if let Some(parameter_sources) = parameter_sources.as_deref() {
                 self.record_pending_callable_argument_sources(
                     argument,
