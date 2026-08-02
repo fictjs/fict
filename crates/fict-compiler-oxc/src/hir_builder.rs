@@ -18750,6 +18750,13 @@ impl StaticHookAliasCollector<'_> {
         )
     }
 
+    fn local_invocations_cover_arguments(invocations: &[LocalInvocationFact]) -> bool {
+        !invocations.is_empty()
+            && invocations.iter().all(|invocation| {
+                invocation.parameters.is_some() && !invocation.force_argument_exposure
+            })
+    }
+
     fn collect_local_callable_parameter_bindings(
         pattern: &BindingPattern<'_>,
         index: usize,
@@ -22038,10 +22045,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .discarded_invocation_spans
                 .contains(&(call.span.start, call.span.end));
         }
-        let local_invocations_cover_arguments = !local_invocations.is_empty()
-            && local_invocations.iter().all(|invocation| {
-                invocation.parameters.is_some() && !invocation.force_argument_exposure
-            });
+        let local_invocations_cover_arguments =
+            Self::local_invocations_cover_arguments(&local_invocations);
         let reflect_exposed = self
             .reflect_apply_exposed_argument_paths(call)
             .or_else(|| self.reflect_construct_exposed_argument_paths(call));
@@ -22122,15 +22127,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 self.collect_local_invocation_value_arguments(argument),
             )
         }));
-        let local_invocation = self
-            .local_invocation_fact_from_arguments(&expression.tag, local_arguments)
-            .map(|mut invocation| {
-                invocation.result_discarded = self
-                    .discarded_invocation_spans
-                    .contains(&(expression.span.start, expression.span.end));
-                invocation
-            });
-        let exposed_arguments = if self.callee_may_mutate_arguments(&expression.tag) {
+        let mut local_invocations = self
+            .local_invocation_facts_from_arguments(&expression.tag, local_arguments)
+            .unwrap_or_default();
+        for invocation in &mut local_invocations {
+            invocation.result_discarded = self
+                .discarded_invocation_spans
+                .contains(&(expression.span.start, expression.span.end));
+        }
+        let exposed_arguments = if !Self::local_invocations_cover_arguments(&local_invocations)
+            && self.callee_may_mutate_arguments(&expression.tag)
+        {
             let mut exposed = BTreeSet::new();
             for substitution in &expression.quasi.expressions {
                 self.collect_exposed_argument_paths(substitution, &mut exposed);
@@ -22140,9 +22147,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
-        if let Some(invocation) = local_invocation {
-            self.local_invocations.push(invocation);
-        }
+        self.local_invocations.extend(local_invocations);
         for path in exposed_arguments {
             self.invalidate_exposed_path(path);
         }

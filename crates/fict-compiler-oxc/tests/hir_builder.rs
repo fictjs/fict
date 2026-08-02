@@ -9737,6 +9737,26 @@ fn local_template_tags_propagate_substitution_invalidations() {
             "((strings, target) => { target.forEach = null; })`${values}`;",
         ),
         (
+            "immediate conditional tag",
+            "function inspect(_strings, target) { return target.length; } function mutate(_strings, target) { target.forEach = null; }",
+            "(choose ? inspect : mutate)`${values}`;",
+        ),
+        (
+            "immediate logical tag",
+            "function inspect(_strings, target) { return target.length; } function mutate(_strings, target) { target.forEach = null; }",
+            "(mutate || inspect)`${values}`;",
+        ),
+        (
+            "conditional inline tag",
+            "",
+            "(choose ? (_strings, target) => target.length : (_strings, target) => { target.forEach = null; })`${values}`;",
+        ),
+        (
+            "conditional external tag",
+            "function inspect(_strings, target) { return target.length; }",
+            "(choose ? inspect : External)`${values}`;",
+        ),
+        (
             "destructured substitution",
             "const box = { target: values }; function tag(strings, { target }) { target.forEach = null; }",
             "tag`${box}`;",
@@ -9755,7 +9775,7 @@ fn local_template_tags_propagate_substitution_invalidations() {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(External, choose) {{
                     const count = $state(0);
                     const values = [];
                     {tag}
@@ -9786,32 +9806,51 @@ fn local_template_tags_propagate_substitution_invalidations() {
 
 #[test]
 fn pure_local_template_tags_preserve_receiver_methods() {
-    for (name, tag) in [
+    for (name, tag, invocation) in [
         (
             "template object mutation",
             "function tag(strings, target) { strings.forEach = null; return target.length; }",
+            "tag`${values}`;",
         ),
         (
             "read-only substitution",
             "function tag(strings, target) { return target.length; }",
+            "tag`${values}`;",
         ),
         (
             "detached substitution",
             "function tag(strings, target) { target = {}; target.forEach = null; }",
+            "tag`${values}`;",
         ),
         (
             "unadvanced generator tag",
             "function* tag(strings, target) { target.forEach = null; }",
+            "tag`${values}`;",
+        ),
+        (
+            "immediate conditional tag",
+            "function first(_strings, target) { return target.length; } function second(_strings, target) { return target[0]; }",
+            "(choose ? first : second)`${values}`;",
+        ),
+        (
+            "conditional inline tag",
+            "",
+            "(choose ? (_strings, target) => target.length : (_strings, target) => target[0])`${values}`;",
+        ),
+        (
+            "immediate conditional generator tag",
+            "function* inspect() { values.forEach = null; } function first(_strings, value) { void value; } function second(_strings, value) { void value; }",
+            "(choose ? first : second)`${inspect()}`;",
         ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {tag}
-                    tag`${{values}}`;
+                    {invocation}
                     values.forEach(() => count);
                     return count;
                 }}
