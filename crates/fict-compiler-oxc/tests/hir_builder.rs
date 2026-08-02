@@ -6186,6 +6186,119 @@ fn consuming_reflect_construct_arguments_propagate_local_effects() {
 }
 
 #[test]
+fn discarded_generator_result_member_reads_remain_unadvanced() {
+    for (name, helper, observation) in [
+        (
+            "static result property",
+            "function* inspect() { values.forEach = null; }",
+            "void inspect().value;",
+        ),
+        (
+            "next method value",
+            "function* inspect() { values.forEach = null; }",
+            "inspect().next;",
+        ),
+        (
+            "computed next method value",
+            "function* inspect() { values.forEach = null; }",
+            "void inspect()['next'];",
+        ),
+        (
+            "optional next method value",
+            "function* inspect() { values.forEach = null; }",
+            "void inspect()?.next;",
+        ),
+        (
+            "assigned result property",
+            "function* inspect() { values.forEach = null; }",
+            "const value = inspect().value; void value;",
+        ),
+        (
+            "assigned next method value",
+            "function* inspect() { values.forEach = null; }",
+            "const advance = inspect().next; void advance;",
+        ),
+        (
+            "conditional result property",
+            "function* first() { values.forEach = null; } function* second() { values.forEach = null; }",
+            "void (choose ? first() : second()).value;",
+        ),
+        (
+            "local no-op receives result property",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore(inspect().value);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected iterator to remain unadvanced, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn invoked_generator_result_members_propagate_local_effects() {
+    for (name, invocation) in [
+        ("direct next call", "inspect().next();"),
+        ("computed next call", "inspect()['next']();"),
+        ("optional next call", "inspect()?.next();"),
+        (
+            "stored iterator next call",
+            "const iterator = inspect(); iterator.next();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    function* inspect() {{ values.forEach = null; }}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn observed_generator_iterators_propagate_local_effects() {
     for (name, setup, invocation) in [
         (

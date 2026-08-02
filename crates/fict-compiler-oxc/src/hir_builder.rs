@@ -12151,11 +12151,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 Expression::CallExpression(call) => {
                     collector.collect_pending_discarded_call(call, pending);
                 }
-                Expression::ChainExpression(chain) => {
-                    if let ChainElement::CallExpression(call) = &chain.expression {
+                Expression::ChainExpression(chain) => match &chain.expression {
+                    ChainElement::CallExpression(call) => {
                         collector.collect_pending_discarded_call(call, pending);
                     }
-                }
+                    ChainElement::StaticMemberExpression(member) => {
+                        collect(collector, &member.object, pending);
+                    }
+                    ChainElement::ComputedMemberExpression(member) => {
+                        collect(collector, &member.object, pending);
+                    }
+                    ChainElement::PrivateFieldExpression(member) => {
+                        collect(collector, &member.object, pending);
+                    }
+                    ChainElement::TSNonNullExpression(_) => {}
+                },
                 Expression::TaggedTemplateExpression(tagged) => {
                     let invocation_span = (tagged.span.start, tagged.span.end);
                     pending.invocation_spans.insert(invocation_span);
@@ -12187,6 +12197,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     if let Some(expression) = expression.expressions.last() {
                         collect(collector, expression, pending);
                     }
+                }
+                Expression::StaticMemberExpression(expression) => {
+                    collect(collector, &expression.object, pending);
+                }
+                Expression::ComputedMemberExpression(expression) => {
+                    collect(collector, &expression.object, pending);
+                }
+                Expression::PrivateFieldExpression(expression) => {
+                    collect(collector, &expression.object, pending);
                 }
                 Expression::ArrayExpression(expression) => {
                     for element in &expression.elements {
@@ -13923,6 +13942,33 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn has_nonadvancing_member_value(expression: &Expression<'_>) -> bool {
+        match expression.get_inner_expression() {
+            Expression::StaticMemberExpression(_)
+            | Expression::ComputedMemberExpression(_)
+            | Expression::PrivateFieldExpression(_) => true,
+            Expression::ChainExpression(chain) => matches!(
+                &chain.expression,
+                ChainElement::StaticMemberExpression(_)
+                    | ChainElement::ComputedMemberExpression(_)
+                    | ChainElement::PrivateFieldExpression(_)
+            ),
+            Expression::ConditionalExpression(expression) => {
+                Self::has_nonadvancing_member_value(&expression.consequent)
+                    || Self::has_nonadvancing_member_value(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                Self::has_nonadvancing_member_value(&expression.left)
+                    || Self::has_nonadvancing_member_value(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_some_and(Self::has_nonadvancing_member_value),
+            _ => false,
+        }
+    }
+
     fn record_callable_initializer(
         &mut self,
         target: StaticAliasPath,
@@ -13931,13 +13977,16 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.record_local_non_consuming_initializer(&target, initializer);
         self.record_terminal_generator_method_alias(target.clone(), initializer);
         self.record_bound_terminal_generator_method_alias(target.clone(), initializer);
-        if Self::has_retained_callable_container(initializer) {
+        let retained_container = Self::has_retained_callable_container(initializer);
+        if retained_container {
             self.record_retained_callable_source(
                 target.clone(),
                 initializer,
                 None,
                 RetainedCallableReadKind::Container,
             );
+        }
+        if retained_container || Self::has_nonadvancing_member_value(initializer) {
             self.record_retained_invocations(target.clone(), initializer);
         }
         self.record_forwarded_callable(target.clone(), initializer);
@@ -14092,8 +14141,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .insert((expression.span.start, expression.span.end));
                 self.record_nonexecuting_callable(&expression.callee);
             }
-            Expression::ChainExpression(chain) => {
-                if let ChainElement::CallExpression(call) = &chain.expression {
+            Expression::StaticMemberExpression(expression) => {
+                self.record_discarded_expression(&expression.object);
+            }
+            Expression::ComputedMemberExpression(expression) => {
+                self.record_discarded_expression(&expression.object);
+            }
+            Expression::PrivateFieldExpression(expression) => {
+                self.record_discarded_expression(&expression.object);
+            }
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => {
                     self.discarded_invocation_spans
                         .insert((call.span.start, call.span.end));
                     self.record_assignment_callable_read(call, true);
@@ -14103,7 +14161,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         self.record_nonexecuting_callable(&call.callee);
                     }
                 }
-            }
+                ChainElement::StaticMemberExpression(member) => {
+                    self.record_discarded_expression(&member.object);
+                }
+                ChainElement::ComputedMemberExpression(member) => {
+                    self.record_discarded_expression(&member.object);
+                }
+                ChainElement::PrivateFieldExpression(member) => {
+                    self.record_discarded_expression(&member.object);
+                }
+                ChainElement::TSNonNullExpression(_) => {}
+            },
             Expression::ConditionalExpression(conditional) => {
                 self.record_discarded_expression(&conditional.consequent);
                 self.record_discarded_expression(&conditional.alternate);
