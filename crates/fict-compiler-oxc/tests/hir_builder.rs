@@ -3967,6 +3967,46 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "inline arrow no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (value => void value)(iterator);",
+        ),
+        (
+            "inline function no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function (value) { void value; })(iterator);",
+        ),
+        (
+            "conditional inline no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (choose ? value => void value : value => {})(iterator);",
+        ),
+        (
+            "sequenced inline no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (0, value => void value)(iterator);",
+        ),
+        (
+            "inline no-op call generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (value => void value).call(null, iterator);",
+        ),
+        (
+            "inline no-op apply generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (value => void value).apply(null, [iterator]);",
+        ),
+        (
+            "inline no-op Reflect.apply generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); Reflect.apply(value => void value, null, [iterator]);",
+        ),
+        (
+            "discarded inline identity generator iterator result",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); void (value => value)(iterator);",
+        ),
+        (
             "bound local no-op generator iterator argument",
             "function* inspect() { values.forEach = null; } function ignore(value) { void value; } const run = ignore.bind(null);",
             "const iterator = inspect(); run(iterator);",
@@ -5153,6 +5193,46 @@ fn observed_generator_iterators_propagate_local_effects() {
             "observed local identity call exposes iterator",
             "function* mutate() { values.forEach = null; } function identity(value) { return value; }",
             "const iterator = mutate(); const result = identity.call(null, iterator); result.next();",
+        ),
+        (
+            "inline callable consumes iterator argument",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); (value => value.next())(iterator);",
+        ),
+        (
+            "observed inline identity exposes iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const result = (value => value)(iterator); result.next();",
+        ),
+        (
+            "mixed conditional inline callable consumes iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); (choose ? value => void value : value => value.next())(iterator);",
+        ),
+        (
+            "inline callable consumes iterator receiver",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); (function (value) { void value; return this.next(); }).call(iterator, null);",
+        ),
+        (
+            "overridden prototype call consumes inline iterator argument",
+            "function* mutate() { values.forEach = null; } Function.prototype.call = function (_receiver, value) { return value.next(); };",
+            "const iterator = mutate(); (value => void value).call(null, iterator);",
+        ),
+        (
+            "overridden Reflect.apply consumes inline iterator argument",
+            "function* mutate() { values.forEach = null; } Reflect.apply = function (_target, _receiver, args) { return args[0].next(); };",
+            "const iterator = mutate(); Reflect.apply(value => void value, null, [iterator]);",
+        ),
+        (
+            "inline direct spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); ((_first, _second, safe, value) => { void safe; value.next(); })(null, ...[null, null], iterator);",
+        ),
+        (
+            "inline apply spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); ((_first, _second, safe, value) => { void safe; value.next(); }).apply(null, [null, ...[null, null], iterator]);",
         ),
         (
             "direct eval may consume iterator argument",

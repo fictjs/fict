@@ -9927,6 +9927,7 @@ struct PendingCallableArgumentRead {
     source: StaticAliasPath,
     source_span: (u32, u32),
     callee: Option<StaticAliasPath>,
+    inline_parameters: Option<BTreeMap<usize, bool>>,
     parameter_index: usize,
     result_discarded: bool,
     method_guard: Option<GeneratorMethodGuard>,
@@ -10434,6 +10435,54 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             &function.body,
             function.get_expression(),
         )
+    }
+
+    fn intersect_non_consuming_parameters(
+        mut parameters: BTreeMap<usize, bool>,
+        alternate: &BTreeMap<usize, bool>,
+    ) -> BTreeMap<usize, bool> {
+        parameters.retain(|index, returned| {
+            alternate.get(index).is_some_and(|alternate_returned| {
+                *returned |= *alternate_returned;
+                true
+            })
+        });
+        parameters
+    }
+
+    fn inline_non_consuming_parameters(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<BTreeMap<usize, bool>> {
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                self.local_non_consuming_parameters(function)
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                self.local_non_consuming_arrow_parameters(function)
+            }
+            Expression::ConditionalExpression(expression) => {
+                Some(Self::intersect_non_consuming_parameters(
+                    self.inline_non_consuming_parameters(&expression.consequent)?,
+                    &self.inline_non_consuming_parameters(&expression.alternate)?,
+                ))
+            }
+            Expression::LogicalExpression(expression) => {
+                Some(Self::intersect_non_consuming_parameters(
+                    self.inline_non_consuming_parameters(&expression.left)?,
+                    &self.inline_non_consuming_parameters(&expression.right)?,
+                ))
+            }
+            Expression::SequenceExpression(expression) => {
+                self.inline_non_consuming_parameters(expression.expressions.last()?)
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.inline_non_consuming_parameters(&expression.right)
+            }
+            _ => None,
+        }
     }
 
     fn generator_body_spans_for_target(
@@ -11185,6 +11234,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.record_pending_callable_argument(
                 argument.as_expression().expect("ordinary bind argument"),
                 Some(source),
+                None,
                 parameter_index,
                 false,
                 Some(guard),
@@ -11441,6 +11491,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &mut self,
         expression: &Expression<'_>,
         callee: Option<&StaticAliasPath>,
+        inline_parameters: Option<&BTreeMap<usize, bool>>,
         parameter_index: usize,
         result_discarded: bool,
         method_guard: Option<&GeneratorMethodGuard>,
@@ -11472,10 +11523,118 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source,
                 source_span,
                 callee: callee.cloned(),
+                inline_parameters: inline_parameters.cloned(),
                 parameter_index,
                 result_discarded,
                 method_guard: method_guard.cloned(),
             });
+    }
+
+    fn inline_indirect_callable_target(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(BTreeMap<usize, bool>, GeneratorMethodGuard, usize)> {
+        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        if static_alias_source_path(self.scoping, &call.callee)
+            .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
+        {
+            let parameters = call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .and_then(|target| self.inline_non_consuming_parameters(target))?;
+            return Some((
+                parameters,
+                GeneratorMethodGuard {
+                    source: None,
+                    owner: reflect,
+                    method: "apply",
+                },
+                1,
+            ));
+        }
+        let (target, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => match member.property.name.as_str() {
+                "call" => (&member.object, "call"),
+                "apply" => (&member.object, "apply"),
+                _ => return None,
+            },
+            Expression::ComputedMemberExpression(member) => {
+                let method = match static_member_name(&member.expression)?.as_str() {
+                    "call" => "call",
+                    "apply" => "apply",
+                    _ => return None,
+                };
+                (&member.object, method)
+            }
+            _ => return None,
+        };
+        Some((
+            self.inline_non_consuming_parameters(target)?,
+            GeneratorMethodGuard {
+                source: None,
+                owner: StaticAliasPath::unresolved_global("Function".to_string())
+                    .with_property("prototype".to_string()),
+                method,
+            },
+            0,
+        ))
+    }
+
+    fn record_pending_indirect_callable_arguments(
+        &mut self,
+        call: &CallExpression<'_>,
+        callee: Option<&StaticAliasPath>,
+        inline_parameters: Option<&BTreeMap<usize, bool>>,
+        guard: &GeneratorMethodGuard,
+        receiver_index: usize,
+        result_discarded: bool,
+    ) {
+        if let Some(receiver) = call
+            .arguments
+            .get(receiver_index)
+            .and_then(|argument| argument.as_expression())
+        {
+            self.record_pending_callable_argument(receiver, None, None, 0, false, None);
+        }
+        if guard.method == "call" {
+            for (parameter_index, argument) in call
+                .arguments
+                .iter()
+                .skip(receiver_index + 1)
+                .take_while(|argument| argument.as_expression().is_some())
+                .enumerate()
+            {
+                self.record_pending_callable_argument(
+                    argument.as_expression().expect("ordinary call argument"),
+                    callee,
+                    inline_parameters,
+                    parameter_index,
+                    result_discarded,
+                    Some(guard),
+                );
+            }
+        } else if let Some(Expression::ArrayExpression(arguments)) = call
+            .arguments
+            .get(receiver_index + 1)
+            .and_then(|argument| argument.as_expression())
+            .map(Expression::get_inner_expression)
+        {
+            for (parameter_index, argument) in arguments.elements.iter().enumerate() {
+                match argument {
+                    ArrayExpressionElement::Elision(_) => {}
+                    ArrayExpressionElement::SpreadElement(_) => break,
+                    _ => self.record_pending_callable_argument(
+                        argument.to_expression(),
+                        callee,
+                        inline_parameters,
+                        parameter_index,
+                        result_discarded,
+                        Some(guard),
+                    ),
+                }
+            }
+        }
     }
 
     fn record_pending_callable_arguments(&mut self, call: &CallExpression<'_>) {
@@ -11485,49 +11644,27 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         if let Some((callee, Some(guard), receiver_index)) = self.generator_invocation_target(call)
             && matches!(guard.method, "call" | "apply")
         {
-            if let Some(receiver) = call
-                .arguments
-                .get(receiver_index)
-                .and_then(|argument| argument.as_expression())
-            {
-                self.record_pending_callable_argument(receiver, None, 0, false, None);
-            }
-            if guard.method == "call" {
-                for (parameter_index, argument) in call
-                    .arguments
-                    .iter()
-                    .skip(receiver_index + 1)
-                    .take_while(|argument| argument.as_expression().is_some())
-                    .enumerate()
-                {
-                    self.record_pending_callable_argument(
-                        argument.as_expression().expect("ordinary call argument"),
-                        Some(&callee),
-                        parameter_index,
-                        result_discarded,
-                        Some(&guard),
-                    );
-                }
-            } else if let Some(Expression::ArrayExpression(arguments)) = call
-                .arguments
-                .get(receiver_index + 1)
-                .and_then(|argument| argument.as_expression())
-                .map(Expression::get_inner_expression)
-            {
-                for (parameter_index, argument) in arguments.elements.iter().enumerate() {
-                    match argument {
-                        ArrayExpressionElement::Elision(_) => {}
-                        ArrayExpressionElement::SpreadElement(_) => break,
-                        _ => self.record_pending_callable_argument(
-                            argument.to_expression(),
-                            Some(&callee),
-                            parameter_index,
-                            result_discarded,
-                            Some(&guard),
-                        ),
-                    }
-                }
-            }
+            self.record_pending_indirect_callable_arguments(
+                call,
+                Some(&callee),
+                None,
+                &guard,
+                receiver_index,
+                result_discarded,
+            );
+            return;
+        }
+        if let Some((parameters, guard, receiver_index)) =
+            self.inline_indirect_callable_target(call)
+        {
+            self.record_pending_indirect_callable_arguments(
+                call,
+                None,
+                Some(&parameters),
+                &guard,
+                receiver_index,
+                result_discarded,
+            );
             return;
         }
         if let Some(GeneratorBindForwarding::Source {
@@ -11546,6 +11683,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.record_pending_callable_argument(
                     argument.as_expression().expect("ordinary call argument"),
                     Some(&callee),
+                    None,
                     parameter_offset + parameter_index,
                     result_discarded,
                     Some(&guard),
@@ -11556,6 +11694,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let callee = self
             .callable_reference(&call.callee)
             .map(|(callee, _)| callee);
+        let inline_parameters = callee
+            .is_none()
+            .then(|| self.inline_non_consuming_parameters(&call.callee))
+            .flatten();
         for (parameter_index, argument) in call
             .arguments
             .iter()
@@ -11565,6 +11707,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.record_pending_callable_argument(
                 argument.as_expression().expect("ordinary call argument"),
                 callee.as_ref(),
+                inline_parameters.as_ref(),
                 parameter_index,
                 result_discarded,
                 None,
@@ -12905,9 +13048,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .as_ref()
                 .is_none_or(|guard| self.method_guard_is_intact(guard))
                 && read
-                    .callee
+                    .inline_parameters
                     .as_ref()
-                    .and_then(|callee| self.local_non_consuming_parameters.get(callee))
+                    .or_else(|| {
+                        read.callee
+                            .as_ref()
+                            .and_then(|callee| self.local_non_consuming_parameters.get(callee))
+                    })
                     .and_then(|parameters| parameters.get(&read.parameter_index))
                     .is_some_and(|returned| !returned || read.result_discarded);
             if non_consuming {
