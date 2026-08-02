@@ -10452,6 +10452,25 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         )
     }
 
+    fn local_non_consuming_class_parameters(
+        &self,
+        class: &Class<'_>,
+    ) -> Option<BTreeMap<usize, bool>> {
+        if !class.decorators.is_empty() {
+            return None;
+        }
+        let constructor = class.body.body.iter().find_map(|element| {
+            let ClassElement::MethodDefinition(method) = element else {
+                return None;
+            };
+            (method.kind == MethodDefinitionKind::Constructor).then_some(method)
+        })?;
+        if !constructor.decorators.is_empty() {
+            return None;
+        }
+        self.local_non_consuming_parameters(&constructor.value)
+    }
+
     fn intersect_non_consuming_parameters(
         mut parameters: BTreeMap<usize, bool>,
         alternate: &BTreeMap<usize, bool>,
@@ -11977,6 +11996,51 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_pending_constructor_arguments(&mut self, constructor: &NewExpression<'_>) {
+        let result_discarded = self
+            .discarded_invocation_spans
+            .contains(&(constructor.span.start, constructor.span.end));
+        let callee = self
+            .callable_reference(&constructor.callee)
+            .map(|(callee, _)| callee);
+        let inline_parameters = if callee.is_some() {
+            None
+        } else {
+            match constructor.callee.get_inner_expression() {
+                Expression::ClassExpression(class) => {
+                    self.local_non_consuming_class_parameters(class)
+                }
+                _ => self.inline_non_consuming_parameters(&constructor.callee),
+            }
+        };
+        let inline_bound = (callee.is_none() && inline_parameters.is_none())
+            .then(|| self.inline_bound_non_consuming_parameters(&constructor.callee))
+            .flatten();
+        let parameters = inline_parameters
+            .as_ref()
+            .or_else(|| inline_bound.as_ref().map(|(parameters, _)| parameters));
+        let method_guard = inline_bound.as_ref().and_then(|(_, guards)| guards.first());
+        let mut stable_parameter_positions = true;
+        for (index, argument) in constructor.arguments.iter().enumerate() {
+            let Some(argument) = argument.as_expression() else {
+                stable_parameter_positions = false;
+                continue;
+            };
+            if stable_parameter_positions {
+                self.record_pending_callable_argument(
+                    argument,
+                    callee.as_ref(),
+                    parameters,
+                    index,
+                    result_discarded,
+                    method_guard,
+                );
+            } else {
+                self.record_escaped_callable_path(argument);
+            }
+        }
+    }
+
     fn record_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
         let (source, method) = match unwrap_transparent_call_expression(&call.callee) {
             Expression::StaticMemberExpression(member) => {
@@ -12774,6 +12838,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Expression::ArrowFunctionExpression(function) => {
                 self.local_non_consuming_arrow_parameters(function)
             }
+            Expression::ClassExpression(class) => self.local_non_consuming_class_parameters(class),
             _ => return,
         };
         if let Some(parameters) = parameters {
@@ -13026,6 +13091,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.record_nonexecuting_callable(&tagged.tag);
             }
             Expression::NewExpression(expression) => {
+                self.discarded_invocation_spans
+                    .insert((expression.span.start, expression.span.end));
                 self.record_nonexecuting_callable(&expression.callee);
             }
             Expression::ChainExpression(chain) => {
@@ -13860,11 +13927,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
 
     fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
         self.record_nonexecuting_callable(&expression.callee);
-        for argument in &expression.arguments {
-            if let Some(argument) = argument.as_expression() {
-                self.record_escaped_callable_path(argument);
-            }
-        }
+        self.record_pending_constructor_arguments(expression);
         oxc::ast_visit::walk::walk_new_expression(self, expression);
     }
 
@@ -13938,7 +14001,14 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                 .as_ref()
                 .and_then(|identifier| identifier.symbol_id.get())
         {
-            self.record_class_generator_bodies(&StaticAliasPath::root(target), class);
+            let target = StaticAliasPath::root(target);
+            self.record_class_generator_bodies(&target, class);
+            if self.is_immutable_local_callable_target(&target)
+                && let Some(parameters) = self.local_non_consuming_class_parameters(class)
+            {
+                self.local_non_consuming_parameters
+                    .insert(target, parameters);
+            }
         }
         oxc::ast_visit::walk::walk_class(self, class);
     }

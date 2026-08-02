@@ -4037,6 +4037,41 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); (function (_strings, value) { void value; }).bind(null)`${iterator}`;",
         ),
         (
+            "local no-op constructor generator iterator argument",
+            "function* inspect() { values.forEach = null; } function Ignore(value) { void value; }",
+            "const iterator = inspect(); new Ignore(iterator);",
+        ),
+        (
+            "aliased local no-op constructor generator iterator argument",
+            "function* inspect() { values.forEach = null; } function Ignore(value) { void value; } const Snapshot = Ignore;",
+            "const iterator = inspect(); new Snapshot(iterator);",
+        ),
+        (
+            "inline no-op constructor generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); new (function (value) { void value; })(iterator);",
+        ),
+        (
+            "local class no-op constructor generator iterator argument",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); new Ignore(iterator);",
+        ),
+        (
+            "inline class no-op constructor generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); new (class { constructor(value) { void value; } })(iterator);",
+        ),
+        (
+            "bound local no-op constructor generator iterator argument",
+            "function* inspect() { values.forEach = null; } function Ignore(value) { void value; } const Snapshot = Ignore.bind(null);",
+            "const iterator = inspect(); new Snapshot(iterator);",
+        ),
+        (
+            "discarded local identity constructor generator iterator result",
+            "function* inspect() { values.forEach = null; } function Identity(value) { return value; }",
+            "const iterator = inspect(); void new Identity(iterator);",
+        ),
+        (
             "stored inline bound no-op generator iterator argument",
             "function* inspect() { values.forEach = null; } const run = (value => void value).bind(null);",
             "const iterator = inspect(); run(iterator);",
@@ -5343,6 +5378,36 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden prototype bind consumes inline tag iterator",
             "function* mutate() { values.forEach = null; } Function.prototype.bind = function () { return (_strings, value) => value.next(); };",
             "const iterator = mutate(); (function (_strings, value) { void value; }).bind(null)`${iterator}`;",
+        ),
+        (
+            "local constructor consumes iterator argument",
+            "function* mutate() { values.forEach = null; } function Consume(value) { value.next(); }",
+            "const iterator = mutate(); new Consume(iterator);",
+        ),
+        (
+            "local class constructor consumes iterator argument",
+            "function* mutate() { values.forEach = null; } class Consume { constructor(value) { value.next(); } }",
+            "const iterator = mutate(); new Consume(iterator);",
+        ),
+        (
+            "observed local identity constructor exposes iterator",
+            "function* mutate() { values.forEach = null; } function Identity(value) { return value; }",
+            "const iterator = mutate(); const result = new Identity(iterator); result.next();",
+        ),
+        (
+            "reassigned local constructor consumes iterator argument",
+            "function* mutate() { values.forEach = null; } let Consume = value => void value; Consume = function (value) { value.next(); };",
+            "const iterator = mutate(); new Consume(iterator);",
+        ),
+        (
+            "overridden prototype bind consumes bound constructor iterator",
+            "function* mutate() { values.forEach = null; } function Ignore(value) { void value; } Function.prototype.bind = function () { return function (value) { value.next(); }; }; const Snapshot = Ignore.bind(null);",
+            "const iterator = mutate(); new Snapshot(iterator);",
+        ),
+        (
+            "constructor spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; } function Consume(_first, _second, safe, value) { void safe; value.next(); }",
+            "const iterator = mutate(); new Consume(null, ...[null, null], iterator);",
         ),
         (
             "direct eval may consume iterator argument",
