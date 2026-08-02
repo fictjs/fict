@@ -4007,6 +4007,36 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); void (value => value)(iterator);",
         ),
         (
+            "local no-op tag generator iterator substitution",
+            "function* inspect() { values.forEach = null; } function ignore(_strings, value) { void value; }",
+            "const iterator = inspect(); ignore`${iterator}`;",
+        ),
+        (
+            "local arrow no-op tag generator iterator substitution",
+            "function* inspect() { values.forEach = null; } const ignore = (_strings, value) => void value;",
+            "const iterator = inspect(); ignore`${iterator}`;",
+        ),
+        (
+            "aliased local no-op tag generator iterator substitution",
+            "function* inspect() { values.forEach = null; } function ignore(_strings, value) { void value; } const tag = ignore;",
+            "const iterator = inspect(); tag`${iterator}`;",
+        ),
+        (
+            "inline no-op tag generator iterator substitution",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function (_strings, value) { void value; })`${iterator}`;",
+        ),
+        (
+            "discarded local identity tag generator iterator result",
+            "function* inspect() { values.forEach = null; } function identity(_strings, value) { return value; }",
+            "const iterator = inspect(); identity`${iterator}`;",
+        ),
+        (
+            "inline bound no-op tag generator iterator substitution",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function (_strings, value) { void value; }).bind(null)`${iterator}`;",
+        ),
+        (
             "stored inline bound no-op generator iterator argument",
             "function* inspect() { values.forEach = null; } const run = (value => void value).bind(null);",
             "const iterator = inspect(); run(iterator);",
@@ -5293,6 +5323,26 @@ fn observed_generator_iterators_propagate_local_effects() {
             "inline bind spread shifts iterator to consuming parameter",
             "function* mutate() { values.forEach = null; } const run = ((_first, safe, value) => { void safe; value.next(); }).bind(null, ...[null, null]);",
             "const iterator = mutate(); run(iterator);",
+        ),
+        (
+            "local tag consumes iterator substitution",
+            "function* mutate() { values.forEach = null; } function consume(_strings, value) { return value.next(); }",
+            "const iterator = mutate(); consume`${iterator}`;",
+        ),
+        (
+            "observed local identity tag exposes iterator",
+            "function* mutate() { values.forEach = null; } function identity(_strings, value) { return value; }",
+            "const iterator = mutate(); const result = identity`${iterator}`; result.next();",
+        ),
+        (
+            "mixed conditional inline tag consumes iterator",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); (choose ? ((_strings, value) => void value) : ((_strings, value) => value.next()))`${iterator}`;",
+        ),
+        (
+            "overridden prototype bind consumes inline tag iterator",
+            "function* mutate() { values.forEach = null; } Function.prototype.bind = function () { return (_strings, value) => value.next(); };",
+            "const iterator = mutate(); (function (_strings, value) { void value; }).bind(null)`${iterator}`;",
         ),
         (
             "direct eval may consume iterator argument",

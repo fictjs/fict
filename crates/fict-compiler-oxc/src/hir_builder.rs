@@ -11946,6 +11946,37 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_pending_tagged_arguments(&mut self, tagged: &TaggedTemplateExpression<'_>) {
+        let result_discarded = self
+            .discarded_invocation_spans
+            .contains(&(tagged.span.start, tagged.span.end));
+        let callee = self
+            .callable_reference(&tagged.tag)
+            .map(|(callee, _)| callee)
+            .or_else(|| self.assignment_callable_target(&tagged.tag));
+        let inline_parameters = callee
+            .is_none()
+            .then(|| self.inline_non_consuming_parameters(&tagged.tag))
+            .flatten();
+        let inline_bound = (callee.is_none() && inline_parameters.is_none())
+            .then(|| self.inline_bound_non_consuming_parameters(&tagged.tag))
+            .flatten();
+        let parameters = inline_parameters
+            .as_ref()
+            .or_else(|| inline_bound.as_ref().map(|(parameters, _)| parameters));
+        let method_guard = inline_bound.as_ref().and_then(|(_, guards)| guards.first());
+        for (index, substitution) in tagged.quasi.expressions.iter().enumerate() {
+            self.record_pending_callable_argument(
+                substitution,
+                callee.as_ref(),
+                parameters,
+                index + 1,
+                result_discarded,
+                method_guard,
+            );
+        }
+    }
+
     fn record_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
         let (source, method) = match unwrap_transparent_call_expression(&call.callee) {
             Expression::StaticMemberExpression(member) => {
@@ -13797,6 +13828,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
 
     fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
         self.record_assignment_tagged_read(expression, false);
+        self.record_pending_tagged_arguments(expression);
         if let Some(target) = self
             .callable_reference(&expression.tag)
             .map(|(target, _)| target)
