@@ -10043,6 +10043,13 @@ enum PendingParameterSource {
     },
 }
 
+#[derive(Clone, Copy)]
+enum PendingInvocationParameters<'a> {
+    Local(&'a StaticAliasPath),
+    Inline(&'a NonConsumingParameters),
+    Sources(&'a [PendingParameterSource]),
+}
+
 struct PendingCallableArgumentRead {
     value: PendingCallableArgumentValue,
     parameter_sources: Option<Vec<PendingParameterSource>>,
@@ -13014,11 +13021,98 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         ))
     }
 
+    fn pending_indirect_parameter_sources(
+        &self,
+        target: &Expression<'_>,
+        method: &'static str,
+    ) -> Option<Vec<PendingParameterSource>> {
+        match target.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let mut sources =
+                    self.pending_indirect_parameter_sources(&expression.consequent, method)?;
+                sources.extend(
+                    self.pending_indirect_parameter_sources(&expression.alternate, method)?,
+                );
+                return Some(sources);
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut sources =
+                    self.pending_indirect_parameter_sources(&expression.left, method)?;
+                sources.extend(self.pending_indirect_parameter_sources(&expression.right, method)?);
+                return Some(sources);
+            }
+            Expression::SequenceExpression(expression) => {
+                return self
+                    .pending_indirect_parameter_sources(expression.expressions.last()?, method);
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                return self.pending_indirect_parameter_sources(&expression.right, method);
+            }
+            _ => {}
+        }
+        let guard = GeneratorMethodGuard {
+            source: self.callable_reference(target).map(|(source, _)| source),
+            owner: StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string()),
+            method,
+        };
+        let mut sources = self
+            .pending_bound_parameter_sources(target, false)
+            .or_else(|| self.pending_parameter_sources(target, false))?;
+        for source in &mut sources {
+            match source {
+                PendingParameterSource::Local { method_guards, .. }
+                | PendingParameterSource::Inline { method_guards, .. } => {
+                    method_guards.push(guard.clone());
+                }
+            }
+        }
+        Some(sources)
+    }
+
+    fn composite_indirect_callable_target(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(Vec<PendingParameterSource>, GeneratorMethodGuard, usize)> {
+        let (target, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.as_str())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let method = static_member_name(&member.expression)?;
+                let method = match method.as_str() {
+                    "call" => "call",
+                    "apply" => "apply",
+                    _ => return None,
+                };
+                (&member.object, method)
+            }
+            _ => return None,
+        };
+        let method = match method {
+            "call" => "call",
+            "apply" => "apply",
+            _ => return None,
+        };
+        let owner = StaticAliasPath::unresolved_global("Function".to_string())
+            .with_property("prototype".to_string());
+        Some((
+            self.pending_indirect_parameter_sources(target, method)?,
+            GeneratorMethodGuard {
+                source: None,
+                owner,
+                method,
+            },
+            0,
+        ))
+    }
+
     fn record_pending_indirect_callable_arguments(
         &mut self,
         call: &CallExpression<'_>,
-        callee: Option<&StaticAliasPath>,
-        inline_parameters: Option<&NonConsumingParameters>,
+        parameters: PendingInvocationParameters<'_>,
         guard: &GeneratorMethodGuard,
         receiver_index: usize,
         result_discarded: bool,
@@ -13038,39 +13132,58 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .take_while(|argument| argument.as_expression().is_some())
                 .enumerate()
             {
-                self.record_pending_callable_argument(
-                    argument.as_expression().expect("ordinary call argument"),
-                    callee,
-                    inline_parameters,
-                    parameter_index,
-                    result_discarded,
-                    Some(guard),
-                );
+                let argument = argument.as_expression().expect("ordinary call argument");
+                match parameters {
+                    PendingInvocationParameters::Local(callee) => self
+                        .record_pending_callable_argument(
+                            argument,
+                            Some(callee),
+                            None,
+                            parameter_index,
+                            result_discarded,
+                            Some(guard),
+                        ),
+                    PendingInvocationParameters::Inline(inline_parameters) => self
+                        .record_pending_callable_argument(
+                            argument,
+                            None,
+                            Some(inline_parameters),
+                            parameter_index,
+                            result_discarded,
+                            Some(guard),
+                        ),
+                    PendingInvocationParameters::Sources(parameter_sources) => self
+                        .record_pending_callable_argument_sources(
+                            argument,
+                            parameter_sources,
+                            parameter_index,
+                            result_discarded,
+                            Some(guard),
+                        ),
+                }
             }
-        } else if let Some(Expression::ArrayExpression(arguments)) = call
+        } else if let Some(argument_list) = call
             .arguments
             .get(receiver_index + 1)
             .and_then(|argument| argument.as_expression())
-            .map(Expression::get_inner_expression)
         {
-            for (parameter_index, argument) in arguments.elements.iter().enumerate() {
-                match argument {
-                    ArrayExpressionElement::Elision(_) => {}
-                    ArrayExpressionElement::SpreadElement(_) => break,
-                    _ => self.record_pending_callable_argument(
-                        argument.to_expression(),
-                        callee,
-                        inline_parameters,
-                        parameter_index,
-                        result_discarded,
-                        Some(guard),
-                    ),
-                }
-            }
+            let (callee, inline_parameters, parameter_sources) = match parameters {
+                PendingInvocationParameters::Local(callee) => (Some(callee), None, None),
+                PendingInvocationParameters::Inline(parameters) => (None, Some(parameters), None),
+                PendingInvocationParameters::Sources(sources) => (None, None, Some(sources)),
+            };
+            self.record_pending_indirect_argument_list(
+                argument_list,
+                callee,
+                inline_parameters,
+                parameter_sources,
+                result_discarded,
+                guard,
+            );
         }
     }
 
-    fn record_pending_reflect_argument_list(
+    fn record_pending_indirect_argument_list(
         &mut self,
         argument_list: &Expression<'_>,
         callee: Option<&StaticAliasPath>,
@@ -13179,7 +13292,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             owner: reflect,
             method: "apply",
         };
-        self.record_pending_reflect_argument_list(
+        self.record_pending_indirect_argument_list(
             argument_list,
             callee.as_ref(),
             inline_parameters.as_ref(),
@@ -13238,7 +13351,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             owner: reflect,
             method: "construct",
         };
-        self.record_pending_reflect_argument_list(
+        self.record_pending_indirect_argument_list(
             argument_list,
             callee.as_ref(),
             inline_parameters.as_ref(),
@@ -13317,8 +13430,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         {
             self.record_pending_indirect_callable_arguments(
                 call,
-                Some(&callee),
-                None,
+                PendingInvocationParameters::Local(&callee),
                 &guard,
                 receiver_index,
                 result_discarded,
@@ -13330,8 +13442,19 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         {
             self.record_pending_indirect_callable_arguments(
                 call,
-                None,
-                Some(&parameters),
+                PendingInvocationParameters::Inline(&parameters),
+                &guard,
+                receiver_index,
+                result_discarded,
+            );
+            return;
+        }
+        if let Some((parameter_sources, guard, receiver_index)) =
+            self.composite_indirect_callable_target(call)
+        {
+            self.record_pending_indirect_callable_arguments(
+                call,
+                PendingInvocationParameters::Sources(&parameter_sources),
                 &guard,
                 receiver_index,
                 result_discarded,
@@ -18091,25 +18214,87 @@ impl StaticHookAliasCollector<'_> {
         Some(exposed)
     }
 
-    fn local_apply_invocation_fact(
+    fn local_function_indirection_invocation_facts_from_target(
         &self,
-        callee: &Expression<'_>,
-        arguments: &[oxc::ast::ast::Argument<'_>],
-    ) -> Option<LocalInvocationFact> {
-        let argument_list = arguments.get(1)?.as_expression()?;
-        let local_arguments = self.collect_apply_invocation_arguments(argument_list);
-        let receiver = arguments
-            .first()
-            .and_then(|argument| argument.as_expression())
-            .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
-            .unwrap_or_default();
-        if let Some(raw_callee) = static_alias_source_path(self.scoping, callee) {
+        target: &Expression<'_>,
+        arguments: Vec<LocalInvocationArgumentSegment>,
+        argument_offset: usize,
+        receiver: Vec<LocalInvocationArgument>,
+        method: &str,
+    ) -> Option<Vec<LocalInvocationFact>> {
+        match target.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let mut facts = self.local_function_indirection_invocation_facts_from_target(
+                    &expression.consequent,
+                    arguments.clone(),
+                    argument_offset,
+                    receiver.clone(),
+                    method,
+                )?;
+                facts.extend(
+                    self.local_function_indirection_invocation_facts_from_target(
+                        &expression.alternate,
+                        arguments,
+                        argument_offset,
+                        receiver,
+                        method,
+                    )?,
+                );
+                return Some(facts);
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut facts = self.local_function_indirection_invocation_facts_from_target(
+                    &expression.left,
+                    arguments.clone(),
+                    argument_offset,
+                    receiver.clone(),
+                    method,
+                )?;
+                facts.extend(
+                    self.local_function_indirection_invocation_facts_from_target(
+                        &expression.right,
+                        arguments,
+                        argument_offset,
+                        receiver,
+                        method,
+                    )?,
+                );
+                return Some(facts);
+            }
+            Expression::SequenceExpression(expression) => {
+                return self.local_function_indirection_invocation_facts_from_target(
+                    expression.expressions.last()?,
+                    arguments,
+                    argument_offset,
+                    receiver,
+                    method,
+                );
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                return self.local_function_indirection_invocation_facts_from_target(
+                    &expression.right,
+                    arguments,
+                    argument_offset,
+                    receiver,
+                    method,
+                );
+            }
+            _ => {}
+        }
+        if let Some(raw_target) = static_alias_source_path(self.scoping, target) {
+            let raw_callee = raw_target.clone().with_property(method.to_string());
             let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
-            let (raw_target, target) = self.intact_function_apply_target(&raw_callee, &callee)?;
+            let (raw_target, target) = match method {
+                "call" => self.intact_function_call_target(&raw_callee, &callee),
+                "apply" => self.intact_function_apply_target(&raw_callee, &callee),
+                _ => None,
+            }?;
             let invocation = LocalInvocationFact {
                 parameters: self.current_invocation_parameters(&raw_target, &target),
-                arguments: local_arguments,
-                argument_offset: 0,
+                arguments,
+                argument_offset,
                 raw_callee: Some(raw_target),
                 callee: Some(target.clone()),
                 function_depth: self.function_depth,
@@ -18120,27 +18305,75 @@ impl StaticHookAliasCollector<'_> {
                 force_argument_exposure: false,
                 construct: false,
             };
-            return Some(self.with_current_bound_callable(invocation, &target));
+            return Some(vec![self.with_current_bound_callable(invocation, &target)]);
         }
-        let parameters = self.inline_function_indirection_parameters(callee, "apply")?;
-        Some(LocalInvocationFact {
-            parameters: Some(parameters),
-            arguments: local_arguments,
-            argument_offset: 0,
+        Some(vec![LocalInvocationFact {
+            parameters: Some(Self::inline_callable_parameters(target)?),
+            arguments,
+            argument_offset,
             raw_callee: None,
             callee: None,
             function_depth: self.function_depth,
             bound_receiver: receiver,
             dynamic_receiver: LocalInvocationDynamicReceiver::Known(
-                self.inline_function_indirection_receiver(callee, "apply"),
+                Self::inline_callable_receiver(target),
             ),
-            generator: LocalInvocationGenerator::Known(
-                self.inline_function_indirection_is_generator(callee, "apply"),
-            ),
+            generator: LocalInvocationGenerator::Known(Self::inline_callable_is_generator(target)),
             result_discarded: false,
             force_argument_exposure: false,
             construct: false,
-        })
+        }])
+    }
+
+    fn local_function_indirection_invocation_facts(
+        &self,
+        callee: &Expression<'_>,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+        expected_method: &str,
+    ) -> Option<Vec<LocalInvocationFact>> {
+        if !self.path_is_currently_intact(
+            &StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string())
+                .with_property(expected_method.to_string()),
+        ) {
+            return None;
+        }
+        let (target, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        if method != expected_method {
+            return None;
+        }
+        let (local_arguments, argument_offset, receiver) = if expected_method == "call" {
+            let local_arguments = self.collect_local_invocation_arguments(arguments);
+            let receiver = LocalInvocationFact::arguments_at(&local_arguments, 0);
+            (local_arguments, 1, receiver)
+        } else {
+            let argument_list = arguments.get(1)?.as_expression()?;
+            let receiver = arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
+                .unwrap_or_default();
+            (
+                self.collect_apply_invocation_arguments(argument_list),
+                0,
+                receiver,
+            )
+        };
+        self.local_function_indirection_invocation_facts_from_target(
+            target,
+            local_arguments,
+            argument_offset,
+            receiver,
+            expected_method,
+        )
     }
 
     fn invocation_reference_receiver(
@@ -18501,8 +18734,15 @@ impl StaticHookAliasCollector<'_> {
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
     ) -> Option<Vec<LocalInvocationFact>> {
-        if let Some(invocation) = self.local_apply_invocation_fact(callee, arguments) {
-            return Some(vec![invocation]);
+        if let Some(invocations) =
+            self.local_function_indirection_invocation_facts(callee, arguments, "apply")
+        {
+            return Some(invocations);
+        }
+        if let Some(invocations) =
+            self.local_function_indirection_invocation_facts(callee, arguments, "call")
+        {
+            return Some(invocations);
         }
         self.local_invocation_facts_from_arguments(
             callee,

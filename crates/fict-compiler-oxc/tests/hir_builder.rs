@@ -9872,6 +9872,31 @@ fn local_function_call_indirections_propagate_parameter_invalidations() {
             "(function (target) { target.forEach = null; }).call(null, values);",
         ),
         (
+            "immediate conditional call target",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; }",
+            "(choose ? inspect : mutate).call(null, values);",
+        ),
+        (
+            "immediate conditional call target advances generator",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } function consume(value) { value.next(); }",
+            "(choose ? ignore : consume).call(null, inspect());",
+        ),
+        (
+            "conditional call target has overridden branch",
+            "function first(target) { return target.length; } function second(target) { return target.length; } first.call = function (_receiver, target) { target.forEach = null; };",
+            "(choose ? first : second).call(null, values);",
+        ),
+        (
+            "overridden conditional call target advances generator",
+            "function* inspect() { values.forEach = null; } function first(value) { void value; } function second(value) { void value; } first.call = function (_receiver, value) { value.next(); };",
+            "(choose ? first : second).call(null, inspect());",
+        ),
+        (
+            "conditional call target may be external",
+            "function inspect(target) { return target.length; }",
+            "(choose ? inspect : External).call(null, values);",
+        ),
+        (
             "dynamic receiver",
             "function mutate() { this.forEach = null; }",
             "mutate.call(values);",
@@ -9930,7 +9955,7 @@ fn local_function_call_indirections_propagate_parameter_invalidations() {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(External, choose) {{
                     const count = $state(0);
                     const values = [];
                     {helper}
@@ -10012,11 +10037,26 @@ fn pure_and_overridden_function_call_indirections_preserve_receivers() {
             "function inspect() { class Snapshot { static { this.forEach = null; } } void Snapshot; }",
             "inspect.call(values);",
         ),
+        (
+            "immediate conditional call target",
+            "function first(target) { return target.length; } function second(target) { return target[0]; }",
+            "(choose ? first : second).call(null, values);",
+        ),
+        (
+            "conditional inline call target",
+            "",
+            "(choose ? target => target.length : target => target[0]).call(null, values);",
+        ),
+        (
+            "immediate conditional call target ignores generator result",
+            "function* inspect() { values.forEach = null; } function first(value) { void value; } function second(value) { void value; }",
+            "(choose ? first : second).call(null, inspect());",
+        ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {helper}
@@ -10088,6 +10128,36 @@ fn local_function_apply_indirections_propagate_parameter_invalidations() {
             "(function (target) { target.forEach = null; }).apply(null, [values]);",
         ),
         (
+            "immediate conditional apply target",
+            "",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; }",
+            "(choose ? inspect : mutate).apply(null, [values]);",
+        ),
+        (
+            "immediate conditional apply target advances generator",
+            "",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } function consume(value) { value.next(); }",
+            "(choose ? ignore : consume).apply(null, [inspect()]);",
+        ),
+        (
+            "conditional apply target has overridden branch",
+            "",
+            "function first(target) { return target.length; } function second(target) { return target.length; } first.apply = function (_receiver, args) { args[0].forEach = null; };",
+            "(choose ? first : second).apply(null, [values]);",
+        ),
+        (
+            "overridden conditional apply target advances generator",
+            "",
+            "function* inspect() { values.forEach = null; } function first(value) { void value; } function second(value) { void value; } first.apply = function (_receiver, args) { args[0].next(); };",
+            "(choose ? first : second).apply(null, [inspect()]);",
+        ),
+        (
+            "conditional apply target may be external",
+            "",
+            "function inspect(target) { return target.length; }",
+            "(choose ? inspect : External).apply(null, [values]);",
+        ),
+        (
             "dynamic receiver",
             "",
             "function mutate() { this.forEach = null; }",
@@ -10097,7 +10167,7 @@ fn local_function_apply_indirections_propagate_parameter_invalidations() {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(External, choose) {{
                     const count = $state(0);
                     const values = [];
                     {setup}
@@ -10150,11 +10220,31 @@ fn pure_and_overridden_function_apply_indirections_preserve_receivers() {
             "function inspect() { return this.length; }",
             "inspect.apply(values, []);",
         ),
+        (
+            "immediate conditional apply target",
+            "function first(target) { return target.length; } function second(target) { return target[0]; }",
+            "(choose ? first : second).apply(null, [values]);",
+        ),
+        (
+            "conditional inline apply target",
+            "",
+            "(choose ? target => target.length : target => target[0]).apply(null, [values]);",
+        ),
+        (
+            "immediate conditional apply target ignores generator result",
+            "function* inspect() { values.forEach = null; } function first(value) { void value; } function second(value) { void value; }",
+            "(choose ? first : second).apply(null, [inspect()]);",
+        ),
+        (
+            "conditional apply target ignores stored generator result",
+            "function* inspect() { values.forEach = null; } function first(value) { void value; } function second(value) { void value; } const args = [inspect()];",
+            "(choose ? first : second).apply(null, args);",
+        ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {helper}
