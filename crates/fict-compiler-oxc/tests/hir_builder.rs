@@ -5289,6 +5289,137 @@ fn observed_direct_generator_results_in_containers_propagate_local_effects() {
 }
 
 #[test]
+fn immediate_iterator_containers_remain_unadvanced_when_discarded() {
+    for (name, helper, statement) in [
+        (
+            "iterator in immediate discarded array",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); void [iterator];",
+        ),
+        (
+            "iterator in immediate discarded object",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); void { value: iterator };",
+        ),
+        (
+            "iterator in nested immediate discarded container",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); void [{ nested: [iterator] }];",
+        ),
+        (
+            "iterator array passed to local no-op",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); ignore([iterator]);",
+        ),
+        (
+            "iterator object passed to local no-op",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); ignore({ value: iterator });",
+        ),
+        (
+            "mixed iterator container passed to local no-op",
+            "function* inspect() { values.forEach = null; } function* alternate() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); ignore([iterator, alternate()]);",
+        ),
+        (
+            "iterator container passed to local no-op tag",
+            "function* inspect() { values.forEach = null; } function ignore(_strings, value) { void value; }",
+            "const iterator = inspect(); ignore`${[iterator]}`;",
+        ),
+        (
+            "iterator container passed to local no-op constructor",
+            "function* inspect() { values.forEach = null; } function Ignore(value) { void value; }",
+            "const iterator = inspect(); new Ignore([iterator]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {statement}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn consumed_immediate_iterator_containers_propagate_local_effects() {
+    for (name, setup, statement) in [
+        (
+            "local consumer advances immediate array element",
+            "function* mutate() { values.forEach = null; } function consume(value) { value[0].next(); }",
+            "const iterator = mutate(); consume([iterator]);",
+        ),
+        (
+            "local consumer advances immediate object property",
+            "function* mutate() { values.forEach = null; } function consume(value) { value.item.next(); }",
+            "const iterator = mutate(); consume({ item: iterator });",
+        ),
+        (
+            "external consumer receives immediate iterator container",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); externalConsume([iterator]);",
+        ),
+        (
+            "array spread advances iterator",
+            "function* mutate() { values.forEach = null; yield 1; }",
+            "const iterator = mutate(); void [...iterator];",
+        ),
+        (
+            "assigned array element remains observable",
+            "function* mutate() { values.forEach = null; } let retained;",
+            "const iterator = mutate(); void [retained = iterator]; retained.next();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(externalConsume) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {statement}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (

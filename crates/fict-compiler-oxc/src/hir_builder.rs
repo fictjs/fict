@@ -12267,36 +12267,89 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         result_discarded: bool,
         method_guard: Option<&GeneratorMethodGuard>,
     ) {
-        let value =
-            if let Some((source, source_span)) = self.callable_reference(expression) {
-                if self.retained_callable_reads.iter().any(|retained| {
-                    retained.source == source && retained.source_span == source_span
-                }) || self.generator_argument_reads.iter().any(|retained| {
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            if self
+                .retained_callable_reads
+                .iter()
+                .any(|retained| retained.source == source && retained.source_span == source_span)
+                || self.generator_argument_reads.iter().any(|retained| {
                     retained.source == source
                         && retained.source_span == source_span
                         && retained.source == retained.target
-                }) || self
+                })
+                || self
                     .non_escaping_callable_reads
                     .contains(&(source.clone(), source_span))
-                    || self
-                        .initial_generator_next_argument_reads
-                        .iter()
-                        .any(|read| read.source == source && read.source_span == source_span)
-                {
-                    return;
-                }
-                PendingCallableArgumentValue::Reference {
-                    source,
-                    source_span,
-                }
-            } else if let Some(pending) = self.pending_discarded_invocations(expression) {
-                PendingCallableArgumentValue::Invocations(pending)
-            } else {
+                || self
+                    .initial_generator_next_argument_reads
+                    .iter()
+                    .any(|read| read.source == source && read.source_span == source_span)
+            {
                 return;
-            };
+            }
+            self.pending_callable_argument_reads
+                .push(PendingCallableArgumentRead {
+                    value: PendingCallableArgumentValue::Reference {
+                        source,
+                        source_span,
+                    },
+                    callee: callee.cloned(),
+                    inline_parameters: inline_parameters.cloned(),
+                    parameter_selection,
+                    result_discarded,
+                    method_guard: method_guard.cloned(),
+                });
+            return;
+        }
+        let nested = match expression.get_inner_expression() {
+            Expression::ArrayExpression(expression) => expression
+                .elements
+                .iter()
+                .filter_map(|element| match element {
+                    ArrayExpressionElement::Elision(_)
+                    | ArrayExpressionElement::SpreadElement(_) => None,
+                    _ => Some(element.to_expression()),
+                })
+                .collect::<Vec<_>>(),
+            Expression::ObjectExpression(expression) => expression
+                .properties
+                .iter()
+                .filter_map(|property| match property {
+                    OxcObjectPropertyKind::ObjectProperty(property) => Some(&property.value),
+                    OxcObjectPropertyKind::SpreadProperty(_) => None,
+                })
+                .collect::<Vec<_>>(),
+            Expression::ConditionalExpression(expression) => {
+                vec![&expression.consequent, &expression.alternate]
+            }
+            Expression::LogicalExpression(expression) => {
+                vec![&expression.left, &expression.right]
+            }
+            Expression::SequenceExpression(expression) => {
+                expression.expressions.last().into_iter().collect()
+            }
+            Expression::AssignmentExpression(_) => return,
+            _ => Vec::new(),
+        };
+        if !nested.is_empty() {
+            for expression in nested {
+                self.record_pending_callable_value(
+                    expression,
+                    callee,
+                    inline_parameters,
+                    parameter_selection,
+                    result_discarded,
+                    method_guard,
+                );
+            }
+            return;
+        }
+        let Some(pending) = self.pending_discarded_invocations(expression) else {
+            return;
+        };
         self.pending_callable_argument_reads
             .push(PendingCallableArgumentRead {
-                value,
+                value: PendingCallableArgumentValue::Invocations(pending),
                 callee: callee.cloned(),
                 inline_parameters: inline_parameters.cloned(),
                 parameter_selection,
@@ -13719,6 +13772,26 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             Expression::TSInstantiationExpression(expression) => {
                 self.record_discarded_value_read(&expression.expression);
+            }
+            Expression::ArrayExpression(expression) => {
+                for element in &expression.elements {
+                    if matches!(
+                        element,
+                        ArrayExpressionElement::Elision(_)
+                            | ArrayExpressionElement::SpreadElement(_)
+                    ) {
+                        continue;
+                    }
+                    self.record_discarded_value_read(element.to_expression());
+                }
+            }
+            Expression::ObjectExpression(expression) => {
+                for property in &expression.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        continue;
+                    };
+                    self.record_discarded_value_read(&property.value);
+                }
             }
             _ => {}
         }
