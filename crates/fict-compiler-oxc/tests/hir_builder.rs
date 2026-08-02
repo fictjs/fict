@@ -11116,6 +11116,24 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "run();",
         ),
         (
+            "immediately bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; } const run = make(values).bind(null);",
+            "run();",
+        ),
+        (
+            "immediately bound factory result mutates prebound argument",
+            "",
+            "function make() { return target => { target.forEach = null; }; } const run = make().bind(null, values);",
+            "run();",
+        ),
+        (
+            "immediately bound factory result references mutator",
+            "",
+            "function mutate(target) { target.forEach = null; } function make() { return mutate; } const run = make().bind(null);",
+            "run(values);",
+        ),
+        (
             "local factory conditionally returns mutating callable",
             "",
             "function make() { return choose ? function (target) { return target.length; } : function (target) { target.forEach = null; }; } const run = make();",
@@ -11271,6 +11289,18 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "",
             "function make(target) { return (() => { target.forEach = null; }).bind(null); } const run = make(values);",
             "void run;",
+        ),
+        (
+            "uninvoked immediately bound factory result",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; } const run = make(values).bind(null);",
+            "void run;",
+        ),
+        (
+            "immediately bound factory result remains read-only",
+            "",
+            "function make(target) { return () => target.length; } const run = make(values).bind(null);",
+            "run();",
         ),
         (
             "invoked sibling closure does not activate capture mutation",
