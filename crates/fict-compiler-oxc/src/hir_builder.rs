@@ -13070,6 +13070,126 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_pending_reflect_argument_list(
+        &mut self,
+        argument_list: &Expression<'_>,
+        callee: Option<&StaticAliasPath>,
+        inline_parameters: Option<&NonConsumingParameters>,
+        parameter_sources: Option<&[PendingParameterSource]>,
+        result_discarded: bool,
+        guard: &GeneratorMethodGuard,
+    ) {
+        let Expression::ArrayExpression(arguments) = argument_list.get_inner_expression() else {
+            if let Some(parameter_sources) = parameter_sources {
+                self.record_pending_callable_value(
+                    argument_list,
+                    Some(parameter_sources),
+                    PendingParameterSelection::All,
+                    result_discarded,
+                    Some(guard),
+                );
+            } else {
+                self.record_pending_callable_argument_list(
+                    argument_list,
+                    callee,
+                    inline_parameters,
+                    result_discarded,
+                    Some(guard),
+                );
+            }
+            return;
+        };
+        let mut stable_parameter_positions = true;
+        for (parameter_index, argument) in arguments.elements.iter().enumerate() {
+            match argument {
+                ArrayExpressionElement::Elision(_) => {}
+                ArrayExpressionElement::SpreadElement(_) => {
+                    stable_parameter_positions = false;
+                }
+                _ if stable_parameter_positions => {
+                    if let Some(parameter_sources) = parameter_sources {
+                        self.record_pending_callable_argument_sources(
+                            argument.to_expression(),
+                            parameter_sources,
+                            parameter_index,
+                            result_discarded,
+                            Some(guard),
+                        );
+                    } else {
+                        self.record_pending_callable_argument(
+                            argument.to_expression(),
+                            callee,
+                            inline_parameters,
+                            parameter_index,
+                            result_discarded,
+                            Some(guard),
+                        );
+                    }
+                }
+                _ => self.record_escaped_callable_path(argument.to_expression()),
+            }
+        }
+    }
+
+    fn record_pending_reflect_apply_arguments(
+        &mut self,
+        call: &CallExpression<'_>,
+        result_discarded: bool,
+    ) -> bool {
+        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        let apply = reflect.clone().with_property("apply".to_string());
+        if !self.callable_resolves_to_path(Self::immediate_callable_value(&call.callee), &apply) {
+            return false;
+        }
+        let Some(target) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return true;
+        };
+        let target = Self::immediate_callable_value(target);
+        let callee = self.callable_reference(target).map(|(callee, _)| callee);
+        let inline_parameters = callee
+            .is_none()
+            .then(|| self.inline_non_consuming_parameters(target))
+            .flatten();
+        let parameter_sources = (callee.is_none() && inline_parameters.is_none())
+            .then(|| {
+                self.pending_bound_parameter_sources(target, false)
+                    .or_else(|| self.pending_parameter_sources(target, false))
+            })
+            .flatten();
+        if let Some(receiver) = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+        {
+            self.record_pending_callable_argument(receiver, None, None, 0, false, None);
+        }
+        let Some(argument_list) = call
+            .arguments
+            .get(2)
+            .and_then(|argument| argument.as_expression())
+        else {
+            return true;
+        };
+        let guard = GeneratorMethodGuard {
+            source: None,
+            owner: reflect,
+            method: "apply",
+        };
+        self.record_pending_reflect_argument_list(
+            argument_list,
+            callee.as_ref(),
+            inline_parameters.as_ref(),
+            parameter_sources.as_deref(),
+            result_discarded,
+            &guard,
+        );
+        true
+    }
+
     fn record_pending_reflect_construct_arguments(
         &mut self,
         call: &CallExpression<'_>,
@@ -13118,56 +13238,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             owner: reflect,
             method: "construct",
         };
-        let Expression::ArrayExpression(arguments) = argument_list.get_inner_expression() else {
-            if let Some(parameter_sources) = parameter_sources.as_deref() {
-                self.record_pending_callable_value(
-                    argument_list,
-                    Some(parameter_sources),
-                    PendingParameterSelection::All,
-                    result_discarded,
-                    Some(&guard),
-                );
-            } else {
-                self.record_pending_callable_argument_list(
-                    argument_list,
-                    callee.as_ref(),
-                    inline_parameters.as_ref(),
-                    result_discarded,
-                    Some(&guard),
-                );
-            }
-            return true;
-        };
-        let mut stable_parameter_positions = true;
-        for (parameter_index, argument) in arguments.elements.iter().enumerate() {
-            match argument {
-                ArrayExpressionElement::Elision(_) => {}
-                ArrayExpressionElement::SpreadElement(_) => {
-                    stable_parameter_positions = false;
-                }
-                _ if stable_parameter_positions => {
-                    if let Some(parameter_sources) = parameter_sources.as_deref() {
-                        self.record_pending_callable_argument_sources(
-                            argument.to_expression(),
-                            parameter_sources,
-                            parameter_index,
-                            result_discarded,
-                            Some(&guard),
-                        );
-                    } else {
-                        self.record_pending_callable_argument(
-                            argument.to_expression(),
-                            callee.as_ref(),
-                            inline_parameters.as_ref(),
-                            parameter_index,
-                            result_discarded,
-                            Some(&guard),
-                        );
-                    }
-                }
-                _ => self.record_escaped_callable_path(argument.to_expression()),
-            }
-        }
+        self.record_pending_reflect_argument_list(
+            argument_list,
+            callee.as_ref(),
+            inline_parameters.as_ref(),
+            parameter_sources.as_deref(),
+            result_discarded,
+            &guard,
+        );
         true
     }
 
@@ -13229,6 +13307,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .contains(&(call.span.start, call.span.end));
         let discarded_callback_guard = self.discarded_builtin_callback_result_guard(call);
         if self.record_pending_reflect_construct_arguments(call, result_discarded) {
+            return;
+        }
+        if self.record_pending_reflect_apply_arguments(call, result_discarded) {
             return;
         }
         if let Some((callee, Some(guard), receiver_index)) = self.generator_invocation_target(call)
@@ -17858,32 +17939,35 @@ impl StaticHookAliasCollector<'_> {
             && self.path_is_currently_intact(&reflect_method)
     }
 
-    fn local_reflect_apply_invocation_fact(
+    fn local_reflect_apply_invocation_facts(
         &self,
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
-    ) -> Option<LocalInvocationFact> {
+    ) -> Option<Vec<LocalInvocationFact>> {
         if !self.is_intact_reflect_method_callee(callee, "apply") {
             return None;
         }
         let target = arguments.first()?.as_expression()?;
         let argument_list = arguments.get(2)?.as_expression()?;
-        let mut invocation = self.local_invocation_fact_from_arguments(
+        let mut invocations = self.local_invocation_facts_from_arguments(
             target,
             self.collect_apply_invocation_arguments(argument_list),
         )?;
-        let bound_receiver_applied = invocation
-            .callee
-            .as_ref()
-            .is_some_and(|callee| self.local_bound_callables.contains_key(callee));
-        if !bound_receiver_applied {
-            invocation.bound_receiver = arguments
-                .get(1)
-                .and_then(|argument| argument.as_expression())
-                .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
-                .unwrap_or_default();
+        let receiver = arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
+            .unwrap_or_default();
+        for invocation in &mut invocations {
+            let bound_receiver_applied = invocation
+                .callee
+                .as_ref()
+                .is_some_and(|callee| self.local_bound_callables.contains_key(callee));
+            if !bound_receiver_applied {
+                invocation.bound_receiver.clone_from(&receiver);
+            }
         }
-        Some(invocation)
+        Some(invocations)
     }
 
     fn reflect_apply_exposed_argument_paths(
@@ -17908,7 +17992,7 @@ impl StaticHookAliasCollector<'_> {
         else {
             return Some(exposed);
         };
-        if !self.callee_may_mutate_arguments(target) {
+        if !self.reflect_apply_target_may_mutate_arguments(target) {
             return Some(exposed);
         }
         if let Some(this_argument) = call
@@ -18417,9 +18501,6 @@ impl StaticHookAliasCollector<'_> {
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
     ) -> Option<LocalInvocationFact> {
-        if let Some(invocation) = self.local_reflect_apply_invocation_fact(callee, arguments) {
-            return Some(invocation);
-        }
         if let Some(invocation) = self.local_apply_invocation_fact(callee, arguments) {
             return Some(invocation);
         }
@@ -20204,6 +20285,33 @@ impl StaticHookAliasCollector<'_> {
         self.callable_path_may_mutate_arguments(&path)
     }
 
+    fn reflect_apply_target_may_mutate_arguments(&self, target: &Expression<'_>) -> bool {
+        if static_alias_source_path(self.scoping, target).is_some() {
+            return self.callee_may_mutate_arguments(target);
+        }
+        match target.get_inner_expression() {
+            Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_) => false,
+            Expression::ConditionalExpression(expression) => {
+                self.reflect_apply_target_may_mutate_arguments(&expression.consequent)
+                    || self.reflect_apply_target_may_mutate_arguments(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                self.reflect_apply_target_may_mutate_arguments(&expression.left)
+                    || self.reflect_apply_target_may_mutate_arguments(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_none_or(|value| self.reflect_apply_target_may_mutate_arguments(value)),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.reflect_apply_target_may_mutate_arguments(&expression.right)
+            }
+            _ => true,
+        }
+    }
+
     fn assignment_detaches_parameter(
         &self,
         target: &StaticAliasPath,
@@ -21686,7 +21794,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         let mut local_invocations = self
-            .local_reflect_construct_invocation_facts(&call.callee, &call.arguments)
+            .local_reflect_apply_invocation_facts(&call.callee, &call.arguments)
+            .or_else(|| {
+                self.local_reflect_construct_invocation_facts(&call.callee, &call.arguments)
+            })
             .unwrap_or_else(|| {
                 self.local_invocation_fact(&call.callee, &call.arguments)
                     .into_iter()
@@ -22449,11 +22560,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             for (index, argument) in arguments.iter().enumerate() {
                 if (configured && index == 0)
                     || self.direct_state_symbol(*argument).is_some()
-                    || self.is_non_retaining_reflect_construct_target(
-                        &call.callee,
-                        index,
-                        *argument,
-                    )
+                    || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
                     || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                     || self.is_non_escaping_string_replacer(
                         &call.callee,
@@ -22475,7 +22582,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         }
         for (index, argument) in arguments.iter().enumerate() {
             if (configured && index == 0)
-                || self.is_non_retaining_reflect_construct_target(&call.callee, index, *argument)
+                || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
                 || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                 || self.is_non_escaping_string_replacer(&call.callee, index, *argument, arguments)
             {
@@ -22867,7 +22974,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         )
     }
 
-    fn is_non_retaining_reflect_construct_target(
+    fn is_non_retaining_reflect_target(
         &self,
         callee: &Expression<'_>,
         index: usize,
@@ -22879,11 +22986,14 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let Some(path) = static_alias_source_path(self.scoping, callee) else {
             return false;
         };
-        let construct = StaticAliasPath::unresolved_global("Reflect".to_string())
-            .with_property("construct".to_string());
-        self.callback_aliases.resolve(&path) == construct
-            && self.callback_aliases.path_is_intact(&path)
-            && self.callback_aliases.path_is_intact(&construct)
+        let resolved = self.callback_aliases.resolve(&path);
+        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        ["apply", "construct"].into_iter().any(|method| {
+            let target = reflect.clone().with_property(method.to_string());
+            resolved == target
+                && self.callback_aliases.path_is_intact(&path)
+                && self.callback_aliases.path_is_intact(&target)
+        })
     }
 
     fn is_non_escaping_string_replacer(

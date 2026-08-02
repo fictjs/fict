@@ -10154,6 +10154,30 @@ fn local_reflect_apply_invocations_propagate_parameter_invalidations() {
             "Reflect.apply(mutate, null, [values]);",
         ),
         (
+            "immediate conditional target",
+            "",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; }",
+            "Reflect.apply(choose ? inspect : mutate, null, [values]);",
+        ),
+        (
+            "immediate logical target",
+            "",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; }",
+            "Reflect.apply(mutate || inspect, null, [values]);",
+        ),
+        (
+            "immediate conditional target may advance generator",
+            "",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } function consume(value) { value.next(); }",
+            "Reflect.apply(choose ? ignore : consume, null, [inspect()]);",
+        ),
+        (
+            "immediate conditional target may be external",
+            "",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "Reflect.apply(choose ? ignore : external, null, [inspect()]);",
+        ),
+        (
             "inline target",
             "",
             "",
@@ -10244,6 +10268,34 @@ fn pure_reflect_apply_invocations_preserve_receivers() {
             "values",
         ),
         (
+            "immediate conditional target",
+            "",
+            "function first(target) { return target.length; } function second(target) { return target[0]; }",
+            "Reflect.apply(choose ? first : second, null, [values]);",
+            "values",
+        ),
+        (
+            "conditional inline target",
+            "",
+            "",
+            "Reflect.apply(choose ? target => target.length : target => target[0], null, [values]);",
+            "values",
+        ),
+        (
+            "immediate conditional target ignores generator result",
+            "",
+            "function* inspect() { values.forEach = null; } function first(value) { void value; } function second(value) { void value; }",
+            "Reflect.apply(choose ? first : second, null, [inspect()]);",
+            "values",
+        ),
+        (
+            "aliased Reflect.apply accepts conditional target",
+            "const apply = Reflect.apply;",
+            "function first(target) { return target.length; } function second(target) { return target[0]; }",
+            "apply(choose ? first : second, null, [values]);",
+            "values",
+        ),
+        (
             "missing argument list",
             "",
             "function inspect() { return 0; }",
@@ -10261,7 +10313,7 @@ fn pure_reflect_apply_invocations_preserve_receivers() {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {setup}
