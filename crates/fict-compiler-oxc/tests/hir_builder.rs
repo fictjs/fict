@@ -5684,6 +5684,179 @@ fn composite_consuming_or_unknown_callables_propagate_local_effects() {
 }
 
 #[test]
+fn immediate_bound_callables_preserve_unadvanced_iterator_arguments() {
+    for (name, helper, invocation) in [
+        (
+            "bound named no-op tag",
+            "function ignore(_strings, value) { void value; }",
+            "const iterator = inspect(); ignore.bind(null)`${iterator}`;",
+        ),
+        (
+            "computed bound named no-op tag with prefix",
+            "function ignore(_prefix, _strings, value) { void value; }",
+            "const iterator = inspect(); ignore['bind'](null, 0)`${iterator}`;",
+        ),
+        (
+            "conditional bound named no-op tag",
+            "function first(_strings, value) { void value; } function second(_strings, value) { void value; }",
+            "const iterator = inspect(); (choose ? first.bind(null) : second.bind(null))`${iterator}`;",
+        ),
+        (
+            "bound named no-op class constructor",
+            "class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); new (Ignore.bind(null))(iterator);",
+        ),
+        (
+            "bound inline no-op class constructor with prefix",
+            "",
+            "const iterator = inspect(); new ((class { constructor(_prefix, value) { void value; } }).bind(null, 0))(iterator);",
+        ),
+        (
+            "conditional bound named no-op constructor",
+            "class First { constructor(value) { void value; } } class Second { constructor(value) { void value; } }",
+            "const iterator = inspect(); new (choose ? First.bind(null) : Second.bind(null))(iterator);",
+        ),
+        (
+            "bound named no-op Reflect constructor",
+            "class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); Reflect.construct(Ignore.bind(null), [iterator]);",
+        ),
+        (
+            "bound named Reflect constructor receives direct generator result",
+            "function Ignore(value) { void value; }",
+            "Reflect.construct(Ignore.bind(null), [inspect()]);",
+        ),
+        (
+            "bound named Reflect constructor receives stored arguments",
+            "class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); const args = [iterator]; Reflect.construct(Ignore.bind(null), args);",
+        ),
+        (
+            "bound named Reflect constructor receives array-like arguments after prefix",
+            "class Ignore { constructor(_prefix, value) { void value; } }",
+            "const iterator = inspect(); Reflect.construct(Ignore.bind(null, 0), { 0: iterator, length: 1 });",
+        ),
+        (
+            "bound inline class Reflect constructor",
+            "",
+            "const iterator = inspect(); Reflect.construct((class { constructor(value) { void value; } }).bind(null), [iterator]);",
+        ),
+        (
+            "aliased Reflect constructor with computed bind",
+            "const construct = Reflect.construct; class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); construct(Ignore['bind'](null), [iterator]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    function* inspect() {{ values.forEach = null; }}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn consuming_or_overridden_immediate_bound_callables_propagate_local_effects() {
+    for (name, helper, invocation) in [
+        (
+            "bound consuming tag",
+            "function consume(_strings, value) { value.next(); }",
+            "const iterator = mutate(); consume.bind(null)`${iterator}`;",
+        ),
+        (
+            "bound consuming constructor",
+            "class Consume { constructor(value) { value.next(); } }",
+            "const iterator = mutate(); new (Consume.bind(null))(iterator);",
+        ),
+        (
+            "bound consuming Reflect constructor",
+            "class Consume { constructor(value) { value.next(); } }",
+            "const iterator = mutate(); Reflect.construct(Consume.bind(null), [iterator]);",
+        ),
+        (
+            "overridden tag bind",
+            "function ignore(_strings, value) { void value; } ignore.bind = function () { return function (_strings, value) { value.next(); }; };",
+            "const iterator = mutate(); ignore.bind(null)`${iterator}`;",
+        ),
+        (
+            "overridden constructor bind",
+            "class Ignore { constructor(value) { void value; } } Ignore.bind = function () { return class { constructor(value) { value.next(); } }; };",
+            "const iterator = mutate(); new (Ignore.bind(null))(iterator);",
+        ),
+        (
+            "overridden Function prototype bind",
+            "function ignore(_strings, value) { void value; } Function.prototype.bind = function () { return function (_strings, value) { value.next(); }; };",
+            "const iterator = mutate(); ignore.bind(null)`${iterator}`;",
+        ),
+        (
+            "overridden Reflect construct",
+            "class Ignore { constructor(value) { void value; } } Reflect.construct = function (_target, args) { args[0].next(); return {}; };",
+            "const iterator = mutate(); Reflect.construct(Ignore.bind(null), [iterator]);",
+        ),
+        (
+            "external bound constructor",
+            "",
+            "const iterator = mutate(); new (External.bind(null))(iterator);",
+        ),
+        (
+            "observed bound identity tag result",
+            "function identity(_strings, value) { return value; }",
+            "const iterator = mutate(); const result = identity.bind(null)`${iterator}`; result.next();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(External) {{
+                    const count = $state(0);
+                    const values = [];
+                    function* mutate() {{ values.forEach = null; }}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn reflect_construct_preserves_unadvanced_iterator_arguments() {
     for (name, setup, constructor, invocation) in [
         (

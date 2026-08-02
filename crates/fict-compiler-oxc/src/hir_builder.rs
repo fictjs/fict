@@ -10030,8 +10030,16 @@ enum PendingParameterSelection {
 
 #[derive(Clone)]
 enum PendingParameterSource {
-    Local(StaticAliasPath),
-    Inline(NonConsumingParameters),
+    Local {
+        source: StaticAliasPath,
+        parameter_offset: usize,
+        method_guards: Vec<GeneratorMethodGuard>,
+    },
+    Inline {
+        parameters: NonConsumingParameters,
+        parameter_offset: usize,
+        method_guards: Vec<GeneratorMethodGuard>,
+    },
 }
 
 struct PendingCallableArgumentRead {
@@ -10691,7 +10699,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         construct: bool,
     ) -> Option<Vec<PendingParameterSource>> {
         if let Some((source, _)) = self.callable_reference(expression) {
-            return Some(vec![PendingParameterSource::Local(source)]);
+            return Some(vec![PendingParameterSource::Local {
+                source,
+                parameter_offset: 0,
+                method_guards: Vec::new(),
+            }]);
         }
         let inline = match expression.get_inner_expression() {
             Expression::FunctionExpression(function) => {
@@ -10706,7 +10718,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             _ => None,
         };
         if let Some(parameters) = inline {
-            return Some(vec![PendingParameterSource::Inline(parameters)]);
+            return Some(vec![PendingParameterSource::Inline {
+                parameters,
+                parameter_offset: 0,
+                method_guards: Vec::new(),
+            }]);
         }
         match expression.get_inner_expression() {
             Expression::ConditionalExpression(expression) => {
@@ -10727,6 +10743,99 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 if expression.operator == OxcAssignmentOperator::Assign =>
             {
                 self.pending_parameter_sources(&expression.right, construct)
+            }
+            _ => None,
+        }
+    }
+
+    fn pending_bound_parameter_sources(
+        &self,
+        expression: &Expression<'_>,
+        construct: bool,
+    ) -> Option<Vec<PendingParameterSource>> {
+        if let Some((parameters, method_guards)) =
+            self.inline_bound_non_consuming_parameters(expression)
+        {
+            return Some(vec![PendingParameterSource::Inline {
+                parameters,
+                parameter_offset: 0,
+                method_guards,
+            }]);
+        }
+        if let Some(GeneratorBindForwarding::Source { source, guard, .. }) =
+            self.generator_bind_forwarding(expression)
+            && let Some(parameter_offset) = Self::fixed_bound_parameter_count(expression)
+        {
+            return Some(vec![PendingParameterSource::Local {
+                source,
+                parameter_offset,
+                method_guards: vec![guard],
+            }]);
+        }
+        if construct {
+            let call = match expression.get_inner_expression() {
+                Expression::CallExpression(call) => Some(call.as_ref()),
+                Expression::ChainExpression(chain) => match &chain.expression {
+                    ChainElement::CallExpression(call) => Some(call.as_ref()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(call) = call {
+                let source = match unwrap_transparent_call_expression(&call.callee) {
+                    Expression::StaticMemberExpression(member)
+                        if member.property.name == "bind" =>
+                    {
+                        Some(&member.object)
+                    }
+                    Expression::ComputedMemberExpression(member)
+                        if static_member_name(&member.expression).as_deref() == Some("bind") =>
+                    {
+                        Some(&member.object)
+                    }
+                    _ => None,
+                };
+                if let Some(Expression::ClassExpression(class)) =
+                    source.map(Expression::get_inner_expression)
+                    && let Some(parameter_offset) = Self::fixed_bound_parameter_count(expression)
+                    && let Some(parameters) =
+                        self.local_non_consuming_class_parameters(class.as_ref())
+                {
+                    return Some(vec![PendingParameterSource::Inline {
+                        parameters: parameters.shifted(parameter_offset),
+                        parameter_offset: 0,
+                        method_guards: vec![GeneratorMethodGuard {
+                            source: None,
+                            owner: StaticAliasPath::unresolved_global("Function".to_string())
+                                .with_property("prototype".to_string()),
+                            method: "bind",
+                        }],
+                    }]);
+                }
+            }
+        }
+        match expression.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let mut sources =
+                    self.pending_bound_parameter_sources(&expression.consequent, construct)?;
+                sources.extend(
+                    self.pending_bound_parameter_sources(&expression.alternate, construct)?,
+                );
+                Some(sources)
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut sources =
+                    self.pending_bound_parameter_sources(&expression.left, construct)?;
+                sources.extend(self.pending_bound_parameter_sources(&expression.right, construct)?);
+                Some(sources)
+            }
+            Expression::SequenceExpression(expression) => {
+                self.pending_bound_parameter_sources(expression.expressions.last()?, construct)
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.pending_bound_parameter_sources(&expression.right, construct)
             }
             _ => None,
         }
@@ -12206,8 +12315,22 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         method_guard: Option<&GeneratorMethodGuard>,
     ) {
         let parameter_sources = inline_parameters
-            .map(|parameters| vec![PendingParameterSource::Inline(parameters.clone())])
-            .or_else(|| callee.map(|callee| vec![PendingParameterSource::Local(callee.clone())]));
+            .map(|parameters| {
+                vec![PendingParameterSource::Inline {
+                    parameters: parameters.clone(),
+                    parameter_offset: 0,
+                    method_guards: Vec::new(),
+                }]
+            })
+            .or_else(|| {
+                callee.map(|callee| {
+                    vec![PendingParameterSource::Local {
+                        source: callee.clone(),
+                        parameter_offset: 0,
+                        method_guards: Vec::new(),
+                    }]
+                })
+            });
         self.record_pending_callable_value(
             expression,
             parameter_sources.as_deref(),
@@ -12320,9 +12443,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             _ => {
                 let parameter_sources = inline_parameters
-                    .map(|parameters| vec![PendingParameterSource::Inline(parameters.clone())])
+                    .map(|parameters| {
+                        vec![PendingParameterSource::Inline {
+                            parameters: parameters.clone(),
+                            parameter_offset: 0,
+                            method_guards: Vec::new(),
+                        }]
+                    })
                     .or_else(|| {
-                        callee.map(|callee| vec![PendingParameterSource::Local(callee.clone())])
+                        callee.map(|callee| {
+                            vec![PendingParameterSource::Local {
+                                source: callee.clone(),
+                                parameter_offset: 0,
+                                method_guards: Vec::new(),
+                            }]
+                        })
                     });
                 self.record_pending_callable_value(
                     expression,
@@ -12568,6 +12703,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 _ => self.inline_non_consuming_parameters(target),
             }
         };
+        let parameter_sources = (callee.is_none() && inline_parameters.is_none())
+            .then(|| self.pending_bound_parameter_sources(target, true))
+            .flatten();
         let Some(argument_list) = call
             .arguments
             .get(1)
@@ -12581,13 +12719,23 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             method: "construct",
         };
         let Expression::ArrayExpression(arguments) = argument_list.get_inner_expression() else {
-            self.record_pending_callable_argument_list(
-                argument_list,
-                callee.as_ref(),
-                inline_parameters.as_ref(),
-                result_discarded,
-                Some(&guard),
-            );
+            if let Some(parameter_sources) = parameter_sources.as_deref() {
+                self.record_pending_callable_value(
+                    argument_list,
+                    Some(parameter_sources),
+                    PendingParameterSelection::All,
+                    result_discarded,
+                    Some(&guard),
+                );
+            } else {
+                self.record_pending_callable_argument_list(
+                    argument_list,
+                    callee.as_ref(),
+                    inline_parameters.as_ref(),
+                    result_discarded,
+                    Some(&guard),
+                );
+            }
             return true;
         };
         let mut stable_parameter_positions = true;
@@ -12597,14 +12745,26 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 ArrayExpressionElement::SpreadElement(_) => {
                     stable_parameter_positions = false;
                 }
-                _ if stable_parameter_positions => self.record_pending_callable_argument(
-                    argument.to_expression(),
-                    callee.as_ref(),
-                    inline_parameters.as_ref(),
-                    parameter_index,
-                    result_discarded,
-                    Some(&guard),
-                ),
+                _ if stable_parameter_positions => {
+                    if let Some(parameter_sources) = parameter_sources.as_deref() {
+                        self.record_pending_callable_argument_sources(
+                            argument.to_expression(),
+                            parameter_sources,
+                            parameter_index,
+                            result_discarded,
+                            Some(&guard),
+                        );
+                    } else {
+                        self.record_pending_callable_argument(
+                            argument.to_expression(),
+                            callee.as_ref(),
+                            inline_parameters.as_ref(),
+                            parameter_index,
+                            result_discarded,
+                            Some(&guard),
+                        );
+                    }
+                }
                 _ => self.record_escaped_callable_path(argument.to_expression()),
             }
         }
@@ -12776,17 +12936,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .is_none()
             .then(|| self.inline_non_consuming_parameters(tag_value))
             .flatten();
-        let inline_bound = (callee.is_none() && inline_parameters.is_none())
-            .then(|| self.inline_bound_non_consuming_parameters(tag_value))
+        let parameter_sources = (callee.is_none() && inline_parameters.is_none())
+            .then(|| {
+                self.pending_bound_parameter_sources(tag_value, false)
+                    .or_else(|| self.pending_parameter_sources(tag_value, false))
+            })
             .flatten();
-        let parameter_sources =
-            (callee.is_none() && inline_parameters.is_none() && inline_bound.is_none())
-                .then(|| self.pending_parameter_sources(tag_value, false))
-                .flatten();
-        let parameters = inline_parameters
-            .as_ref()
-            .or_else(|| inline_bound.as_ref().map(|(parameters, _)| parameters));
-        let method_guard = inline_bound.as_ref().and_then(|(_, guards)| guards.first());
         for (index, substitution) in tagged.quasi.expressions.iter().enumerate() {
             if let Some(parameter_sources) = parameter_sources.as_deref() {
                 self.record_pending_callable_argument_sources(
@@ -12800,10 +12955,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.record_pending_callable_argument(
                     substitution,
                     callee.as_ref(),
-                    parameters,
+                    inline_parameters.as_ref(),
                     index + 1,
                     result_discarded,
-                    method_guard,
+                    None,
                 );
             }
         }
@@ -12827,17 +12982,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 _ => self.inline_non_consuming_parameters(callee_value),
             }
         };
-        let inline_bound = (callee.is_none() && inline_parameters.is_none())
-            .then(|| self.inline_bound_non_consuming_parameters(callee_value))
+        let parameter_sources = (callee.is_none() && inline_parameters.is_none())
+            .then(|| {
+                self.pending_bound_parameter_sources(callee_value, true)
+                    .or_else(|| self.pending_parameter_sources(callee_value, true))
+            })
             .flatten();
-        let parameter_sources =
-            (callee.is_none() && inline_parameters.is_none() && inline_bound.is_none())
-                .then(|| self.pending_parameter_sources(callee_value, true))
-                .flatten();
-        let parameters = inline_parameters
-            .as_ref()
-            .or_else(|| inline_bound.as_ref().map(|(parameters, _)| parameters));
-        let method_guard = inline_bound.as_ref().and_then(|(_, guards)| guards.first());
         let mut stable_parameter_positions = true;
         for (index, argument) in constructor.arguments.iter().enumerate() {
             let Some(argument) = argument.as_expression() else {
@@ -12857,10 +13007,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     self.record_pending_callable_argument(
                         argument,
                         callee.as_ref(),
-                        parameters,
+                        inline_parameters.as_ref(),
                         index,
                         result_discarded,
-                        method_guard,
+                        None,
                     );
                 }
             } else {
@@ -14238,25 +14388,43 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.propagate_local_non_consuming_parameters();
         for read in std::mem::take(&mut self.pending_callable_argument_reads) {
             let parameters_are_non_consuming =
-                |parameters: &NonConsumingParameters| match read.parameter_selection {
-                    PendingParameterSelection::Index(index) => parameters
-                        .returned(index)
+                |parameters: &NonConsumingParameters, parameter_offset: usize| match read
+                    .parameter_selection
+                {
+                    PendingParameterSelection::Index(index) => index
+                        .checked_add(parameter_offset)
+                        .and_then(|index| parameters.returned(index))
                         .is_some_and(|returned| !returned || read.result_discarded),
-                    PendingParameterSelection::All => {
-                        parameters.all_non_consuming(read.result_discarded)
-                    }
+                    PendingParameterSelection::All => parameters
+                        .shifted(parameter_offset)
+                        .all_non_consuming(read.result_discarded),
                 };
             let sources_are_non_consuming =
                 read.parameter_sources.as_ref().is_some_and(|sources| {
                     !sources.is_empty()
                         && sources.iter().all(|source| {
-                            let parameters = match source {
-                                PendingParameterSource::Local(source) => {
-                                    self.local_non_consuming_parameters.get(source)
-                                }
-                                PendingParameterSource::Inline(parameters) => Some(parameters),
+                            let (parameters, parameter_offset, method_guards) = match source {
+                                PendingParameterSource::Local {
+                                    source,
+                                    parameter_offset,
+                                    method_guards,
+                                } => (
+                                    self.local_non_consuming_parameters.get(source),
+                                    *parameter_offset,
+                                    method_guards,
+                                ),
+                                PendingParameterSource::Inline {
+                                    parameters,
+                                    parameter_offset,
+                                    method_guards,
+                                } => (Some(parameters), *parameter_offset, method_guards),
                             };
-                            parameters.is_some_and(&parameters_are_non_consuming)
+                            method_guards
+                                .iter()
+                                .all(|guard| self.method_guard_is_intact(guard))
+                                && parameters.is_some_and(|parameters| {
+                                    parameters_are_non_consuming(parameters, parameter_offset)
+                                })
                         })
                 });
             let non_consuming = read
