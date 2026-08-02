@@ -9981,9 +9981,34 @@ struct TerminalAliasGuard {
     method: &'static str,
 }
 
+enum PendingCallableArgumentValue {
+    Reference {
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+    },
+    Invocations(PendingDiscardedInvocations),
+}
+
+enum PendingNonExecutingAction {
+    CallableRead {
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        method_guard: Option<GeneratorMethodGuard>,
+    },
+    BodySpan {
+        body_span: GeneratorBodySpan,
+        method_guard: Option<GeneratorMethodGuard>,
+    },
+}
+
+#[derive(Default)]
+struct PendingDiscardedInvocations {
+    invocation_spans: BTreeSet<(u32, u32)>,
+    nonexecuting_actions: Vec<PendingNonExecutingAction>,
+}
+
 struct PendingCallableArgumentRead {
-    source: StaticAliasPath,
-    source_span: (u32, u32),
+    value: PendingCallableArgumentValue,
     callee: Option<StaticAliasPath>,
     inline_parameters: Option<NonConsumingParameters>,
     parameter_index: usize,
@@ -11742,6 +11767,214 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn collect_pending_nonexecuting_callable(
+        &self,
+        expression: &Expression<'_>,
+        method: Option<(&StaticAliasPath, &'static str, bool)>,
+        actions: &mut Vec<PendingNonExecutingAction>,
+    ) -> bool {
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            let method_guard =
+                method.map(
+                    |(owner, method, check_source_method)| GeneratorMethodGuard {
+                        source: check_source_method.then_some(source.clone()),
+                        owner: owner.clone(),
+                        method,
+                    },
+                );
+            actions.push(PendingNonExecutingAction::CallableRead {
+                source,
+                source_span,
+                method_guard,
+            });
+            return true;
+        }
+        if method.is_none()
+            && let Some((source, source_span)) =
+                self.constructed_instance_callable_reference(expression)
+        {
+            actions.push(PendingNonExecutingAction::CallableRead {
+                source,
+                source_span,
+                method_guard: None,
+            });
+            return true;
+        }
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                let Some(body_span) = Self::generator_body_span(function) else {
+                    return false;
+                };
+                let method_guard = method.map(|(owner, method, _)| GeneratorMethodGuard {
+                    source: None,
+                    owner: owner.clone(),
+                    method,
+                });
+                actions.push(PendingNonExecutingAction::BodySpan {
+                    body_span,
+                    method_guard,
+                });
+                true
+            }
+            Expression::ConditionalExpression(expression) => {
+                let consequent = self.collect_pending_nonexecuting_callable(
+                    &expression.consequent,
+                    method,
+                    actions,
+                );
+                let alternate = self.collect_pending_nonexecuting_callable(
+                    &expression.alternate,
+                    method,
+                    actions,
+                );
+                consequent || alternate
+            }
+            Expression::LogicalExpression(expression) => {
+                let left =
+                    self.collect_pending_nonexecuting_callable(&expression.left, method, actions);
+                let right =
+                    self.collect_pending_nonexecuting_callable(&expression.right, method, actions);
+                left || right
+            }
+            Expression::SequenceExpression(expression) => {
+                expression.expressions.last().is_some_and(|expression| {
+                    self.collect_pending_nonexecuting_callable(expression, method, actions)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn collect_pending_discarded_call(
+        &self,
+        call: &CallExpression<'_>,
+        pending: &mut PendingDiscardedInvocations,
+    ) {
+        let invocation_span = (call.span.start, call.span.end);
+        pending.invocation_spans.insert(invocation_span);
+        if let Some((source, method_guard, _)) = self.assignment_invocation_target(call) {
+            pending
+                .nonexecuting_actions
+                .push(PendingNonExecutingAction::CallableRead {
+                    source,
+                    source_span: invocation_span,
+                    method_guard,
+                });
+            return;
+        }
+        if !call.optional {
+            let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+            if static_alias_source_path(self.scoping, &call.callee)
+                .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
+                && let Some(target) = call
+                    .arguments
+                    .first()
+                    .and_then(|argument| argument.as_expression())
+                && self.collect_pending_nonexecuting_callable(
+                    target,
+                    Some((&reflect, "apply", false)),
+                    &mut pending.nonexecuting_actions,
+                )
+            {
+                return;
+            }
+            let indirect = match unwrap_transparent_call_expression(&call.callee) {
+                Expression::StaticMemberExpression(member) if !member.optional => {
+                    match member.property.name.as_str() {
+                        "call" => Some((&member.object, "call")),
+                        "apply" => Some((&member.object, "apply")),
+                        _ => None,
+                    }
+                }
+                Expression::ComputedMemberExpression(member) if !member.optional => {
+                    static_member_name(&member.expression).and_then(|method| {
+                        match method.as_str() {
+                            "call" => Some((&member.object, "call")),
+                            "apply" => Some((&member.object, "apply")),
+                            _ => None,
+                        }
+                    })
+                }
+                _ => None,
+            };
+            if let Some((target, method @ ("call" | "apply"))) = indirect {
+                let function_prototype = StaticAliasPath::unresolved_global("Function".to_string())
+                    .with_property("prototype".to_string());
+                if self.collect_pending_nonexecuting_callable(
+                    target,
+                    Some((&function_prototype, method, true)),
+                    &mut pending.nonexecuting_actions,
+                ) {
+                    return;
+                }
+            }
+        }
+        self.collect_pending_nonexecuting_callable(
+            &call.callee,
+            None,
+            &mut pending.nonexecuting_actions,
+        );
+    }
+
+    fn pending_discarded_invocations(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<PendingDiscardedInvocations> {
+        fn collect(
+            collector: &GeneratorExecutionCollector<'_>,
+            expression: &Expression<'_>,
+            pending: &mut PendingDiscardedInvocations,
+        ) {
+            match expression.get_inner_expression() {
+                Expression::CallExpression(call) => {
+                    collector.collect_pending_discarded_call(call, pending);
+                }
+                Expression::ChainExpression(chain) => {
+                    if let ChainElement::CallExpression(call) = &chain.expression {
+                        collector.collect_pending_discarded_call(call, pending);
+                    }
+                }
+                Expression::TaggedTemplateExpression(tagged) => {
+                    let invocation_span = (tagged.span.start, tagged.span.end);
+                    pending.invocation_spans.insert(invocation_span);
+                    if let Some(source) = collector.assignment_callable_target(&tagged.tag) {
+                        pending.nonexecuting_actions.push(
+                            PendingNonExecutingAction::CallableRead {
+                                source,
+                                source_span: invocation_span,
+                                method_guard: None,
+                            },
+                        );
+                    } else {
+                        collector.collect_pending_nonexecuting_callable(
+                            &tagged.tag,
+                            None,
+                            &mut pending.nonexecuting_actions,
+                        );
+                    }
+                }
+                Expression::ConditionalExpression(expression) => {
+                    collect(collector, &expression.consequent, pending);
+                    collect(collector, &expression.alternate, pending);
+                }
+                Expression::LogicalExpression(expression) => {
+                    collect(collector, &expression.left, pending);
+                    collect(collector, &expression.right, pending);
+                }
+                Expression::SequenceExpression(expression) => {
+                    if let Some(expression) = expression.expressions.last() {
+                        collect(collector, expression, pending);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut pending = PendingDiscardedInvocations::default();
+        collect(self, expression, &mut pending);
+        (!pending.invocation_spans.is_empty()).then_some(pending)
+    }
+
     fn record_pending_callable_argument(
         &mut self,
         expression: &Expression<'_>,
@@ -11751,32 +11984,36 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         result_discarded: bool,
         method_guard: Option<&GeneratorMethodGuard>,
     ) {
-        let Some((source, source_span)) = self.callable_reference(expression) else {
-            return;
-        };
-        if self
-            .retained_callable_reads
-            .iter()
-            .any(|retained| retained.source == source && retained.source_span == source_span)
-            || self.generator_argument_reads.iter().any(|retained| {
-                retained.source == source
-                    && retained.source_span == source_span
-                    && retained.source == retained.target
-            })
-            || self
-                .non_escaping_callable_reads
-                .contains(&(source.clone(), source_span))
-            || self
-                .initial_generator_next_argument_reads
-                .iter()
-                .any(|read| read.source == source && read.source_span == source_span)
-        {
-            return;
-        }
+        let value =
+            if let Some((source, source_span)) = self.callable_reference(expression) {
+                if self.retained_callable_reads.iter().any(|retained| {
+                    retained.source == source && retained.source_span == source_span
+                }) || self.generator_argument_reads.iter().any(|retained| {
+                    retained.source == source
+                        && retained.source_span == source_span
+                        && retained.source == retained.target
+                }) || self
+                    .non_escaping_callable_reads
+                    .contains(&(source.clone(), source_span))
+                    || self
+                        .initial_generator_next_argument_reads
+                        .iter()
+                        .any(|read| read.source == source && read.source_span == source_span)
+                {
+                    return;
+                }
+                PendingCallableArgumentValue::Reference {
+                    source,
+                    source_span,
+                }
+            } else if let Some(pending) = self.pending_discarded_invocations(expression) {
+                PendingCallableArgumentValue::Invocations(pending)
+            } else {
+                return;
+            };
         self.pending_callable_argument_reads
             .push(PendingCallableArgumentRead {
-                source,
-                source_span,
+                value,
                 callee: callee.cloned(),
                 inline_parameters: inline_parameters.cloned(),
                 parameter_index,
@@ -13463,13 +13700,60 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     })
                     .and_then(|parameters| parameters.returned(read.parameter_index))
                     .is_some_and(|returned| !returned || read.result_discarded);
-            if non_consuming {
-                self.discarded_value_reads
-                    .entry(read.source)
-                    .or_default()
-                    .insert(read.source_span);
-            } else {
-                self.escaped_callable_paths.insert(read.source);
+            match read.value {
+                PendingCallableArgumentValue::Reference {
+                    source,
+                    source_span,
+                } => {
+                    if non_consuming {
+                        self.discarded_value_reads
+                            .entry(source)
+                            .or_default()
+                            .insert(source_span);
+                    } else {
+                        self.escaped_callable_paths.insert(source);
+                    }
+                }
+                PendingCallableArgumentValue::Invocations(pending) if non_consuming => {
+                    self.discarded_invocation_spans
+                        .extend(pending.invocation_spans);
+                    for action in pending.nonexecuting_actions {
+                        match action {
+                            PendingNonExecutingAction::CallableRead {
+                                source,
+                                source_span,
+                                method_guard: Some(method_guard),
+                            } => self.guarded_discarded_invocation_reads.push((
+                                source,
+                                source_span,
+                                method_guard,
+                            )),
+                            PendingNonExecutingAction::CallableRead {
+                                source,
+                                source_span,
+                                method_guard: None,
+                            } => {
+                                self.discarded_invocation_reads
+                                    .entry(source)
+                                    .or_default()
+                                    .insert(source_span);
+                            }
+                            PendingNonExecutingAction::BodySpan {
+                                body_span,
+                                method_guard: Some(method_guard),
+                            } => self
+                                .guarded_unexecuted_body_spans
+                                .push((body_span, method_guard)),
+                            PendingNonExecutingAction::BodySpan {
+                                body_span,
+                                method_guard: None,
+                            } => {
+                                self.directly_unexecuted_body_spans.insert(body_span);
+                            }
+                        }
+                    }
+                }
+                PendingCallableArgumentValue::Invocations(_) => {}
             }
         }
         for read in std::mem::take(&mut self.initial_generator_next_argument_reads) {

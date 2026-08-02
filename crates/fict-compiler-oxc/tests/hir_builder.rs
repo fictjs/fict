@@ -4967,6 +4967,187 @@ fn pure_local_calls_preserve_receiver_methods() {
 }
 
 #[test]
+fn direct_generator_results_in_non_consuming_arguments_remain_unadvanced() {
+    for (name, helper, call) in [
+        (
+            "direct generator result passed to local no-op",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore(inspect());",
+        ),
+        (
+            "direct generator result passed to inline no-op",
+            "function* inspect() { values.forEach = null; }",
+            "(value => void value)(inspect());",
+        ),
+        (
+            "conditional direct generator result passed to local no-op",
+            "function* inspect() { values.forEach = null; } function* alternate() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore(choose ? inspect() : alternate());",
+        ),
+        (
+            "direct generator result passed through call",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore.call(null, inspect());",
+        ),
+        (
+            "direct generator result passed through apply",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore.apply(null, [inspect()]);",
+        ),
+        (
+            "direct generator result passed through Reflect.apply",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "Reflect.apply(ignore, null, [inspect()]);",
+        ),
+        (
+            "direct generator result passed to local tag",
+            "function* inspect() { values.forEach = null; } function ignore(_strings, value) { void value; }",
+            "ignore`${inspect()}`;",
+        ),
+        (
+            "direct generator result passed to local constructor",
+            "function* inspect() { values.forEach = null; } function Ignore(value) { void value; }",
+            "new Ignore(inspect());",
+        ),
+        (
+            "direct generator result retained by local no-op bind",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const run = ignore.bind(null, inspect()); run();",
+        ),
+        (
+            "direct generator result retained by inline no-op bind",
+            "function* inspect() { values.forEach = null; }",
+            "const run = (value => void value).bind(null, inspect()); run();",
+        ),
+        (
+            "inline generator result passed to local no-op",
+            "function ignore(value) { void value; }",
+            "ignore((function* () { values.forEach = null; })());",
+        ),
+        (
+            "inline indirect generator result passed to local no-op",
+            "function ignore(value) { void value; }",
+            "ignore((function* () { values.forEach = null; }).call(null));",
+        ),
+        (
+            "tagged generator result passed to local no-op",
+            "function* inspect(_strings) { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore(inspect`value`);",
+        ),
+        (
+            "indirect generator result passed to local no-op",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore(inspect.call(null));",
+        ),
+        (
+            "reflected generator result passed to local no-op",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore(Reflect.apply(inspect, null, []));",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {call}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn consumed_direct_generator_results_propagate_local_effects() {
+    for (name, setup, invocation) in [
+        (
+            "local consumer advances direct generator result",
+            "function* mutate() { values.forEach = null; } function consume(value) { value.next(); }",
+            "consume(mutate());",
+        ),
+        (
+            "observed identity exposes direct generator result",
+            "function* mutate() { values.forEach = null; } function identity(value) { return value; }",
+            "identity(mutate()).next();",
+        ),
+        (
+            "overridden call consumes direct generator result",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } ignore.call = function (_receiver, value) { value.next(); };",
+            "ignore.call(null, mutate());",
+        ),
+        (
+            "overridden bind consumes direct generator result",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } ignore.bind = function (_receiver, value) { value.next(); return () => {}; };",
+            "const run = ignore.bind(null, mutate()); run();",
+        ),
+        (
+            "spread advances direct generator result",
+            "function* mutate() { values.forEach = null; yield 1; } function ignore() {}",
+            "ignore(...mutate());",
+        ),
+        (
+            "overridden inner call eagerly mutates receiver",
+            "function* mutate() {} function ignore(value) { void value; } mutate.call = function () { values.forEach = null; return {}; };",
+            "ignore(mutate.call(null));",
+        ),
+        (
+            "overridden prototype call eagerly mutates receiver",
+            "function* mutate() {} function ignore(value) { void value; } Function.prototype.call = function () { values.forEach = null; return {}; };",
+            "ignore(mutate.call(null));",
+        ),
+        (
+            "assigned direct generator result remains observable",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } let iterator;",
+            "ignore(iterator = mutate()); iterator.next();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn observed_generator_iterators_propagate_local_effects() {
     for (name, setup, invocation) in [
         (
