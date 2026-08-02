@@ -4007,6 +4007,36 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); void (value => value)(iterator);",
         ),
         (
+            "stored inline bound no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const run = (value => void value).bind(null);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
+            "immediate inline bound no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (value => void value).bind(null)(iterator);",
+        ),
+        (
+            "inline bound no-op retains generator iterator argument",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); const run = (value => void value).bind(null, iterator); run();",
+        ),
+        (
+            "conditional inline bound no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const run = choose ? (value => void value).bind(null) : (value => {}).bind(null);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
+            "chained inline bound no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const run = (function (_prefix, value) { void value; }).bind(null, 0).bind(null);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
+            "discarded inline bind retains generator iterator receiver",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); (function () {}).bind(iterator);",
+        ),
+        (
             "bound local no-op generator iterator argument",
             "function* inspect() { values.forEach = null; } function ignore(value) { void value; } const run = ignore.bind(null);",
             "const iterator = inspect(); run(iterator);",
@@ -5233,6 +5263,36 @@ fn observed_generator_iterators_propagate_local_effects() {
             "inline apply spread shifts iterator to consuming parameter",
             "function* mutate() { values.forEach = null; }",
             "const iterator = mutate(); ((_first, _second, safe, value) => { void safe; value.next(); }).apply(null, [null, ...[null, null], iterator]);",
+        ),
+        (
+            "inline bound callable consumes iterator argument",
+            "function* mutate() { values.forEach = null; } const run = (value => value.next()).bind(null);",
+            "const iterator = mutate(); run(iterator);",
+        ),
+        (
+            "inline bound callable consumes iterator receiver",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); const run = (function () { return this.next(); }).bind(iterator); run();",
+        ),
+        (
+            "observed inline bound identity exposes iterator",
+            "function* mutate() { values.forEach = null; } const run = (value => value).bind(null);",
+            "const iterator = mutate(); const result = run(iterator); result.next();",
+        ),
+        (
+            "overridden prototype bind consumes inline iterator argument",
+            "function* mutate() { values.forEach = null; } Function.prototype.bind = function () { return value => value.next(); }; const run = (value => void value).bind(null);",
+            "const iterator = mutate(); run(iterator);",
+        ),
+        (
+            "mixed conditional inline bound callable consumes iterator",
+            "function* mutate() { values.forEach = null; } const run = choose ? (value => void value).bind(null) : (value => value.next()).bind(null);",
+            "const iterator = mutate(); run(iterator);",
+        ),
+        (
+            "inline bind spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; } const run = ((_first, safe, value) => { void safe; value.next(); }).bind(null, ...[null, null]);",
+            "const iterator = mutate(); run(iterator);",
         ),
         (
             "direct eval may consume iterator argument",

@@ -9933,6 +9933,19 @@ struct PendingCallableArgumentRead {
     method_guard: Option<GeneratorMethodGuard>,
 }
 
+struct GuardedLocalNonConsumingParameters {
+    target: StaticAliasPath,
+    parameters: BTreeMap<usize, bool>,
+    method_guards: Vec<GeneratorMethodGuard>,
+}
+
+struct DirectInlineBoundParameters {
+    source_parameters: BTreeMap<usize, bool>,
+    parameters: BTreeMap<usize, bool>,
+    guard: GeneratorMethodGuard,
+    method_guards: Vec<GeneratorMethodGuard>,
+}
+
 struct InitialGeneratorNextArgumentRead {
     source: StaticAliasPath,
     source_span: (u32, u32),
@@ -10098,6 +10111,7 @@ struct GeneratorExecutionCollector<'semantic> {
     generator_result_reads: Vec<ForwardedCallableRead>,
     terminal_method_alias_reads: Vec<ForwardedCallableRead>,
     local_non_consuming_parameters: BTreeMap<StaticAliasPath, BTreeMap<usize, bool>>,
+    guarded_local_non_consuming_parameters: Vec<GuardedLocalNonConsumingParameters>,
     pending_callable_argument_reads: Vec<PendingCallableArgumentRead>,
     initial_generator_next_argument_reads: Vec<InitialGeneratorNextArgumentRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
@@ -10133,6 +10147,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             generator_result_reads: Vec::new(),
             terminal_method_alias_reads: Vec::new(),
             local_non_consuming_parameters: BTreeMap::new(),
+            guarded_local_non_consuming_parameters: Vec::new(),
             pending_callable_argument_reads: Vec::new(),
             initial_generator_next_argument_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
@@ -10480,6 +10495,111 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 if expression.operator == OxcAssignmentOperator::Assign =>
             {
                 self.inline_non_consuming_parameters(&expression.right)
+            }
+            _ => None,
+        }
+    }
+
+    fn direct_inline_bound_non_consuming_parameters(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<DirectInlineBoundParameters> {
+        let call = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        self.direct_inline_bound_call_parameters(call)
+    }
+
+    fn direct_inline_bound_call_parameters(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<DirectInlineBoundParameters> {
+        let source = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) if member.property.name == "bind" => {
+                &member.object
+            }
+            Expression::ComputedMemberExpression(member)
+                if static_member_name(&member.expression).as_deref() == Some("bind") =>
+            {
+                &member.object
+            }
+            _ => return None,
+        };
+        let (source_parameters, mut method_guards) = self
+            .inline_non_consuming_parameters(source)
+            .map(|parameters| (parameters, Vec::new()))
+            .or_else(|| self.inline_bound_non_consuming_parameters(source))?;
+        if call
+            .arguments
+            .iter()
+            .any(|argument| argument.as_expression().is_none())
+        {
+            return None;
+        }
+        let offset = call.arguments.len().saturating_sub(1);
+        let parameters = source_parameters
+            .iter()
+            .filter_map(|(index, returned)| {
+                index.checked_sub(offset).map(|index| (index, *returned))
+            })
+            .collect();
+        let guard = GeneratorMethodGuard {
+            source: None,
+            owner: StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string()),
+            method: "bind",
+        };
+        method_guards.push(guard.clone());
+        Some(DirectInlineBoundParameters {
+            source_parameters,
+            parameters,
+            guard,
+            method_guards,
+        })
+    }
+
+    fn inline_bound_non_consuming_parameters(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<(BTreeMap<usize, bool>, Vec<GeneratorMethodGuard>)> {
+        if let Some(bound) = self.direct_inline_bound_non_consuming_parameters(expression) {
+            return Some((bound.parameters, bound.method_guards));
+        }
+        match expression.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let (parameters, mut guards) =
+                    self.inline_bound_non_consuming_parameters(&expression.consequent)?;
+                let (alternate, alternate_guards) =
+                    self.inline_bound_non_consuming_parameters(&expression.alternate)?;
+                guards.extend(alternate_guards);
+                Some((
+                    Self::intersect_non_consuming_parameters(parameters, &alternate),
+                    guards,
+                ))
+            }
+            Expression::LogicalExpression(expression) => {
+                let (parameters, mut guards) =
+                    self.inline_bound_non_consuming_parameters(&expression.left)?;
+                let (alternate, alternate_guards) =
+                    self.inline_bound_non_consuming_parameters(&expression.right)?;
+                guards.extend(alternate_guards);
+                Some((
+                    Self::intersect_non_consuming_parameters(parameters, &alternate),
+                    guards,
+                ))
+            }
+            Expression::SequenceExpression(expression) => {
+                self.inline_bound_non_consuming_parameters(expression.expressions.last()?)
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.inline_bound_non_consuming_parameters(&expression.right)
             }
             _ => None,
         }
@@ -11242,6 +11362,58 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_inline_bind_reads(
+        &mut self,
+        target: Option<&StaticAliasPath>,
+        expression: &Expression<'_>,
+    ) {
+        if let Some(bound) = self.direct_inline_bound_non_consuming_parameters(expression) {
+            let call = match expression.get_inner_expression() {
+                Expression::CallExpression(call) => call.as_ref(),
+                Expression::ChainExpression(chain) => match &chain.expression {
+                    ChainElement::CallExpression(call) => call.as_ref(),
+                    _ => return,
+                },
+                _ => return,
+            };
+            for (parameter_index, argument) in call.arguments.iter().skip(1).enumerate() {
+                self.record_pending_callable_argument(
+                    argument.as_expression().expect("ordinary bind argument"),
+                    None,
+                    Some(&bound.source_parameters),
+                    parameter_index,
+                    false,
+                    Some(&bound.guard),
+                );
+            }
+            if let Some(target) = target {
+                self.record_retained_bind_arguments(target, expression, &bound.guard);
+            }
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                self.record_inline_bind_reads(target, &expression.consequent);
+                self.record_inline_bind_reads(target, &expression.alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.record_inline_bind_reads(target, &expression.left);
+                self.record_inline_bind_reads(target, &expression.right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(expression) = expression.expressions.last() {
+                    self.record_inline_bind_reads(target, expression);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.record_inline_bind_reads(target, &expression.right);
+            }
+            _ => {}
+        }
+    }
+
     fn record_discarded_bind(&mut self, expression: &Expression<'_>) -> bool {
         let call = match expression.get_inner_expression() {
             Expression::CallExpression(call) => call.as_ref(),
@@ -11665,6 +11837,65 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 receiver_index,
                 result_discarded,
             );
+            return;
+        }
+        if let Some(bound) = self.direct_inline_bound_call_parameters(call) {
+            if result_discarded {
+                for argument in &call.arguments {
+                    let Some((source, source_span)) = argument
+                        .as_expression()
+                        .and_then(|argument| self.callable_reference(argument))
+                    else {
+                        continue;
+                    };
+                    self.guarded_discarded_invocation_reads.push((
+                        source.clone(),
+                        source_span,
+                        bound.guard.clone(),
+                    ));
+                    self.non_escaping_callable_reads
+                        .insert((source, source_span));
+                }
+                return;
+            }
+            if let Some(receiver) = call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+            {
+                self.record_pending_callable_argument(receiver, None, None, 0, false, None);
+            }
+            for (parameter_index, argument) in call.arguments.iter().skip(1).enumerate() {
+                self.record_pending_callable_argument(
+                    argument.as_expression().expect("ordinary bind argument"),
+                    None,
+                    Some(&bound.source_parameters),
+                    parameter_index,
+                    false,
+                    Some(&bound.guard),
+                );
+            }
+            return;
+        }
+        if let Some((parameters, method_guards)) =
+            self.inline_bound_non_consuming_parameters(&call.callee)
+            && let Some(guard) = method_guards.first()
+        {
+            for (parameter_index, argument) in call
+                .arguments
+                .iter()
+                .take_while(|argument| argument.as_expression().is_some())
+                .enumerate()
+            {
+                self.record_pending_callable_argument(
+                    argument.as_expression().expect("ordinary call argument"),
+                    None,
+                    Some(&parameters),
+                    parameter_index,
+                    result_discarded,
+                    Some(guard),
+                );
+            }
             return;
         }
         if let Some(GeneratorBindForwarding::Source {
@@ -12493,6 +12724,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         if !self.is_immutable_local_callable_target(target) {
             return;
         }
+        if let Some((parameters, method_guards)) =
+            self.inline_bound_non_consuming_parameters(initializer)
+        {
+            self.record_inline_bind_reads(Some(target), initializer);
+            self.guarded_local_non_consuming_parameters
+                .push(GuardedLocalNonConsumingParameters {
+                    target: target.clone(),
+                    parameters,
+                    method_guards,
+                });
+            return;
+        }
         let parameters = match initializer.get_inner_expression() {
             Expression::FunctionExpression(function) => {
                 self.local_non_consuming_parameters(function)
@@ -13041,6 +13284,16 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     }
 
     fn finish(mut self) -> GeneratorExecutionProof {
+        for candidate in std::mem::take(&mut self.guarded_local_non_consuming_parameters) {
+            if candidate
+                .method_guards
+                .iter()
+                .all(|guard| self.method_guard_is_intact(guard))
+            {
+                self.local_non_consuming_parameters
+                    .insert(candidate.target, candidate.parameters);
+            }
+        }
         self.propagate_local_non_consuming_parameters();
         for read in std::mem::take(&mut self.pending_callable_argument_reads) {
             let non_consuming = read
