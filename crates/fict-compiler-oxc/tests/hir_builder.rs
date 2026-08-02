@@ -5415,6 +5415,194 @@ fn immediate_consuming_callable_assignments_propagate_local_effects() {
 }
 
 #[test]
+fn reflect_construct_preserves_unadvanced_iterator_arguments() {
+    for (name, setup, constructor, invocation) in [
+        (
+            "function constructor ignores iterator",
+            "",
+            "function* inspect() { values.forEach = null; } function Ignore(value) { void value; }",
+            "const iterator = inspect(); Reflect.construct(Ignore, [iterator]);",
+        ),
+        (
+            "class constructor ignores direct generator result",
+            "",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "Reflect.construct(Ignore, [inspect()]);",
+        ),
+        (
+            "computed Reflect.construct ignores iterator",
+            "",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); Reflect['construct'](Ignore, [iterator]);",
+        ),
+        (
+            "aliased Reflect.construct ignores iterator",
+            "const construct = Reflect.construct;",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); construct(Ignore, [iterator]);",
+        ),
+        (
+            "inline class constructor ignores iterator",
+            "",
+            "function* inspect() { values.forEach = null; }",
+            "const iterator = inspect(); Reflect.construct(class { constructor(value) { void value; } }, [iterator]);",
+        ),
+        (
+            "default base class ignores iterator",
+            "",
+            "function* inspect() { values.forEach = null; } class Ignore {}",
+            "const iterator = inspect(); Reflect.construct(Ignore, [iterator]);",
+        ),
+        (
+            "bound class constructor ignores iterator",
+            "",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } } const Bound = Ignore.bind(null);",
+            "const iterator = inspect(); Reflect.construct(Bound, [iterator]);",
+        ),
+        (
+            "class constructor ignores stored iterator arguments",
+            "",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); const args = [iterator]; Reflect.construct(Ignore, args);",
+        ),
+        (
+            "class constructor ignores stored direct generator results",
+            "",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "const args = [inspect()]; Reflect.construct(Ignore, args);",
+        ),
+        (
+            "class constructor ignores array-like iterator arguments",
+            "",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "const iterator = inspect(); Reflect.construct(Ignore, { 0: iterator, length: 1 });",
+        ),
+        (
+            "discarded identity constructor result ignores iterator",
+            "",
+            "function* inspect() { values.forEach = null; } function Identity(value) { return value; }",
+            "const iterator = inspect(); void Reflect.construct(Identity, [iterator]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {constructor}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn consuming_reflect_construct_arguments_propagate_local_effects() {
+    for (name, setup, constructor, invocation) in [
+        (
+            "function constructor consumes iterator",
+            "",
+            "function* mutate() { values.forEach = null; } function Consume(value) { value.next(); }",
+            "const iterator = mutate(); Reflect.construct(Consume, [iterator]);",
+        ),
+        (
+            "observed identity constructor exposes iterator",
+            "",
+            "function* mutate() { values.forEach = null; } function Identity(value) { return value; }",
+            "const iterator = mutate(); Reflect.construct(Identity, [iterator]).next();",
+        ),
+        (
+            "overridden Reflect.construct consumes iterator",
+            "Reflect.construct = function (_target, args) { args[0].next(); return {}; };",
+            "function* mutate() { values.forEach = null; } function Ignore(value) { void value; }",
+            "const iterator = mutate(); Reflect.construct(Ignore, [iterator]);",
+        ),
+        (
+            "reassigned Reflect.construct alias consumes iterator",
+            "let construct = Reflect.construct; construct = function (_target, args) { args[0].next(); return {}; };",
+            "function* mutate() { values.forEach = null; } function Ignore(value) { void value; }",
+            "const iterator = mutate(); construct(Ignore, [iterator]);",
+        ),
+        (
+            "external constructor may consume iterator",
+            "",
+            "function* mutate() { values.forEach = null; }",
+            "const iterator = mutate(); Reflect.construct(External, [iterator]);",
+        ),
+        (
+            "Reflect.construct argument spread advances iterator",
+            "",
+            "function* mutate() { values.forEach = null; yield 1; } function Ignore() {}",
+            "const iterator = mutate(); Reflect.construct(Ignore, [...iterator]);",
+        ),
+        (
+            "function constructor consumes stored iterator arguments",
+            "",
+            "function* mutate() { values.forEach = null; } function Consume(value) { value.next(); }",
+            "const iterator = mutate(); const args = [iterator]; Reflect.construct(Consume, args);",
+        ),
+        (
+            "stored iterator arguments remain observable after construction",
+            "",
+            "function* mutate() { values.forEach = null; } function Ignore(value) { void value; }",
+            "const iterator = mutate(); const args = [iterator]; Reflect.construct(Ignore, args); args[0].next();",
+        ),
+        (
+            "function constructor consumes array-like iterator arguments",
+            "",
+            "function* mutate() { values.forEach = null; } function Consume(value) { value.next(); }",
+            "const iterator = mutate(); Reflect.construct(Consume, { 0: iterator, length: 1 });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(External) {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {constructor}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn observed_generator_iterators_propagate_local_effects() {
     for (name, setup, invocation) in [
         (

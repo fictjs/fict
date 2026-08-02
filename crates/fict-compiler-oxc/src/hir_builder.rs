@@ -9973,6 +9973,16 @@ impl NonConsumingParameters {
             safe_tail_start,
         }
     }
+
+    fn all_non_consuming(&self, result_discarded: bool) -> bool {
+        let Some(tail_start) = self.safe_tail_start else {
+            return false;
+        };
+        (0..tail_start).all(|index| {
+            self.returned(index)
+                .is_some_and(|returned| !returned || result_discarded)
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -10012,11 +10022,17 @@ struct RetainedInvocationSpans {
     invocation_spans: BTreeSet<(u32, u32)>,
 }
 
+#[derive(Clone, Copy)]
+enum PendingParameterSelection {
+    Index(usize),
+    All,
+}
+
 struct PendingCallableArgumentRead {
     value: PendingCallableArgumentValue,
     callee: Option<StaticAliasPath>,
     inline_parameters: Option<NonConsumingParameters>,
-    parameter_index: usize,
+    parameter_selection: PendingParameterSelection,
     result_discarded: bool,
     method_guard: Option<GeneratorMethodGuard>,
 }
@@ -10379,6 +10395,31 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 &assignment.right
             }
             _ => expression,
+        }
+    }
+
+    fn callable_resolves_to_path(
+        &self,
+        expression: &Expression<'_>,
+        expected: &StaticAliasPath,
+    ) -> bool {
+        let Some((mut current, _)) = self.callable_reference(expression) else {
+            return false;
+        };
+        let mut visited = BTreeSet::new();
+        loop {
+            if current == *expected {
+                return true;
+            }
+            if !visited.insert(current.clone())
+                || !self.is_immutable_local_callable_target(&current)
+            {
+                return false;
+            }
+            let Some(source) = self.sole_forwarded_callable_source(&current) else {
+                return false;
+            };
+            current = source.clone();
         }
     }
 
@@ -12112,6 +12153,120 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         result_discarded: bool,
         method_guard: Option<&GeneratorMethodGuard>,
     ) {
+        self.record_pending_callable_value(
+            expression,
+            callee,
+            inline_parameters,
+            PendingParameterSelection::Index(parameter_index),
+            result_discarded,
+            method_guard,
+        );
+    }
+
+    fn record_pending_callable_argument_list(
+        &mut self,
+        expression: &Expression<'_>,
+        callee: Option<&StaticAliasPath>,
+        inline_parameters: Option<&NonConsumingParameters>,
+        result_discarded: bool,
+        method_guard: Option<&GeneratorMethodGuard>,
+    ) {
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(expression) => {
+                for element in &expression.elements {
+                    if matches!(
+                        element,
+                        ArrayExpressionElement::Elision(_)
+                            | ArrayExpressionElement::SpreadElement(_)
+                    ) {
+                        continue;
+                    }
+                    self.record_pending_callable_argument_list(
+                        element.to_expression(),
+                        callee,
+                        inline_parameters,
+                        result_discarded,
+                        method_guard,
+                    );
+                }
+            }
+            Expression::ObjectExpression(expression) => {
+                for property in &expression.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        continue;
+                    };
+                    self.record_pending_callable_argument_list(
+                        &property.value,
+                        callee,
+                        inline_parameters,
+                        result_discarded,
+                        method_guard,
+                    );
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.record_pending_callable_argument_list(
+                    &expression.consequent,
+                    callee,
+                    inline_parameters,
+                    result_discarded,
+                    method_guard,
+                );
+                self.record_pending_callable_argument_list(
+                    &expression.alternate,
+                    callee,
+                    inline_parameters,
+                    result_discarded,
+                    method_guard,
+                );
+            }
+            Expression::LogicalExpression(expression) => {
+                self.record_pending_callable_argument_list(
+                    &expression.left,
+                    callee,
+                    inline_parameters,
+                    result_discarded,
+                    method_guard,
+                );
+                self.record_pending_callable_argument_list(
+                    &expression.right,
+                    callee,
+                    inline_parameters,
+                    result_discarded,
+                    method_guard,
+                );
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(expression) = expression.expressions.last() {
+                    self.record_pending_callable_argument_list(
+                        expression,
+                        callee,
+                        inline_parameters,
+                        result_discarded,
+                        method_guard,
+                    );
+                }
+            }
+            _ => self.record_pending_callable_value(
+                expression,
+                callee,
+                inline_parameters,
+                PendingParameterSelection::All,
+                result_discarded,
+                method_guard,
+            ),
+        }
+    }
+
+    fn record_pending_callable_value(
+        &mut self,
+        expression: &Expression<'_>,
+        callee: Option<&StaticAliasPath>,
+        inline_parameters: Option<&NonConsumingParameters>,
+        parameter_selection: PendingParameterSelection,
+        result_discarded: bool,
+        method_guard: Option<&GeneratorMethodGuard>,
+    ) {
         let value =
             if let Some((source, source_span)) = self.callable_reference(expression) {
                 if self.retained_callable_reads.iter().any(|retained| {
@@ -12144,7 +12299,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 value,
                 callee: callee.cloned(),
                 inline_parameters: inline_parameters.cloned(),
-                parameter_index,
+                parameter_selection,
                 result_discarded,
                 method_guard: method_guard.cloned(),
             });
@@ -12257,10 +12412,86 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_pending_reflect_construct_arguments(
+        &mut self,
+        call: &CallExpression<'_>,
+        result_discarded: bool,
+    ) -> bool {
+        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
+        let construct = reflect.clone().with_property("construct".to_string());
+        if !self.callable_resolves_to_path(Self::immediate_callable_value(&call.callee), &construct)
+        {
+            return false;
+        }
+        let Some(target) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return true;
+        };
+        let target = Self::immediate_callable_value(target);
+        let callee = self.callable_reference(target).map(|(callee, _)| callee);
+        let inline_parameters = if callee.is_some() {
+            None
+        } else {
+            match target.get_inner_expression() {
+                Expression::ClassExpression(class) => {
+                    self.local_non_consuming_class_parameters(class.as_ref())
+                }
+                _ => self.inline_non_consuming_parameters(target),
+            }
+        };
+        let Some(argument_list) = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+        else {
+            return true;
+        };
+        let guard = GeneratorMethodGuard {
+            source: None,
+            owner: reflect,
+            method: "construct",
+        };
+        let Expression::ArrayExpression(arguments) = argument_list.get_inner_expression() else {
+            self.record_pending_callable_argument_list(
+                argument_list,
+                callee.as_ref(),
+                inline_parameters.as_ref(),
+                result_discarded,
+                Some(&guard),
+            );
+            return true;
+        };
+        let mut stable_parameter_positions = true;
+        for (parameter_index, argument) in arguments.elements.iter().enumerate() {
+            match argument {
+                ArrayExpressionElement::Elision(_) => {}
+                ArrayExpressionElement::SpreadElement(_) => {
+                    stable_parameter_positions = false;
+                }
+                _ if stable_parameter_positions => self.record_pending_callable_argument(
+                    argument.to_expression(),
+                    callee.as_ref(),
+                    inline_parameters.as_ref(),
+                    parameter_index,
+                    result_discarded,
+                    Some(&guard),
+                ),
+                _ => self.record_escaped_callable_path(argument.to_expression()),
+            }
+        }
+        true
+    }
+
     fn record_pending_callable_arguments(&mut self, call: &CallExpression<'_>) {
         let result_discarded = self
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
+        if self.record_pending_reflect_construct_arguments(call, result_discarded) {
+            return;
+        }
         if let Some((callee, Some(guard), receiver_index)) = self.generator_invocation_target(call)
             && matches!(guard.method, "call" | "apply")
         {
@@ -13830,8 +14061,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                             .as_ref()
                             .and_then(|callee| self.local_non_consuming_parameters.get(callee))
                     })
-                    .and_then(|parameters| parameters.returned(read.parameter_index))
-                    .is_some_and(|returned| !returned || read.result_discarded);
+                    .is_some_and(|parameters| match read.parameter_selection {
+                        PendingParameterSelection::Index(index) => parameters
+                            .returned(index)
+                            .is_some_and(|returned| !returned || read.result_discarded),
+                        PendingParameterSelection::All => {
+                            parameters.all_non_consuming(read.result_discarded)
+                        }
+                    });
             match read.value {
                 PendingCallableArgumentValue::Reference {
                     source,
