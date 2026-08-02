@@ -2072,6 +2072,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             returned_callable_effects: BTreeMap::new(),
             returned_callable_aliases: BTreeMap::new(),
             returned_callable_ambiguous_targets: BTreeMap::new(),
+            generator_callable_body_spans: BTreeMap::new(),
             active_returned_callable_instances: BTreeMap::new(),
             current_callable_spans: Vec::new(),
             local_class_instances: BTreeSet::new(),
@@ -9910,6 +9911,89 @@ struct GeneratorExecutionProof {
     unexecuted_body_spans: BTreeSet<(u32, u32)>,
 }
 
+struct ReturnedGeneratorBodyCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    spans: BTreeSet<GeneratorBodySpan>,
+    sources: BTreeSet<StaticAliasPath>,
+}
+
+impl<'semantic> ReturnedGeneratorBodyCollector<'semantic> {
+    fn new(scoping: &'semantic Scoping) -> Self {
+        Self {
+            scoping,
+            spans: BTreeSet::new(),
+            sources: BTreeSet::new(),
+        }
+    }
+
+    fn collect_expression(&mut self, expression: &Expression<'_>) {
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                if let Some(body) = GeneratorExecutionCollector::generator_body_span(function) {
+                    self.spans.insert(body);
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_expression(&expression.consequent);
+                self.collect_expression(&expression.alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_expression(&expression.left);
+                self.collect_expression(&expression.right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(expression) = expression.expressions.last() {
+                    self.collect_expression(expression);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_expression(&expression.right);
+            }
+            Expression::CallExpression(call) => {
+                let bound = match unwrap_transparent_call_expression(&call.callee) {
+                    Expression::StaticMemberExpression(member)
+                        if member.property.name == "bind" =>
+                    {
+                        Some(&member.object)
+                    }
+                    Expression::ComputedMemberExpression(member)
+                        if static_member_name(&member.expression).as_deref() == Some("bind") =>
+                    {
+                        Some(&member.object)
+                    }
+                    _ => None,
+                };
+                if let Some(bound) = bound {
+                    self.collect_expression(bound);
+                } else if let Some(source) = static_alias_source_path(self.scoping, &call.callee) {
+                    self.sources.insert(source);
+                }
+            }
+            _ => {
+                if let Some(source) = static_alias_source_path(self.scoping, expression) {
+                    self.sources.insert(source);
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Visit<'a> for ReturnedGeneratorBodyCollector<'_> {
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if let Some(argument) = &statement.argument {
+            self.collect_expression(argument);
+        }
+    }
+
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _class: &Class<'a>) {}
+}
+
 struct ForwardedCallableRead {
     source: StaticAliasPath,
     source_span: (u32, u32),
@@ -10307,6 +10391,7 @@ struct GeneratorExecutionCollector<'semantic> {
     initial_generator_next_argument_reads: Vec<InitialGeneratorNextArgumentRead>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
+    returned_generator_body_spans: BTreeMap<StaticAliasPath, BTreeSet<GeneratorBodySpan>>,
     generator_callable_targets: BTreeSet<StaticAliasPath>,
     non_generator_callable_targets: BTreeSet<StaticAliasPath>,
     class_instance_generator_bodies: BTreeMap<StaticAliasPath, InstanceGeneratorBodies>,
@@ -10350,6 +10435,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             initial_generator_next_argument_reads: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
+            returned_generator_body_spans: BTreeMap::new(),
             generator_callable_targets: BTreeSet::new(),
             non_generator_callable_targets: BTreeSet::new(),
             class_instance_generator_bodies: BTreeMap::new(),
@@ -10642,6 +10728,75 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .then_some(function.body.as_ref())
             .flatten()
             .map(|body| (body.span.start, body.span.end))
+    }
+
+    fn resolve_returned_generator_bodies(
+        &self,
+        collector: ReturnedGeneratorBodyCollector<'_>,
+    ) -> BTreeSet<GeneratorBodySpan> {
+        let mut spans = collector.spans;
+        for source in collector.sources {
+            if let Some(returned) = self.returned_generator_body_spans.get(&source) {
+                spans.extend(returned.iter().copied());
+            }
+            spans.extend(
+                self.generator_body_targets
+                    .iter()
+                    .filter_map(|(span, target)| (target == &source).then_some(*span)),
+            );
+        }
+        spans
+    }
+
+    fn returned_generator_bodies_from_function(
+        &self,
+        function: &Function<'_>,
+    ) -> BTreeSet<GeneratorBodySpan> {
+        if function.generator || function.r#async {
+            return BTreeSet::new();
+        }
+        let Some(body) = &function.body else {
+            return BTreeSet::new();
+        };
+        let mut collector = ReturnedGeneratorBodyCollector::new(self.scoping);
+        collector.visit_function_body(body);
+        self.resolve_returned_generator_bodies(collector)
+    }
+
+    fn returned_generator_bodies_from_arrow(
+        &self,
+        function: &ArrowFunctionExpression<'_>,
+    ) -> BTreeSet<GeneratorBodySpan> {
+        if function.r#async {
+            return BTreeSet::new();
+        }
+        let mut collector = ReturnedGeneratorBodyCollector::new(self.scoping);
+        if let Some(expression) = function.get_expression() {
+            collector.collect_expression(expression);
+        } else {
+            collector.visit_function_body(&function.body);
+        }
+        self.resolve_returned_generator_bodies(collector)
+    }
+
+    fn record_returned_generator_factory_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let spans = match initializer.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                self.returned_generator_bodies_from_function(function)
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                self.returned_generator_bodies_from_arrow(function)
+            }
+            _ => return,
+        };
+        if !spans.is_empty() {
+            self.returned_generator_body_spans
+                .insert(target.clone(), spans);
+        }
     }
 
     fn analyze_local_non_consuming_parameters(
@@ -14496,6 +14651,29 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         )
     }
 
+    fn record_returned_generator_callable(
+        &mut self,
+        target: StaticAliasPath,
+        call: &CallExpression<'_>,
+    ) -> bool {
+        let Some(source) = static_alias_source_path(self.scoping, &call.callee) else {
+            return false;
+        };
+        let Some(body_spans) = self.returned_generator_body_spans.get(&source).cloned() else {
+            return false;
+        };
+        if body_spans.is_empty() {
+            return false;
+        }
+        self.generator_callable_targets.insert(target.clone());
+        self.generator_body_targets.extend(
+            body_spans
+                .into_iter()
+                .map(|body_span| (body_span, target.clone())),
+        );
+        true
+    }
+
     fn record_local_non_consuming_initializer(
         &mut self,
         target: &StaticAliasPath,
@@ -14697,6 +14875,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
+        self.record_returned_generator_factory_initializer(&target, initializer);
         self.record_local_non_consuming_initializer(&target, initializer);
         self.record_terminal_generator_method_alias(target.clone(), initializer);
         self.record_bound_terminal_generator_method_alias(target.clone(), initializer);
@@ -15139,11 +15318,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             },
             _ => None,
         };
-        if let Some(call) = call
-            && self.record_generator_result_forwarding(target.clone(), call)
-        {
-            self.non_generator_callable_targets.insert(target);
-            return;
+        if let Some(call) = call {
+            if self.record_returned_generator_callable(target.clone(), call) {
+                return;
+            }
+            if self.record_generator_result_forwarding(target.clone(), call) {
+                self.non_generator_callable_targets.insert(target);
+                return;
+            }
         }
         if let Expression::TaggedTemplateExpression(tagged) = expression.get_inner_expression() {
             let recorded = self.record_generator_result_source(target.clone(), &tagged.tag, None);
@@ -15970,6 +16152,20 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         if function.r#type == FunctionType::FunctionDeclaration
             && !function.generator
+            && !function.r#async
+            && let Some(target) = function
+                .id
+                .as_ref()
+                .and_then(|identifier| identifier.symbol_id.get())
+        {
+            let spans = self.returned_generator_bodies_from_function(function);
+            if !spans.is_empty() {
+                self.returned_generator_body_spans
+                    .insert(StaticAliasPath::root(target), spans);
+            }
+        }
+        if function.r#type == FunctionType::FunctionDeclaration
+            && !function.generator
             && let Some(target) = function
                 .id
                 .as_ref()
@@ -16190,6 +16386,7 @@ struct StaticHookAliasCollector<'semantic> {
     returned_callable_effects: BTreeMap<(u32, u32), BTreeSet<LocalCallableCapturedEffect>>,
     returned_callable_aliases: BTreeMap<(u32, u32), BTreeSet<(StaticAliasPath, StaticAliasPath)>>,
     returned_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
+    generator_callable_body_spans: BTreeMap<(u32, u32), (u32, u32)>,
     active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
     current_callable_spans: Vec<(u32, u32)>,
     local_class_instances: BTreeSet<StaticAliasPath>,
@@ -22449,14 +22646,18 @@ impl StaticHookAliasCollector<'_> {
                 for specialized in self.specialize_returned_callable_invocation(invocation.clone())
                 {
                     for variant in self.bound_invocation_variants(specialized) {
-                        if self.invocation_is_definitely_generator(&variant)
-                            && (variant.result_discarded || variant.construct)
-                        {
-                            continue;
-                        }
+                        let deferred_generator = self.invocation_is_definitely_generator(&variant)
+                            && (variant.result_discarded || variant.construct);
                         for (target, span, historical) in
                             self.invocation_callable_effect_instances(&variant)
                         {
+                            if deferred_generator
+                                && !self.generator_callable_body_spans.get(&span).is_some_and(
+                                    |body| self.unexecuted_generator_body_spans.contains(body),
+                                )
+                            {
+                                continue;
+                            }
                             instances
                                 .entry((target, span))
                                 .and_modify(|existing| *existing |= historical)
@@ -23216,6 +23417,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if function.generator
+            && let Some(body) = &function.body
+        {
+            self.generator_callable_body_spans.insert(
+                (function.span.start, function.span.end),
+                (body.span.start, body.span.end),
+            );
+        }
         if function.r#type == FunctionType::FunctionDeclaration
             && let Some(symbol) = function
                 .id

@@ -3632,6 +3632,31 @@ fn pure_local_calls_preserve_receiver_methods() {
             "inspect();",
         ),
         (
+            "unadvanced returned generator capture",
+            "function make(target) { return function* () { target.forEach = null; }; } const inspect = make(values);",
+            "const iterator = inspect(); void iterator;",
+        ),
+        (
+            "unadvanced arrow factory generator capture",
+            "const make = target => function* () { target.forEach = null; }; const inspect = make(values);",
+            "const iterator = inspect(); void iterator;",
+        ),
+        (
+            "unadvanced bound returned generator capture",
+            "function make(target) { return (function* () { target.forEach = null; }).bind(null); } const inspect = make(values);",
+            "const iterator = inspect(); void iterator;",
+        ),
+        (
+            "unadvanced delegated returned generator capture",
+            "function create(target) { return function* () { target.forEach = null; }; } function make(target) { return create(target); } const inspect = make(values);",
+            "const iterator = inspect(); void iterator;",
+        ),
+        (
+            "advanced sibling returned generator preserves capture",
+            "const other = []; function make(target) { return function* () { target.forEach = null; }; } const inspect = make(values); const mutateOther = make(other);",
+            "inspect(); mutateOther().next();",
+        ),
+        (
             "unadvanced aliased generator capture",
             "function* inspect() { values.forEach = null; } const run = inspect;",
             "run();",
@@ -6887,6 +6912,21 @@ fn observed_generator_iterators_propagate_local_effects() {
             "stored iterator advance",
             "function* mutate(target) { target.forEach = null; }",
             "const iterator = mutate(values); iterator.next();",
+        ),
+        (
+            "returned generator iterator advance",
+            "function make(target) { return function* () { target.forEach = null; }; } const mutate = make(values);",
+            "const iterator = mutate(); iterator.next();",
+        ),
+        (
+            "delegated returned generator iterator advance",
+            "function create(target) { return function* () { target.forEach = null; }; } function make(target) { return create(target); } const mutate = make(values);",
+            "const iterator = mutate(); iterator.next();",
+        ),
+        (
+            "returned generator parameter default",
+            "function make(target) { return function* (unused = (target.forEach = null)) {}; } const mutate = make(values);",
+            "mutate();",
         ),
         (
             "detached iterator advance",
