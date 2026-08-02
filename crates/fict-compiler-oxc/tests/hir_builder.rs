@@ -5289,6 +5289,132 @@ fn observed_direct_generator_results_in_containers_propagate_local_effects() {
 }
 
 #[test]
+fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
+    for (name, helper, invocation) in [
+        (
+            "assigned local no-op call",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } let run;",
+            "const iterator = inspect(); (run = ignore)(iterator);",
+        ),
+        (
+            "assigned local no-op receives direct generator result",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } let run;",
+            "(run = ignore)(inspect());",
+        ),
+        (
+            "assigned aliased local no-op call",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } const alias = ignore; let run;",
+            "const iterator = inspect(); (run = alias)(iterator);",
+        ),
+        (
+            "assigned bound local no-op call",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } let run;",
+            "const iterator = inspect(); (run = ignore.bind(null))(iterator);",
+        ),
+        (
+            "assigned local no-op tag",
+            "function* inspect() { values.forEach = null; } function ignore(_strings, value) { void value; } let run;",
+            "const iterator = inspect(); (run = ignore)`${iterator}`;",
+        ),
+        (
+            "assigned local no-op function constructor",
+            "function* inspect() { values.forEach = null; } function Ignore(value) { void value; } let Run;",
+            "const iterator = inspect(); new (Run = Ignore)(iterator);",
+        ),
+        (
+            "assigned local no-op class constructor",
+            "function* inspect() { values.forEach = null; } class Ignore { constructor(value) { void value; } } let Run;",
+            "const iterator = inspect(); new (Run = Ignore)(iterator);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn immediate_consuming_callable_assignments_propagate_local_effects() {
+    for (name, setup, invocation) in [
+        (
+            "assigned local consuming call",
+            "function* mutate() { values.forEach = null; } function consume(value) { value.next(); } let run;",
+            "const iterator = mutate(); (run = consume)(iterator);",
+        ),
+        (
+            "assigned mutable callable call",
+            "function* mutate() { values.forEach = null; } let consume = value => void value; consume = value => value.next(); let run;",
+            "const iterator = mutate(); (run = consume)(iterator);",
+        ),
+        (
+            "assigned bound override consumes iterator",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } ignore.bind = function () { return value => value.next(); }; let run;",
+            "const iterator = mutate(); (run = ignore.bind(null))(iterator);",
+        ),
+        (
+            "assigned local consuming tag",
+            "function* mutate() { values.forEach = null; } function consume(_strings, value) { value.next(); } let run;",
+            "const iterator = mutate(); (run = consume)`${iterator}`;",
+        ),
+        (
+            "assigned local consuming constructor",
+            "function* mutate() { values.forEach = null; } class Consume { constructor(value) { value.next(); } } let Run;",
+            "const iterator = mutate(); new (Run = Consume)(iterator);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn observed_generator_iterators_propagate_local_effects() {
     for (name, setup, invocation) in [
         (

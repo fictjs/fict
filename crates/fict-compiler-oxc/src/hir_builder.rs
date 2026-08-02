@@ -10369,6 +10369,19 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.assignment_target_path(assignment)
     }
 
+    fn immediate_callable_value<'a, 'ast>(
+        expression: &'a Expression<'ast>,
+    ) -> &'a Expression<'ast> {
+        match expression.get_inner_expression() {
+            Expression::AssignmentExpression(assignment)
+                if assignment.operator == OxcAssignmentOperator::Assign =>
+            {
+                &assignment.right
+            }
+            _ => expression,
+        }
+    }
+
     fn assignment_invocation_target(
         &self,
         call: &CallExpression<'_>,
@@ -12333,12 +12346,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             return;
         }
+        let callee_value = Self::immediate_callable_value(&call.callee);
         if let Some(GeneratorBindForwarding::Source {
             source: callee,
             guard,
             ..
-        }) = self.generator_bind_forwarding(&call.callee)
-            && let Some(parameter_offset) = Self::fixed_bound_parameter_count(&call.callee)
+        }) = self.generator_bind_forwarding(callee_value)
+            && let Some(parameter_offset) = Self::fixed_bound_parameter_count(callee_value)
         {
             for (parameter_index, argument) in call
                 .arguments
@@ -12358,11 +12372,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             return;
         }
         let callee = self
-            .callable_reference(&call.callee)
+            .callable_reference(callee_value)
             .map(|(callee, _)| callee);
         let inline_parameters = callee
             .is_none()
-            .then(|| self.inline_non_consuming_parameters(&call.callee))
+            .then(|| self.inline_non_consuming_parameters(callee_value))
             .flatten();
         for (parameter_index, argument) in call
             .arguments
@@ -12385,16 +12399,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let result_discarded = self
             .discarded_invocation_spans
             .contains(&(tagged.span.start, tagged.span.end));
-        let callee = self
-            .callable_reference(&tagged.tag)
-            .map(|(callee, _)| callee)
-            .or_else(|| self.assignment_callable_target(&tagged.tag));
+        let tag_value = Self::immediate_callable_value(&tagged.tag);
+        let callee = self.callable_reference(tag_value).map(|(callee, _)| callee);
         let inline_parameters = callee
             .is_none()
-            .then(|| self.inline_non_consuming_parameters(&tagged.tag))
+            .then(|| self.inline_non_consuming_parameters(tag_value))
             .flatten();
         let inline_bound = (callee.is_none() && inline_parameters.is_none())
-            .then(|| self.inline_bound_non_consuming_parameters(&tagged.tag))
+            .then(|| self.inline_bound_non_consuming_parameters(tag_value))
             .flatten();
         let parameters = inline_parameters
             .as_ref()
@@ -12416,21 +12428,22 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let result_discarded = self
             .discarded_invocation_spans
             .contains(&(constructor.span.start, constructor.span.end));
+        let callee_value = Self::immediate_callable_value(&constructor.callee);
         let callee = self
-            .callable_reference(&constructor.callee)
+            .callable_reference(callee_value)
             .map(|(callee, _)| callee);
         let inline_parameters = if callee.is_some() {
             None
         } else {
-            match constructor.callee.get_inner_expression() {
+            match callee_value.get_inner_expression() {
                 Expression::ClassExpression(class) => {
-                    self.local_non_consuming_class_parameters(class)
+                    self.local_non_consuming_class_parameters(class.as_ref())
                 }
-                _ => self.inline_non_consuming_parameters(&constructor.callee),
+                _ => self.inline_non_consuming_parameters(callee_value),
             }
         };
         let inline_bound = (callee.is_none() && inline_parameters.is_none())
-            .then(|| self.inline_bound_non_consuming_parameters(&constructor.callee))
+            .then(|| self.inline_bound_non_consuming_parameters(callee_value))
             .flatten();
         let parameters = inline_parameters
             .as_ref()
