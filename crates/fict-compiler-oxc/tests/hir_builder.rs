@@ -5908,6 +5908,170 @@ fn advanced_or_exposed_object_generator_methods_propagate_local_effects() {
 }
 
 #[test]
+fn unadvanced_destructured_generator_values_remain_unexecuted() {
+    for (name, helper, binding, observation) in [
+        (
+            "inline array generator",
+            "",
+            "const [run] = [function* () { values.forEach = null; }];",
+            "void run;",
+        ),
+        (
+            "named array generator",
+            "function* inspect() { values.forEach = null; }",
+            "const [run] = [inspect];",
+            "run();",
+        ),
+        (
+            "array iterator result",
+            "function* inspect() { values.forEach = null; }",
+            "const [iterator] = [inspect()];",
+            "void iterator;",
+        ),
+        (
+            "nested array generator",
+            "",
+            "const [[run]] = [[function* () { values.forEach = null; }]];",
+            "void run;",
+        ),
+        (
+            "inline object generator",
+            "",
+            "const { run } = { run: function* () { values.forEach = null; } };",
+            "void run;",
+        ),
+        (
+            "object generator method",
+            "",
+            "const { run } = { *run() { values.forEach = null; } };",
+            "run();",
+        ),
+        (
+            "nested object generator",
+            "",
+            "const { box: { run } } = { box: { run: function* () { values.forEach = null; } } };",
+            "void run;",
+        ),
+        (
+            "object generator nested in array",
+            "",
+            "const [{ run }] = [{ run: function* () { values.forEach = null; } }];",
+            "void run;",
+        ),
+        (
+            "unselected array generator",
+            "",
+            "const [first] = [0, function* () { values.forEach = null; }];",
+            "void first;",
+        ),
+        (
+            "array-pattern hole discards generator",
+            "",
+            "const [,] = [function* () { values.forEach = null; }];",
+            "void 0;",
+        ),
+        (
+            "unselected object generator",
+            "",
+            "const { first } = { first: 0, run: function* () { values.forEach = null; } };",
+            "void first;",
+        ),
+        (
+            "overwritten object generator",
+            "",
+            "const { run } = { run: function* () { values.forEach = null; }, run() {} };",
+            "void run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {binding}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected generator body to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
+    for (name, helper, binding, observation) in [
+        (
+            "array generator is advanced",
+            "",
+            "const [run] = [function* () { values.forEach = null; }];",
+            "run().next();",
+        ),
+        (
+            "object generator is advanced",
+            "",
+            "const { run } = { run: function* () { values.forEach = null; } };",
+            "run().next();",
+        ),
+        (
+            "array iterator override consumes generator",
+            "Array.prototype[Symbol.iterator] = function () { this[0]().next(); return { next() { return { done: true }; } }; };",
+            "const [run] = [function* () { values.forEach = null; }];",
+            "void run;",
+        ),
+        (
+            "array iterator override advances iterator",
+            "Array.prototype[Symbol.iterator] = function () { this[0].next(); return { next() { return { done: true }; } }; }; function* inspect() { values.forEach = null; }",
+            "const [iterator] = [inspect()];",
+            "void iterator;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {binding}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (

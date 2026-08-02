@@ -11948,6 +11948,27 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_static_container_generator_values(
+        &mut self,
+        expression: &Expression<'_>,
+        array_iterator_guarded: bool,
+    ) {
+        let mut body_spans = BTreeSet::new();
+        let mut guarded_body_spans = BTreeSet::new();
+        self.collect_static_container_generator_body_spans(
+            expression,
+            array_iterator_guarded,
+            &mut body_spans,
+            &mut guarded_body_spans,
+        );
+        self.directly_unexecuted_body_spans.extend(body_spans);
+        self.guarded_unexecuted_body_spans.extend(
+            guarded_body_spans
+                .into_iter()
+                .map(|span| (span, Self::array_iterator_guard())),
+        );
+    }
+
     fn record_retained_bind_arguments(
         &mut self,
         target: &StaticAliasPath,
@@ -14456,6 +14477,137 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_guarded_callable_initializer(
+        &mut self,
+        target: StaticAliasPath,
+        initializer: &Expression<'_>,
+        guard: &GeneratorMethodGuard,
+    ) {
+        self.forwarding_targets.insert(target.clone());
+        if let Some((source, source_span)) = self.callable_reference(initializer) {
+            self.forwarded_callable_reads.push(ForwardedCallableRead {
+                source,
+                source_span,
+                target,
+                method_guard: Some(guard.clone()),
+                parameter_offset: None,
+            });
+            return;
+        }
+        match initializer.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                let Some(body_span) = Self::generator_body_span(function) else {
+                    self.non_generator_callable_targets.insert(target);
+                    return;
+                };
+                self.generator_callable_targets.insert(target.clone());
+                self.generator_body_targets
+                    .push((body_span, target.clone()));
+                self.guarded_generator_targets.push((target, guard.clone()));
+            }
+            Expression::CallExpression(call)
+                if self.record_generator_result_forwarding(target.clone(), call) =>
+            {
+                self.non_generator_callable_targets.insert(target.clone());
+                self.guarded_generator_targets.push((target, guard.clone()));
+            }
+            _ => {}
+        }
+    }
+
+    fn record_destructured_callable_initializers(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        initializer: &Expression<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                let Some(target) = binding.symbol_id.get().map(StaticAliasPath::root) else {
+                    return;
+                };
+                if let Some(guard) = guard {
+                    self.record_guarded_callable_initializer(target, initializer, guard);
+                } else {
+                    self.record_callable_initializer(target, initializer);
+                }
+            }
+            BindingPattern::ArrayPattern(pattern) => {
+                let Expression::ArrayExpression(initializer) = initializer.get_inner_expression()
+                else {
+                    return;
+                };
+                if pattern.rest.is_some()
+                    || initializer
+                        .elements
+                        .iter()
+                        .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+                {
+                    return;
+                }
+                let guard = Self::array_iterator_guard();
+                for (index, value) in initializer.elements.iter().enumerate() {
+                    if matches!(value, ArrayExpressionElement::Elision(_)) {
+                        continue;
+                    }
+                    let Some(binding) = pattern.elements.get(index).and_then(Option::as_ref) else {
+                        self.record_static_container_generator_values(value.to_expression(), true);
+                        continue;
+                    };
+                    self.record_destructured_callable_initializers(
+                        binding,
+                        value.to_expression(),
+                        Some(&guard),
+                    );
+                }
+            }
+            BindingPattern::ObjectPattern(pattern) => {
+                let Expression::ObjectExpression(initializer) = initializer.get_inner_expression()
+                else {
+                    return;
+                };
+                if pattern.rest.is_some() {
+                    return;
+                }
+                let mut values = BTreeMap::new();
+                for property in &initializer.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        return;
+                    };
+                    if property.kind != PropertyKind::Init {
+                        return;
+                    }
+                    let Some(name) = property.key.static_name() else {
+                        return;
+                    };
+                    if name == "__proto__" {
+                        return;
+                    }
+                    if let Some(previous) = values.insert(name.into_owned(), &property.value) {
+                        self.record_static_container_generator_values(previous, guard.is_some());
+                    }
+                }
+                let mut selected = BTreeSet::new();
+                for property in &pattern.properties {
+                    let Some(name) = property.key.static_name() else {
+                        return;
+                    };
+                    selected.insert(name.to_string());
+                    let Some(value) = values.get(name.as_ref()) else {
+                        continue;
+                    };
+                    self.record_destructured_callable_initializers(&property.value, value, guard);
+                }
+                for (name, value) in values {
+                    if !selected.contains(&name) {
+                        self.record_static_container_generator_values(value, guard.is_some());
+                    }
+                }
+            }
+            BindingPattern::AssignmentPattern(_) => {}
+        }
+    }
+
     fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
         if let Some((path, span)) = self.callable_reference(expression) {
             self.discarded_invocation_reads
@@ -15436,18 +15588,21 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
-        if let Some(initializer) = &declarator.init
-            && let BindingPattern::BindingIdentifier(binding) = &declarator.id
-            && let Some(target_symbol) = binding.symbol_id.get()
-        {
-            let target = StaticAliasPath::root(target_symbol);
-            self.record_callable_initializer(target, initializer);
-            if !self
-                .scoping
-                .get_resolved_references(target_symbol)
-                .any(|reference| reference.is_read())
+        if let Some(initializer) = &declarator.init {
+            if let BindingPattern::BindingIdentifier(binding) = &declarator.id
+                && let Some(target_symbol) = binding.symbol_id.get()
             {
-                self.record_discarded_expression(initializer);
+                let target = StaticAliasPath::root(target_symbol);
+                self.record_callable_initializer(target, initializer);
+                if !self
+                    .scoping
+                    .get_resolved_references(target_symbol)
+                    .any(|reference| reference.is_read())
+                {
+                    self.record_discarded_expression(initializer);
+                }
+            } else {
+                self.record_destructured_callable_initializers(&declarator.id, initializer, None);
             }
         }
         walk_variable_declarator(self, declarator);
