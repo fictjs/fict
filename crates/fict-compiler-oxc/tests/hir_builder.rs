@@ -9385,6 +9385,26 @@ fn local_constructors_propagate_parameter_invalidations() {
             "new (class { constructor(target) { target.forEach = null; } })(values);",
         ),
         (
+            "immediate conditional constructor",
+            "class Inspect { constructor(target) { this.length = target.length; } } class Mutate { constructor(target) { target.forEach = null; } }",
+            "new (choose ? Inspect : Mutate)(values);",
+        ),
+        (
+            "immediate logical constructor",
+            "function Inspect(target) { this.length = target.length; } function Mutate(target) { target.forEach = null; }",
+            "new (Mutate || Inspect)(values);",
+        ),
+        (
+            "conditional inline constructor",
+            "",
+            "new (choose ? class { constructor(target) { this.length = target.length; } } : class { constructor(target) { target.forEach = null; } })(values);",
+        ),
+        (
+            "conditional external constructor",
+            "class Inspect { constructor(target) { this.length = target.length; } }",
+            "new (choose ? Inspect : External)(values);",
+        ),
+        (
             "destructured constructor",
             "const box = { target: values }; class Mutate { constructor({ target }) { target.forEach = null; } }",
             "new Mutate(box);",
@@ -9478,7 +9498,7 @@ fn local_constructors_propagate_parameter_invalidations() {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(External, choose) {{
                     const count = $state(0);
                     const values = [];
                     {constructor}
@@ -9509,32 +9529,46 @@ fn local_constructors_propagate_parameter_invalidations() {
 
 #[test]
 fn pure_local_constructors_preserve_receiver_methods() {
-    for (name, constructor) in [
+    for (name, constructor, invocation) in [
         (
             "read-only function constructor",
             "function Inspect(target) { this.length = target.length; }",
+            "new Inspect(values);",
         ),
         (
             "detached function constructor",
             "function Inspect(target) { target = {}; target.forEach = null; }",
+            "new Inspect(values);",
         ),
         (
             "read-only class constructor",
             "class Inspect { constructor(target) { this.length = target.length; } }",
+            "new Inspect(values);",
         ),
         (
             "detached class constructor",
             "class Inspect { constructor(target) { target = {}; target.forEach = null; } }",
+            "new Inspect(values);",
+        ),
+        (
+            "immediate conditional constructor",
+            "class First { constructor(target) { this.length = target.length; } } class Second { constructor(target) { this.target = target; } }",
+            "new (choose ? First : Second)(values);",
+        ),
+        (
+            "conditional inline constructor",
+            "",
+            "new (choose ? class { constructor(target) { this.length = target.length; } } : class { constructor(target) { this.target = target; } })(values);",
         ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {constructor}
-                    new Inspect(values);
+                    {invocation}
                     values.forEach(() => count);
                     return count;
                 }}

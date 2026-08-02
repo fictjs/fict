@@ -21856,12 +21856,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
-        let local_invocation = self
-            .local_invocation_fact(&expression.callee, &expression.arguments)
-            .map(|mut invocation| {
-                invocation.construct = true;
-                invocation
-            });
+        let mut local_invocations = self
+            .local_invocation_facts_from_arguments(
+                &expression.callee,
+                self.collect_local_invocation_arguments(&expression.arguments),
+            )
+            .unwrap_or_default();
+        for invocation in &mut local_invocations {
+            invocation.construct = true;
+        }
         let exposed_arguments = if self.constructor_may_mutate_arguments(&expression.callee) {
             let exposed = self.collect_invocation_argument_paths(&expression.arguments);
             self.prepare_exposed_paths(exposed)
@@ -21869,9 +21872,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_new_expression(self, expression);
-        if let Some(invocation) = local_invocation {
-            self.local_invocations.push(invocation);
-        }
+        self.local_invocations.extend(local_invocations);
         for path in exposed_arguments {
             self.invalidate_exposed_path(path);
         }
