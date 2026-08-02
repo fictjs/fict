@@ -5546,6 +5546,144 @@ fn immediate_consuming_callable_assignments_propagate_local_effects() {
 }
 
 #[test]
+fn composite_local_callables_preserve_unadvanced_iterator_arguments() {
+    for (name, helper, invocation) in [
+        (
+            "conditional local no-op call",
+            "function first(value) { void value; } function second(value) { void value; }",
+            "const iterator = inspect(); (choose ? first : second)(iterator);",
+        ),
+        (
+            "assigned conditional local no-op call",
+            "function first(value) { void value; } function second(value) { void value; } let run;",
+            "const iterator = inspect(); (run = choose ? first : second)(iterator);",
+        ),
+        (
+            "logical local no-op call",
+            "function first(value) { void value; } function second(value) { void value; }",
+            "const iterator = inspect(); (first || second)(iterator);",
+        ),
+        (
+            "mixed local and inline no-op call",
+            "function first(value) { void value; }",
+            "const iterator = inspect(); (choose ? first : function (value) { void value; })(iterator);",
+        ),
+        (
+            "conditional local no-op receives direct generator result",
+            "function first(value) { void value; } function second(value) { void value; }",
+            "(choose ? first : second)(inspect());",
+        ),
+        (
+            "conditional local no-op tag",
+            "function first(_strings, value) { void value; } function second(_strings, value) { void value; }",
+            "const iterator = inspect(); (choose ? first : second)`${iterator}`;",
+        ),
+        (
+            "conditional local no-op function constructor",
+            "function First(value) { void value; } function Second(value) { void value; }",
+            "const iterator = inspect(); new (choose ? First : Second)(iterator);",
+        ),
+        (
+            "conditional local no-op class constructor",
+            "class First { constructor(value) { void value; } } class Second { constructor(value) { void value; } }",
+            "const iterator = inspect(); new (choose ? First : Second)(iterator);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    function* inspect() {{ values.forEach = null; }}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn composite_consuming_or_unknown_callables_propagate_local_effects() {
+    for (name, helper, invocation) in [
+        (
+            "conditional consuming call branch",
+            "function ignore(value) { void value; } function consume(value) { value.next(); }",
+            "const iterator = mutate(); (choose ? ignore : consume)(iterator);",
+        ),
+        (
+            "conditional external call branch",
+            "function ignore(value) { void value; }",
+            "const iterator = mutate(); (choose ? ignore : External)(iterator);",
+        ),
+        (
+            "conditional reassigned call branch",
+            "function ignore(value) { void value; } let other = ignore; other = value => value.next();",
+            "const iterator = mutate(); (choose ? ignore : other)(iterator);",
+        ),
+        (
+            "observed conditional identity result",
+            "function first(value) { return value; } function second(value) { return value; }",
+            "const iterator = mutate(); const result = (choose ? first : second)(iterator); result.next();",
+        ),
+        (
+            "conditional consuming tag branch",
+            "function ignore(_strings, value) { void value; } function consume(_strings, value) { value.next(); }",
+            "const iterator = mutate(); (choose ? ignore : consume)`${iterator}`;",
+        ),
+        (
+            "conditional consuming constructor branch",
+            "class Ignore { constructor(value) { void value; } } class Consume { constructor(value) { value.next(); } }",
+            "const iterator = mutate(); new (choose ? Ignore : Consume)(iterator);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(External, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    function* mutate() {{ values.forEach = null; }}
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn reflect_construct_preserves_unadvanced_iterator_arguments() {
     for (name, setup, constructor, invocation) in [
         (
