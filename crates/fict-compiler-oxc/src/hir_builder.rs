@@ -2064,6 +2064,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_generator_callable_history: BTreeMap::new(),
             local_callable_results: BTreeMap::new(),
             local_callable_result_history: BTreeMap::new(),
+            local_callable_effect_spans: BTreeMap::new(),
+            local_callable_effect_span_history: BTreeMap::new(),
+            local_callable_effect_creators: BTreeMap::new(),
+            local_callable_effect_creator_history: BTreeMap::new(),
+            returned_callable_spans: BTreeSet::new(),
+            returned_callable_effects: BTreeMap::new(),
+            returned_callable_aliases: BTreeMap::new(),
+            returned_callable_ambiguous_targets: BTreeMap::new(),
+            active_returned_callable_instances: BTreeMap::new(),
+            current_callable_spans: Vec::new(),
             local_class_instances: BTreeSet::new(),
             local_class_instance_fields: BTreeMap::new(),
             local_class_instance_callables: BTreeMap::new(),
@@ -16172,6 +16182,16 @@ struct StaticHookAliasCollector<'semantic> {
     local_generator_callable_history: BTreeMap<StaticAliasPath, Vec<bool>>,
     local_callable_results: BTreeMap<StaticAliasPath, Vec<LocalCallableResult>>,
     local_callable_result_history: BTreeMap<StaticAliasPath, Vec<Vec<LocalCallableResult>>>,
+    local_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
+    local_callable_effect_span_history: BTreeMap<StaticAliasPath, Vec<BTreeSet<(u32, u32)>>>,
+    local_callable_effect_creators: LocalCallableEffectCreatorMap,
+    local_callable_effect_creator_history: LocalCallableEffectCreatorMap,
+    returned_callable_spans: BTreeSet<(u32, u32)>,
+    returned_callable_effects: BTreeMap<(u32, u32), BTreeSet<LocalCallableCapturedEffect>>,
+    returned_callable_aliases: BTreeMap<(u32, u32), BTreeSet<(StaticAliasPath, StaticAliasPath)>>,
+    returned_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
+    active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
+    current_callable_spans: Vec<(u32, u32)>,
     local_class_instances: BTreeSet<StaticAliasPath>,
     local_class_instance_fields: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     local_class_instance_callables:
@@ -16210,6 +16230,7 @@ struct ReflectiveMemberMutationFact {
     parameter_target: Option<StaticAliasPath>,
     key: Option<String>,
     function_depth: usize,
+    returned_callable_span: Option<(u32, u32)>,
 }
 
 struct StoredSpreadAliasSources {
@@ -16271,12 +16292,24 @@ struct LocalBoundCallableAlternatives {
     exposures: BTreeSet<StaticAliasPath>,
     historical: bool,
     results: Vec<LocalCallableResult>,
+    effect_spans: BTreeSet<(u32, u32)>,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LocalCallableCapturedEffect {
+    path: StaticAliasPath,
+    parameter: Option<StaticAliasPath>,
+    slot: bool,
+    member: bool,
+    exposure: bool,
 }
 
 #[derive(Clone)]
 enum LocalCallableResult {
     Reference(StaticAliasPath),
     Direct {
+        span: (u32, u32),
+        capture_invocations: Vec<LocalInvocationFact>,
         parameters: Vec<LocalCallableParameter>,
         dynamic_receiver: Option<StaticAliasPath>,
         bound_receiver: Option<Vec<LocalInvocationArgument>>,
@@ -16290,6 +16323,8 @@ enum LocalCallableResult {
         exposures: BTreeSet<StaticAliasPath>,
         historical: bool,
         results: Vec<LocalCallableResult>,
+        effect_spans: BTreeSet<(u32, u32)>,
+        capture_invocations: Vec<LocalInvocationFact>,
     },
     Invocation(Vec<LocalInvocationFact>),
     Unknown,
@@ -16655,6 +16690,8 @@ struct LocalInvocationFact {
     raw_callee: Option<StaticAliasPath>,
     callee: Option<StaticAliasPath>,
     parameters: Option<Vec<LocalCallableParameter>>,
+    parameters_resolved: bool,
+    owner_returned_callable_span: Option<(u32, u32)>,
     arguments: Vec<LocalInvocationArgumentSegment>,
     argument_offset: usize,
     function_depth: usize,
@@ -16665,6 +16702,9 @@ struct LocalInvocationFact {
     force_argument_exposure: bool,
     construct: bool,
 }
+
+type LocalCallableEffectCreatorMap =
+    BTreeMap<(StaticAliasPath, (u32, u32)), Vec<Vec<LocalInvocationFact>>>;
 
 #[derive(Clone)]
 enum LocalInvocationDynamicReceiver {
@@ -16873,6 +16913,8 @@ impl StaticHookAliasCollector<'_> {
                 exposures: alternatives.exposures,
                 historical: alternatives.historical,
                 results: alternatives.results,
+                effect_spans: alternatives.effect_spans,
+                capture_invocations: Vec::new(),
             }];
         }
         if let Some(source) = self.alias_source_path(expression) {
@@ -16881,6 +16923,8 @@ impl StaticHookAliasCollector<'_> {
         match expression.get_inner_expression() {
             Expression::FunctionExpression(function) => {
                 vec![LocalCallableResult::Direct {
+                    span: (function.span.start, function.span.end),
+                    capture_invocations: Vec::new(),
                     parameters: Self::local_callable_parameters(&function.params),
                     dynamic_receiver: Some(StaticAliasPath::dynamic_this(function.span)),
                     bound_receiver: None,
@@ -16898,6 +16942,8 @@ impl StaticHookAliasCollector<'_> {
             }
             Expression::ArrowFunctionExpression(function) => {
                 vec![LocalCallableResult::Direct {
+                    span: (function.span.start, function.span.end),
+                    capture_invocations: Vec::new(),
                     parameters: Self::local_callable_parameters(&function.params),
                     dynamic_receiver: lexical_receiver.cloned(),
                     bound_receiver: None,
@@ -16914,6 +16960,8 @@ impl StaticHookAliasCollector<'_> {
                 }]
             }
             Expression::ClassExpression(class) => vec![LocalCallableResult::Direct {
+                span: (class.span.start, class.span.end),
+                capture_invocations: Vec::new(),
                 parameters: Self::class_constructor_parameters(class),
                 dynamic_receiver: None,
                 bound_receiver: None,
@@ -17035,11 +17083,148 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         results: Vec<LocalCallableResult>,
     ) {
+        self.register_returned_callable_spans(&results);
         self.local_callable_result_history
             .entry(target.clone())
             .or_default()
             .push(results.clone());
         self.local_callable_results.insert(target, results);
+    }
+
+    fn register_returned_callable_spans(&mut self, results: &[LocalCallableResult]) {
+        for result in results {
+            match result {
+                LocalCallableResult::Direct { span, results, .. } => {
+                    self.returned_callable_spans.insert(*span);
+                    self.register_returned_callable_spans(results);
+                }
+                LocalCallableResult::Bound {
+                    effect_spans,
+                    results,
+                    ..
+                } => {
+                    self.returned_callable_spans
+                        .extend(effect_spans.iter().copied());
+                    self.register_returned_callable_spans(results);
+                }
+                LocalCallableResult::Reference(_)
+                | LocalCallableResult::Invocation(_)
+                | LocalCallableResult::Unknown => {}
+            }
+        }
+    }
+
+    fn record_local_callable_effect_span(&mut self, target: StaticAliasPath, span: (u32, u32)) {
+        self.local_callable_effect_span_history
+            .entry(target.clone())
+            .or_default()
+            .push(BTreeSet::from([span]));
+        self.local_callable_effect_spans
+            .entry(target)
+            .or_default()
+            .insert(span);
+    }
+
+    fn record_local_callable_effect_creator(
+        &mut self,
+        target: StaticAliasPath,
+        span: (u32, u32),
+        invocations: Vec<LocalInvocationFact>,
+    ) {
+        let key = (target, span);
+        self.local_callable_effect_creator_history
+            .entry(key.clone())
+            .or_default()
+            .push(invocations.clone());
+        self.local_callable_effect_creators
+            .entry(key)
+            .or_default()
+            .push(invocations);
+    }
+
+    fn record_returned_callable_effect(
+        &mut self,
+        path: &StaticAliasPath,
+        resolved: &StaticAliasPath,
+        slot: bool,
+        member: bool,
+    ) -> bool {
+        let Some(span) = self
+            .returned_callable_capture_span(path)
+            .or_else(|| self.returned_callable_capture_span(resolved))
+        else {
+            return false;
+        };
+        let parameter = member
+            .then(|| self.attached_parameter_path(path, resolved))
+            .flatten();
+        self.returned_callable_effects
+            .entry(span)
+            .or_default()
+            .insert(LocalCallableCapturedEffect {
+                path: path.clone(),
+                parameter,
+                slot,
+                member,
+                exposure: false,
+            });
+        true
+    }
+
+    fn record_returned_callable_exposure(
+        &mut self,
+        path: &StaticAliasPath,
+        resolved: &StaticAliasPath,
+    ) -> bool {
+        let Some(span) = self
+            .returned_callable_capture_span(path)
+            .or_else(|| self.returned_callable_capture_span(resolved))
+        else {
+            return false;
+        };
+        let parameter = if matches!(&path.root, StaticAliasRoot::DynamicThis { .. }) {
+            Some(path.clone())
+        } else if matches!(&resolved.root, StaticAliasRoot::DynamicThis { .. }) {
+            Some(resolved.clone())
+        } else {
+            self.attached_parameter_path(path, resolved)
+        };
+        self.returned_callable_effects
+            .entry(span)
+            .or_default()
+            .insert(LocalCallableCapturedEffect {
+                path: path.clone(),
+                parameter,
+                slot: false,
+                member: false,
+                exposure: true,
+            });
+        true
+    }
+
+    fn returned_callable_capture_span(&self, path: &StaticAliasPath) -> Option<(u32, u32)> {
+        let span = self.current_returned_callable_span()?;
+        match &path.root {
+            StaticAliasRoot::Binding(root)
+                if self
+                    .binding_owner_depths
+                    .get(root)
+                    .is_some_and(|owner| *owner >= self.function_depth) =>
+            {
+                None
+            }
+            StaticAliasRoot::DynamicThis { start, end } if (*start, *end) == span => None,
+            StaticAliasRoot::Binding(_)
+            | StaticAliasRoot::DynamicThis { .. }
+            | StaticAliasRoot::UnresolvedGlobal(_) => Some(span),
+        }
+    }
+
+    fn current_returned_callable_span(&self) -> Option<(u32, u32)> {
+        self.current_callable_spans
+            .last()
+            .copied()
+            .filter(|span| self.returned_callable_spans.contains(span))
     }
 
     fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
@@ -17346,6 +17531,10 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             self.record_unreferenced_callable_span(&method_target, method.value.span);
+            self.record_local_callable_effect_span(
+                method_target.clone(),
+                (method.value.span.start, method.value.span.end),
+            );
             self.record_local_callable_parameters(method_target.clone(), &method.value.params);
             self.record_local_callable_receiver(
                 method_target.clone(),
@@ -18585,6 +18774,8 @@ impl StaticHookAliasCollector<'_> {
             }?;
             let invocation = LocalInvocationFact {
                 parameters: self.current_invocation_parameters(&raw_target, &target),
+                parameters_resolved: false,
+                owner_returned_callable_span: self.current_returned_callable_span(),
                 arguments,
                 argument_offset,
                 raw_callee: Some(raw_target),
@@ -18601,6 +18792,8 @@ impl StaticHookAliasCollector<'_> {
         }
         Some(vec![LocalInvocationFact {
             parameters: Some(Self::inline_callable_parameters(target)?),
+            parameters_resolved: true,
+            owner_returned_callable_span: self.current_returned_callable_span(),
             arguments,
             argument_offset,
             raw_callee: None,
@@ -18708,6 +18901,8 @@ impl StaticHookAliasCollector<'_> {
         if let Some(parameters) = self.inline_function_indirection_parameters(callee, "call") {
             return Some(LocalInvocationFact {
                 parameters: Some(parameters),
+                parameters_resolved: true,
+                owner_returned_callable_span: self.current_returned_callable_span(),
                 arguments,
                 argument_offset: 1,
                 raw_callee: None,
@@ -18732,6 +18927,8 @@ impl StaticHookAliasCollector<'_> {
             {
                 let invocation = LocalInvocationFact {
                     parameters: self.current_invocation_parameters(&raw_target, &target),
+                    parameters_resolved: false,
+                    owner_returned_callable_span: self.current_returned_callable_span(),
                     arguments,
                     argument_offset: 1,
                     raw_callee: Some(raw_target),
@@ -18748,6 +18945,8 @@ impl StaticHookAliasCollector<'_> {
             }
             let invocation = LocalInvocationFact {
                 parameters: self.current_invocation_parameters(&raw_callee, &resolved_callee),
+                parameters_resolved: false,
+                owner_returned_callable_span: self.current_returned_callable_span(),
                 arguments,
                 argument_offset: 0,
                 raw_callee: Some(raw_callee),
@@ -18764,6 +18963,8 @@ impl StaticHookAliasCollector<'_> {
         }
         Self::inline_callable_parameters(callee).map(|parameters| LocalInvocationFact {
             parameters: Some(parameters),
+            parameters_resolved: true,
+            owner_returned_callable_span: self.current_returned_callable_span(),
             arguments,
             argument_offset: 0,
             raw_callee: None,
@@ -18801,6 +19002,7 @@ impl StaticHookAliasCollector<'_> {
         bound: &LocalBoundCallable,
     ) -> LocalInvocationFact {
         invocation.parameters = Some(bound.parameters.clone());
+        invocation.parameters_resolved = true;
         invocation.bound_receiver = bound.receiver.clone();
         invocation.dynamic_receiver =
             LocalInvocationDynamicReceiver::Known(bound.dynamic_receiver.clone());
@@ -19347,6 +19549,9 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_cross_scope_target(&mut self, target: &StaticAliasPath) {
+        if self.returned_callable_capture_span(target).is_some() {
+            return;
+        }
         if self.path_owner_depth(target) < self.function_depth {
             self.cross_scope_alias_targets.insert(target.clone());
         }
@@ -19399,6 +19604,10 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target| !target.overlaps(path));
         self.local_callable_results
             .retain(|target, _| !target.overlaps(path));
+        self.local_callable_effect_spans
+            .retain(|target, _| !target.overlaps(path));
+        self.local_callable_effect_creators
+            .retain(|(target, _), _| !target.overlaps(path));
         self.local_class_instances
             .retain(|target| !target.starts_with(path));
         self.local_class_instance_fields
@@ -19416,6 +19625,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn mark_alias_target_ambiguous(&mut self, path: StaticAliasPath) {
+        let returned_callable_span = self.returned_callable_capture_span(&path);
         self.transient_callable_alias_targets
             .retain(|target| !target.overlaps(&path));
         self.local_callable_parameters
@@ -19426,6 +19636,10 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target| !target.overlaps(&path));
         self.local_callable_results
             .retain(|target, _| !target.overlaps(&path));
+        self.local_callable_effect_spans
+            .retain(|target, _| !target.overlaps(&path));
+        self.local_callable_effect_creators
+            .retain(|(target, _), _| !target.overlaps(&path));
         self.local_class_instances
             .retain(|target| !target.starts_with(&path));
         self.local_class_instance_fields
@@ -19440,17 +19654,32 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(&path));
         self.default_derived_constructors
             .retain(|target, _| !target.overlaps(&path));
-        self.ambiguous_alias_targets.insert(path);
+        if let Some(span) = returned_callable_span {
+            self.returned_callable_ambiguous_targets
+                .entry(span)
+                .or_default()
+                .insert(path);
+        } else {
+            self.ambiguous_alias_targets.insert(path);
+        }
     }
 
     fn insert_alias(&mut self, target: StaticAliasPath, source: StaticAliasPath) {
+        let returned_callable_span = self.returned_callable_capture_span(&target);
         let array_length = self.known_array_length(&source);
         self.clear_overlapping_aliases(&target);
         if target != source {
-            self.alias_history
-                .entry(target.clone())
-                .or_default()
-                .insert(source.clone());
+            if let Some(span) = returned_callable_span {
+                self.returned_callable_aliases
+                    .entry(span)
+                    .or_default()
+                    .insert((target.clone(), source.clone()));
+            } else {
+                self.alias_history
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(source.clone());
+            }
             self.aliases.insert(target.clone(), source);
         }
         if let Some(length) = array_length {
@@ -19561,18 +19790,30 @@ impl StaticHookAliasCollector<'_> {
         invocation: &LocalInvocationFact,
     ) -> LocalCallableResult {
         if let LocalCallableResult::Direct {
+            capture_invocations,
             dynamic_receiver,
             bound_receiver,
-            lexical_receiver: true,
+            lexical_receiver,
             ..
         } = &mut result
-            && bound_receiver.is_none()
-            && dynamic_receiver.as_ref().is_some_and(|receiver| {
-                self.invocation_dynamic_receivers(invocation)
-                    .contains(receiver)
-            })
         {
-            *bound_receiver = Some(invocation.bound_receiver.clone());
+            capture_invocations.push(invocation.clone());
+            if *lexical_receiver
+                && bound_receiver.is_none()
+                && dynamic_receiver.as_ref().is_some_and(|receiver| {
+                    self.invocation_dynamic_receivers(invocation)
+                        .contains(receiver)
+                })
+            {
+                *bound_receiver = Some(invocation.bound_receiver.clone());
+            }
+        }
+        if let LocalCallableResult::Bound {
+            capture_invocations,
+            ..
+        } = &mut result
+        {
+            capture_invocations.push(invocation.clone());
         }
         result
     }
@@ -19608,6 +19849,8 @@ impl StaticHookAliasCollector<'_> {
                         self.insert_alias(target.clone(), source);
                     }
                     LocalCallableResult::Direct {
+                        span,
+                        capture_invocations,
                         parameters,
                         dynamic_receiver,
                         bound_receiver,
@@ -19617,6 +19860,12 @@ impl StaticHookAliasCollector<'_> {
                         results,
                     } => {
                         alternatives = alternatives.saturating_add(1);
+                        self.record_local_callable_effect_span(target.clone(), span);
+                        self.record_local_callable_effect_creator(
+                            target.clone(),
+                            span,
+                            capture_invocations,
+                        );
                         if lexical_receiver {
                             self.record_local_bound_callable(
                                 target.clone(),
@@ -19646,9 +19895,19 @@ impl StaticHookAliasCollector<'_> {
                         exposures,
                         historical,
                         results,
+                        effect_spans,
+                        capture_invocations,
                     } => {
                         alternatives = alternatives.saturating_add(callables.len());
                         ambiguous |= historical || callables.len() > 1;
+                        for span in effect_spans {
+                            self.record_local_callable_effect_span(target.clone(), span);
+                            self.record_local_callable_effect_creator(
+                                target.clone(),
+                                span,
+                                capture_invocations.clone(),
+                            );
+                        }
                         for callable in callables {
                             self.record_local_bound_callable(target.clone(), callable);
                         }
@@ -19835,6 +20094,19 @@ impl StaticHookAliasCollector<'_> {
             )
             .unwrap_or_default();
         self.record_unreferenced_callable_initializer(&target, value);
+        match inner {
+            Expression::FunctionExpression(function) => self.record_local_callable_effect_span(
+                target.clone(),
+                (function.span.start, function.span.end),
+            ),
+            Expression::ArrowFunctionExpression(function) => self
+                .record_local_callable_effect_span(
+                    target.clone(),
+                    (function.span.start, function.span.end),
+                ),
+            Expression::ClassExpression(_) => {}
+            _ => unreachable!("callable initializer was validated above"),
+        }
         self.record_local_callable_signature(target.clone(), parameters);
         self.record_local_callable_results(target.clone(), results);
         if let Expression::FunctionExpression(function) = inner {
@@ -19874,6 +20146,7 @@ impl StaticHookAliasCollector<'_> {
                 alternatives.exposures.extend(alternate.exposures);
                 alternatives.historical |= alternate.historical;
                 alternatives.results.extend(alternate.results);
+                alternatives.effect_spans.extend(alternate.effect_spans);
                 return Some(alternatives);
             }
             Expression::LogicalExpression(expression) => {
@@ -19885,6 +20158,7 @@ impl StaticHookAliasCollector<'_> {
                 alternatives.exposures.extend(alternate.exposures);
                 alternatives.historical |= alternate.historical;
                 alternatives.results.extend(alternate.results);
+                alternatives.effect_spans.extend(alternate.effect_spans);
                 return Some(alternatives);
             }
             Expression::SequenceExpression(expression) => {
@@ -19904,6 +20178,7 @@ impl StaticHookAliasCollector<'_> {
         let mut alternatives = Vec::new();
         let mut exposures = BTreeSet::new();
         let mut results = Vec::new();
+        let mut effect_spans = BTreeSet::new();
         let mut historical = false;
         if let Some(raw_target) = static_alias_source_path(self.scoping, target) {
             let raw_callee = raw_target.with_property("bind".to_string());
@@ -19923,6 +20198,13 @@ impl StaticHookAliasCollector<'_> {
                 BTreeSet::from([source])
             };
             for source in sources {
+                if historical {
+                    if let Some(history) = self.local_callable_effect_span_history.get(&source) {
+                        effect_spans.extend(history.iter().flatten().copied());
+                    }
+                } else if let Some(current) = self.local_callable_effect_spans.get(&source) {
+                    effect_spans.extend(current.iter().copied());
+                }
                 if historical {
                     if let Some(history) = self.local_callable_result_history.get(&source) {
                         results.extend(history.iter().flatten().cloned());
@@ -20008,6 +20290,18 @@ impl StaticHookAliasCollector<'_> {
             }
         } else {
             let parameters = Self::inline_callable_parameters(target)?;
+            match unwrap_transparent_call_expression(target) {
+                Expression::FunctionExpression(function) => {
+                    effect_spans.insert((function.span.start, function.span.end));
+                }
+                Expression::ArrowFunctionExpression(function) => {
+                    effect_spans.insert((function.span.start, function.span.end));
+                }
+                Expression::ClassExpression(class) => {
+                    effect_spans.insert((class.span.start, class.span.end));
+                }
+                _ => {}
+            }
             let inline_exposures = match unwrap_transparent_call_expression(target) {
                 Expression::ClassExpression(_) => BTreeSet::new(),
                 _ => self.returned_function_paths(target)?,
@@ -20043,6 +20337,7 @@ impl StaticHookAliasCollector<'_> {
             exposures,
             historical,
             results,
+            effect_spans,
         })
     }
 
@@ -20097,6 +20392,9 @@ impl StaticHookAliasCollector<'_> {
         let Some(alternatives) = self.local_bound_callable_initializer(value) else {
             return false;
         };
+        for span in &alternatives.effect_spans {
+            self.record_local_callable_effect_span(target.clone(), *span);
+        }
         for alternative in alternatives.callables {
             self.record_local_bound_callable(target.clone(), alternative);
         }
@@ -21019,6 +21317,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn invalidate_path(&mut self, path: StaticAliasPath, member: bool) {
         let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if self.record_returned_callable_effect(&path, &resolved, false, member) {
+            return;
+        }
         if member && let Some(parameter) = self.attached_parameter_path(&path, &resolved) {
             self.parameter_member_invalidated.insert(parameter);
         }
@@ -21035,6 +21336,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn invalidate_slot_path(&mut self, path: StaticAliasPath, member: bool) {
         let resolved = resolve_static_alias_slot_path(&self.aliases, &path);
+        if self.record_returned_callable_effect(&path, &resolved, true, member) {
+            return;
+        }
         if member && let Some(parameter) = self.attached_parameter_path(&path, &resolved) {
             self.parameter_slot_invalidated.insert(parameter);
         }
@@ -21314,7 +21618,9 @@ impl StaticHookAliasCollector<'_> {
         exposed: BTreeSet<StaticAliasPath>,
     ) -> BTreeSet<StaticAliasPath> {
         for path in &exposed {
-            if self.path_requires_historical_aliases(path, self.function_depth) {
+            if self.returned_callable_capture_span(path).is_none()
+                && self.path_requires_historical_aliases(path, self.function_depth)
+            {
                 self.deferred_exposed_paths.insert(path.clone());
             }
         }
@@ -21347,6 +21653,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn invalidate_exposed_path(&mut self, path: StaticAliasPath) {
         let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if self.record_returned_callable_exposure(&path, &resolved) {
+            return;
+        }
         if matches!(&path.root, StaticAliasRoot::DynamicThis { .. }) {
             self.parameter_exposed.insert(path.clone());
         }
@@ -21452,6 +21761,584 @@ impl StaticHookAliasCollector<'_> {
             resolve_historical_alias_paths(&self.alias_history, raw_callee)
         } else {
             BTreeSet::from([callee.clone()])
+        }
+    }
+
+    fn invocation_callable_effect_instances(
+        &self,
+        invocation: &LocalInvocationFact,
+    ) -> BTreeSet<(StaticAliasPath, (u32, u32), bool)> {
+        let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
+            self.path_requires_historical_aliases(callee, invocation.function_depth)
+        });
+        let mut instances = BTreeSet::new();
+        for callee in self.invocation_callees(invocation) {
+            if historical {
+                if let Some(history) = self.local_callable_effect_span_history.get(&callee) {
+                    instances.extend(
+                        history
+                            .iter()
+                            .flatten()
+                            .map(|span| (callee.clone(), *span, true)),
+                    );
+                }
+            } else if let Some(current) = self.local_callable_effect_spans.get(&callee) {
+                instances.extend(current.iter().map(|span| (callee.clone(), *span, false)));
+            }
+        }
+        instances
+    }
+
+    fn returned_callable_effect_creators(
+        &self,
+        target: &StaticAliasPath,
+        span: (u32, u32),
+        historical: bool,
+    ) -> Vec<Vec<LocalInvocationFact>> {
+        let key = (target.clone(), span);
+        if historical {
+            self.local_callable_effect_creator_history.get(&key)
+        } else {
+            self.local_callable_effect_creators.get(&key)
+        }
+        .cloned()
+        .unwrap_or_default()
+    }
+
+    fn map_returned_callable_capture(
+        &self,
+        capture: &StaticAliasPath,
+        kind: LocalParameterInvalidationKind,
+        creators: &[LocalInvocationFact],
+        additions: &mut LocalInvocationEffectAdditions,
+    ) -> bool {
+        self.map_returned_callable_capture_chain_inner(
+            capture,
+            kind,
+            creators,
+            additions,
+            &mut BTreeSet::new(),
+        )
+    }
+
+    fn merge_local_invocation_effect_additions(
+        target: &mut LocalInvocationEffectAdditions,
+        additions: LocalInvocationEffectAdditions,
+    ) {
+        for (path, (kind, attached_kind)) in additions {
+            target
+                .entry(path)
+                .and_modify(|(existing_kind, existing_attached)| {
+                    *existing_kind = (*existing_kind).max(kind);
+                    if let Some(attached_kind) = attached_kind {
+                        *existing_attached = Some(
+                            existing_attached
+                                .map_or(attached_kind, |existing| existing.max(attached_kind)),
+                        );
+                    }
+                })
+                .or_insert((kind, attached_kind));
+        }
+    }
+
+    fn map_returned_callable_capture_chain_inner(
+        &self,
+        capture: &StaticAliasPath,
+        kind: LocalParameterInvalidationKind,
+        creators: &[LocalInvocationFact],
+        additions: &mut LocalInvocationEffectAdditions,
+        visiting: &mut BTreeSet<(StaticAliasPath, (u32, u32))>,
+    ) -> bool {
+        let mut paths = LocalInvocationEffectAdditions::from([(capture.clone(), (kind, None))]);
+        let mut matched = false;
+        for creator in creators {
+            let mut next = LocalInvocationEffectAdditions::new();
+            for (path, existing) in paths {
+                let mut mapped = LocalInvocationEffectAdditions::new();
+                if self.map_returned_callable_capture_inner(
+                    &path,
+                    kind,
+                    creator,
+                    &mut mapped,
+                    visiting,
+                ) {
+                    matched = true;
+                    if let Some(existing_attached) = existing.1 {
+                        for (_, attached) in mapped.values_mut() {
+                            *attached = Some(attached.map_or(existing_attached, |current| {
+                                current.max(existing_attached)
+                            }));
+                        }
+                    }
+                    Self::merge_local_invocation_effect_additions(&mut next, mapped);
+                } else {
+                    next.insert(path, existing);
+                }
+            }
+            paths = next;
+        }
+        if matched {
+            Self::merge_local_invocation_effect_additions(additions, paths);
+        }
+        matched
+    }
+
+    fn map_returned_callable_capture_inner(
+        &self,
+        capture: &StaticAliasPath,
+        kind: LocalParameterInvalidationKind,
+        creator: &LocalInvocationFact,
+        additions: &mut LocalInvocationEffectAdditions,
+        visiting: &mut BTreeSet<(StaticAliasPath, (u32, u32))>,
+    ) -> bool {
+        let mut matched = false;
+        for invocation in self.bound_invocation_variants(creator.clone()) {
+            for parameters in self.invocation_parameter_sets(&invocation) {
+                for parameter in parameters {
+                    if capture.root != StaticAliasRoot::Binding(parameter.symbol) {
+                        continue;
+                    }
+                    matched = true;
+                    let Some((argument_index, properties, element_wildcard)) =
+                        parameter.map_invalidation(capture, kind)
+                    else {
+                        continue;
+                    };
+                    for invocation_argument in invocation.arguments_for_parameter(argument_index) {
+                        self.map_local_invocation_effect(
+                            &invocation_argument,
+                            &properties,
+                            element_wildcard,
+                            kind,
+                            invocation.function_depth,
+                            additions,
+                        );
+                    }
+                }
+            }
+            if invocation.construct {
+                continue;
+            }
+            for receiver in self.invocation_dynamic_receivers(&invocation) {
+                if capture.root != receiver.root {
+                    continue;
+                }
+                matched = true;
+                for invocation_receiver in &invocation.bound_receiver {
+                    self.map_local_invocation_effect(
+                        invocation_receiver,
+                        &capture.properties,
+                        capture.element_wildcard,
+                        kind,
+                        invocation.function_depth,
+                        additions,
+                    );
+                }
+            }
+        }
+        if matched {
+            return true;
+        }
+        for (target, span, historical) in self.invocation_callable_effect_instances(creator) {
+            if !visiting.insert((target.clone(), span)) {
+                continue;
+            }
+            for parent in self.returned_callable_effect_creators(&target, span, historical) {
+                matched |= self.map_returned_callable_capture_chain_inner(
+                    capture, kind, &parent, additions, visiting,
+                );
+            }
+            visiting.remove(&(target, span));
+        }
+        matched
+    }
+
+    fn mapped_returned_callable_capture_paths(
+        &self,
+        capture: &StaticAliasPath,
+        kind: LocalParameterInvalidationKind,
+        creators: &[Vec<LocalInvocationFact>],
+    ) -> Option<BTreeSet<StaticAliasPath>> {
+        let mut additions = LocalInvocationEffectAdditions::new();
+        let mut matched = false;
+        for creator in creators {
+            matched |= self.map_returned_callable_capture(capture, kind, creator, &mut additions);
+        }
+        matched.then(|| additions.into_keys().collect())
+    }
+
+    fn map_returned_callable_invocation_argument(
+        &self,
+        argument: &LocalInvocationArgument,
+        creators: &[LocalInvocationFact],
+    ) -> Vec<LocalInvocationArgument> {
+        let mut additions = LocalInvocationEffectAdditions::new();
+        if !self.map_returned_callable_capture(
+            &argument.resolved,
+            LocalParameterInvalidationKind::Member,
+            creators,
+            &mut additions,
+        ) {
+            return vec![argument.clone()];
+        }
+        additions
+            .into_iter()
+            .map(|(path, (_, attached))| LocalInvocationArgument {
+                raw: path.clone(),
+                resolved: path,
+                parameter_attached: argument.parameter_attached || attached.is_some(),
+                coarse: false,
+                source_projection: LocalInvocationSourceProjection::Value(Vec::new()),
+            })
+            .collect()
+    }
+
+    fn map_returned_callable_invocation_segment(
+        &self,
+        segment: &LocalInvocationArgumentSegment,
+        creators: &[LocalInvocationFact],
+    ) -> LocalInvocationArgumentSegment {
+        match segment {
+            LocalInvocationArgumentSegment::Fixed(arguments) => {
+                LocalInvocationArgumentSegment::Fixed(
+                    arguments
+                        .iter()
+                        .flat_map(|argument| {
+                            self.map_returned_callable_invocation_argument(argument, creators)
+                        })
+                        .collect(),
+                )
+            }
+            LocalInvocationArgumentSegment::Spread {
+                indexed,
+                ambiguous,
+                minimum_length,
+            } => {
+                let mut mapped_indexed = BTreeMap::new();
+                let mut mapped_ambiguous = ambiguous
+                    .iter()
+                    .flat_map(|argument| {
+                        self.map_returned_callable_invocation_argument(argument, creators)
+                    })
+                    .collect::<Vec<_>>();
+                for (index, argument) in indexed {
+                    let mut mapped =
+                        self.map_returned_callable_invocation_argument(argument, creators);
+                    if !mapped.is_empty() {
+                        mapped_ambiguous.extend(mapped.drain(1..));
+                        mapped_indexed.insert(*index, mapped.remove(0));
+                    }
+                }
+                LocalInvocationArgumentSegment::Spread {
+                    indexed: mapped_indexed,
+                    ambiguous: mapped_ambiguous,
+                    minimum_length: *minimum_length,
+                }
+            }
+        }
+    }
+
+    fn specialize_returned_callable_invocation(
+        &self,
+        invocation: LocalInvocationFact,
+    ) -> Vec<LocalInvocationFact> {
+        let Some(owner) = invocation.owner_returned_callable_span else {
+            return vec![invocation];
+        };
+        let instances = self
+            .active_returned_callable_instances
+            .iter()
+            .filter(|((_, span), _)| *span == owner)
+            .map(|((target, span), historical)| (target.clone(), *span, *historical))
+            .collect::<Vec<_>>();
+        let mut variants = Vec::new();
+        for (target, span, historical) in instances {
+            let creators = self.returned_callable_effect_creators(&target, span, historical);
+            if creators.is_empty() {
+                variants.push(invocation.clone());
+                continue;
+            }
+            for creators in creators {
+                let mut variant = invocation.clone();
+                variant.arguments = variant
+                    .arguments
+                    .iter()
+                    .map(|segment| {
+                        self.map_returned_callable_invocation_segment(segment, &creators)
+                    })
+                    .collect();
+                variant.bound_receiver = variant
+                    .bound_receiver
+                    .iter()
+                    .flat_map(|receiver| {
+                        self.map_returned_callable_invocation_argument(receiver, &creators)
+                    })
+                    .collect();
+                let capture = variant
+                    .callee
+                    .as_ref()
+                    .or(variant.raw_callee.as_ref())
+                    .cloned();
+                let mapped_callees = capture.as_ref().and_then(|capture| {
+                    self.mapped_returned_callable_capture_paths(
+                        capture,
+                        LocalParameterInvalidationKind::Member,
+                        std::slice::from_ref(&creators),
+                    )
+                });
+                if let Some(mapped_callees) = mapped_callees {
+                    if mapped_callees.is_empty() {
+                        variant.force_argument_exposure = true;
+                        variants.push(variant);
+                    } else {
+                        variants.extend(mapped_callees.into_iter().map(|callee| {
+                            let mut variant = variant.clone();
+                            variant.raw_callee = Some(callee.clone());
+                            variant.callee = Some(callee.clone());
+                            variant.parameters = None;
+                            variant.parameters_resolved = false;
+                            variant.force_argument_exposure =
+                                self.callable_path_may_mutate_arguments(&callee);
+                            variant
+                        }));
+                    }
+                } else {
+                    if let Some(capture) = capture {
+                        variant.force_argument_exposure |=
+                            self.callable_path_may_mutate_arguments(&capture);
+                    }
+                    variants.push(variant);
+                }
+            }
+        }
+        variants
+    }
+
+    fn specialize_returned_reflective_mutation(
+        &self,
+        mutation: ReflectiveMemberMutationFact,
+    ) -> Vec<ReflectiveMemberMutationFact> {
+        let Some(owner) = mutation.returned_callable_span else {
+            return vec![mutation];
+        };
+        let instances = self
+            .active_returned_callable_instances
+            .iter()
+            .filter(|((_, span), _)| *span == owner)
+            .map(|((target, span), historical)| (target.clone(), *span, *historical))
+            .collect::<Vec<_>>();
+        let capture = mutation
+            .parameter_target
+            .as_ref()
+            .unwrap_or(&mutation.target);
+        let mut variants = Vec::new();
+        for (target, span, historical) in instances {
+            let creators = self.returned_callable_effect_creators(&target, span, historical);
+            if creators.is_empty() {
+                variants.push(mutation.clone());
+                continue;
+            }
+            for creators in creators {
+                let mut additions = LocalInvocationEffectAdditions::new();
+                if !self.map_returned_callable_capture(
+                    capture,
+                    LocalParameterInvalidationKind::Member,
+                    &creators,
+                    &mut additions,
+                ) {
+                    variants.push(mutation.clone());
+                    continue;
+                }
+                variants.extend(additions.into_iter().map(|(path, (_, attached))| {
+                    let mut mutation = mutation.clone();
+                    mutation.raw_target = path.clone();
+                    mutation.target = path.clone();
+                    mutation.parameter_target = attached.is_some().then_some(path);
+                    mutation
+                }));
+            }
+        }
+        variants
+    }
+
+    fn defer_returned_callable_effect(&mut self, effect: LocalCallableCapturedEffect) {
+        if effect.exposure {
+            if let Some(parameter) = effect.parameter {
+                self.parameter_exposed.insert(parameter);
+            }
+            self.deferred_exposed_paths.insert(effect.path);
+            return;
+        }
+        if effect.member
+            && let Some(parameter) = effect.parameter
+        {
+            if effect.slot {
+                self.parameter_slot_invalidated.insert(parameter);
+            } else {
+                self.parameter_member_invalidated.insert(parameter);
+            }
+        }
+        match (effect.slot, effect.member) {
+            (false, false) => {
+                self.deferred_invalidated.insert(effect.path);
+            }
+            (false, true) => {
+                self.deferred_member_invalidated.insert(effect.path);
+            }
+            (true, false) => {
+                self.deferred_slot_invalidated.insert(effect.path);
+            }
+            (true, true) => {
+                self.deferred_slot_member_invalidated.insert(effect.path);
+            }
+        }
+    }
+
+    fn activate_returned_callable_aliases(
+        &mut self,
+        instances: &BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
+    ) {
+        for ((instance_target, span), historical) in instances {
+            let creators =
+                self.returned_callable_effect_creators(instance_target, *span, *historical);
+            let aliases = self
+                .returned_callable_aliases
+                .get(span)
+                .cloned()
+                .unwrap_or_default();
+            for (target, source) in aliases {
+                let targets = if target.properties.is_empty() && !target.element_wildcard {
+                    BTreeSet::from([target])
+                } else {
+                    self.mapped_returned_callable_capture_paths(
+                        &target,
+                        LocalParameterInvalidationKind::Slot,
+                        &creators,
+                    )
+                    .unwrap_or_else(|| BTreeSet::from([target]))
+                };
+                let sources = self
+                    .mapped_returned_callable_capture_paths(
+                        &source,
+                        LocalParameterInvalidationKind::Member,
+                        &creators,
+                    )
+                    .unwrap_or_else(|| BTreeSet::from([source]));
+                for target in targets {
+                    if sources.is_empty() {
+                        self.ambiguous_alias_targets.insert(target);
+                        continue;
+                    }
+                    self.alias_history
+                        .entry(target.clone())
+                        .or_default()
+                        .extend(sources.iter().cloned());
+                    self.cross_scope_alias_targets.insert(target);
+                }
+            }
+            let ambiguous_targets = self
+                .returned_callable_ambiguous_targets
+                .get(span)
+                .cloned()
+                .unwrap_or_default();
+            for target in ambiguous_targets {
+                let targets = if target.properties.is_empty() && !target.element_wildcard {
+                    BTreeSet::from([target])
+                } else {
+                    self.mapped_returned_callable_capture_paths(
+                        &target,
+                        LocalParameterInvalidationKind::Slot,
+                        &creators,
+                    )
+                    .unwrap_or_else(|| BTreeSet::from([target]))
+                };
+                self.ambiguous_alias_targets.extend(targets);
+            }
+        }
+    }
+
+    fn activate_invoked_returned_callable_effects(&mut self) {
+        let invocations = self.local_invocations.clone();
+        let mut instances = BTreeMap::<(StaticAliasPath, (u32, u32)), bool>::new();
+        for _ in 0..=invocations.len() {
+            let previous_len = instances.len();
+            self.active_returned_callable_instances
+                .clone_from(&instances);
+            let active_spans = instances
+                .keys()
+                .map(|(_, span)| *span)
+                .collect::<BTreeSet<_>>();
+            for invocation in &invocations {
+                if invocation
+                    .owner_returned_callable_span
+                    .is_some_and(|owner| !active_spans.contains(&owner))
+                {
+                    continue;
+                }
+                for specialized in self.specialize_returned_callable_invocation(invocation.clone())
+                {
+                    for variant in self.bound_invocation_variants(specialized) {
+                        if self.invocation_is_definitely_generator(&variant)
+                            && (variant.result_discarded || variant.construct)
+                        {
+                            continue;
+                        }
+                        for (target, span, historical) in
+                            self.invocation_callable_effect_instances(&variant)
+                        {
+                            instances
+                                .entry((target, span))
+                                .and_modify(|existing| *existing |= historical)
+                                .or_insert(historical);
+                        }
+                    }
+                }
+            }
+            self.activate_returned_callable_aliases(&instances);
+            if instances.len() == previous_len {
+                break;
+            }
+        }
+        self.active_returned_callable_instances
+            .clone_from(&instances);
+        for ((instance_target, span), historical) in instances {
+            let creators =
+                self.returned_callable_effect_creators(&instance_target, span, historical);
+            let effects = self
+                .returned_callable_effects
+                .get(&span)
+                .cloned()
+                .unwrap_or_default();
+            for effect in effects {
+                let kind = if effect.exposure {
+                    Some(LocalParameterInvalidationKind::Exposure)
+                } else if effect.member {
+                    Some(if effect.slot {
+                        LocalParameterInvalidationKind::Slot
+                    } else {
+                        LocalParameterInvalidationKind::Member
+                    })
+                } else {
+                    None
+                };
+                let mut additions = LocalInvocationEffectAdditions::new();
+                let mut mapped = false;
+                if let (Some(capture), Some(kind)) = (effect.parameter.as_ref(), kind) {
+                    for creator in &creators {
+                        mapped |= self.map_returned_callable_capture(
+                            capture,
+                            kind,
+                            creator,
+                            &mut additions,
+                        );
+                    }
+                }
+                if mapped {
+                    self.apply_local_invocation_effect_additions(additions);
+                } else {
+                    self.defer_returned_callable_effect(effect);
+                }
+            }
         }
     }
 
@@ -21620,7 +22507,13 @@ impl StaticHookAliasCollector<'_> {
         invocation: LocalInvocationFact,
     ) -> Vec<LocalInvocationFact> {
         let mut variants = self.default_derived_invocation_variants(&invocation);
-        if invocation.parameters.is_some() {
+        let requires_historical_parameters =
+            invocation.raw_callee.as_ref().is_some_and(|raw_callee| {
+                self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
+            });
+        if invocation.parameters.is_some()
+            && (invocation.parameters_resolved || !requires_historical_parameters)
+        {
             variants.push(invocation);
             return variants;
         }
@@ -21644,6 +22537,39 @@ impl StaticHookAliasCollector<'_> {
                 .map(|bound| Self::with_bound_callable(invocation.clone(), bound)),
         );
         variants
+    }
+
+    fn invocation_parameter_sets(
+        &self,
+        invocation: &LocalInvocationFact,
+    ) -> Vec<Vec<LocalCallableParameter>> {
+        let requires_historical_parameters =
+            invocation.raw_callee.as_ref().is_some_and(|raw_callee| {
+                self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
+            });
+        if let Some(parameters) = &invocation.parameters
+            && (invocation.parameters_resolved || !requires_historical_parameters)
+        {
+            return vec![parameters.clone()];
+        }
+        let (Some(raw_callee), Some(callee)) = (&invocation.raw_callee, &invocation.callee) else {
+            return Vec::new();
+        };
+        let callees =
+            if self.path_requires_historical_aliases(raw_callee, invocation.function_depth) {
+                resolve_historical_alias_paths(&self.alias_history, raw_callee)
+            } else {
+                BTreeSet::from([callee.clone()])
+            };
+        callees
+            .iter()
+            .flat_map(|callee| {
+                self.local_callable_parameter_history
+                    .get(callee)
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     fn map_local_invocation_effect(
@@ -21698,11 +22624,59 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn apply_local_invocation_effect_additions(
+        &mut self,
+        additions: LocalInvocationEffectAdditions,
+    ) {
+        for (path, (kind, attached_kind)) in additions {
+            if let Some(attached_kind) = attached_kind
+                && path
+                    .binding_root()
+                    .is_some_and(|root| self.external_callable_parameters.contains(&root))
+            {
+                match attached_kind {
+                    LocalParameterInvalidationKind::Slot => {
+                        self.parameter_slot_invalidated.insert(path.clone());
+                    }
+                    LocalParameterInvalidationKind::Member => {
+                        self.parameter_member_invalidated.insert(path.clone());
+                    }
+                    LocalParameterInvalidationKind::Exposure => {
+                        self.parameter_exposed.insert(path.clone());
+                    }
+                }
+            }
+            match kind {
+                LocalParameterInvalidationKind::Slot => {
+                    let sources = self.historical_element_sources(&path, false);
+                    self.insert_slot_invalidation_path(path, true);
+                    for source in sources {
+                        self.insert_slot_invalidation_path(source, true);
+                    }
+                }
+                LocalParameterInvalidationKind::Member => {
+                    let sources = self.historical_element_sources(&path, false);
+                    self.insert_invalidation_path(path, true);
+                    for source in sources {
+                        self.insert_invalidation_path(source, true);
+                    }
+                }
+                LocalParameterInvalidationKind::Exposure => {
+                    self.insert_propagated_exposure(
+                        path,
+                        attached_kind == Some(LocalParameterInvalidationKind::Exposure),
+                    );
+                }
+            }
+        }
+    }
+
     fn propagate_local_invocation_invalidations(&mut self) {
         let invocation_variants = self
             .local_invocations
             .clone()
             .into_iter()
+            .flat_map(|invocation| self.specialize_returned_callable_invocation(invocation))
             .flat_map(|invocation| self.bound_invocation_variants(invocation))
             .filter(|invocation| {
                 !self.invocation_is_definitely_generator(invocation)
@@ -21753,32 +22727,7 @@ impl StaticHookAliasCollector<'_> {
             }
             let mut additions = LocalInvocationEffectAdditions::new();
             for invocation in &invocation_variants {
-                let parameter_sets = if let Some(parameters) = &invocation.parameters {
-                    vec![parameters.clone()]
-                } else {
-                    let (Some(raw_callee), Some(callee)) =
-                        (&invocation.raw_callee, &invocation.callee)
-                    else {
-                        continue;
-                    };
-                    let callees = if self
-                        .path_requires_historical_aliases(raw_callee, invocation.function_depth)
-                    {
-                        resolve_historical_alias_paths(&self.alias_history, raw_callee)
-                    } else {
-                        BTreeSet::from([callee.clone()])
-                    };
-                    callees
-                        .iter()
-                        .flat_map(|callee| {
-                            self.local_callable_parameter_history
-                                .get(callee)
-                                .cloned()
-                                .unwrap_or_default()
-                        })
-                        .collect::<Vec<_>>()
-                };
-                for parameters in parameter_sets {
+                for parameters in self.invocation_parameter_sets(invocation) {
                     for parameter in parameters {
                         for (invalidated, kind) in &invalidated {
                             if invalidated.root != StaticAliasRoot::Binding(parameter.symbol) {
@@ -21825,47 +22774,7 @@ impl StaticHookAliasCollector<'_> {
                     }
                 }
             }
-            for (path, (kind, attached_kind)) in additions {
-                if let Some(attached_kind) = attached_kind
-                    && path
-                        .binding_root()
-                        .is_some_and(|root| self.external_callable_parameters.contains(&root))
-                {
-                    match attached_kind {
-                        LocalParameterInvalidationKind::Slot => {
-                            self.parameter_slot_invalidated.insert(path.clone());
-                        }
-                        LocalParameterInvalidationKind::Member => {
-                            self.parameter_member_invalidated.insert(path.clone());
-                        }
-                        LocalParameterInvalidationKind::Exposure => {
-                            self.parameter_exposed.insert(path.clone());
-                        }
-                    }
-                }
-                match kind {
-                    LocalParameterInvalidationKind::Slot => {
-                        let sources = self.historical_element_sources(&path, false);
-                        self.insert_slot_invalidation_path(path, true);
-                        for source in sources {
-                            self.insert_slot_invalidation_path(source, true);
-                        }
-                    }
-                    LocalParameterInvalidationKind::Member => {
-                        let sources = self.historical_element_sources(&path, false);
-                        self.insert_invalidation_path(path, true);
-                        for source in sources {
-                            self.insert_invalidation_path(source, true);
-                        }
-                    }
-                    LocalParameterInvalidationKind::Exposure => {
-                        self.insert_propagated_exposure(
-                            path,
-                            attached_kind == Some(LocalParameterInvalidationKind::Exposure),
-                        );
-                    }
-                }
-            }
+            self.apply_local_invocation_effect_additions(additions);
             if (
                 self.member_invalidated.len(),
                 self.parameter_member_invalidated.len(),
@@ -21887,6 +22796,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
+        self.activate_invoked_returned_callable_effects();
         for path in self.deferred_exposed_paths.clone() {
             for path in resolve_historical_exposed_paths(
                 &self.alias_history,
@@ -21920,7 +22830,13 @@ impl StaticHookAliasCollector<'_> {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
         };
-        for mutation in self.reflective_mutations.clone() {
+        let reflective_mutations = self
+            .reflective_mutations
+            .clone()
+            .into_iter()
+            .flat_map(|mutation| self.specialize_returned_reflective_mutation(mutation))
+            .collect::<Vec<_>>();
+        for mutation in reflective_mutations {
             let callees = if self
                 .path_requires_historical_aliases(&mutation.raw_callee, mutation.function_depth)
             {
@@ -22140,6 +23056,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .entry(symbol)
                 .or_insert(self.function_depth);
             self.record_unreferenced_callable_span(&target, function.span);
+            self.record_local_callable_effect_span(
+                target.clone(),
+                (function.span.start, function.span.end),
+            );
             self.record_local_callable_parameters(target.clone(), &function.params);
             self.record_local_callable_receiver(
                 target.clone(),
@@ -22212,6 +23132,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, results)| (target.clone(), results.clone()))
             .collect::<Vec<_>>();
+        let outer_local_callable_effect_spans = self
+            .local_callable_effect_spans
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, spans)| (target.clone(), spans.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_callable_effect_creators = self
+            .local_callable_effect_creators
+            .iter()
+            .filter(|((target, _), _)| self.path_owner_depth(target) < depth)
+            .map(|(key, invocations)| (key.clone(), invocations.clone()))
+            .collect::<Vec<_>>();
         let outer_local_class_instances = self
             .local_class_instances
             .iter()
@@ -22250,10 +23182,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         self.function_control_baselines.push(self.control_depth);
         self.function_depth = depth;
+        self.current_callable_spans
+            .push((function.span.start, function.span.end));
         self.dynamic_this_roots
             .push(Some(StaticAliasPath::dynamic_this(function.span)));
         walk_function(self, function, flags);
         self.dynamic_this_roots.pop();
+        self.current_callable_spans.pop();
         let changed_outer_targets = self
             .aliases
             .keys()
@@ -22318,6 +23253,28 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_callable_results
             .extend(outer_local_callable_results);
+        let changed_outer_targets = self
+            .local_callable_effect_spans
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_callable_effect_spans.remove(&target);
+        }
+        self.local_callable_effect_spans
+            .extend(outer_local_callable_effect_spans);
+        let binding_owner_depths = &self.binding_owner_depths;
+        self.local_callable_effect_creators
+            .retain(|(target, _), _| {
+                target
+                    .binding_root()
+                    .and_then(|root| binding_owner_depths.get(&root).copied())
+                    .unwrap_or(0)
+                    >= depth
+            });
+        self.local_callable_effect_creators
+            .extend(outer_local_callable_effect_creators);
         let changed_outer_targets = self
             .local_class_instances
             .iter()
@@ -22436,6 +23393,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, results)| (target.clone(), results.clone()))
             .collect::<Vec<_>>();
+        let outer_local_callable_effect_spans = self
+            .local_callable_effect_spans
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, spans)| (target.clone(), spans.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_callable_effect_creators = self
+            .local_callable_effect_creators
+            .iter()
+            .filter(|((target, _), _)| self.path_owner_depth(target) < depth)
+            .map(|(key, invocations)| (key.clone(), invocations.clone()))
+            .collect::<Vec<_>>();
         let outer_local_class_instances = self
             .local_class_instances
             .iter()
@@ -22474,7 +23443,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         self.function_control_baselines.push(self.control_depth);
         self.function_depth = depth;
+        self.current_callable_spans
+            .push((function.span.start, function.span.end));
         walk_arrow_function_expression(self, function);
+        self.current_callable_spans.pop();
         let changed_outer_targets = self
             .aliases
             .keys()
@@ -22539,6 +23511,28 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         self.local_callable_results
             .extend(outer_local_callable_results);
+        let changed_outer_targets = self
+            .local_callable_effect_spans
+            .keys()
+            .filter(|target| self.path_owner_depth(target) < depth)
+            .cloned()
+            .collect::<Vec<_>>();
+        for target in changed_outer_targets {
+            self.local_callable_effect_spans.remove(&target);
+        }
+        self.local_callable_effect_spans
+            .extend(outer_local_callable_effect_spans);
+        let binding_owner_depths = &self.binding_owner_depths;
+        self.local_callable_effect_creators
+            .retain(|(target, _), _| {
+                target
+                    .binding_root()
+                    .and_then(|root| binding_owner_depths.get(&root).copied())
+                    .unwrap_or(0)
+                    >= depth
+            });
+        self.local_callable_effect_creators
+            .extend(outer_local_callable_effect_creators);
         let changed_outer_targets = self
             .local_class_instances
             .iter()
@@ -22673,12 +23667,21 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         let local_invocations_cover_arguments =
             Self::local_invocations_cover_arguments(&local_invocations);
+        let returned_captured_callee = static_alias_source_path(self.scoping, &call.callee)
+            .is_some_and(|callee| {
+                let resolved = resolve_static_alias_path(&self.aliases, &callee);
+                [&callee, &resolved].into_iter().any(|callee| {
+                    !matches!(&callee.root, StaticAliasRoot::UnresolvedGlobal(_))
+                        && self.returned_callable_capture_span(callee).is_some()
+                })
+            });
         let reflect_exposed = self
             .reflect_apply_exposed_argument_paths(call)
             .or_else(|| self.reflect_construct_exposed_argument_paths(call));
         let exposed_arguments = if let Some(exposed) = reflect_exposed {
             self.prepare_exposed_paths(exposed)
         } else if !local_invocations_cover_arguments
+            && !returned_captured_callee
             && self.callee_may_mutate_arguments(&call.callee)
         {
             let exposed = self.collect_invocation_argument_paths(&call.arguments);
@@ -22695,6 +23698,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .and_then(|target| self.alias_source_path(target))
         {
             let resolved_target = resolve_static_alias_path(&self.aliases, &target);
+            let returned_callable_span = self
+                .returned_callable_capture_span(&target)
+                .or_else(|| self.returned_callable_capture_span(&resolved_target));
             let key = call
                 .arguments
                 .get(1)
@@ -22708,6 +23714,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 raw_target: target,
                 key,
                 function_depth: self.function_depth,
+                returned_callable_span,
             })
         } else {
             None
