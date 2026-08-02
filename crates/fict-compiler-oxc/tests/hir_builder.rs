@@ -5433,6 +5433,51 @@ fn unobserved_inline_generator_values_remain_unexecuted() {
             "void { run: function* () { values.forEach = null; } };",
         ),
         (
+            "discarded nested array spread generator",
+            "",
+            "void [...[function* () { values.forEach = null; }]];",
+        ),
+        (
+            "discarded nested object spread generator",
+            "",
+            "void { ...{ run: function* () { values.forEach = null; } } };",
+        ),
+        (
+            "discarded nested guarded spread generator",
+            "",
+            "void { ...{ runs: [...[function* () { values.forEach = null; }]] } };",
+        ),
+        (
+            "discarded named array spread generator",
+            "function* inspect() { values.forEach = null; }",
+            "void [...[inspect]];",
+        ),
+        (
+            "discarded named object spread generator",
+            "function* inspect() { values.forEach = null; }",
+            "void { ...{ run: inspect } };",
+        ),
+        (
+            "discarded iterator value in array spread",
+            "function* inspect() { values.forEach = null; } const iterator = inspect();",
+            "void [...[iterator]];",
+        ),
+        (
+            "discarded direct iterator result in array spread",
+            "function* inspect() { values.forEach = null; }",
+            "void [...[inspect()]];",
+        ),
+        (
+            "discarded direct iterator result in object spread",
+            "function* inspect() { values.forEach = null; }",
+            "void { ...{ iterator: inspect() } };",
+        ),
+        (
+            "discarded inline iterator result in array spread",
+            "",
+            "void [...[(function* () { values.forEach = null; })()]];",
+        ),
+        (
             "discarded conditional inline generator container",
             "",
             "void (choose ? [function* () { values.forEach = null; }] : { run: function* () { values.forEach = null; } });",
@@ -5652,6 +5697,26 @@ fn consumed_inline_generator_values_propagate_local_effects() {
             "stored inline generator object property is advanced",
             "",
             "const box = { run: function* () { values.forEach = null; } }; box.run().next();",
+        ),
+        (
+            "array spread advances generator source",
+            "function* inspect() { values.forEach = null; }",
+            "void [...inspect()];",
+        ),
+        (
+            "overridden array iterator consumes nested generator",
+            "Array.prototype[Symbol.iterator] = function () { this[0]().next(); return { next() { return { done: true }; } }; };",
+            "void [...[function* () { values.forEach = null; }]];",
+        ),
+        (
+            "overridden array iterator advances nested iterator",
+            "Array.prototype[Symbol.iterator] = function () { this[0].next(); return { next() { return { done: true }; } }; }; function* inspect() { values.forEach = null; }",
+            "void [...[inspect()]];",
+        ),
+        (
+            "array-spread iterator value is later advanced",
+            "function* inspect() { values.forEach = null; } const iterator = inspect();",
+            "void [...[iterator]]; iterator.next();",
         ),
     ] {
         let source = format!(

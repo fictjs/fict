@@ -11709,6 +11709,245 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         true
     }
 
+    fn collect_static_container_generator_body_spans(
+        &mut self,
+        expression: &Expression<'_>,
+        array_iterator_guarded: bool,
+        body_spans: &mut BTreeSet<GeneratorBodySpan>,
+        guarded_body_spans: &mut BTreeSet<GeneratorBodySpan>,
+    ) {
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            if array_iterator_guarded {
+                self.guarded_discarded_invocation_reads.push((
+                    source,
+                    source_span,
+                    Self::array_iterator_guard(),
+                ));
+            } else {
+                self.discarded_value_reads
+                    .entry(source)
+                    .or_default()
+                    .insert(source_span);
+            }
+            return;
+        }
+        let record = |span, body_spans: &mut BTreeSet<_>, guarded_body_spans: &mut BTreeSet<_>| {
+            if array_iterator_guarded {
+                guarded_body_spans.insert(span);
+            } else {
+                body_spans.insert(span);
+            }
+        };
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                if let Some(span) = Self::generator_body_span(function) {
+                    record(span, body_spans, guarded_body_spans);
+                }
+            }
+            Expression::CallExpression(_) | Expression::TaggedTemplateExpression(_) => {
+                let Some(pending) = self.pending_discarded_invocations(expression) else {
+                    return;
+                };
+                if !array_iterator_guarded {
+                    self.record_discarded_invocations(pending);
+                    return;
+                }
+                for action in pending.nonexecuting_actions {
+                    match action {
+                        PendingNonExecutingAction::CallableRead {
+                            source,
+                            source_span,
+                            method_guard: None,
+                        } => self.guarded_discarded_invocation_reads.push((
+                            source,
+                            source_span,
+                            Self::array_iterator_guard(),
+                        )),
+                        PendingNonExecutingAction::BodySpan {
+                            body_span,
+                            method_guard: None,
+                        } => {
+                            guarded_body_spans.insert(body_span);
+                        }
+                        PendingNonExecutingAction::CallableRead {
+                            method_guard: Some(_),
+                            ..
+                        }
+                        | PendingNonExecutingAction::BodySpan {
+                            method_guard: Some(_),
+                            ..
+                        } => {}
+                    }
+                }
+            }
+            Expression::ArrayExpression(array) => {
+                for element in &array.elements {
+                    match element {
+                        ArrayExpressionElement::Elision(_) => {}
+                        ArrayExpressionElement::SpreadElement(spread) => {
+                            if matches!(
+                                spread.argument.get_inner_expression(),
+                                Expression::ArrayExpression(_)
+                            ) {
+                                self.collect_static_container_generator_body_spans(
+                                    &spread.argument,
+                                    true,
+                                    body_spans,
+                                    guarded_body_spans,
+                                );
+                            }
+                        }
+                        _ => self.collect_static_container_generator_body_spans(
+                            element.to_expression(),
+                            array_iterator_guarded,
+                            body_spans,
+                            guarded_body_spans,
+                        ),
+                    }
+                }
+            }
+            Expression::ObjectExpression(object) => {
+                for property in &object.properties {
+                    match property {
+                        OxcObjectPropertyKind::ObjectProperty(property) => {
+                            self.collect_static_container_generator_body_spans(
+                                &property.value,
+                                array_iterator_guarded,
+                                body_spans,
+                                guarded_body_spans,
+                            );
+                        }
+                        OxcObjectPropertyKind::SpreadProperty(spread)
+                            if matches!(
+                                spread.argument.get_inner_expression(),
+                                Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+                            ) =>
+                        {
+                            self.collect_static_container_generator_body_spans(
+                                &spread.argument,
+                                array_iterator_guarded,
+                                body_spans,
+                                guarded_body_spans,
+                            );
+                        }
+                        OxcObjectPropertyKind::SpreadProperty(_) => {}
+                    }
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_static_container_generator_body_spans(
+                    &expression.consequent,
+                    array_iterator_guarded,
+                    body_spans,
+                    guarded_body_spans,
+                );
+                self.collect_static_container_generator_body_spans(
+                    &expression.alternate,
+                    array_iterator_guarded,
+                    body_spans,
+                    guarded_body_spans,
+                );
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_static_container_generator_body_spans(
+                    &expression.left,
+                    array_iterator_guarded,
+                    body_spans,
+                    guarded_body_spans,
+                );
+                self.collect_static_container_generator_body_spans(
+                    &expression.right,
+                    array_iterator_guarded,
+                    body_spans,
+                    guarded_body_spans,
+                );
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.collect_static_container_generator_body_spans(
+                        value,
+                        array_iterator_guarded,
+                        body_spans,
+                        guarded_body_spans,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_discarded_spread_generator_body_spans(
+        &mut self,
+        expression: &Expression<'_>,
+        body_spans: &mut BTreeSet<GeneratorBodySpan>,
+        guarded_body_spans: &mut BTreeSet<GeneratorBodySpan>,
+    ) {
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(array) => {
+                for element in &array.elements {
+                    match element {
+                        ArrayExpressionElement::Elision(_) => {}
+                        ArrayExpressionElement::SpreadElement(spread) => {
+                            if matches!(
+                                spread.argument.get_inner_expression(),
+                                Expression::ArrayExpression(_)
+                            ) {
+                                self.collect_static_container_generator_body_spans(
+                                    &spread.argument,
+                                    true,
+                                    body_spans,
+                                    guarded_body_spans,
+                                );
+                            }
+                        }
+                        _ => self.collect_discarded_spread_generator_body_spans(
+                            element.to_expression(),
+                            body_spans,
+                            guarded_body_spans,
+                        ),
+                    }
+                }
+            }
+            Expression::ObjectExpression(object) => {
+                for property in &object.properties {
+                    match property {
+                        OxcObjectPropertyKind::ObjectProperty(property) => {
+                            self.collect_discarded_spread_generator_body_spans(
+                                &property.value,
+                                body_spans,
+                                guarded_body_spans,
+                            );
+                        }
+                        OxcObjectPropertyKind::SpreadProperty(spread)
+                            if matches!(
+                                spread.argument.get_inner_expression(),
+                                Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+                            ) =>
+                        {
+                            self.collect_static_container_generator_body_spans(
+                                &spread.argument,
+                                false,
+                                body_spans,
+                                guarded_body_spans,
+                            );
+                        }
+                        OxcObjectPropertyKind::SpreadProperty(_) => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn array_iterator_guard() -> GeneratorMethodGuard {
+        GeneratorMethodGuard {
+            source: None,
+            owner: StaticAliasPath::unresolved_global("Array".to_string())
+                .with_property("prototype".to_string()),
+            method: "[Symbol.iterator]",
+        }
+    }
+
     fn record_retained_bind_arguments(
         &mut self,
         target: &StaticAliasPath,
@@ -14431,6 +14670,20 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.record_discarded_expression(&expression.expression);
             }
             _ => {
+                let mut spread_body_spans = BTreeSet::new();
+                let mut guarded_spread_body_spans = BTreeSet::new();
+                self.collect_discarded_spread_generator_body_spans(
+                    expression,
+                    &mut spread_body_spans,
+                    &mut guarded_spread_body_spans,
+                );
+                self.directly_unexecuted_body_spans
+                    .extend(spread_body_spans);
+                self.guarded_unexecuted_body_spans.extend(
+                    guarded_spread_body_spans
+                        .into_iter()
+                        .map(|span| (span, Self::array_iterator_guard())),
+                );
                 if let Some(pending) = self.pending_discarded_invocations(expression) {
                     self.record_discarded_invocations(pending);
                 }
