@@ -5148,6 +5148,147 @@ fn consumed_direct_generator_results_propagate_local_effects() {
 }
 
 #[test]
+fn direct_generator_results_in_discarded_containers_remain_unadvanced() {
+    for (name, helper, statement) in [
+        (
+            "direct generator result in immediate discarded array",
+            "function* inspect() { values.forEach = null; }",
+            "void [inspect()];",
+        ),
+        (
+            "direct generator result in immediate discarded object",
+            "function* inspect() { values.forEach = null; }",
+            "void { value: inspect() };",
+        ),
+        (
+            "direct generator result in nested discarded container",
+            "function* inspect() { values.forEach = null; }",
+            "void [{ nested: [inspect()] }];",
+        ),
+        (
+            "direct generator result in stored discarded array",
+            "function* inspect() { values.forEach = null; }",
+            "const holder = [inspect()]; void holder;",
+        ),
+        (
+            "direct generator result in stored discarded object",
+            "function* inspect() { values.forEach = null; }",
+            "const holder = { value: inspect() }; void holder;",
+        ),
+        (
+            "direct generator result in discarded conditional container",
+            "function* inspect() { values.forEach = null; } function* alternate() { values.forEach = null; }",
+            "const holder = choose ? [inspect()] : { value: alternate() }; void holder;",
+        ),
+        (
+            "direct generator result in ignored array argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore([inspect()]);",
+        ),
+        (
+            "direct generator result in ignored object argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "ignore({ value: inspect() });",
+        ),
+        (
+            "inline generator result in stored discarded container",
+            "",
+            "const holder = [(function* () { values.forEach = null; })()]; void holder;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {statement}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected receiver integrity to be preserved, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn observed_direct_generator_results_in_containers_propagate_local_effects() {
+    for (name, setup, statement) in [
+        (
+            "stored array element advances direct generator result",
+            "function* mutate() { values.forEach = null; }",
+            "const holder = [mutate()]; holder[0].next();",
+        ),
+        (
+            "stored object property advances direct generator result",
+            "function* mutate() { values.forEach = null; }",
+            "const holder = { value: mutate() }; holder.value.next();",
+        ),
+        (
+            "local consumer advances container element",
+            "function* mutate() { values.forEach = null; } function consume([value]) { value.next(); }",
+            "consume([mutate()]);",
+        ),
+        (
+            "external consumer may advance container element",
+            "function* mutate() { values.forEach = null; }",
+            "consume([mutate()]);",
+        ),
+        (
+            "array spread advances direct generator result",
+            "function* mutate() { values.forEach = null; yield 1; }",
+            "void [...mutate()];",
+        ),
+        (
+            "assigned container element remains observable",
+            "function* mutate() { values.forEach = null; } let iterator;",
+            "void [iterator = mutate()]; iterator.next();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {statement}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn observed_generator_iterators_propagate_local_effects() {
     for (name, setup, invocation) in [
         (

@@ -10007,6 +10007,11 @@ struct PendingDiscardedInvocations {
     nonexecuting_actions: Vec<PendingNonExecutingAction>,
 }
 
+struct RetainedInvocationSpans {
+    target: StaticAliasPath,
+    invocation_spans: BTreeSet<(u32, u32)>,
+}
+
 struct PendingCallableArgumentRead {
     value: PendingCallableArgumentValue,
     callee: Option<StaticAliasPath>,
@@ -10215,6 +10220,7 @@ struct GeneratorExecutionCollector<'semantic> {
     non_escaping_callable_reads: BTreeSet<(StaticAliasPath, (u32, u32))>,
     guarded_unexecuted_body_spans: Vec<(GeneratorBodySpan, GeneratorMethodGuard)>,
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
+    retained_invocation_spans: Vec<RetainedInvocationSpans>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
 }
 
@@ -10252,6 +10258,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             non_escaping_callable_reads: BTreeSet::new(),
             guarded_unexecuted_body_spans: Vec::new(),
             directly_unexecuted_body_spans: BTreeSet::new(),
+            retained_invocation_spans: Vec::new(),
             discarded_invocation_spans: BTreeSet::new(),
         }
     }
@@ -11966,6 +11973,26 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         collect(collector, expression, pending);
                     }
                 }
+                Expression::ArrayExpression(expression) => {
+                    for element in &expression.elements {
+                        if matches!(
+                            element,
+                            ArrayExpressionElement::Elision(_)
+                                | ArrayExpressionElement::SpreadElement(_)
+                        ) {
+                            continue;
+                        }
+                        collect(collector, element.to_expression(), pending);
+                    }
+                }
+                Expression::ObjectExpression(expression) => {
+                    for property in &expression.properties {
+                        let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                            continue;
+                        };
+                        collect(collector, &property.value, pending);
+                    }
+                }
                 _ => {}
             }
         }
@@ -11973,6 +12000,94 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let mut pending = PendingDiscardedInvocations::default();
         collect(self, expression, &mut pending);
         (!pending.invocation_spans.is_empty()).then_some(pending)
+    }
+
+    fn record_nonexecuting_actions(&mut self, actions: Vec<PendingNonExecutingAction>) {
+        for action in actions {
+            match action {
+                PendingNonExecutingAction::CallableRead {
+                    source,
+                    source_span,
+                    method_guard: Some(method_guard),
+                } => self.guarded_discarded_invocation_reads.push((
+                    source,
+                    source_span,
+                    method_guard,
+                )),
+                PendingNonExecutingAction::CallableRead {
+                    source,
+                    source_span,
+                    method_guard: None,
+                } => {
+                    self.discarded_invocation_reads
+                        .entry(source)
+                        .or_default()
+                        .insert(source_span);
+                }
+                PendingNonExecutingAction::BodySpan {
+                    body_span,
+                    method_guard: Some(method_guard),
+                } => self
+                    .guarded_unexecuted_body_spans
+                    .push((body_span, method_guard)),
+                PendingNonExecutingAction::BodySpan {
+                    body_span,
+                    method_guard: None,
+                } => {
+                    self.directly_unexecuted_body_spans.insert(body_span);
+                }
+            }
+        }
+    }
+
+    fn record_discarded_invocations(&mut self, pending: PendingDiscardedInvocations) {
+        self.discarded_invocation_spans
+            .extend(pending.invocation_spans);
+        self.record_nonexecuting_actions(pending.nonexecuting_actions);
+    }
+
+    fn record_retained_invocations(
+        &mut self,
+        target: StaticAliasPath,
+        expression: &Expression<'_>,
+    ) {
+        let Some(pending) = self.pending_discarded_invocations(expression) else {
+            return;
+        };
+        if pending.nonexecuting_actions.is_empty() {
+            return;
+        }
+        for action in pending.nonexecuting_actions {
+            match action {
+                PendingNonExecutingAction::CallableRead {
+                    source,
+                    source_span,
+                    method_guard,
+                } => self.generator_result_reads.push(ForwardedCallableRead {
+                    source,
+                    source_span,
+                    target: target.clone(),
+                    method_guard,
+                    parameter_offset: None,
+                }),
+                PendingNonExecutingAction::BodySpan {
+                    body_span,
+                    method_guard,
+                } => {
+                    self.generator_body_targets
+                        .push((body_span, target.clone()));
+                    if let Some(method_guard) = method_guard {
+                        self.guarded_generator_targets
+                            .push((target.clone(), method_guard));
+                    }
+                }
+            }
+        }
+        self.retained_invocation_spans
+            .push(RetainedInvocationSpans {
+                target,
+                invocation_spans: pending.invocation_spans,
+            });
     }
 
     fn record_pending_callable_argument(
@@ -13254,6 +13369,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 None,
                 RetainedCallableReadKind::Container,
             );
+            self.record_retained_invocations(target.clone(), initializer);
         }
         self.record_forwarded_callable(target.clone(), initializer);
         if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
@@ -13434,6 +13550,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.record_discarded_expression(&expression.expression);
             }
             _ => {
+                if let Some(pending) = self.pending_discarded_invocations(expression) {
+                    self.record_discarded_invocations(pending);
+                }
                 self.record_nonexecuting_callable(expression);
                 self.record_discarded_value_read(expression);
             }
@@ -13715,43 +13834,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     }
                 }
                 PendingCallableArgumentValue::Invocations(pending) if non_consuming => {
-                    self.discarded_invocation_spans
-                        .extend(pending.invocation_spans);
-                    for action in pending.nonexecuting_actions {
-                        match action {
-                            PendingNonExecutingAction::CallableRead {
-                                source,
-                                source_span,
-                                method_guard: Some(method_guard),
-                            } => self.guarded_discarded_invocation_reads.push((
-                                source,
-                                source_span,
-                                method_guard,
-                            )),
-                            PendingNonExecutingAction::CallableRead {
-                                source,
-                                source_span,
-                                method_guard: None,
-                            } => {
-                                self.discarded_invocation_reads
-                                    .entry(source)
-                                    .or_default()
-                                    .insert(source_span);
-                            }
-                            PendingNonExecutingAction::BodySpan {
-                                body_span,
-                                method_guard: Some(method_guard),
-                            } => self
-                                .guarded_unexecuted_body_spans
-                                .push((body_span, method_guard)),
-                            PendingNonExecutingAction::BodySpan {
-                                body_span,
-                                method_guard: None,
-                            } => {
-                                self.directly_unexecuted_body_spans.insert(body_span);
-                            }
-                        }
-                    }
+                    self.record_discarded_invocations(pending);
                 }
                 PendingCallableArgumentValue::Invocations(_) => {}
             }
@@ -14141,6 +14224,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             if !changed {
                 break;
+            }
+        }
+        for retained in self.retained_invocation_spans {
+            if unexecuted.contains(&retained.target) {
+                self.discarded_invocation_spans
+                    .extend(retained.invocation_spans);
             }
         }
         let mut unexecuted_body_spans = self.directly_unexecuted_body_spans;
