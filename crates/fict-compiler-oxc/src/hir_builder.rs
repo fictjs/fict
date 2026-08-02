@@ -17992,7 +17992,7 @@ impl StaticHookAliasCollector<'_> {
         else {
             return Some(exposed);
         };
-        if !self.reflect_apply_target_may_mutate_arguments(target) {
+        if !self.callee_may_mutate_arguments(target) {
             return Some(exposed);
         }
         if let Some(this_argument) = call
@@ -18496,15 +18496,15 @@ impl StaticHookAliasCollector<'_> {
         Some((raw_target, target))
     }
 
-    fn local_invocation_fact(
+    fn local_invocation_facts(
         &self,
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
-    ) -> Option<LocalInvocationFact> {
+    ) -> Option<Vec<LocalInvocationFact>> {
         if let Some(invocation) = self.local_apply_invocation_fact(callee, arguments) {
-            return Some(invocation);
+            return Some(vec![invocation]);
         }
-        self.local_invocation_fact_from_arguments(
+        self.local_invocation_facts_from_arguments(
             callee,
             self.collect_local_invocation_arguments(arguments),
         )
@@ -20275,38 +20275,31 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn callee_may_mutate_arguments(&self, callee: &Expression<'_>) -> bool {
-        let Some(path) = static_alias_source_path(self.scoping, callee) else {
-            return false;
-        };
-        let resolved = resolve_static_alias_path(&self.aliases, &path);
-        if self.intact_function_bind_target(&path, &resolved).is_some() {
-            return false;
+        if let Some(path) = static_alias_source_path(self.scoping, callee) {
+            let resolved = resolve_static_alias_path(&self.aliases, &path);
+            if self.intact_function_bind_target(&path, &resolved).is_some() {
+                return false;
+            }
+            return self.callable_path_may_mutate_arguments(&path);
         }
-        self.callable_path_may_mutate_arguments(&path)
-    }
-
-    fn reflect_apply_target_may_mutate_arguments(&self, target: &Expression<'_>) -> bool {
-        if static_alias_source_path(self.scoping, target).is_some() {
-            return self.callee_may_mutate_arguments(target);
-        }
-        match target.get_inner_expression() {
+        match callee.get_inner_expression() {
             Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_) => false,
             Expression::ConditionalExpression(expression) => {
-                self.reflect_apply_target_may_mutate_arguments(&expression.consequent)
-                    || self.reflect_apply_target_may_mutate_arguments(&expression.alternate)
+                self.callee_may_mutate_arguments(&expression.consequent)
+                    || self.callee_may_mutate_arguments(&expression.alternate)
             }
             Expression::LogicalExpression(expression) => {
-                self.reflect_apply_target_may_mutate_arguments(&expression.left)
-                    || self.reflect_apply_target_may_mutate_arguments(&expression.right)
+                self.callee_may_mutate_arguments(&expression.left)
+                    || self.callee_may_mutate_arguments(&expression.right)
             }
             Expression::SequenceExpression(expression) => expression
                 .expressions
                 .last()
-                .is_none_or(|value| self.reflect_apply_target_may_mutate_arguments(value)),
+                .is_none_or(|value| self.callee_may_mutate_arguments(value)),
             Expression::AssignmentExpression(expression)
                 if expression.operator == OxcAssignmentOperator::Assign =>
             {
-                self.reflect_apply_target_may_mutate_arguments(&expression.right)
+                self.callee_may_mutate_arguments(&expression.right)
             }
             _ => true,
         }
@@ -21798,22 +21791,25 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .or_else(|| {
                 self.local_reflect_construct_invocation_facts(&call.callee, &call.arguments)
             })
-            .unwrap_or_else(|| {
-                self.local_invocation_fact(&call.callee, &call.arguments)
-                    .into_iter()
-                    .collect()
-            });
+            .or_else(|| self.local_invocation_facts(&call.callee, &call.arguments))
+            .unwrap_or_default();
         for invocation in &mut local_invocations {
             invocation.result_discarded = self
                 .discarded_invocation_spans
                 .contains(&(call.span.start, call.span.end));
         }
+        let local_invocations_cover_arguments = !local_invocations.is_empty()
+            && local_invocations.iter().all(|invocation| {
+                invocation.parameters.is_some() && !invocation.force_argument_exposure
+            });
         let reflect_exposed = self
             .reflect_apply_exposed_argument_paths(call)
             .or_else(|| self.reflect_construct_exposed_argument_paths(call));
         let exposed_arguments = if let Some(exposed) = reflect_exposed {
             self.prepare_exposed_paths(exposed)
-        } else if self.callee_may_mutate_arguments(&call.callee) {
+        } else if !local_invocations_cover_arguments
+            && self.callee_may_mutate_arguments(&call.callee)
+        {
             let exposed = self.collect_invocation_argument_paths(&call.arguments);
             self.prepare_exposed_paths(exposed)
         } else {

@@ -9282,11 +9282,41 @@ fn immediately_invoked_functions_propagate_parameter_invalidations() {
             "",
             "((...targets) => { targets[0].forEach = null; })(values);",
         ),
+        (
+            "immediate conditional callable",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; }",
+            "(choose ? inspect : mutate)(values);",
+        ),
+        (
+            "immediate logical callable",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; }",
+            "(mutate || inspect)(values);",
+        ),
+        (
+            "sequenced conditional callable",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; }",
+            "(0, choose ? inspect : mutate)(values);",
+        ),
+        (
+            "assigned conditional callable",
+            "function inspect(target) { return target.length; } function mutate(target) { target.forEach = null; } let run;",
+            "(run = choose ? inspect : mutate)(values);",
+        ),
+        (
+            "conditional inline callable",
+            "",
+            "(choose ? target => target.length : target => { target.forEach = null; })(values);",
+        ),
+        (
+            "conditional external callable",
+            "function inspect(target) { return target.length; }",
+            "(choose ? inspect : External)(values);",
+        ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(External, choose) {{
                     const count = $state(0);
                     const values = [];
                     {setup}
@@ -9327,11 +9357,19 @@ fn pure_immediately_invoked_functions_preserve_receiver_methods() {
             "rest slot replacement",
             "((...targets) => { targets[0] = []; })(values);",
         ),
+        (
+            "immediate conditional callable",
+            "function first(target) { return target.length; } function second(target) { return target[0]; } (choose ? first : second)(values);",
+        ),
+        (
+            "conditional inline callable",
+            "(choose ? target => target.length : target => target[0])(values);",
+        ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {call}
