@@ -2025,7 +2025,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter(|binding| binding.mutated)
             .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
             .collect();
-        let mut generator_execution = GeneratorExecutionCollector::new(self.semantic.scoping());
+        let mut generator_execution = GeneratorExecutionCollector::new(
+            self.semantic.scoping(),
+            program.source_type.is_module(),
+        );
         generator_execution.visit_program(program);
         let generator_execution = generator_execution.finish();
         let mut static_hook_aliases = StaticHookAliasCollector {
@@ -9918,6 +9921,61 @@ struct CompositeGuardedRead {
 }
 
 #[derive(Clone)]
+struct NonConsumingParameters {
+    fixed: BTreeMap<usize, bool>,
+    safe_tail_start: Option<usize>,
+}
+
+impl NonConsumingParameters {
+    fn returned(&self, index: usize) -> Option<bool> {
+        self.fixed.get(&index).copied().or_else(|| {
+            self.safe_tail_start
+                .is_some_and(|start| index >= start)
+                .then_some(false)
+        })
+    }
+
+    fn shifted(&self, offset: usize) -> Self {
+        Self {
+            fixed: self
+                .fixed
+                .iter()
+                .filter_map(|(index, returned)| {
+                    index.checked_sub(offset).map(|index| (index, *returned))
+                })
+                .collect(),
+            safe_tail_start: self
+                .safe_tail_start
+                .map(|start| start.saturating_sub(offset)),
+        }
+    }
+
+    fn intersect(&self, alternate: &Self) -> Self {
+        let safe_tail_start = self
+            .safe_tail_start
+            .zip(alternate.safe_tail_start)
+            .map(|(left, right)| left.max(right));
+        let indices = self
+            .fixed
+            .keys()
+            .chain(alternate.fixed.keys())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let fixed = indices
+            .into_iter()
+            .filter_map(|index| {
+                let returned = self.returned(index)? | alternate.returned(index)?;
+                (!safe_tail_start.is_some_and(|start| index >= start)).then_some((index, returned))
+            })
+            .collect();
+        Self {
+            fixed,
+            safe_tail_start,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct TerminalAliasGuard {
     aliases: Vec<StaticAliasPath>,
     method: &'static str,
@@ -9927,7 +9985,7 @@ struct PendingCallableArgumentRead {
     source: StaticAliasPath,
     source_span: (u32, u32),
     callee: Option<StaticAliasPath>,
-    inline_parameters: Option<BTreeMap<usize, bool>>,
+    inline_parameters: Option<NonConsumingParameters>,
     parameter_index: usize,
     result_discarded: bool,
     method_guard: Option<GeneratorMethodGuard>,
@@ -9935,13 +9993,13 @@ struct PendingCallableArgumentRead {
 
 struct GuardedLocalNonConsumingParameters {
     target: StaticAliasPath,
-    parameters: BTreeMap<usize, bool>,
+    parameters: NonConsumingParameters,
     method_guards: Vec<GeneratorMethodGuard>,
 }
 
 struct DirectInlineBoundParameters {
-    source_parameters: BTreeMap<usize, bool>,
-    parameters: BTreeMap<usize, bool>,
+    source_parameters: NonConsumingParameters,
+    parameters: NonConsumingParameters,
     guard: GeneratorMethodGuard,
     method_guards: Vec<GeneratorMethodGuard>,
 }
@@ -9958,6 +10016,7 @@ struct NonConsumingParameterCollector<'semantic> {
     parameter_indices: BTreeMap<SymbolId, usize>,
     returned: BTreeSet<usize>,
     unsafe_uses: BTreeSet<usize>,
+    dynamic_arguments: bool,
     nested_function_depth: usize,
 }
 
@@ -10004,6 +10063,7 @@ impl NonConsumingParameterCollector<'_> {
 impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         if self.is_direct_eval_callee(&call.callee) {
+            self.dynamic_arguments = true;
             self.unsafe_uses
                 .extend(self.parameter_indices.values().copied());
         }
@@ -10019,6 +10079,7 @@ impl<'a> Visit<'a> for NonConsumingParameterCollector<'_> {
             return;
         };
         if identifier.name == "arguments" && reference.symbol_id().is_none() {
+            self.dynamic_arguments = true;
             self.unsafe_uses
                 .extend(self.parameter_indices.values().copied());
         }
@@ -10099,6 +10160,7 @@ type InstanceGeneratorBodies = BTreeMap<String, BTreeSet<GeneratorBodySpan>>;
 
 struct GeneratorExecutionCollector<'semantic> {
     scoping: &'semantic Scoping,
+    strict_program: bool,
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     direct_callable_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     discarded_invocation_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
@@ -10110,7 +10172,7 @@ struct GeneratorExecutionCollector<'semantic> {
     assigned_generator_result_reads: Vec<ForwardedCallableRead>,
     generator_result_reads: Vec<ForwardedCallableRead>,
     terminal_method_alias_reads: Vec<ForwardedCallableRead>,
-    local_non_consuming_parameters: BTreeMap<StaticAliasPath, BTreeMap<usize, bool>>,
+    local_non_consuming_parameters: BTreeMap<StaticAliasPath, NonConsumingParameters>,
     guarded_local_non_consuming_parameters: Vec<GuardedLocalNonConsumingParameters>,
     pending_callable_argument_reads: Vec<PendingCallableArgumentRead>,
     initial_generator_next_argument_reads: Vec<InitialGeneratorNextArgumentRead>,
@@ -10132,9 +10194,10 @@ struct GeneratorExecutionCollector<'semantic> {
 }
 
 impl<'semantic> GeneratorExecutionCollector<'semantic> {
-    fn new(scoping: &'semantic Scoping) -> Self {
+    fn new(scoping: &'semantic Scoping, strict_program: bool) -> Self {
         Self {
             scoping,
+            strict_program,
             binding_reads: BTreeMap::new(),
             direct_callable_reads: BTreeMap::new(),
             discarded_invocation_reads: BTreeMap::new(),
@@ -10383,7 +10446,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         parameters: &FormalParameters<'_>,
         body: &FunctionBody<'_>,
         concise_return: Option<&Expression<'_>>,
-    ) -> Option<BTreeMap<usize, bool>> {
+        has_own_arguments: bool,
+        strict_function: bool,
+    ) -> Option<NonConsumingParameters> {
         if parameters.rest.is_some() {
             return None;
         }
@@ -10408,6 +10473,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             parameter_indices: parameter_indices.clone(),
             returned: BTreeSet::new(),
             unsafe_uses: BTreeSet::new(),
+            dynamic_arguments: false,
             nested_function_depth: 0,
         };
         if let Some(returned) = concise_return {
@@ -10419,29 +10485,38 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         } else {
             collector.visit_function_body(body);
         }
-        Some(
-            parameter_indices
+        Some(NonConsumingParameters {
+            fixed: parameter_indices
                 .into_values()
                 .filter(|index| !collector.unsafe_uses.contains(index))
                 .map(|index| (index, collector.returned.contains(&index)))
                 .collect(),
-        )
+            safe_tail_start: (!has_own_arguments
+                || (strict_function && !collector.dynamic_arguments))
+                .then_some(parameters.items.len()),
+        })
     }
 
     fn local_non_consuming_parameters(
         &self,
         function: &Function<'_>,
-    ) -> Option<BTreeMap<usize, bool>> {
+    ) -> Option<NonConsumingParameters> {
         if function.generator || function.r#async {
             return None;
         }
-        self.analyze_local_non_consuming_parameters(&function.params, function.body.as_ref()?, None)
+        self.analyze_local_non_consuming_parameters(
+            &function.params,
+            function.body.as_ref()?,
+            None,
+            true,
+            self.strict_program,
+        )
     }
 
     fn local_non_consuming_arrow_parameters(
         &self,
         function: &ArrowFunctionExpression<'_>,
-    ) -> Option<BTreeMap<usize, bool>> {
+    ) -> Option<NonConsumingParameters> {
         if function.r#async {
             return None;
         }
@@ -10449,13 +10524,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             &function.params,
             &function.body,
             function.get_expression(),
+            false,
+            self.strict_program,
         )
     }
 
     fn local_non_consuming_class_parameters(
         &self,
         class: &Class<'_>,
-    ) -> Option<BTreeMap<usize, bool>> {
+    ) -> Option<NonConsumingParameters> {
         if !class.decorators.is_empty() {
             return None;
         }
@@ -10464,30 +10541,32 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 return None;
             };
             (method.kind == MethodDefinitionKind::Constructor).then_some(method)
-        })?;
+        });
+        let Some(constructor) = constructor else {
+            return class
+                .super_class
+                .is_none()
+                .then_some(NonConsumingParameters {
+                    fixed: BTreeMap::new(),
+                    safe_tail_start: Some(0),
+                });
+        };
         if !constructor.decorators.is_empty() {
             return None;
         }
-        self.local_non_consuming_parameters(&constructor.value)
-    }
-
-    fn intersect_non_consuming_parameters(
-        mut parameters: BTreeMap<usize, bool>,
-        alternate: &BTreeMap<usize, bool>,
-    ) -> BTreeMap<usize, bool> {
-        parameters.retain(|index, returned| {
-            alternate.get(index).is_some_and(|alternate_returned| {
-                *returned |= *alternate_returned;
-                true
-            })
-        });
-        parameters
+        self.analyze_local_non_consuming_parameters(
+            &constructor.value.params,
+            constructor.value.body.as_ref()?,
+            None,
+            true,
+            true,
+        )
     }
 
     fn inline_non_consuming_parameters(
         &self,
         expression: &Expression<'_>,
-    ) -> Option<BTreeMap<usize, bool>> {
+    ) -> Option<NonConsumingParameters> {
         match expression.get_inner_expression() {
             Expression::FunctionExpression(function) => {
                 self.local_non_consuming_parameters(function)
@@ -10495,18 +10574,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             Expression::ArrowFunctionExpression(function) => {
                 self.local_non_consuming_arrow_parameters(function)
             }
-            Expression::ConditionalExpression(expression) => {
-                Some(Self::intersect_non_consuming_parameters(
-                    self.inline_non_consuming_parameters(&expression.consequent)?,
-                    &self.inline_non_consuming_parameters(&expression.alternate)?,
-                ))
-            }
-            Expression::LogicalExpression(expression) => {
-                Some(Self::intersect_non_consuming_parameters(
-                    self.inline_non_consuming_parameters(&expression.left)?,
-                    &self.inline_non_consuming_parameters(&expression.right)?,
-                ))
-            }
+            Expression::ConditionalExpression(expression) => Some(
+                self.inline_non_consuming_parameters(&expression.consequent)?
+                    .intersect(&self.inline_non_consuming_parameters(&expression.alternate)?),
+            ),
+            Expression::LogicalExpression(expression) => Some(
+                self.inline_non_consuming_parameters(&expression.left)?
+                    .intersect(&self.inline_non_consuming_parameters(&expression.right)?),
+            ),
             Expression::SequenceExpression(expression) => {
                 self.inline_non_consuming_parameters(expression.expressions.last()?)
             }
@@ -10561,12 +10636,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             return None;
         }
         let offset = call.arguments.len().saturating_sub(1);
-        let parameters = source_parameters
-            .iter()
-            .filter_map(|(index, returned)| {
-                index.checked_sub(offset).map(|index| (index, *returned))
-            })
-            .collect();
+        let parameters = source_parameters.shifted(offset);
         let guard = GeneratorMethodGuard {
             source: None,
             owner: StaticAliasPath::unresolved_global("Function".to_string())
@@ -10585,7 +10655,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     fn inline_bound_non_consuming_parameters(
         &self,
         expression: &Expression<'_>,
-    ) -> Option<(BTreeMap<usize, bool>, Vec<GeneratorMethodGuard>)> {
+    ) -> Option<(NonConsumingParameters, Vec<GeneratorMethodGuard>)> {
         if let Some(bound) = self.direct_inline_bound_non_consuming_parameters(expression) {
             return Some((bound.parameters, bound.method_guards));
         }
@@ -10596,10 +10666,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 let (alternate, alternate_guards) =
                     self.inline_bound_non_consuming_parameters(&expression.alternate)?;
                 guards.extend(alternate_guards);
-                Some((
-                    Self::intersect_non_consuming_parameters(parameters, &alternate),
-                    guards,
-                ))
+                Some((parameters.intersect(&alternate), guards))
             }
             Expression::LogicalExpression(expression) => {
                 let (parameters, mut guards) =
@@ -10607,10 +10674,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 let (alternate, alternate_guards) =
                     self.inline_bound_non_consuming_parameters(&expression.right)?;
                 guards.extend(alternate_guards);
-                Some((
-                    Self::intersect_non_consuming_parameters(parameters, &alternate),
-                    guards,
-                ))
+                Some((parameters.intersect(&alternate), guards))
             }
             Expression::SequenceExpression(expression) => {
                 self.inline_bound_non_consuming_parameters(expression.expressions.last()?)
@@ -11682,7 +11746,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &mut self,
         expression: &Expression<'_>,
         callee: Option<&StaticAliasPath>,
-        inline_parameters: Option<&BTreeMap<usize, bool>>,
+        inline_parameters: Option<&NonConsumingParameters>,
         parameter_index: usize,
         result_discarded: bool,
         method_guard: Option<&GeneratorMethodGuard>,
@@ -11724,7 +11788,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     fn inline_indirect_callable_target(
         &self,
         call: &CallExpression<'_>,
-    ) -> Option<(BTreeMap<usize, bool>, GeneratorMethodGuard, usize)> {
+    ) -> Option<(NonConsumingParameters, GeneratorMethodGuard, usize)> {
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         if static_alias_source_path(self.scoping, &call.callee)
             .is_some_and(|callee| callee == reflect.with_property("apply".to_string()))
@@ -11776,7 +11840,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         &mut self,
         call: &CallExpression<'_>,
         callee: Option<&StaticAliasPath>,
-        inline_parameters: Option<&BTreeMap<usize, bool>>,
+        inline_parameters: Option<&NonConsumingParameters>,
         guard: &GeneratorMethodGuard,
         receiver_index: usize,
         result_discarded: bool,
@@ -12891,11 +12955,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     Some(
                         self.local_non_consuming_parameters
                             .get(&read.source)?
-                            .iter()
-                            .filter_map(|(index, returned)| {
-                                index.checked_sub(offset).map(|index| (index, *returned))
-                            })
-                            .collect::<BTreeMap<_, _>>(),
+                            .shifted(offset),
                     )
                 };
                 let Some(mut parameters) = dependencies
@@ -12910,12 +12970,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         complete = false;
                         break;
                     };
-                    parameters.retain(|index, returned| {
-                        source_parameters.get(index).is_some_and(|source_returned| {
-                            *returned |= *source_returned;
-                            true
-                        })
-                    });
+                    parameters = parameters.intersect(&source_parameters);
                 }
                 if complete {
                     additions.push((target, parameters));
@@ -13406,7 +13461,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                             .as_ref()
                             .and_then(|callee| self.local_non_consuming_parameters.get(callee))
                     })
-                    .and_then(|parameters| parameters.get(&read.parameter_index))
+                    .and_then(|parameters| parameters.returned(read.parameter_index))
                     .is_some_and(|returned| !returned || read.result_discarded);
             if non_consuming {
                 self.discarded_value_reads

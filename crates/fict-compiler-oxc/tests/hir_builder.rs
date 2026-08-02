@@ -4152,6 +4152,46 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "zero parameter local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore() {}",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
+            "zero parameter arrow no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } const ignore = () => {};",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
+            "extra local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(first) { void first; }",
+            "const iterator = inspect(); ignore(null, iterator);",
+        ),
+        (
+            "extra local no-op tag generator iterator substitution",
+            "function* inspect() { values.forEach = null; } function ignore(strings) { void strings; }",
+            "const iterator = inspect(); ignore`${iterator}`;",
+        ),
+        (
+            "extra local no-op constructor generator iterator argument",
+            "function* inspect() { values.forEach = null; } function Ignore() {}",
+            "const iterator = inspect(); new Ignore(iterator);",
+        ),
+        (
+            "default base class ignores generator iterator argument",
+            "function* inspect() { values.forEach = null; } class Ignore {}",
+            "const iterator = inspect(); new Ignore(iterator);",
+        ),
+        (
+            "bound zero parameter no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore() {} const run = ignore.bind(null, 0);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
+            "conditional extra local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function first() {} function second(value) { void value; } const ignore = choose ? first : second;",
+            "const iterator = inspect(); ignore(iterator);",
+        ),
+        (
             "discarded local identity generator iterator result",
             "function* inspect() { values.forEach = null; } function identity(value) { return value; }",
             "const iterator = inspect(); void identity(iterator);",
@@ -5413,6 +5453,31 @@ fn observed_generator_iterators_propagate_local_effects() {
             "direct eval may consume iterator argument",
             "function* mutate() { values.forEach = null; } function consume(value) { eval('value.next()'); }",
             "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "zero parameter arguments may consume iterator argument",
+            "function* mutate() { values.forEach = null; } function consume() { arguments[0].next(); }",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "zero parameter direct eval may consume iterator argument",
+            "function* mutate() { values.forEach = null; } function consume() { eval('arguments[0].next()'); }",
+            "const iterator = mutate(); consume(iterator);",
+        ),
+        (
+            "arguments may consume extra iterator argument",
+            "function* mutate() { values.forEach = null; } function consume(value) { void value; arguments[1].next(); }",
+            "const iterator = mutate(); consume(null, iterator);",
+        ),
+        (
+            "mixed conditional tail callable consumes iterator",
+            "function* mutate() { values.forEach = null; } function ignore() {} function consume(value) { value.next(); } const run = choose ? ignore : consume;",
+            "const iterator = mutate(); run(iterator);",
+        ),
+        (
+            "default derived class may forward iterator argument",
+            "function* mutate() { values.forEach = null; } class Consume extends External {}",
+            "const iterator = mutate(); new Consume(iterator);",
         ),
         (
             "arguments alias may consume iterator argument",
