@@ -10369,10 +10369,62 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         Some((path, (span.start(), span.end())))
     }
 
-    fn generator_bind_forwarding(
+    fn generator_bind_target_forwardings(
         &self,
         expression: &Expression<'_>,
-    ) -> Option<GeneratorBindForwarding> {
+    ) -> Option<Vec<GeneratorBindForwarding>> {
+        match expression.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let mut forwardings =
+                    self.generator_bind_target_forwardings(&expression.consequent)?;
+                forwardings.extend(self.generator_bind_target_forwardings(&expression.alternate)?);
+                return Some(forwardings);
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut forwardings = self.generator_bind_target_forwardings(&expression.left)?;
+                forwardings.extend(self.generator_bind_target_forwardings(&expression.right)?);
+                return Some(forwardings);
+            }
+            Expression::SequenceExpression(expression) => {
+                return self.generator_bind_target_forwardings(expression.expressions.last()?);
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                return self.generator_bind_target_forwardings(&expression.right);
+            }
+            _ => {}
+        }
+        let owner = StaticAliasPath::unresolved_global("Function".to_string())
+            .with_property("prototype".to_string());
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            return Some(vec![GeneratorBindForwarding::Source {
+                guard: GeneratorMethodGuard {
+                    source: Some(source.clone()),
+                    owner,
+                    method: "bind",
+                },
+                source,
+                source_span,
+            }]);
+        }
+        let Expression::FunctionExpression(function) = expression.get_inner_expression() else {
+            return None;
+        };
+        Some(vec![GeneratorBindForwarding::Inline {
+            body_span: Self::generator_body_span(function)?,
+            guard: GeneratorMethodGuard {
+                source: None,
+                owner,
+                method: "bind",
+            },
+        }])
+    }
+
+    fn generator_bind_forwardings(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<Vec<GeneratorBindForwarding>> {
         let call = match expression.get_inner_expression() {
             Expression::CallExpression(call) => call.as_ref(),
             Expression::ChainExpression(chain) => match &chain.expression {
@@ -10392,30 +10444,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             _ => return None,
         };
-        let owner = StaticAliasPath::unresolved_global("Function".to_string())
-            .with_property("prototype".to_string());
-        if let Some((source, source_span)) = self.callable_reference(object) {
-            return Some(GeneratorBindForwarding::Source {
-                guard: GeneratorMethodGuard {
-                    source: Some(source.clone()),
-                    owner,
-                    method: "bind",
-                },
-                source,
-                source_span,
-            });
-        }
-        let Expression::FunctionExpression(function) = object.get_inner_expression() else {
-            return None;
-        };
-        Some(GeneratorBindForwarding::Inline {
-            body_span: Self::generator_body_span(function)?,
-            guard: GeneratorMethodGuard {
-                source: None,
-                owner,
-                method: "bind",
-            },
-        })
+        self.generator_bind_target_forwardings(object)
     }
 
     fn record_escaped_callable_path(&mut self, expression: &Expression<'_>) {
@@ -10827,15 +10856,25 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 method_guards,
             }]);
         }
-        if let Some(GeneratorBindForwarding::Source { source, guard, .. }) =
-            self.generator_bind_forwarding(expression)
+        if let Some(forwardings) = self.generator_bind_forwardings(expression)
             && let Some(parameter_offset) = Self::fixed_bound_parameter_count(expression)
         {
-            return Some(vec![PendingParameterSource::Local {
-                source,
-                parameter_offset,
-                method_guards: vec![guard],
-            }]);
+            let sources = forwardings
+                .into_iter()
+                .map(|forwarding| match forwarding {
+                    GeneratorBindForwarding::Source { source, guard, .. } => {
+                        Some(PendingParameterSource::Local {
+                            source,
+                            parameter_offset,
+                            method_guards: vec![guard],
+                        })
+                    }
+                    GeneratorBindForwarding::Inline { .. } => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(sources) = sources {
+                return Some(sources);
+            }
         }
         if construct {
             let call = match expression.get_inner_expression() {
@@ -13521,26 +13560,19 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             return;
         }
         let callee_value = Self::immediate_callable_value(&call.callee);
-        if let Some(GeneratorBindForwarding::Source {
-            source: callee,
-            guard,
-            ..
-        }) = self.generator_bind_forwarding(callee_value)
-            && let Some(parameter_offset) = Self::fixed_bound_parameter_count(callee_value)
-        {
+        if let Some(parameter_sources) = self.pending_bound_parameter_sources(callee_value, false) {
             for (parameter_index, argument) in call
                 .arguments
                 .iter()
                 .take_while(|argument| argument.as_expression().is_some())
                 .enumerate()
             {
-                self.record_pending_callable_argument(
+                self.record_pending_callable_argument_sources(
                     argument.as_expression().expect("ordinary call argument"),
-                    Some(&callee),
-                    None,
-                    parameter_offset + parameter_index,
+                    &parameter_sources,
+                    parameter_index,
                     result_discarded,
-                    Some(&guard),
+                    None,
                 );
             }
             return;
@@ -15054,30 +15086,32 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
 
     fn record_forwarded_callable(&mut self, target: StaticAliasPath, expression: &Expression<'_>) {
         self.forwarding_targets.insert(target.clone());
-        if let Some(forwarding) = self.generator_bind_forwarding(expression) {
-            match forwarding {
-                GeneratorBindForwarding::Source {
-                    source,
-                    source_span,
-                    guard,
-                } => {
-                    let parameter_offset = Self::fixed_bound_parameter_count(expression);
-                    self.record_pending_bound_arguments(&source, expression, &guard);
-                    self.record_retained_bind_arguments(&target, expression, &guard);
-                    self.forwarded_callable_reads.push(ForwardedCallableRead {
+        if let Some(forwardings) = self.generator_bind_forwardings(expression) {
+            let parameter_offset = Self::fixed_bound_parameter_count(expression);
+            for forwarding in forwardings {
+                match forwarding {
+                    GeneratorBindForwarding::Source {
                         source,
                         source_span,
-                        target,
-                        method_guard: Some(guard),
-                        parameter_offset,
-                    });
-                }
-                GeneratorBindForwarding::Inline { body_span, guard } => {
-                    self.record_retained_bind_arguments(&target, expression, &guard);
-                    self.generator_callable_targets.insert(target.clone());
-                    self.generator_body_targets
-                        .push((body_span, target.clone()));
-                    self.guarded_generator_targets.push((target, guard));
+                        guard,
+                    } => {
+                        self.record_pending_bound_arguments(&source, expression, &guard);
+                        self.record_retained_bind_arguments(&target, expression, &guard);
+                        self.forwarded_callable_reads.push(ForwardedCallableRead {
+                            source,
+                            source_span,
+                            target: target.clone(),
+                            method_guard: Some(guard),
+                            parameter_offset,
+                        });
+                    }
+                    GeneratorBindForwarding::Inline { body_span, guard } => {
+                        self.record_retained_bind_arguments(&target, expression, &guard);
+                        self.generator_callable_targets.insert(target.clone());
+                        self.generator_body_targets
+                            .push((body_span, target.clone()));
+                        self.guarded_generator_targets.push((target.clone(), guard));
+                    }
                 }
             }
             return;
@@ -18612,36 +18646,6 @@ impl StaticHookAliasCollector<'_> {
         method == expected_method && Self::inline_callable_is_generator(object)
     }
 
-    fn inline_function_indirection_exposures(
-        &self,
-        callee: &Expression<'_>,
-        expected_method: &str,
-    ) -> Option<BTreeSet<StaticAliasPath>> {
-        if !self.path_is_currently_intact(
-            &StaticAliasPath::unresolved_global("Function".to_string())
-                .with_property("prototype".to_string())
-                .with_property(expected_method.to_string()),
-        ) {
-            return None;
-        }
-        let (object, method) = match unwrap_transparent_call_expression(callee) {
-            Expression::StaticMemberExpression(member) => {
-                (&member.object, member.property.name.to_string())
-            }
-            Expression::ComputedMemberExpression(member) => {
-                (&member.object, static_member_name(&member.expression)?)
-            }
-            _ => return None,
-        };
-        if method != expected_method {
-            return None;
-        }
-        match unwrap_transparent_call_expression(object) {
-            Expression::ClassExpression(_) if expected_method == "bind" => Some(BTreeSet::new()),
-            _ => self.returned_function_paths(object),
-        }
-    }
-
     fn intact_function_call_target(
         &self,
         raw_callee: &StaticAliasPath,
@@ -19386,28 +19390,49 @@ impl StaticHookAliasCollector<'_> {
         true
     }
 
-    fn local_bound_callable_initializer(
+    fn local_bound_callable_alternatives(
         &self,
-        value: &Expression<'_>,
+        target: &Expression<'_>,
+        receiver: &[LocalInvocationArgument],
     ) -> Option<(Vec<LocalBoundCallable>, BTreeSet<StaticAliasPath>, bool)> {
-        let Expression::CallExpression(call) = value.get_inner_expression() else {
-            return None;
-        };
-        if call.optional {
-            return None;
+        match target.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let (mut alternatives, mut exposures, historical) =
+                    self.local_bound_callable_alternatives(&expression.consequent, receiver)?;
+                let (alternate, alternate_exposures, alternate_historical) =
+                    self.local_bound_callable_alternatives(&expression.alternate, receiver)?;
+                alternatives.extend(alternate);
+                exposures.extend(alternate_exposures);
+                return Some((alternatives, exposures, historical || alternate_historical));
+            }
+            Expression::LogicalExpression(expression) => {
+                let (mut alternatives, mut exposures, historical) =
+                    self.local_bound_callable_alternatives(&expression.left, receiver)?;
+                let (alternate, alternate_exposures, alternate_historical) =
+                    self.local_bound_callable_alternatives(&expression.right, receiver)?;
+                alternatives.extend(alternate);
+                exposures.extend(alternate_exposures);
+                return Some((alternatives, exposures, historical || alternate_historical));
+            }
+            Expression::SequenceExpression(expression) => {
+                return self
+                    .local_bound_callable_alternatives(expression.expressions.last()?, receiver);
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                return self.local_bound_callable_alternatives(&expression.right, receiver);
+            }
+            Expression::CallExpression(_) => {
+                return self.local_bound_callable_initializer(target);
+            }
+            _ => {}
         }
-        let added_arguments =
-            self.collect_local_invocation_arguments(call.arguments.get(1..).unwrap_or_default());
-        let receiver = call
-            .arguments
-            .first()
-            .and_then(|argument| argument.as_expression())
-            .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
-            .unwrap_or_default();
         let mut alternatives = Vec::new();
         let mut exposures = BTreeSet::new();
         let mut historical = false;
-        if let Some(raw_callee) = static_alias_source_path(self.scoping, &call.callee) {
+        if let Some(raw_target) = static_alias_source_path(self.scoping, target) {
+            let raw_callee = raw_target.with_property("bind".to_string());
             let resolved_callee = resolve_static_alias_path(&self.aliases, &raw_callee);
             let (raw_source, source) =
                 self.intact_function_bind_target(&raw_callee, &resolved_callee)?;
@@ -19443,7 +19468,7 @@ impl StaticHookAliasCollector<'_> {
                                 LocalBoundCallable {
                                     parameters,
                                     arguments: Vec::new(),
-                                    receiver: receiver.clone(),
+                                    receiver: receiver.to_vec(),
                                     dynamic_receiver: self
                                         .local_callable_receiver_history
                                         .get(&source)
@@ -19469,7 +19494,7 @@ impl StaticHookAliasCollector<'_> {
                     alternatives.push(LocalBoundCallable {
                         parameters: parameters.clone(),
                         arguments: Vec::new(),
-                        receiver: receiver.clone(),
+                        receiver: receiver.to_vec(),
                         dynamic_receiver: self.local_callable_receivers.get(&source).cloned(),
                         generator: self.local_generator_callables.contains(&source),
                         unknown: false,
@@ -19480,7 +19505,7 @@ impl StaticHookAliasCollector<'_> {
                     alternatives.push(LocalBoundCallable {
                         parameters: Vec::new(),
                         arguments: Vec::new(),
-                        receiver: receiver.clone(),
+                        receiver: receiver.to_vec(),
                         dynamic_receiver: None,
                         generator: false,
                         unknown: true,
@@ -19488,24 +19513,65 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
         } else {
-            let inline_exposures =
-                self.inline_function_indirection_exposures(&call.callee, "bind")?;
-            let parameters = self
-                .inline_function_indirection_parameters(&call.callee, "bind")
-                .unwrap_or_default();
+            let parameters = Self::inline_callable_parameters(target)?;
+            let inline_exposures = match unwrap_transparent_call_expression(target) {
+                Expression::ClassExpression(_) => BTreeSet::new(),
+                _ => self.returned_function_paths(target)?,
+            };
             exposures.extend(inline_exposures);
             alternatives.push(LocalBoundCallable {
                 parameters,
                 arguments: Vec::new(),
-                receiver,
-                dynamic_receiver: self.inline_function_indirection_receiver(&call.callee, "bind"),
-                generator: self.inline_function_indirection_is_generator(&call.callee, "bind"),
+                receiver: receiver.to_vec(),
+                dynamic_receiver: Self::inline_callable_receiver(target),
+                generator: Self::inline_callable_is_generator(target),
                 unknown: false,
             });
         }
         if alternatives.is_empty() {
             return None;
         }
+        Some((alternatives, exposures, historical))
+    }
+
+    fn local_bound_callable_initializer(
+        &self,
+        value: &Expression<'_>,
+    ) -> Option<(Vec<LocalBoundCallable>, BTreeSet<StaticAliasPath>, bool)> {
+        let Expression::CallExpression(call) = value.get_inner_expression() else {
+            return None;
+        };
+        if call.optional
+            || !self.path_is_currently_intact(
+                &StaticAliasPath::unresolved_global("Function".to_string())
+                    .with_property("prototype".to_string())
+                    .with_property("bind".to_string()),
+            )
+        {
+            return None;
+        }
+        let target = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) if member.property.name == "bind" => {
+                &member.object
+            }
+            Expression::ComputedMemberExpression(member)
+                if static_member_name(&member.expression).as_deref() == Some("bind") =>
+            {
+                &member.object
+            }
+            _ => return None,
+        };
+        let added_arguments =
+            self.collect_local_invocation_arguments(call.arguments.get(1..).unwrap_or_default());
+        let receiver = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
+            .unwrap_or_default();
+        let (mut alternatives, exposures, historical) =
+            self.local_bound_callable_alternatives(target, &receiver)?;
+        let historical = historical || alternatives.len() > 1;
         for alternative in &mut alternatives {
             alternative.arguments.extend(added_arguments.clone());
         }

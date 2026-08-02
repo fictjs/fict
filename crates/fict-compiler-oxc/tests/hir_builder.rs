@@ -6354,6 +6354,21 @@ fn immediate_bound_callables_preserve_unadvanced_iterator_arguments() {
             "const iterator = inspect(); (choose ? first.bind(null) : second.bind(null))`${iterator}`;",
         ),
         (
+            "bound conditional named no-op call",
+            "function first(value) { void value; } function second(value) { void value; }",
+            "const iterator = inspect(); (choose ? first : second).bind(null)(iterator);",
+        ),
+        (
+            "bound conditional named no-op tag",
+            "function first(_strings, value) { void value; } function second(_strings, value) { void value; }",
+            "const iterator = inspect(); (choose ? first : second).bind(null)`${iterator}`;",
+        ),
+        (
+            "stored bound conditional named no-op call",
+            "function first(value) { void value; } function second(value) { void value; } const run = (choose ? first : second).bind(null);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
             "bound named no-op class constructor",
             "class Ignore { constructor(value) { void value; } }",
             "const iterator = inspect(); new (Ignore.bind(null))(iterator);",
@@ -6445,6 +6460,21 @@ fn consuming_or_overridden_immediate_bound_callables_propagate_local_effects() {
             "const iterator = mutate(); Reflect.construct(Consume.bind(null), [iterator]);",
         ),
         (
+            "bound conditional callable may consume",
+            "function ignore(value) { void value; } function consume(value) { value.next(); }",
+            "const iterator = mutate(); (choose ? ignore : consume).bind(null)(iterator);",
+        ),
+        (
+            "bound conditional tag may consume",
+            "function ignore(_strings, value) { void value; } function consume(_strings, value) { value.next(); }",
+            "const iterator = mutate(); (choose ? ignore : consume).bind(null)`${iterator}`;",
+        ),
+        (
+            "stored bound conditional callable may consume",
+            "function ignore(value) { void value; } function consume(value) { value.next(); } const run = (choose ? ignore : consume).bind(null);",
+            "const iterator = mutate(); run(iterator);",
+        ),
+        (
             "overridden tag bind",
             "function ignore(_strings, value) { void value; } ignore.bind = function () { return function (_strings, value) { value.next(); }; };",
             "const iterator = mutate(); ignore.bind(null)`${iterator}`;",
@@ -6478,7 +6508,7 @@ fn consuming_or_overridden_immediate_bound_callables_propagate_local_effects() {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App(External) {{
+                function App(External, choose) {{
                     const count = $state(0);
                     const values = [];
                     function* mutate() {{ values.forEach = null; }}
@@ -10858,6 +10888,24 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "run();",
         ),
         (
+            "immediate conditional bound target",
+            "",
+            "function mutate(target) { target.forEach = null; } function inspect(target) { return target.length; } const run = (choose ? mutate : inspect).bind(null);",
+            "run(values);",
+        ),
+        (
+            "immediate conditional bound constructor",
+            "",
+            "class Mutate { constructor(target) { target.forEach = null; } } class Inspect { constructor(target) { this.length = target.length; } } const Bound = (choose ? Mutate : Inspect).bind(null);",
+            "new Bound(values);",
+        ),
+        (
+            "immediate conditional bound target may be external",
+            "",
+            "function inspect(target) { return target.length; } const run = (choose ? inspect : External).bind(null);",
+            "run(values);",
+        ),
+        (
             "conditional bound assignment",
             "",
             "function mutate(target) { target.forEach = null; } function inspect(target) { return target.length; } let run; if (choose) { run = mutate.bind(null, values); } else { run = inspect.bind(null, values); }",
@@ -11013,6 +11061,24 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "const other = [];",
             "function mutate(target) { target.forEach = null; } function inspect(target) { return target.length; } const run = choose ? mutate.bind(null, other) : inspect.bind(null, values);",
             "run();",
+        ),
+        (
+            "immediate conditional bound target",
+            "",
+            "function first(target) { return target.length; } function second(target) { return target[0]; } const run = (choose ? first : second).bind(null);",
+            "run(values);",
+        ),
+        (
+            "conditional inline bound target",
+            "",
+            "const run = (choose ? target => target.length : target => target[0]).bind(null);",
+            "run(values);",
+        ),
+        (
+            "immediate conditional bound constructor",
+            "",
+            "class First { constructor(target) { this.length = target.length; } } class Second { constructor(target) { this.target = target; } } const Bound = (choose ? First : Second).bind(null);",
+            "new Bound(values);",
         ),
         (
             "uninvoked deferred replacement",
