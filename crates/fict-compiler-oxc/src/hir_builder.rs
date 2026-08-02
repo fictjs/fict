@@ -16097,6 +16097,7 @@ struct EscapedFunctionValueCollector<'collector, 'semantic> {
 struct LocalCallableResultCollector<'collector, 'semantic> {
     owner: &'collector StaticHookAliasCollector<'semantic>,
     lexical_receiver: Option<StaticAliasPath>,
+    function_depth: usize,
     results: Vec<LocalCallableResult>,
 }
 
@@ -16107,10 +16108,11 @@ impl<'a> Visit<'a> for LocalCallableResultCollector<'_, '_> {
 
     fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
         if let Some(expression) = &statement.argument {
-            self.results.extend(
-                self.owner
-                    .local_callable_results(expression, self.lexical_receiver.as_ref()),
-            );
+            self.results.extend(self.owner.local_callable_results(
+                expression,
+                self.lexical_receiver.as_ref(),
+                self.function_depth,
+            ));
         }
     }
 }
@@ -16264,12 +16266,20 @@ struct LocalBoundCallable {
     unknown: bool,
 }
 
+struct LocalBoundCallableAlternatives {
+    callables: Vec<LocalBoundCallable>,
+    exposures: BTreeSet<StaticAliasPath>,
+    historical: bool,
+    results: Vec<LocalCallableResult>,
+}
+
 #[derive(Clone)]
 enum LocalCallableResult {
     Reference(StaticAliasPath),
     Direct {
         parameters: Vec<LocalCallableParameter>,
         dynamic_receiver: Option<StaticAliasPath>,
+        bound_receiver: Option<Vec<LocalInvocationArgument>>,
         lexical_receiver: bool,
         generator: bool,
         exposures: BTreeSet<StaticAliasPath>,
@@ -16279,7 +16289,9 @@ enum LocalCallableResult {
         callables: Vec<LocalBoundCallable>,
         exposures: BTreeSet<StaticAliasPath>,
         historical: bool,
+        results: Vec<LocalCallableResult>,
     },
+    Invocation(Vec<LocalInvocationFact>),
     Unknown,
 }
 
@@ -16853,14 +16865,14 @@ impl StaticHookAliasCollector<'_> {
         &self,
         expression: &Expression<'_>,
         lexical_receiver: Option<&StaticAliasPath>,
+        function_depth: usize,
     ) -> Vec<LocalCallableResult> {
-        if let Some((callables, exposures, historical)) =
-            self.local_bound_callable_initializer(expression)
-        {
+        if let Some(alternatives) = self.local_bound_callable_initializer(expression) {
             return vec![LocalCallableResult::Bound {
-                callables,
-                exposures,
-                historical,
+                callables: alternatives.callables,
+                exposures: alternatives.exposures,
+                historical: alternatives.historical,
+                results: alternatives.results,
             }];
         }
         if let Some(source) = self.alias_source_path(expression) {
@@ -16871,11 +16883,16 @@ impl StaticHookAliasCollector<'_> {
                 vec![LocalCallableResult::Direct {
                     parameters: Self::local_callable_parameters(&function.params),
                     dynamic_receiver: Some(StaticAliasPath::dynamic_this(function.span)),
+                    bound_receiver: None,
                     lexical_receiver: false,
                     generator: function.generator,
                     exposures: self.returned_function_paths(expression).unwrap_or_default(),
                     results: self
-                        .callable_definition_results(expression, None)
+                        .callable_definition_results(
+                            expression,
+                            None,
+                            function_depth.saturating_add(1),
+                        )
                         .unwrap_or_default(),
                 }]
             }
@@ -16883,53 +16900,98 @@ impl StaticHookAliasCollector<'_> {
                 vec![LocalCallableResult::Direct {
                     parameters: Self::local_callable_parameters(&function.params),
                     dynamic_receiver: lexical_receiver.cloned(),
+                    bound_receiver: None,
                     lexical_receiver: true,
                     generator: false,
                     exposures: self.returned_function_paths(expression).unwrap_or_default(),
                     results: self
-                        .callable_definition_results(expression, lexical_receiver)
+                        .callable_definition_results(
+                            expression,
+                            lexical_receiver,
+                            function_depth.saturating_add(1),
+                        )
                         .unwrap_or_default(),
                 }]
             }
             Expression::ClassExpression(class) => vec![LocalCallableResult::Direct {
                 parameters: Self::class_constructor_parameters(class),
                 dynamic_receiver: None,
+                bound_receiver: None,
                 lexical_receiver: false,
                 generator: false,
                 exposures: BTreeSet::new(),
                 results: Vec::new(),
             }],
             Expression::ConditionalExpression(expression) => {
-                let mut results =
-                    self.local_callable_results(&expression.consequent, lexical_receiver);
-                results
-                    .extend(self.local_callable_results(&expression.alternate, lexical_receiver));
+                let mut results = self.local_callable_results(
+                    &expression.consequent,
+                    lexical_receiver,
+                    function_depth,
+                );
+                results.extend(self.local_callable_results(
+                    &expression.alternate,
+                    lexical_receiver,
+                    function_depth,
+                ));
                 results
             }
             Expression::LogicalExpression(expression) => {
-                let mut results = self.local_callable_results(&expression.left, lexical_receiver);
-                results.extend(self.local_callable_results(&expression.right, lexical_receiver));
+                let mut results =
+                    self.local_callable_results(&expression.left, lexical_receiver, function_depth);
+                results.extend(self.local_callable_results(
+                    &expression.right,
+                    lexical_receiver,
+                    function_depth,
+                ));
                 results
             }
             Expression::SequenceExpression(expression) => expression
                 .expressions
                 .last()
                 .map_or_else(Vec::new, |expression| {
-                    self.local_callable_results(expression, lexical_receiver)
+                    self.local_callable_results(expression, lexical_receiver, function_depth)
                 }),
             Expression::AssignmentExpression(expression)
                 if expression.operator == OxcAssignmentOperator::Assign =>
             {
-                self.local_callable_results(&expression.right, lexical_receiver)
+                self.local_callable_results(&expression.right, lexical_receiver, function_depth)
             }
+            Expression::CallExpression(call) => {
+                self.local_callable_invocation_result(call, function_depth)
+            }
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => {
+                    self.local_callable_invocation_result(call, function_depth)
+                }
+                ChainElement::ComputedMemberExpression(_)
+                | ChainElement::StaticMemberExpression(_)
+                | ChainElement::PrivateFieldExpression(_)
+                | ChainElement::TSNonNullExpression(_) => vec![LocalCallableResult::Unknown],
+            },
             _ => vec![LocalCallableResult::Unknown],
         }
+    }
+
+    fn local_callable_invocation_result(
+        &self,
+        call: &CallExpression<'_>,
+        function_depth: usize,
+    ) -> Vec<LocalCallableResult> {
+        let Some(mut invocations) = self.local_invocation_facts(&call.callee, &call.arguments)
+        else {
+            return vec![LocalCallableResult::Unknown];
+        };
+        for invocation in &mut invocations {
+            invocation.function_depth = function_depth;
+        }
+        vec![LocalCallableResult::Invocation(invocations)]
     }
 
     fn callable_definition_results(
         &self,
         value: &Expression<'_>,
         lexical_receiver: Option<&StaticAliasPath>,
+        function_depth: usize,
     ) -> Option<Vec<LocalCallableResult>> {
         let (body, concise, lexical_receiver) = match value.get_inner_expression() {
             Expression::FunctionExpression(function)
@@ -16952,11 +17014,16 @@ impl StaticHookAliasCollector<'_> {
             _ => return None,
         };
         if let Some(expression) = concise {
-            return Some(self.local_callable_results(expression, lexical_receiver.as_ref()));
+            return Some(self.local_callable_results(
+                expression,
+                lexical_receiver.as_ref(),
+                function_depth,
+            ));
         }
         let mut collector = LocalCallableResultCollector {
             owner: self,
             lexical_receiver,
+            function_depth,
             results: Vec::new(),
         };
         collector.visit_function_body(body);
@@ -17119,9 +17186,7 @@ impl StaticHookAliasCollector<'_> {
             }
             _ => {}
         }
-        if let Some((bound_callables, exposures, bound_historical)) =
-            self.local_bound_callable_initializer(value)
-        {
+        if let Some(alternatives) = self.local_bound_callable_initializer(value) {
             return vec![LocalClassInstanceCallable {
                 source: None,
                 parameters: Vec::new(),
@@ -17129,9 +17194,9 @@ impl StaticHookAliasCollector<'_> {
                 lexical_receiver: false,
                 generator: false,
                 unknown: false,
-                bound_callables,
-                bound_historical,
-                exposures,
+                bound_callables: alternatives.callables,
+                bound_historical: alternatives.historical,
+                exposures: alternatives.exposures,
             }];
         }
         let (source, parameters, dynamic_receiver, lexical_receiver, generator, unknown) =
@@ -17295,6 +17360,7 @@ impl StaticHookAliasCollector<'_> {
                 let mut collector = LocalCallableResultCollector {
                     owner: self,
                     lexical_receiver: Some(StaticAliasPath::dynamic_this(method.value.span)),
+                    function_depth: self.function_depth.saturating_add(1),
                     results: Vec::new(),
                 };
                 collector.visit_function_body(body);
@@ -19431,6 +19497,14 @@ impl StaticHookAliasCollector<'_> {
         &self,
         invocation: &LocalInvocationFact,
     ) -> (Vec<LocalCallableResult>, bool) {
+        self.local_callable_results_for_invocation_inner(invocation, &mut BTreeSet::new())
+    }
+
+    fn local_callable_results_for_invocation_inner(
+        &self,
+        invocation: &LocalInvocationFact,
+        visiting: &mut BTreeSet<StaticAliasPath>,
+    ) -> (Vec<LocalCallableResult>, bool) {
         let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
             self.path_requires_historical_aliases(callee, invocation.function_depth)
         });
@@ -19439,20 +19513,68 @@ impl StaticHookAliasCollector<'_> {
             return (vec![LocalCallableResult::Unknown], historical);
         }
         let mut results = Vec::new();
+        let mut nested_historical = false;
         for callee in callees {
+            if !visiting.insert(callee.clone()) {
+                results.push(LocalCallableResult::Unknown);
+                continue;
+            }
+            let mut callable_results = Vec::new();
             if historical {
                 if let Some(history) = self.local_callable_result_history.get(&callee) {
-                    results.extend(history.iter().flatten().cloned());
+                    callable_results.extend(history.iter().flatten().cloned());
                 } else {
-                    results.push(LocalCallableResult::Unknown);
+                    callable_results.push(LocalCallableResult::Unknown);
                 }
             } else if let Some(current) = self.local_callable_results.get(&callee) {
-                results.extend(current.iter().cloned());
+                callable_results.extend(current.iter().cloned());
             } else {
-                results.push(LocalCallableResult::Unknown);
+                callable_results.push(LocalCallableResult::Unknown);
             }
+            for result in callable_results {
+                match result {
+                    LocalCallableResult::Invocation(invocations) => {
+                        nested_historical |= invocations.len() > 1;
+                        for nested_invocation in invocations {
+                            let (nested_results, nested_was_historical) = self
+                                .local_callable_results_for_invocation_inner(
+                                    &nested_invocation,
+                                    visiting,
+                                );
+                            nested_historical |= nested_was_historical;
+                            results.extend(nested_results.into_iter().map(|result| {
+                                self.bind_local_callable_result(result, &nested_invocation)
+                            }));
+                        }
+                    }
+                    result => results.push(result),
+                }
+            }
+            visiting.remove(&callee);
         }
-        (results, historical)
+        (results, historical || nested_historical)
+    }
+
+    fn bind_local_callable_result(
+        &self,
+        mut result: LocalCallableResult,
+        invocation: &LocalInvocationFact,
+    ) -> LocalCallableResult {
+        if let LocalCallableResult::Direct {
+            dynamic_receiver,
+            bound_receiver,
+            lexical_receiver: true,
+            ..
+        } = &mut result
+            && bound_receiver.is_none()
+            && dynamic_receiver.as_ref().is_some_and(|receiver| {
+                self.invocation_dynamic_receivers(invocation)
+                    .contains(receiver)
+            })
+        {
+            *bound_receiver = Some(invocation.bound_receiver.clone());
+        }
+        result
     }
 
     fn record_callable_result_initializer(
@@ -19480,7 +19602,7 @@ impl StaticHookAliasCollector<'_> {
             let (results, historical) = self.local_callable_results_for_invocation(&invocation);
             ambiguous |= historical;
             for result in results {
-                match result {
+                match self.bind_local_callable_result(result, &invocation) {
                     LocalCallableResult::Reference(source) => {
                         alternatives = alternatives.saturating_add(1);
                         self.insert_alias(target.clone(), source);
@@ -19488,6 +19610,7 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Direct {
                         parameters,
                         dynamic_receiver,
+                        bound_receiver,
                         lexical_receiver,
                         generator,
                         exposures,
@@ -19495,19 +19618,12 @@ impl StaticHookAliasCollector<'_> {
                     } => {
                         alternatives = alternatives.saturating_add(1);
                         if lexical_receiver {
-                            let receiver = dynamic_receiver
-                                .as_ref()
-                                .filter(|receiver| {
-                                    self.invocation_dynamic_receivers(&invocation)
-                                        .contains(receiver)
-                                })
-                                .map_or_else(Vec::new, |_| invocation.bound_receiver.clone());
                             self.record_local_bound_callable(
                                 target.clone(),
                                 LocalBoundCallable {
                                     parameters,
                                     arguments: Vec::new(),
-                                    receiver,
+                                    receiver: bound_receiver.unwrap_or_default(),
                                     dynamic_receiver,
                                     generator,
                                     unknown: false,
@@ -19529,6 +19645,7 @@ impl StaticHookAliasCollector<'_> {
                         callables,
                         exposures,
                         historical,
+                        results,
                     } => {
                         alternatives = alternatives.saturating_add(callables.len());
                         ambiguous |= historical || callables.len() > 1;
@@ -19536,7 +19653,11 @@ impl StaticHookAliasCollector<'_> {
                             self.record_local_bound_callable(target.clone(), callable);
                         }
                         self.record_callable_exposures(target.clone(), exposures);
+                        self.record_local_callable_results(target.clone(), results);
                     }
+                    LocalCallableResult::Invocation(_) => unreachable!(
+                        "callable result invocations must resolve before materialization"
+                    ),
                     LocalCallableResult::Unknown => {
                         alternatives = alternatives.saturating_add(1);
                         self.record_local_bound_callable(
@@ -19707,7 +19828,11 @@ impl StaticHookAliasCollector<'_> {
             .and_then(Option::as_ref)
             .cloned();
         let results = self
-            .callable_definition_results(value, lexical_receiver.as_ref())
+            .callable_definition_results(
+                value,
+                lexical_receiver.as_ref(),
+                self.function_depth.saturating_add(1),
+            )
             .unwrap_or_default();
         self.record_unreferenced_callable_initializer(&target, value);
         self.record_local_callable_signature(target.clone(), parameters);
@@ -19738,25 +19863,29 @@ impl StaticHookAliasCollector<'_> {
         &self,
         target: &Expression<'_>,
         receiver: &[LocalInvocationArgument],
-    ) -> Option<(Vec<LocalBoundCallable>, BTreeSet<StaticAliasPath>, bool)> {
+    ) -> Option<LocalBoundCallableAlternatives> {
         match target.get_inner_expression() {
             Expression::ConditionalExpression(expression) => {
-                let (mut alternatives, mut exposures, historical) =
+                let mut alternatives =
                     self.local_bound_callable_alternatives(&expression.consequent, receiver)?;
-                let (alternate, alternate_exposures, alternate_historical) =
+                let alternate =
                     self.local_bound_callable_alternatives(&expression.alternate, receiver)?;
-                alternatives.extend(alternate);
-                exposures.extend(alternate_exposures);
-                return Some((alternatives, exposures, historical || alternate_historical));
+                alternatives.callables.extend(alternate.callables);
+                alternatives.exposures.extend(alternate.exposures);
+                alternatives.historical |= alternate.historical;
+                alternatives.results.extend(alternate.results);
+                return Some(alternatives);
             }
             Expression::LogicalExpression(expression) => {
-                let (mut alternatives, mut exposures, historical) =
+                let mut alternatives =
                     self.local_bound_callable_alternatives(&expression.left, receiver)?;
-                let (alternate, alternate_exposures, alternate_historical) =
+                let alternate =
                     self.local_bound_callable_alternatives(&expression.right, receiver)?;
-                alternatives.extend(alternate);
-                exposures.extend(alternate_exposures);
-                return Some((alternatives, exposures, historical || alternate_historical));
+                alternatives.callables.extend(alternate.callables);
+                alternatives.exposures.extend(alternate.exposures);
+                alternatives.historical |= alternate.historical;
+                alternatives.results.extend(alternate.results);
+                return Some(alternatives);
             }
             Expression::SequenceExpression(expression) => {
                 return self
@@ -19774,6 +19903,7 @@ impl StaticHookAliasCollector<'_> {
         }
         let mut alternatives = Vec::new();
         let mut exposures = BTreeSet::new();
+        let mut results = Vec::new();
         let mut historical = false;
         if let Some(raw_target) = static_alias_source_path(self.scoping, target) {
             let raw_callee = raw_target.with_property("bind".to_string());
@@ -19793,6 +19923,17 @@ impl StaticHookAliasCollector<'_> {
                 BTreeSet::from([source])
             };
             for source in sources {
+                if historical {
+                    if let Some(history) = self.local_callable_result_history.get(&source) {
+                        results.extend(history.iter().flatten().cloned());
+                    } else {
+                        results.push(LocalCallableResult::Unknown);
+                    }
+                } else if let Some(current) = self.local_callable_results.get(&source) {
+                    results.extend(current.iter().cloned());
+                } else {
+                    results.push(LocalCallableResult::Unknown);
+                }
                 let source_exposures = if historical {
                     self.callable_exposure_history.get(&source)
                 } else {
@@ -19872,6 +20013,19 @@ impl StaticHookAliasCollector<'_> {
                 _ => self.returned_function_paths(target)?,
             };
             exposures.extend(inline_exposures);
+            let lexical_receiver = self
+                .dynamic_this_roots
+                .last()
+                .and_then(Option::as_ref)
+                .cloned();
+            results.extend(
+                self.callable_definition_results(
+                    target,
+                    lexical_receiver.as_ref(),
+                    self.function_depth.saturating_add(1),
+                )
+                .unwrap_or_default(),
+            );
             alternatives.push(LocalBoundCallable {
                 parameters,
                 arguments: Vec::new(),
@@ -19884,13 +20038,18 @@ impl StaticHookAliasCollector<'_> {
         if alternatives.is_empty() {
             return None;
         }
-        Some((alternatives, exposures, historical))
+        Some(LocalBoundCallableAlternatives {
+            callables: alternatives,
+            exposures,
+            historical,
+            results,
+        })
     }
 
     fn local_bound_callable_initializer(
         &self,
         value: &Expression<'_>,
-    ) -> Option<(Vec<LocalBoundCallable>, BTreeSet<StaticAliasPath>, bool)> {
+    ) -> Option<LocalBoundCallableAlternatives> {
         let Expression::CallExpression(call) = value.get_inner_expression() else {
             return None;
         };
@@ -19922,13 +20081,12 @@ impl StaticHookAliasCollector<'_> {
             .and_then(|argument| argument.as_expression())
             .map(|receiver| self.collect_local_invocation_value_arguments(receiver))
             .unwrap_or_default();
-        let (mut alternatives, exposures, historical) =
-            self.local_bound_callable_alternatives(target, &receiver)?;
-        let historical = historical || alternatives.len() > 1;
-        for alternative in &mut alternatives {
+        let mut alternatives = self.local_bound_callable_alternatives(target, &receiver)?;
+        alternatives.historical |= alternatives.callables.len() > 1;
+        for alternative in &mut alternatives.callables {
             alternative.arguments.extend(added_arguments.clone());
         }
-        Some((alternatives, exposures, historical))
+        Some(alternatives)
     }
 
     fn collect_bound_callable_initializer(
@@ -19936,22 +20094,22 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         value: &Expression<'_>,
     ) -> bool {
-        let Some((alternatives, exposures, historical)) =
-            self.local_bound_callable_initializer(value)
-        else {
+        let Some(alternatives) = self.local_bound_callable_initializer(value) else {
             return false;
         };
-        for alternative in alternatives {
+        for alternative in alternatives.callables {
             self.record_local_bound_callable(target.clone(), alternative);
         }
-        if !exposures.is_empty() {
+        if !alternatives.exposures.is_empty() {
             self.callable_exposure_history
                 .entry(target.clone())
                 .or_default()
-                .extend(exposures.iter().cloned());
-            self.callable_exposures.insert(target.clone(), exposures);
+                .extend(alternatives.exposures.iter().cloned());
+            self.callable_exposures
+                .insert(target.clone(), alternatives.exposures);
         }
-        if historical {
+        self.record_local_callable_results(target.clone(), alternatives.results);
+        if alternatives.historical {
             self.mark_alias_target_ambiguous(target);
         }
         true
@@ -21996,6 +22154,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 let mut collector = LocalCallableResultCollector {
                     owner: self,
                     lexical_receiver: Some(StaticAliasPath::dynamic_this(function.span)),
+                    function_depth: self.function_depth.saturating_add(1),
                     results: Vec::new(),
                 };
                 collector.visit_function_body(body);
