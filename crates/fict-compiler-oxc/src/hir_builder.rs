@@ -12208,13 +12208,20 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         collect(collector, &property.value, pending);
                     }
                 }
-                _ => {}
+                _ => {
+                    collector.collect_pending_nonexecuting_callable(
+                        expression,
+                        None,
+                        &mut pending.nonexecuting_actions,
+                    );
+                }
             }
         }
 
         let mut pending = PendingDiscardedInvocations::default();
         collect(self, expression, &mut pending);
-        (!pending.invocation_spans.is_empty()).then_some(pending)
+        (!pending.invocation_spans.is_empty() || !pending.nonexecuting_actions.is_empty())
+            .then_some(pending)
     }
 
     fn record_nonexecuting_actions(&mut self, actions: Vec<PendingNonExecutingAction>) {

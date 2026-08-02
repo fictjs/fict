@@ -5420,6 +5420,147 @@ fn consumed_immediate_iterator_containers_propagate_local_effects() {
 }
 
 #[test]
+fn unobserved_inline_generator_values_remain_unexecuted() {
+    for (name, helper, statement) in [
+        (
+            "discarded inline generator array",
+            "",
+            "void [function* () { values.forEach = null; }];",
+        ),
+        (
+            "discarded inline generator object",
+            "",
+            "void { run: function* () { values.forEach = null; } };",
+        ),
+        (
+            "discarded conditional inline generator container",
+            "",
+            "void (choose ? [function* () { values.forEach = null; }] : { run: function* () { values.forEach = null; } });",
+        ),
+        (
+            "local no-op receives inline generator",
+            "function ignore(value) { void value; }",
+            "ignore(function* () { values.forEach = null; });",
+        ),
+        (
+            "local no-op receives inline generator array",
+            "function ignore(value) { void value; }",
+            "ignore([function* () { values.forEach = null; }]);",
+        ),
+        (
+            "local no-op receives inline generator object",
+            "function ignore(value) { void value; }",
+            "ignore({ run: function* () { values.forEach = null; } });",
+        ),
+        (
+            "unread stored inline generator array",
+            "",
+            "const box = [function* () { values.forEach = null; }];",
+        ),
+        (
+            "discarded stored inline generator array",
+            "",
+            "const box = [function* () { values.forEach = null; }]; void box;",
+        ),
+        (
+            "discarded stored inline generator property",
+            "",
+            "const box = { run: function* () { values.forEach = null; } }; void box.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {statement}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected generator body to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn consumed_inline_generator_values_propagate_local_effects() {
+    for (name, helper, statement) in [
+        (
+            "external receives inline generator",
+            "",
+            "externalConsume(function* () { values.forEach = null; });",
+        ),
+        (
+            "external receives inline generator array",
+            "",
+            "externalConsume([function* () { values.forEach = null; }]);",
+        ),
+        (
+            "local consumer advances inline generator",
+            "function consume(run) { run().next(); }",
+            "consume(function* () { values.forEach = null; });",
+        ),
+        (
+            "local consumer advances inline generator array entry",
+            "function consume(box) { box[0]().next(); }",
+            "consume([function* () { values.forEach = null; }]);",
+        ),
+        (
+            "stored inline generator array entry is advanced",
+            "",
+            "const box = [function* () { values.forEach = null; }]; box[0]().next();",
+        ),
+        (
+            "stored inline generator object property is advanced",
+            "",
+            "const box = { run: function* () { values.forEach = null; } }; box.run().next();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(externalConsume) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {statement}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (
