@@ -9899,6 +9899,7 @@ struct ForwardedCallableRead {
     source_span: (u32, u32),
     target: StaticAliasPath,
     method_guard: Option<GeneratorMethodGuard>,
+    parameter_offset: Option<usize>,
 }
 
 struct GeneratorBodyArgumentRead {
@@ -10656,6 +10657,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     source_span: *source_span,
                     target: target_method,
                     method_guard: None,
+                    parameter_offset: None,
                 });
             }
         }
@@ -10691,6 +10693,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span,
                 target: instance_method,
                 method_guard: None,
+                parameter_offset: None,
             });
         }
         self.instance_generator_bodies.insert(target, bodies);
@@ -10721,6 +10724,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span,
                 target: target_method,
                 method_guard: None,
+                parameter_offset: None,
             });
         }
         self.instance_generator_bodies.insert(target, bodies);
@@ -10757,6 +10761,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span,
                 target: target_method,
                 method_guard: None,
+                parameter_offset: None,
             });
         }
         self.class_instance_generator_bodies.insert(target, bodies);
@@ -10913,6 +10918,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span,
                 target,
                 method_guard,
+                parameter_offset: None,
             });
             return true;
         }
@@ -11033,6 +11039,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span,
                 target: target.clone(),
                 method_guard: guard.cloned(),
+                parameter_offset: None,
             };
             match kind {
                 RetainedCallableReadKind::Bind | RetainedCallableReadKind::Container => {
@@ -11136,6 +11143,52 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     RetainedCallableReadKind::Bind,
                 );
             }
+        }
+    }
+
+    fn fixed_bound_parameter_count(expression: &Expression<'_>) -> Option<usize> {
+        let call = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        call.arguments
+            .iter()
+            .all(|argument| argument.as_expression().is_some())
+            .then(|| call.arguments.len().saturating_sub(1))
+    }
+
+    fn record_pending_bound_arguments(
+        &mut self,
+        source: &StaticAliasPath,
+        expression: &Expression<'_>,
+        guard: &GeneratorMethodGuard,
+    ) {
+        let call = match expression.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                _ => return,
+            },
+            _ => return,
+        };
+        for (parameter_index, argument) in call
+            .arguments
+            .iter()
+            .take_while(|argument| argument.as_expression().is_some())
+            .skip(1)
+            .enumerate()
+        {
+            self.record_pending_callable_argument(
+                argument.as_expression().expect("ordinary bind argument"),
+                Some(source),
+                parameter_index,
+                false,
+                Some(guard),
+            );
         }
     }
 
@@ -11474,6 +11527,29 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         ),
                     }
                 }
+            }
+            return;
+        }
+        if let Some(GeneratorBindForwarding::Source {
+            source: callee,
+            guard,
+            ..
+        }) = self.generator_bind_forwarding(&call.callee)
+            && let Some(parameter_offset) = Self::fixed_bound_parameter_count(&call.callee)
+        {
+            for (parameter_index, argument) in call
+                .arguments
+                .iter()
+                .take_while(|argument| argument.as_expression().is_some())
+                .enumerate()
+            {
+                self.record_pending_callable_argument(
+                    argument.as_expression().expect("ordinary call argument"),
+                    Some(&callee),
+                    parameter_offset + parameter_index,
+                    result_discarded,
+                    Some(&guard),
+                );
             }
             return;
         }
@@ -11944,6 +12020,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     owner: source,
                     method,
                 }),
+                parameter_offset: None,
             });
     }
 
@@ -12213,6 +12290,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     source_span: (call.span.start, call.span.end),
                     target: target.clone(),
                     method_guard,
+                    parameter_offset: None,
                 });
         }
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
@@ -12316,23 +12394,37 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .iter()
                     .filter(|read| read.target == target)
                     .collect::<Vec<_>>();
-                if dependencies.is_empty()
-                    || dependencies.iter().any(|read| read.method_guard.is_some())
-                {
+                if dependencies.is_empty() {
                     continue;
                 }
+                let forwarded_parameters = |read: &ForwardedCallableRead| {
+                    if read
+                        .method_guard
+                        .as_ref()
+                        .is_some_and(|guard| !self.method_guard_is_intact(guard))
+                    {
+                        return None;
+                    }
+                    let offset = read.parameter_offset?;
+                    Some(
+                        self.local_non_consuming_parameters
+                            .get(&read.source)?
+                            .iter()
+                            .filter_map(|(index, returned)| {
+                                index.checked_sub(offset).map(|index| (index, *returned))
+                            })
+                            .collect::<BTreeMap<_, _>>(),
+                    )
+                };
                 let Some(mut parameters) = dependencies
                     .first()
-                    .and_then(|read| self.local_non_consuming_parameters.get(&read.source))
-                    .cloned()
+                    .and_then(|read| forwarded_parameters(read))
                 else {
                     continue;
                 };
                 let mut complete = true;
                 for dependency in dependencies.iter().skip(1) {
-                    let Some(source_parameters) =
-                        self.local_non_consuming_parameters.get(&dependency.source)
-                    else {
+                    let Some(source_parameters) = forwarded_parameters(dependency) else {
                         complete = false;
                         break;
                     };
@@ -12581,12 +12673,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     source_span,
                     guard,
                 } => {
+                    let parameter_offset = Self::fixed_bound_parameter_count(expression);
+                    self.record_pending_bound_arguments(&source, expression, &guard);
                     self.record_retained_bind_arguments(&target, expression, &guard);
                     self.forwarded_callable_reads.push(ForwardedCallableRead {
                         source,
                         source_span,
                         target,
                         method_guard: Some(guard),
+                        parameter_offset,
                     });
                 }
                 GeneratorBindForwarding::Inline { body_span, guard } => {
@@ -12626,6 +12721,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                             source_span: (tagged.span.start, tagged.span.end),
                             target: target.clone(),
                             method_guard: None,
+                            parameter_offset: None,
                         });
                 }
                 self.non_generator_callable_targets.insert(target);
@@ -12638,6 +12734,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 source_span,
                 target,
                 method_guard: None,
+                parameter_offset: Some(0),
             });
             return;
         }

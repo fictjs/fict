@@ -3967,6 +3967,31 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "bound local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } const run = ignore.bind(null);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
+            "bound local no-op retains generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); const run = ignore.bind(null, iterator); run();",
+        ),
+        (
+            "immediate bound local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); ignore.bind(null)(iterator);",
+        ),
+        (
+            "aliased bound local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; } const alias = ignore; const run = alias.bind(null);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
+            "chained bound local no-op generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(_prefix, value) { void value; } const partial = ignore.bind(null, 0); const run = partial.bind(null);",
+            "const iterator = inspect(); run(iterator);",
+        ),
+        (
             "local no-op call generator iterator argument",
             "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
             "const iterator = inspect(); ignore.call(null, iterator);",
@@ -5238,6 +5263,31 @@ fn observed_generator_iterators_propagate_local_effects() {
             "overridden discarded bind consumes iterator",
             "function* mutate() { values.forEach = null; } function ignore() {} ignore.bind = function (_receiver, iterator) { iterator.next(); return () => {}; };",
             "const iterator = mutate(); ignore.bind(null, iterator);",
+        ),
+        (
+            "overridden bind consumes immediate local iterator argument",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } ignore.bind = function () { return value => value.next(); };",
+            "const iterator = mutate(); ignore.bind(null)(iterator);",
+        ),
+        (
+            "overridden prototype bind consumes local iterator argument",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } Function.prototype.bind = function () { return value => value.next(); };",
+            "const iterator = mutate(); const run = ignore.bind(null); run(iterator);",
+        ),
+        (
+            "bound callable consumes iterator receiver",
+            "function* mutate() { values.forEach = null; } function consume() { return this.next(); }",
+            "const iterator = mutate(); const run = consume.bind(iterator); run();",
+        ),
+        (
+            "bound identity exposes retained iterator argument",
+            "function* mutate() { values.forEach = null; } function identity(value) { return value; }",
+            "const iterator = mutate(); const run = identity.bind(null, iterator); const result = run(); result.next();",
+        ),
+        (
+            "bound spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; } function consume(_first, safe, value) { void safe; value.next(); } const run = consume.bind(null, ...[null, null]);",
+            "const iterator = mutate(); run(iterator);",
         ),
         (
             "discarded bind spread advances iterator",
