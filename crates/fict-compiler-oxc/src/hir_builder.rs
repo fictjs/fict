@@ -9928,6 +9928,7 @@ struct PendingCallableArgumentRead {
     callee: Option<StaticAliasPath>,
     parameter_index: usize,
     result_discarded: bool,
+    method_guard: Option<GeneratorMethodGuard>,
 }
 
 struct InitialGeneratorNextArgumentRead {
@@ -11383,6 +11384,118 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_pending_callable_argument(
+        &mut self,
+        expression: &Expression<'_>,
+        callee: Option<&StaticAliasPath>,
+        parameter_index: usize,
+        result_discarded: bool,
+        method_guard: Option<&GeneratorMethodGuard>,
+    ) {
+        let Some((source, source_span)) = self.callable_reference(expression) else {
+            return;
+        };
+        if self
+            .retained_callable_reads
+            .iter()
+            .any(|retained| retained.source == source && retained.source_span == source_span)
+            || self.generator_argument_reads.iter().any(|retained| {
+                retained.source == source
+                    && retained.source_span == source_span
+                    && retained.source == retained.target
+            })
+            || self
+                .non_escaping_callable_reads
+                .contains(&(source.clone(), source_span))
+            || self
+                .initial_generator_next_argument_reads
+                .iter()
+                .any(|read| read.source == source && read.source_span == source_span)
+        {
+            return;
+        }
+        self.pending_callable_argument_reads
+            .push(PendingCallableArgumentRead {
+                source,
+                source_span,
+                callee: callee.cloned(),
+                parameter_index,
+                result_discarded,
+                method_guard: method_guard.cloned(),
+            });
+    }
+
+    fn record_pending_callable_arguments(&mut self, call: &CallExpression<'_>) {
+        let result_discarded = self
+            .discarded_invocation_spans
+            .contains(&(call.span.start, call.span.end));
+        if let Some((callee, Some(guard), receiver_index)) = self.generator_invocation_target(call)
+            && matches!(guard.method, "call" | "apply")
+        {
+            if let Some(receiver) = call
+                .arguments
+                .get(receiver_index)
+                .and_then(|argument| argument.as_expression())
+            {
+                self.record_pending_callable_argument(receiver, None, 0, false, None);
+            }
+            if guard.method == "call" {
+                for (parameter_index, argument) in call
+                    .arguments
+                    .iter()
+                    .skip(receiver_index + 1)
+                    .take_while(|argument| argument.as_expression().is_some())
+                    .enumerate()
+                {
+                    self.record_pending_callable_argument(
+                        argument.as_expression().expect("ordinary call argument"),
+                        Some(&callee),
+                        parameter_index,
+                        result_discarded,
+                        Some(&guard),
+                    );
+                }
+            } else if let Some(Expression::ArrayExpression(arguments)) = call
+                .arguments
+                .get(receiver_index + 1)
+                .and_then(|argument| argument.as_expression())
+                .map(Expression::get_inner_expression)
+            {
+                for (parameter_index, argument) in arguments.elements.iter().enumerate() {
+                    match argument {
+                        ArrayExpressionElement::Elision(_) => {}
+                        ArrayExpressionElement::SpreadElement(_) => break,
+                        _ => self.record_pending_callable_argument(
+                            argument.to_expression(),
+                            Some(&callee),
+                            parameter_index,
+                            result_discarded,
+                            Some(&guard),
+                        ),
+                    }
+                }
+            }
+            return;
+        }
+        let callee = self
+            .callable_reference(&call.callee)
+            .map(|(callee, _)| callee);
+        for (parameter_index, argument) in call
+            .arguments
+            .iter()
+            .take_while(|argument| argument.as_expression().is_some())
+            .enumerate()
+        {
+            self.record_pending_callable_argument(
+                argument.as_expression().expect("ordinary call argument"),
+                callee.as_ref(),
+                parameter_index,
+                result_discarded,
+                None,
+            );
+        }
+    }
+
     fn record_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
         let (source, method) = match unwrap_transparent_call_expression(&call.callee) {
             Expression::StaticMemberExpression(member) => {
@@ -12691,11 +12804,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.propagate_local_non_consuming_parameters();
         for read in std::mem::take(&mut self.pending_callable_argument_reads) {
             let non_consuming = read
-                .callee
+                .method_guard
                 .as_ref()
-                .and_then(|callee| self.local_non_consuming_parameters.get(callee))
-                .and_then(|parameters| parameters.get(&read.parameter_index))
-                .is_some_and(|returned| !returned || read.result_discarded);
+                .is_none_or(|guard| self.method_guard_is_intact(guard))
+                && read
+                    .callee
+                    .as_ref()
+                    .and_then(|callee| self.local_non_consuming_parameters.get(callee))
+                    .and_then(|parameters| parameters.get(&read.parameter_index))
+                    .is_some_and(|returned| !returned || read.result_discarded);
             if non_consuming {
                 self.discarded_value_reads
                     .entry(read.source)
@@ -13177,47 +13294,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_indirect_terminal_method_alias_read(call);
         self.record_immediate_bound_terminal_generator_method_read(call);
         self.record_initial_generator_next_arguments(call);
-        let callee = self
-            .callable_reference(&call.callee)
-            .map(|(callee, _)| callee);
-        let result_discarded = self
-            .discarded_invocation_spans
-            .contains(&(call.span.start, call.span.end));
-        for (parameter_index, argument) in call.arguments.iter().enumerate() {
-            let Some(argument) = argument.as_expression() else {
-                continue;
-            };
-            let Some((source, source_span)) = self.callable_reference(argument) else {
-                continue;
-            };
-            if self
-                .retained_callable_reads
-                .iter()
-                .any(|retained| retained.source == source && retained.source_span == source_span)
-                || self.generator_argument_reads.iter().any(|retained| {
-                    retained.source == source
-                        && retained.source_span == source_span
-                        && retained.source == retained.target
-                })
-                || self
-                    .non_escaping_callable_reads
-                    .contains(&(source.clone(), source_span))
-                || self
-                    .initial_generator_next_argument_reads
-                    .iter()
-                    .any(|read| read.source == source && read.source_span == source_span)
-            {
-                continue;
-            }
-            self.pending_callable_argument_reads
-                .push(PendingCallableArgumentRead {
-                    source,
-                    source_span,
-                    callee: callee.clone(),
-                    parameter_index,
-                    result_discarded,
-                });
-        }
+        self.record_pending_callable_arguments(call);
         walk_call_expression(self, call);
     }
 

@@ -3967,6 +3967,26 @@ fn pure_local_calls_preserve_receiver_methods() {
             "const iterator = inspect(); ignore(iterator);",
         ),
         (
+            "local no-op call generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); ignore.call(null, iterator);",
+        ),
+        (
+            "local arrow no-op apply generator iterator argument",
+            "function* inspect() { values.forEach = null; } const ignore = value => void value;",
+            "const iterator = inspect(); ignore.apply(null, [iterator]);",
+        ),
+        (
+            "local no-op Reflect.apply generator iterator argument",
+            "function* inspect() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = inspect(); Reflect.apply(ignore, null, [iterator]);",
+        ),
+        (
+            "discarded local identity call generator iterator result",
+            "function* inspect() { values.forEach = null; } const identity = value => value;",
+            "const iterator = inspect(); void identity.call(null, iterator);",
+        ),
+        (
             "unused local generator iterator argument",
             "function* inspect() { values.forEach = null; } function ignore(value) {}",
             "const iterator = inspect(); ignore(iterator);",
@@ -5063,6 +5083,51 @@ fn observed_generator_iterators_propagate_local_effects() {
             "observed mixed local identity alias exposes iterator",
             "function* mutate() { values.forEach = null; } const identity = value => value; const ignore = value => {}; const run = choose ? identity : ignore;",
             "const iterator = mutate(); const result = run(iterator); result.next();",
+        ),
+        (
+            "local callable consumes iterator receiver",
+            "function* mutate() { values.forEach = null; } function consume(value) { void value; return this.next(); }",
+            "const iterator = mutate(); consume.call(iterator, null);",
+        ),
+        (
+            "overridden local callable call consumes iterator argument",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } ignore.call = function (_receiver, value) { return value.next(); };",
+            "const iterator = mutate(); ignore.call(null, iterator);",
+        ),
+        (
+            "overridden prototype call consumes local iterator argument",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } Function.prototype.call = function (_receiver, value) { return value.next(); };",
+            "const iterator = mutate(); ignore.call(null, iterator);",
+        ),
+        (
+            "overridden Reflect.apply consumes local iterator argument",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; } Reflect.apply = function (_target, _receiver, args) { return args[0].next(); };",
+            "const iterator = mutate(); Reflect.apply(ignore, null, [iterator]);",
+        ),
+        (
+            "local no-op apply spread consumes iterator",
+            "function* mutate() { values.forEach = null; } function ignore(value) { void value; }",
+            "const iterator = mutate(); ignore.apply(null, [...iterator]);",
+        ),
+        (
+            "direct spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; } function consume(_first, _second, safe, value) { void safe; value.next(); }",
+            "const iterator = mutate(); consume(null, ...[null, null], iterator);",
+        ),
+        (
+            "call spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; } function consume(_first, _second, safe, value) { void safe; value.next(); }",
+            "const iterator = mutate(); consume.call(null, null, ...[null, null], iterator);",
+        ),
+        (
+            "apply spread shifts iterator to consuming parameter",
+            "function* mutate() { values.forEach = null; } function consume(_first, _second, safe, value) { void safe; value.next(); }",
+            "const iterator = mutate(); consume.apply(null, [null, ...[null, null], iterator]);",
+        ),
+        (
+            "observed local identity call exposes iterator",
+            "function* mutate() { values.forEach = null; } function identity(value) { return value; }",
+            "const iterator = mutate(); const result = identity.call(null, iterator); result.next();",
         ),
         (
             "direct eval may consume iterator argument",
