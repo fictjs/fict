@@ -6577,11 +6577,35 @@ fn reflect_construct_preserves_unadvanced_iterator_arguments() {
             "function* inspect() { values.forEach = null; } function Identity(value) { return value; }",
             "const iterator = inspect(); void Reflect.construct(Identity, [iterator]);",
         ),
+        (
+            "conditional class constructor ignores iterator",
+            "",
+            "function* inspect() { values.forEach = null; } class First { constructor(value) { void value; } } class Second { constructor(value) { void value; } }",
+            "const iterator = inspect(); Reflect.construct(choose ? First : Second, [iterator]);",
+        ),
+        (
+            "logical function constructor ignores direct result",
+            "",
+            "function* inspect() { values.forEach = null; } function First(value) { void value; } function Second(value) { void value; }",
+            "Reflect.construct(First || Second, [inspect()]);",
+        ),
+        (
+            "conditional inline class ignores stored arguments",
+            "",
+            "function* inspect() { values.forEach = null; }",
+            "const args = [inspect()]; Reflect.construct(choose ? class { constructor(value) { void value; } } : class { constructor(value) { void value; } }, args);",
+        ),
+        (
+            "aliased Reflect construct accepts conditional target",
+            "const construct = Reflect.construct;",
+            "function* inspect() { values.forEach = null; } class First { constructor(value) { void value; } } class Second { constructor(value) { void value; } }",
+            "const iterator = inspect(); construct(choose ? First : Second, [iterator]);",
+        ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {setup}
@@ -6662,11 +6686,23 @@ fn consuming_reflect_construct_arguments_propagate_local_effects() {
             "function* mutate() { values.forEach = null; } function Consume(value) { value.next(); }",
             "const iterator = mutate(); Reflect.construct(Consume, { 0: iterator, length: 1 });",
         ),
+        (
+            "conditional constructor may consume iterator",
+            "",
+            "function* mutate() { values.forEach = null; } class Ignore { constructor(value) { void value; } } class Consume { constructor(value) { value.next(); } }",
+            "const iterator = mutate(); Reflect.construct(choose ? Ignore : Consume, [iterator]);",
+        ),
+        (
+            "conditional constructor may be external",
+            "",
+            "function* mutate() { values.forEach = null; } class Ignore { constructor(value) { void value; } }",
+            "const iterator = mutate(); Reflect.construct(choose ? Ignore : External, [iterator]);",
+        ),
     ] {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App(External) {{
+                function App(External, choose) {{
                     const count = $state(0);
                     const values = [];
                     {setup}
@@ -10292,6 +10328,18 @@ fn local_reflect_construct_invocations_propagate_parameter_invalidations() {
             "Reflect.construct(Mutate, [values]);",
         ),
         (
+            "immediate conditional constructor",
+            "",
+            "class Inspect { constructor(target) { this.length = target.length; } } class Mutate { constructor(target) { target.forEach = null; } }",
+            "Reflect.construct(choose ? Inspect : Mutate, [values]);",
+        ),
+        (
+            "immediate logical constructor",
+            "",
+            "class Mutate { constructor(target) { target.forEach = null; } } class Inspect { constructor(target) { this.length = target.length; } }",
+            "Reflect.construct(Mutate || Inspect, [values]);",
+        ),
+        (
             "inline constructor",
             "",
             "",
@@ -10376,6 +10424,20 @@ fn pure_reflect_construct_invocations_preserve_receivers() {
             "values",
         ),
         (
+            "immediate conditional constructor",
+            "",
+            "class First { constructor(target) { this.length = target.length; } } class Second { constructor(target) { this.target = target; } }",
+            "Reflect.construct(choose ? First : Second, [values]);",
+            "values",
+        ),
+        (
+            "conditional inline constructor",
+            "",
+            "",
+            "Reflect.construct(choose ? class { constructor(target) { this.length = target.length; } } : class { constructor(target) { this.target = target; } }, [values]);",
+            "values",
+        ),
+        (
             "missing argument list",
             "",
             "class Inspect {}",
@@ -10386,7 +10448,7 @@ fn pure_reflect_construct_invocations_preserve_receivers() {
         let source = format!(
             r#"
                 import {{ $state }} from 'fict';
-                function App() {{
+                function App(choose) {{
                     const count = $state(0);
                     const values = [];
                     {setup}

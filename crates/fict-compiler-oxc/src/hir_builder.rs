@@ -13101,7 +13101,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
         };
         let parameter_sources = (callee.is_none() && inline_parameters.is_none())
-            .then(|| self.pending_bound_parameter_sources(target, true))
+            .then(|| {
+                self.pending_bound_parameter_sources(target, true)
+                    .or_else(|| self.pending_parameter_sources(target, true))
+            })
             .flatten();
         let Some(argument_list) = call
             .arguments
@@ -17919,24 +17922,61 @@ impl StaticHookAliasCollector<'_> {
         Some(exposed)
     }
 
-    fn local_reflect_construct_invocation_fact(
+    fn local_invocation_facts_from_arguments(
+        &self,
+        callee: &Expression<'_>,
+        arguments: Vec<LocalInvocationArgumentSegment>,
+    ) -> Option<Vec<LocalInvocationFact>> {
+        match callee.get_inner_expression() {
+            Expression::ConditionalExpression(expression) => {
+                let mut facts = self.local_invocation_facts_from_arguments(
+                    &expression.consequent,
+                    arguments.clone(),
+                )?;
+                facts.extend(
+                    self.local_invocation_facts_from_arguments(&expression.alternate, arguments)?,
+                );
+                Some(facts)
+            }
+            Expression::LogicalExpression(expression) => {
+                let mut facts = self
+                    .local_invocation_facts_from_arguments(&expression.left, arguments.clone())?;
+                facts.extend(
+                    self.local_invocation_facts_from_arguments(&expression.right, arguments)?,
+                );
+                Some(facts)
+            }
+            Expression::SequenceExpression(expression) => self
+                .local_invocation_facts_from_arguments(expression.expressions.last()?, arguments),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.local_invocation_facts_from_arguments(&expression.right, arguments)
+            }
+            _ => self
+                .local_invocation_fact_from_arguments(callee, arguments)
+                .map(|fact| vec![fact]),
+        }
+    }
+
+    fn local_reflect_construct_invocation_facts(
         &self,
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
-    ) -> Option<LocalInvocationFact> {
+    ) -> Option<Vec<LocalInvocationFact>> {
         if !self.is_intact_reflect_method_callee(callee, "construct") {
             return None;
         }
         let target = arguments.first()?.as_expression()?;
         let argument_list = arguments.get(1)?.as_expression()?;
-        self.local_invocation_fact_from_arguments(
+        let mut invocations = self.local_invocation_facts_from_arguments(
             target,
             self.collect_apply_invocation_arguments(argument_list),
-        )
-        .map(|mut invocation| {
+        )?;
+        for invocation in &mut invocations {
             invocation.construct = true;
-            invocation
-        })
+        }
+        Some(invocations)
     }
 
     fn reflect_construct_exposed_argument_paths(
@@ -18377,9 +18417,6 @@ impl StaticHookAliasCollector<'_> {
         callee: &Expression<'_>,
         arguments: &[oxc::ast::ast::Argument<'_>],
     ) -> Option<LocalInvocationFact> {
-        if let Some(invocation) = self.local_reflect_construct_invocation_fact(callee, arguments) {
-            return Some(invocation);
-        }
         if let Some(invocation) = self.local_reflect_apply_invocation_fact(callee, arguments) {
             return Some(invocation);
         }
@@ -20192,10 +20229,30 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn constructor_may_mutate_arguments(&self, callee: &Expression<'_>) -> bool {
-        let Some(path) = static_alias_source_path(self.scoping, callee) else {
-            return false;
-        };
-        self.constructor_path_may_mutate_arguments(&path)
+        if let Some(path) = static_alias_source_path(self.scoping, callee) {
+            return self.constructor_path_may_mutate_arguments(&path);
+        }
+        match callee.get_inner_expression() {
+            Expression::FunctionExpression(_) | Expression::ClassExpression(_) => false,
+            Expression::ConditionalExpression(expression) => {
+                self.constructor_may_mutate_arguments(&expression.consequent)
+                    || self.constructor_may_mutate_arguments(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                self.constructor_may_mutate_arguments(&expression.left)
+                    || self.constructor_may_mutate_arguments(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_none_or(|value| self.constructor_may_mutate_arguments(value)),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.constructor_may_mutate_arguments(&expression.right)
+            }
+            _ => true,
+        }
     }
 
     fn constructor_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
@@ -21628,14 +21685,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let local_invocation = self
-            .local_invocation_fact(&call.callee, &call.arguments)
-            .map(|mut invocation| {
-                invocation.result_discarded = self
-                    .discarded_invocation_spans
-                    .contains(&(call.span.start, call.span.end));
-                invocation
+        let mut local_invocations = self
+            .local_reflect_construct_invocation_facts(&call.callee, &call.arguments)
+            .unwrap_or_else(|| {
+                self.local_invocation_fact(&call.callee, &call.arguments)
+                    .into_iter()
+                    .collect()
             });
+        for invocation in &mut local_invocations {
+            invocation.result_discarded = self
+                .discarded_invocation_spans
+                .contains(&(call.span.start, call.span.end));
+        }
         let reflect_exposed = self
             .reflect_apply_exposed_argument_paths(call)
             .or_else(|| self.reflect_construct_exposed_argument_paths(call));
@@ -21674,9 +21735,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
-        if let Some(invocation) = local_invocation {
-            self.local_invocations.push(invocation);
-        }
+        self.local_invocations.extend(local_invocations);
         for path in exposed_arguments {
             self.invalidate_exposed_path(path);
         }
@@ -22390,6 +22449,11 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             for (index, argument) in arguments.iter().enumerate() {
                 if (configured && index == 0)
                     || self.direct_state_symbol(*argument).is_some()
+                    || self.is_non_retaining_reflect_construct_target(
+                        &call.callee,
+                        index,
+                        *argument,
+                    )
                     || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                     || self.is_non_escaping_string_replacer(
                         &call.callee,
@@ -22411,6 +22475,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         }
         for (index, argument) in arguments.iter().enumerate() {
             if (configured && index == 0)
+                || self.is_non_retaining_reflect_construct_target(&call.callee, index, *argument)
                 || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                 || self.is_non_escaping_string_replacer(&call.callee, index, *argument, arguments)
             {
@@ -22800,6 +22865,25 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 "get" | "has"
             ) | (StateReceiverKind::Set | StateReceiverKind::WeakSet, "has")
         )
+    }
+
+    fn is_non_retaining_reflect_construct_target(
+        &self,
+        callee: &Expression<'_>,
+        index: usize,
+        argument: EscapeArgument<'_, '_>,
+    ) -> bool {
+        if index != 0 || argument.spread {
+            return false;
+        }
+        let Some(path) = static_alias_source_path(self.scoping, callee) else {
+            return false;
+        };
+        let construct = StaticAliasPath::unresolved_global("Reflect".to_string())
+            .with_property("construct".to_string());
+        self.callback_aliases.resolve(&path) == construct
+            && self.callback_aliases.path_is_intact(&path)
+            && self.callback_aliases.path_is_intact(&construct)
     }
 
     fn is_non_escaping_string_replacer(
