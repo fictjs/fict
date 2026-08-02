@@ -5561,6 +5561,162 @@ fn consumed_inline_generator_values_propagate_local_effects() {
 }
 
 #[test]
+fn unadvanced_object_generator_methods_remain_unexecuted() {
+    for (name, helper, invocation) in [
+        (
+            "stored generator method",
+            "const box = { *run() { values.forEach = null; } };",
+            "box.run();",
+        ),
+        (
+            "stored generator function property",
+            "const box = { run: function* () { values.forEach = null; } };",
+            "box.run();",
+        ),
+        (
+            "stored named generator property",
+            "function* inspect() { values.forEach = null; } const box = { run: inspect };",
+            "box.run();",
+        ),
+        (
+            "computed generator method",
+            "const box = { ['run']: function* () { values.forEach = null; } };",
+            "box['run']();",
+        ),
+        (
+            "conditional generator property",
+            "const box = { run: choose ? function* () { values.forEach = null; } : function* () { values.forEach = null; } };",
+            "box.run();",
+        ),
+        (
+            "immediate generator method",
+            "",
+            "({ *run() { values.forEach = null; } }).run();",
+        ),
+        (
+            "detached generator method",
+            "const box = { *run() { values.forEach = null; } }; const run = box.run;",
+            "run();",
+        ),
+        (
+            "aliased generator method",
+            "const box = { *run() { values.forEach = null; } }; const alias = box;",
+            "alias.run();",
+        ),
+        (
+            "overwritten generator method",
+            "const box = { *run() { values.forEach = null; }, run() {} };",
+            "box.run();",
+        ),
+        (
+            "assigned generator method",
+            "const box = {}; box.run = function* () { values.forEach = null; };",
+            "box.run();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected generator body to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn advanced_or_exposed_object_generator_methods_propagate_local_effects() {
+    for (name, helper, invocation) in [
+        (
+            "stored generator method is advanced",
+            "const box = { *run() { values.forEach = null; } };",
+            "box.run().next();",
+        ),
+        (
+            "immediate generator method is advanced",
+            "",
+            "({ *run() { values.forEach = null; } }).run().next();",
+        ),
+        (
+            "computed generator method is advanced",
+            "const box = { ['run']: function* () { values.forEach = null; } };",
+            "box['run']().next();",
+        ),
+        (
+            "detached generator method is advanced",
+            "const box = { *run() { values.forEach = null; } }; const run = box.run;",
+            "run().next();",
+        ),
+        (
+            "aliased generator method is advanced",
+            "const box = { *run() { values.forEach = null; } }; const alias = box;",
+            "alias.run().next();",
+        ),
+        (
+            "external receives generator method",
+            "const box = { *run() { values.forEach = null; } };",
+            "externalConsume(box.run);",
+        ),
+        (
+            "mixed eager and generator property",
+            "const box = { run: choose ? function* () { values.forEach = null; } : function () { values.forEach = null; } };",
+            "box.run();",
+        ),
+        (
+            "eager method overwrites generator method",
+            "const box = { *run() {}, run() { values.forEach = null; } };",
+            "box.run();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(externalConsume, choose) {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "() => count"
+                    })
+            }),
+            "{name}: expected FICT-R005 on callback, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (

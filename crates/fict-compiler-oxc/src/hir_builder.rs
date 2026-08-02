@@ -11214,8 +11214,6 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         for (name, spans) in &bodies {
             let source_method = source.clone().with_property(name.clone());
             let target_method = target.clone().with_property(name.clone());
-            self.generator_callable_targets
-                .insert(target_method.clone());
             self.generator_body_targets
                 .extend(spans.iter().map(|span| (*span, target_method.clone())));
             self.forwarded_callable_reads.push(ForwardedCallableRead {
@@ -11603,8 +11601,54 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     Self::collect_inline_generator_body_spans(expression, body_spans)
                 })
             }
+            Expression::StaticMemberExpression(expression) => {
+                Self::collect_inline_object_member_generator_body_spans(
+                    &expression.object,
+                    expression.property.name.as_str(),
+                    body_spans,
+                )
+            }
+            Expression::ComputedMemberExpression(expression) => {
+                static_member_name(&expression.expression).is_some_and(|name| {
+                    Self::collect_inline_object_member_generator_body_spans(
+                        &expression.object,
+                        &name,
+                        body_spans,
+                    )
+                })
+            }
             _ => false,
         }
+    }
+
+    fn collect_inline_object_member_generator_body_spans(
+        expression: &Expression<'_>,
+        member: &str,
+        body_spans: &mut BTreeSet<GeneratorBodySpan>,
+    ) -> bool {
+        let Expression::ObjectExpression(object) = expression.get_inner_expression() else {
+            return false;
+        };
+        let mut selected = None;
+        for property in &object.properties {
+            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                return false;
+            };
+            let Some(name) = property.key.static_name() else {
+                return false;
+            };
+            if name != member {
+                continue;
+            }
+            let mut candidate = BTreeSet::new();
+            selected = Self::collect_inline_generator_body_spans(&property.value, &mut candidate)
+                .then_some(candidate);
+        }
+        let Some(selected) = selected else {
+            return false;
+        };
+        body_spans.extend(selected);
+        true
     }
 
     fn record_retained_bind_arguments(
@@ -12315,6 +12359,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     body_span,
                     method_guard,
                 } => {
+                    if self.generator_body_targets.iter().any(
+                        |(candidate_span, candidate_target)| {
+                            *candidate_span == body_span
+                                && candidate_target != &target
+                                && candidate_target.starts_with(&target)
+                        },
+                    ) {
+                        continue;
+                    }
                     self.generator_body_targets
                         .push((body_span, target.clone()));
                     if let Some(method_guard) = method_guard {
@@ -13969,6 +14022,48 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_object_generator_bodies(
+        &mut self,
+        target: &StaticAliasPath,
+        object: &oxc::ast::ast::ObjectExpression<'_>,
+    ) -> bool {
+        let mut properties = BTreeMap::new();
+        let mut direct_body_spans = BTreeSet::new();
+        for property in &object.properties {
+            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                return false;
+            };
+            let Some(name) = property.key.static_name() else {
+                return false;
+            };
+            if let Expression::FunctionExpression(function) = property.value.get_inner_expression()
+                && let Some(body_span) = Self::generator_body_span(function)
+            {
+                direct_body_spans.insert(body_span);
+            }
+            properties.insert(name.into_owned(), &property.value);
+        }
+        let exact_container = properties
+            .values()
+            .all(|value| !Self::has_retained_callable_container(value));
+        let mut instance_bodies = BTreeMap::new();
+        let mut reachable_body_spans = BTreeSet::new();
+        for (name, value) in properties {
+            let method = target.clone().with_property(name.clone());
+            self.record_forwarded_callable(method.clone(), value);
+            let body_spans = self.generator_body_spans_for_target(&method);
+            reachable_body_spans.extend(&body_spans);
+            if !body_spans.is_empty() {
+                instance_bodies.insert(name, body_spans);
+            }
+        }
+        self.directly_unexecuted_body_spans
+            .extend(direct_body_spans.difference(&reachable_body_spans).copied());
+        self.instance_generator_bodies
+            .insert(target.clone(), instance_bodies);
+        exact_container
+    }
+
     fn record_callable_initializer(
         &mut self,
         target: StaticAliasPath,
@@ -13977,8 +14072,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.record_local_non_consuming_initializer(&target, initializer);
         self.record_terminal_generator_method_alias(target.clone(), initializer);
         self.record_bound_terminal_generator_method_alias(target.clone(), initializer);
+        let exact_object = match initializer.get_inner_expression() {
+            Expression::ObjectExpression(object) => {
+                self.record_object_generator_bodies(&target, object)
+            }
+            _ => false,
+        };
         let retained_container = Self::has_retained_callable_container(initializer);
-        if retained_container {
+        if retained_container && !exact_object {
             self.record_retained_callable_source(
                 target.clone(),
                 initializer,
@@ -13986,7 +14087,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 RetainedCallableReadKind::Container,
             );
         }
-        if retained_container || Self::has_nonadvancing_member_value(initializer) {
+        if (retained_container && !exact_object) || Self::has_nonadvancing_member_value(initializer)
+        {
             self.record_retained_invocations(target.clone(), initializer);
         }
         self.record_forwarded_callable(target.clone(), initializer);
@@ -14011,6 +14113,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .entry(path)
                 .or_default()
                 .insert(span);
+            return;
+        }
+        let mut body_spans = BTreeSet::new();
+        if Self::collect_inline_generator_body_spans(expression, &mut body_spans) {
+            self.directly_unexecuted_body_spans.extend(body_spans);
             return;
         }
         match expression {
@@ -14753,7 +14860,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         self.discarded_value_reads
                             .iter()
                             .any(|(observed, observed_spans)| {
-                                observed.starts_with(path) && observed_spans.contains(span)
+                                (observed.starts_with(path) || path.starts_with(observed))
+                                    && observed_spans.contains(span)
                             })
                             || self.forwarded_callable_reads.iter().enumerate().any(
                                 |(index, forwarding)| {
@@ -14801,7 +14909,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         discarded.is_some_and(|discarded| discarded.contains(span))
                             || self.discarded_value_reads.iter().any(
                                 |(observed, observed_spans)| {
-                                    observed.starts_with(path) && observed_spans.contains(span)
+                                    (observed.starts_with(path) || path.starts_with(observed))
+                                        && observed_spans.contains(span)
                                 },
                             )
                             || self
