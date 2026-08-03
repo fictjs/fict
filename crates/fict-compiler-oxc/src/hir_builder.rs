@@ -2075,6 +2075,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             returned_callable_ambiguous_targets: BTreeMap::new(),
             generator_callable_body_spans: BTreeMap::new(),
             active_returned_callable_instances: BTreeMap::new(),
+            active_returned_callable_creator_owners: BTreeMap::new(),
             current_callable_spans: Vec::new(),
             class_constructor_effect_spans: BTreeMap::new(),
             returned_class_blueprint_targets: BTreeMap::new(),
@@ -10862,7 +10863,38 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .insert(target.clone());
             }
         }
-        let returned_callable_spans = returned_spans_by_callable.into_values().flatten().collect();
+        let mut returned_callable_spans = returned_spans_by_callable
+            .into_values()
+            .flatten()
+            .collect::<BTreeSet<_>>();
+        loop {
+            let mut additions = BTreeSet::new();
+            for (target, invocation_spans) in self
+                .direct_callable_reads
+                .iter()
+                .chain(&self.discarded_invocation_reads)
+            {
+                let owned_by_returned_callable = invocation_spans.iter().any(|invocation_span| {
+                    self.read_callable_owner_spans
+                        .iter()
+                        .any(|(read_span, owners)| {
+                            invocation_span.0 <= read_span.0
+                                && read_span.1 <= invocation_span.1
+                                && owners
+                                    .iter()
+                                    .any(|owner| returned_callable_spans.contains(owner))
+                        })
+                });
+                if owned_by_returned_callable {
+                    additions.extend(spans_by_target.get(target).into_iter().flatten().copied());
+                }
+            }
+            let before = returned_callable_spans.len();
+            returned_callable_spans.extend(additions);
+            if returned_callable_spans.len() == before {
+                break;
+            }
+        }
         (
             spans_by_target.into_keys().collect(),
             returned_callable_spans,
@@ -16896,6 +16928,8 @@ struct StaticHookAliasCollector<'semantic> {
     returned_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     generator_callable_body_spans: BTreeMap<(u32, u32), (u32, u32)>,
     active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
+    active_returned_callable_creator_owners:
+        BTreeMap<(StaticAliasPath, (u32, u32)), BTreeSet<ActiveReturnedCallableInstance>>,
     current_callable_spans: Vec<(u32, u32)>,
     class_constructor_effect_spans: BTreeMap<(u32, u32), (u32, u32)>,
     returned_class_blueprint_targets: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -17419,6 +17453,7 @@ struct LocalInvocationFact {
     parameters: Option<Vec<LocalCallableParameter>>,
     parameters_resolved: bool,
     owner_returned_callable_span: Option<(u32, u32)>,
+    creator_owner: Option<ActiveReturnedCallableInstance>,
     arguments: Vec<LocalInvocationArgumentSegment>,
     argument_offset: usize,
     function_depth: usize,
@@ -17432,6 +17467,7 @@ struct LocalInvocationFact {
 
 type LocalCallableEffectCreatorMap =
     BTreeMap<(StaticAliasPath, (u32, u32)), Vec<Vec<LocalInvocationFact>>>;
+type ActiveReturnedCallableInstance = (StaticAliasPath, (u32, u32), bool);
 type PendingReturnedClassMaterializationMap =
     BTreeMap<(u32, u32), Vec<(StaticAliasPath, Vec<LocalInvocationFact>)>>;
 
@@ -19865,6 +19901,7 @@ impl StaticHookAliasCollector<'_> {
                 parameters: self.current_invocation_parameters(&raw_target, &target),
                 parameters_resolved: false,
                 owner_returned_callable_span: self.current_returned_callable_span(),
+                creator_owner: None,
                 arguments,
                 argument_offset,
                 raw_callee: Some(raw_target),
@@ -19883,6 +19920,7 @@ impl StaticHookAliasCollector<'_> {
             parameters: Some(Self::inline_callable_parameters(target)?),
             parameters_resolved: true,
             owner_returned_callable_span: self.current_returned_callable_span(),
+            creator_owner: None,
             arguments,
             argument_offset,
             raw_callee: None,
@@ -19992,6 +20030,7 @@ impl StaticHookAliasCollector<'_> {
                 parameters: Some(parameters),
                 parameters_resolved: true,
                 owner_returned_callable_span: self.current_returned_callable_span(),
+                creator_owner: None,
                 arguments,
                 argument_offset: 1,
                 raw_callee: None,
@@ -20018,6 +20057,7 @@ impl StaticHookAliasCollector<'_> {
                     parameters: self.current_invocation_parameters(&raw_target, &target),
                     parameters_resolved: false,
                     owner_returned_callable_span: self.current_returned_callable_span(),
+                    creator_owner: None,
                     arguments,
                     argument_offset: 1,
                     raw_callee: Some(raw_target),
@@ -20036,6 +20076,7 @@ impl StaticHookAliasCollector<'_> {
                 parameters: self.current_invocation_parameters(&raw_callee, &resolved_callee),
                 parameters_resolved: false,
                 owner_returned_callable_span: self.current_returned_callable_span(),
+                creator_owner: None,
                 arguments,
                 argument_offset: 0,
                 raw_callee: Some(raw_callee),
@@ -20054,6 +20095,7 @@ impl StaticHookAliasCollector<'_> {
             parameters: Some(parameters),
             parameters_resolved: true,
             owner_returned_callable_span: self.current_returned_callable_span(),
+            creator_owner: None,
             arguments,
             argument_offset: 0,
             raw_callee: None,
@@ -21862,6 +21904,7 @@ impl StaticHookAliasCollector<'_> {
                 parameters: Some(callable.parameters.clone()),
                 parameters_resolved: true,
                 owner_returned_callable_span: self.current_returned_callable_span(),
+                creator_owner: None,
                 arguments: arguments.clone(),
                 argument_offset: 0,
                 function_depth: self.function_depth,
@@ -23499,14 +23542,61 @@ impl StaticHookAliasCollector<'_> {
         span: (u32, u32),
         historical: bool,
     ) -> Vec<Vec<LocalInvocationFact>> {
+        self.returned_callable_effect_creators_inner(target, span, historical, &mut BTreeSet::new())
+    }
+
+    fn returned_callable_effect_creators_inner(
+        &self,
+        target: &StaticAliasPath,
+        span: (u32, u32),
+        historical: bool,
+        visiting: &mut BTreeSet<ActiveReturnedCallableInstance>,
+    ) -> Vec<Vec<LocalInvocationFact>> {
         let key = (target.clone(), span);
-        if historical {
+        let stored = if historical {
             self.local_callable_effect_creator_history.get(&key)
         } else {
             self.local_callable_effect_creators.get(&key)
         }
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+        let instance = (target.clone(), span, historical);
+        if !visiting.insert(instance.clone()) {
+            return stored;
+        }
+        let owners = self
+            .active_returned_callable_creator_owners
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
+        if owners.is_empty() {
+            visiting.remove(&instance);
+            return stored;
+        }
+        let mut combined = Vec::new();
+        for (owner_target, owner_span, owner_historical) in owners {
+            let owner_creators = self.returned_callable_effect_creators_inner(
+                &owner_target,
+                owner_span,
+                owner_historical,
+                visiting,
+            );
+            if stored.is_empty() {
+                combined.extend(owner_creators);
+            } else if owner_creators.is_empty() {
+                combined.extend(stored.iter().cloned());
+            } else {
+                for creator in &stored {
+                    for owner_creator in &owner_creators {
+                        let mut creator = creator.clone();
+                        creator.extend(owner_creator.iter().cloned());
+                        combined.push(creator);
+                    }
+                }
+            }
+        }
+        visiting.remove(&instance);
+        combined
     }
 
     fn map_returned_callable_capture(
@@ -23759,11 +23849,14 @@ impl StaticHookAliasCollector<'_> {
         for (target, span, historical) in instances {
             let creators = self.returned_callable_effect_creators(&target, span, historical);
             if creators.is_empty() {
-                variants.push(invocation.clone());
+                let mut variant = invocation.clone();
+                variant.creator_owner = Some((target, span, historical));
+                variants.push(variant);
                 continue;
             }
             for creators in creators {
                 let mut variant = invocation.clone();
+                variant.creator_owner = Some((target.clone(), span, historical));
                 variant.arguments = variant
                     .arguments
                     .iter()
@@ -23964,6 +24057,10 @@ impl StaticHookAliasCollector<'_> {
     fn activate_invoked_returned_callable_effects(&mut self) {
         let invocations = self.local_invocations.clone();
         let mut instances = BTreeMap::<(StaticAliasPath, (u32, u32)), bool>::new();
+        let mut creator_owners = BTreeMap::<
+            (StaticAliasPath, (u32, u32)),
+            BTreeSet<ActiveReturnedCallableInstance>,
+        >::new();
         for target in &self.escaped_callable_effect_targets {
             let historical = self.path_requires_historical_aliases(target, self.function_depth);
             let targets = if historical {
@@ -23993,8 +24090,11 @@ impl StaticHookAliasCollector<'_> {
         }
         for _ in 0..=invocations.len() {
             let previous_len = instances.len();
+            let previous_owner_len = creator_owners.values().map(BTreeSet::len).sum::<usize>();
             self.active_returned_callable_instances
                 .clone_from(&instances);
+            self.active_returned_callable_creator_owners
+                .clone_from(&creator_owners);
             let active_spans = instances
                 .keys()
                 .map(|(_, span)| *span)
@@ -24009,6 +24109,7 @@ impl StaticHookAliasCollector<'_> {
                 for specialized in self.specialize_returned_callable_invocation(invocation.clone())
                 {
                     for variant in self.bound_invocation_variants(specialized) {
+                        let creator_owner = variant.creator_owner.clone();
                         let deferred_generator = self.invocation_is_definitely_generator(&variant)
                             && (variant.result_discarded || variant.construct);
                         for (target, span, historical) in
@@ -24022,20 +24123,32 @@ impl StaticHookAliasCollector<'_> {
                                 continue;
                             }
                             instances
-                                .entry((target, span))
+                                .entry((target.clone(), span))
                                 .and_modify(|existing| *existing |= historical)
                                 .or_insert(historical);
+                            if let Some(creator_owner) = &creator_owner {
+                                creator_owners
+                                    .entry((target, span))
+                                    .or_default()
+                                    .insert(creator_owner.clone());
+                            }
                         }
                     }
                 }
             }
+            self.active_returned_callable_creator_owners
+                .clone_from(&creator_owners);
             self.activate_returned_callable_aliases(&instances);
-            if instances.len() == previous_len {
+            if instances.len() == previous_len
+                && creator_owners.values().map(BTreeSet::len).sum::<usize>() == previous_owner_len
+            {
                 break;
             }
         }
         self.active_returned_callable_instances
             .clone_from(&instances);
+        self.active_returned_callable_creator_owners
+            .clone_from(&creator_owners);
         for ((instance_target, span), historical) in instances {
             let creators =
                 self.returned_callable_effect_creators(&instance_target, span, historical);
