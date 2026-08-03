@@ -7343,6 +7343,158 @@ fn define_property_reads_accessor_fields_from_its_descriptor() {
 }
 
 #[test]
+fn define_properties_installs_local_accessors() {
+    for (name, setup, definition, observation, expected_hir) in [
+        (
+            "unread getter",
+            "",
+            "Object.defineProperties(source, { run: { get() { values.forEach = null; return 1; } } });",
+            "void source;",
+            true,
+        ),
+        (
+            "read getter",
+            "",
+            "Object.defineProperties(source, { run: { get() { values.forEach = null; return 1; } } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "unwritten setter",
+            "",
+            "Object.defineProperties(source, { run: { set(value) { values.forEach = value; } } });",
+            "void source;",
+            true,
+        ),
+        (
+            "written setter",
+            "",
+            "Object.defineProperties(source, { run: { set(value) { values.forEach = value; } } });",
+            "source.run = null;",
+            false,
+        ),
+        (
+            "setter receives the assigned value",
+            "",
+            "Object.defineProperties(source, { run: { set(value) { value.forEach = null; } } });",
+            "source.run = values;",
+            false,
+        ),
+        (
+            "uncalled data function",
+            "",
+            "Object.defineProperties(source, { run: { value: () => { values.forEach = null; } } });",
+            "void source.run;",
+            true,
+        ),
+        (
+            "called data function",
+            "",
+            "Object.defineProperties(source, { run: { value: () => { values.forEach = null; } } });",
+            "source.run();",
+            false,
+        ),
+        (
+            "stored descriptor",
+            "const descriptor = { get() { values.forEach = null; return 1; } };",
+            "Object.defineProperties(source, { run: descriptor });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "unread stored descriptor map",
+            "const descriptors = { run: { get() { values.forEach = null; return 1; } } };",
+            "Object.defineProperties(source, descriptors);",
+            "void source;",
+            true,
+        ),
+        (
+            "read stored descriptor map",
+            "const descriptors = { run: { get() { values.forEach = null; return 1; } } };",
+            "Object.defineProperties(source, descriptors);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "aliased builtin and target",
+            "const define = Object.defineProperties; const target = source;",
+            "define(target, { run: { get() { values.forEach = null; return 1; } } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "multiple descriptors",
+            "",
+            "Object.defineProperties(source, { first: { get() { values.forEach = null; return 1; } }, second: { set(value) { values.forEach = value; } } });",
+            "void source.first; source.second = null;",
+            false,
+        ),
+        (
+            "non-enumerable getter skipped by object spread",
+            "",
+            "Object.defineProperties(source, { run: { get() { values.forEach = null; return 1; } } });",
+            "const copy = { ...source }; void copy.run;",
+            true,
+        ),
+        (
+            "enumerable getter invoked by object spread",
+            "",
+            "Object.defineProperties(source, { run: { enumerable: true, get() { values.forEach = null; return 1; } } });",
+            "const copy = { ...source }; void copy.run;",
+            false,
+        ),
+        (
+            "stored result preserves target identity",
+            "",
+            "const target = Object.defineProperties(source, { run: { get() { values.forEach = null; return 1; } } });",
+            "void target.run;",
+            false,
+        ),
+        (
+            "stored result keeps an unread getter deferred",
+            "",
+            "const target = Object.defineProperties(source, { run: { get() { values.forEach = null; return 1; } } });",
+            "void target;",
+            true,
+        ),
+        (
+            "immediate result preserves target identity",
+            "",
+            "void Object.defineProperties(source, { run: { get() { values.forEach = null; return 1; } } }).run;",
+            "",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const source = {{}};
+                    {setup}
+                    {definition}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected defineProperties accessor timing: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn stored_define_property_descriptors_preserve_accessor_timing() {
     for (name, declaration, definition, observation, expected_hir) in [
         (
