@@ -11018,9 +11018,33 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "make(values).call(null);",
         ),
         (
+            "immediately called local callable reference returned by factory mutates capture",
+            "",
+            "function make(target) { const run = () => { target.forEach = null; }; return run; }",
+            "make(values).call(null);",
+        ),
+        (
+            "optionally called local callable reference returned by factory mutates capture",
+            "",
+            "function make(target) { const run = () => { target.forEach = null; }; return run; }",
+            "make(values)?.call(null);",
+        ),
+        (
+            "optional call method on local callable reference returned by factory mutates capture",
+            "",
+            "function make(target) { const run = () => { target.forEach = null; }; return run; }",
+            "make(values).call?.(null);",
+        ),
+        (
             "immediately applied factory result mutates capture",
             "",
             "function make(target) { return () => { target.forEach = null; }; }",
+            "make(values).apply(null, []);",
+        ),
+        (
+            "immediately applied local callable reference returned by factory mutates capture",
+            "",
+            "function make(target) { const run = () => { target.forEach = null; }; return run; }",
             "make(values).apply(null, []);",
         ),
         (
@@ -11761,6 +11785,18 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "",
             "function make(target) { const run = () => { target.forEach = null; }; return run; } const run = make(values); run.call = () => {};",
             "run.call(null);",
+        ),
+        (
+            "factory-local overridden call on returned callable reference",
+            "",
+            "function make(target) { const run = () => { target.forEach = null; }; run.call = () => {}; return run; }",
+            "make(values).call(null);",
+        ),
+        (
+            "factory-local overridden apply on returned callable reference",
+            "",
+            "function make(target) { const run = () => { target.forEach = null; }; run.apply = () => {}; return run; }",
+            "make(values).apply(null, []);",
         ),
         (
             "invoked sibling local callable reference preserves capture",

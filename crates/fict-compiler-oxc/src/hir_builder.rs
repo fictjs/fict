@@ -21773,7 +21773,11 @@ impl StaticHookAliasCollector<'_> {
         (!alternatives.callables.is_empty()).then_some(alternatives)
     }
 
-    fn factory_call_returns_fresh_callable(&self, call: &CallExpression<'_>) -> bool {
+    fn factory_call_results_support_function_method(
+        &self,
+        call: &CallExpression<'_>,
+        method: &str,
+    ) -> bool {
         let Some(invocations) = self.local_invocation_facts(&call.callee, &call.arguments) else {
             return false;
         };
@@ -21784,9 +21788,26 @@ impl StaticHookAliasCollector<'_> {
                 found = true;
                 match result {
                     LocalCallableResult::Direct { .. } | LocalCallableResult::Bound { .. } => {}
-                    LocalCallableResult::Reference(_)
-                    | LocalCallableResult::Invocation(_)
-                    | LocalCallableResult::Unknown => return false,
+                    LocalCallableResult::Reference(source) => {
+                        let resolved = resolve_static_alias_path(&self.aliases, &source);
+                        if self
+                            .materialize_local_callable_reference(
+                                &source,
+                                invocation.function_depth,
+                            )
+                            .is_none()
+                            || [source, resolved].into_iter().any(|source| {
+                                !self.path_is_currently_intact(
+                                    &source.with_property(method.to_string()),
+                                )
+                            })
+                        {
+                            return false;
+                        }
+                    }
+                    LocalCallableResult::Invocation(_) | LocalCallableResult::Unknown => {
+                        return false;
+                    }
                 }
             }
         }
@@ -21918,7 +21939,7 @@ impl StaticHookAliasCollector<'_> {
             return None;
         };
         if !matches!(method.as_str(), "call" | "apply")
-            || !self.factory_call_returns_fresh_callable(factory_call)
+            || !self.factory_call_results_support_function_method(factory_call, &method)
             || !self.path_is_currently_intact(
                 &StaticAliasPath::unresolved_global("Function".to_string())
                     .with_property("prototype".to_string())
