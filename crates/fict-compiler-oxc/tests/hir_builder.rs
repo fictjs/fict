@@ -10112,6 +10112,237 @@ fn reflect_property_access_invokes_local_accessors() {
 }
 
 #[test]
+fn object_assign_invokes_local_accessors() {
+    for (name, helper, assignment) in [
+        (
+            "source getter",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Object.assign({}, source);",
+        ),
+        (
+            "target setter",
+            "const target = { set run(value) { values.forEach = value; } };",
+            "Object.assign(target, { run: null });",
+        ),
+        (
+            "source getter receiver",
+            "const source = { target: values, get run() { this.target.forEach = null; return 0; } };",
+            "Object.assign({}, source);",
+        ),
+        (
+            "target setter receiver",
+            "const target = { target: values, set run(value) { this.target.forEach = value; } };",
+            "Object.assign(target, { run: null });",
+        ),
+        (
+            "aliased Object.assign source getter",
+            "const source = { get run() { values.forEach = null; return 0; } }; const assign = Object.assign;",
+            "assign({}, source);",
+        ),
+        (
+            "inline source getter",
+            "",
+            "Object.assign({}, { get run() { values.forEach = null; return 0; } });",
+        ),
+        (
+            "inline target setter",
+            "",
+            "Object.assign({ set run(value) { values.forEach = value; } }, { run: null });",
+        ),
+        (
+            "overwritten source getter still executes",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Object.assign({}, source, { run: 1 });",
+        ),
+        (
+            "conditional source getter",
+            "const source = { get run() { values.forEach = null; return 0; } }; const other = {};",
+            "Object.assign({}, values.length ? other : source);",
+        ),
+        (
+            "logical source getter",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Object.assign({}, values.length && source);",
+        ),
+        (
+            "conditional target setter",
+            "const target = { set run(value) { values.forEach = value; } }; const other = {};",
+            "Object.assign(values.length ? other : target, { run: null });",
+        ),
+        (
+            "getter result reaches setter",
+            "const source = { get run() { return values; } }; const target = { set run(value) { value.forEach = null; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "copied getter callable result",
+            "const source = { get run() { return () => { values.forEach = null; }; } }; const target = {};",
+            "Object.assign(target, source); target.run();",
+        ),
+        (
+            "stored Object.assign result",
+            "const source = { run() { values.forEach = null; } };",
+            "const target = Object.assign({}, source); target.run();",
+        ),
+        (
+            "immediate Object.assign result",
+            "const source = { run() { values.forEach = null; } };",
+            "Object.assign({}, source).run();",
+        ),
+        (
+            "factory source getter",
+            "function create(target) { return { get run() { target.forEach = null; return 0; } }; }",
+            "Object.assign({}, create(values));",
+        ),
+        (
+            "factory target setter",
+            "function create(target) { return { set run(value) { target.forEach = value; } }; }",
+            "Object.assign(create(values), { run: null });",
+        ),
+        (
+            "dynamic source getter",
+            "const key = values.length ? 'run' : 'other'; const source = { get [key]() { values.forEach = null; return 0; } };",
+            "Object.assign({}, source);",
+        ),
+        (
+            "dynamic target setter",
+            "const key = values.length ? 'run' : 'other'; const target = { set [key](value) { values.forEach = value; } };",
+            "Object.assign(target, { run: null });",
+        ),
+        (
+            "dynamic getter result reaches dynamic setter",
+            "const key = values.length ? 'run' : 'other'; const source = { get [key]() { return null; } }; const target = { set [key](value) { values.forEach = value; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "computed data reaches possible setter",
+            "const key = values.length ? 'run' : 'other'; const source = { [key]: null }; const target = { set run(value) { values.forEach = value; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "source setter reads undefined",
+            "const source = { set run(value) { void value; } }; const target = { set run(value) { values.forEach = value; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "enumerable descriptor getter",
+            "const source = {}; Object.defineProperty(source, 'run', { enumerable: true, get() { values.forEach = null; return 0; } });",
+            "Object.assign({}, source);",
+        ),
+        (
+            "enumerable descriptor setter source",
+            "const source = {}; Object.defineProperty(source, 'run', { enumerable: true, set(value) { void value; } }); const target = { set run(value) { values.forEach = value; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "enumerable descriptor value reaches setter",
+            "const source = {}; Object.defineProperty(source, 'run', { enumerable: true, value: values }); const target = { set run(value) { value.forEach = null; } };",
+            "Object.assign(target, source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {assignment}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the accessor effect, got {:?}",
+            output.diagnostics
+        );
+    }
+
+    let non_enumerable_source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const source = {};
+            Object.defineProperty(source, 'run', {
+                get() { values.forEach = null; return 0; }
+            });
+            const target = Object.assign({}, source);
+            void target.run;
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let non_enumerable_output = build_hir(
+        non_enumerable_source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        non_enumerable_output.hir.is_some(),
+        "Object.assign must not invoke a non-enumerable getter: {:?}",
+        non_enumerable_output.diagnostics
+    );
+
+    let non_enumerable_setter_source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const source = {};
+            Object.defineProperty(source, 'run', {
+                set(value) { void value; }
+            });
+            const target = { set run(value) { values.forEach = value; } };
+            Object.assign(target, source);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let non_enumerable_setter_output = build_hir(
+        non_enumerable_setter_source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        non_enumerable_setter_output.hir.is_some(),
+        "Object.assign must not copy a non-enumerable setter-only property: {:?}",
+        non_enumerable_setter_output.diagnostics
+    );
+
+    let non_enumerable_value_source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const source = {};
+            Object.defineProperty(source, 'run', { value: values });
+            const target = { set run(value) { value.forEach = null; } };
+            Object.assign(target, source);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let non_enumerable_value_output = build_hir(
+        non_enumerable_value_source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        non_enumerable_value_output.hir.is_some(),
+        "Object.assign must not copy a non-enumerable data property: {:?}",
+        non_enumerable_value_output.diagnostics
+    );
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (
