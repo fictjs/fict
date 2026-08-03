@@ -11618,6 +11618,12 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "run(values);",
         ),
         (
+            "optional bind on factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; } const run = make(values).bind?.(null);",
+            "run();",
+        ),
+        (
             "local factory conditionally returns mutating callable",
             "",
             "function make() { return choose ? function (target) { return target.length; } : function (target) { target.forEach = null; }; } const run = make();",
@@ -11784,6 +11790,12 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "immediately bound factory result remains read-only",
             "",
             "function make(target) { return () => target.length; } const run = make(values).bind(null);",
+            "run();",
+        ),
+        (
+            "optional bind on sibling factory result preserves capture",
+            "const other = [];",
+            "function make(target) { return () => { target.forEach = null; }; } const run = make(other).bind?.(null);",
             "run();",
         ),
         (

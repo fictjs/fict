@@ -22021,16 +22021,22 @@ impl StaticHookAliasCollector<'_> {
         &self,
         value: &Expression<'_>,
     ) -> Option<LocalBoundCallableAlternatives> {
-        let Expression::CallExpression(call) = value.get_inner_expression() else {
-            return None;
+        let call = match value.get_inner_expression() {
+            Expression::CallExpression(call) => call.as_ref(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                ChainElement::CallExpression(call) => call.as_ref(),
+                ChainElement::ComputedMemberExpression(_)
+                | ChainElement::StaticMemberExpression(_)
+                | ChainElement::PrivateFieldExpression(_)
+                | ChainElement::TSNonNullExpression(_) => return None,
+            },
+            _ => return None,
         };
-        if call.optional
-            || !self.path_is_currently_intact(
-                &StaticAliasPath::unresolved_global("Function".to_string())
-                    .with_property("prototype".to_string())
-                    .with_property("bind".to_string()),
-            )
-        {
+        if !self.path_is_currently_intact(
+            &StaticAliasPath::unresolved_global("Function".to_string())
+                .with_property("prototype".to_string())
+                .with_property("bind".to_string()),
+        ) {
             return None;
         }
         let target = match unwrap_transparent_call_expression(&call.callee) {
