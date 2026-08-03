@@ -2000,25 +2000,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .into_iter()
             .filter_map(|span| self.function_by_span.get(&span).copied())
             .collect();
-        let mut calls = CallCollector {
-            scoping: self.semantic.scoping(),
-            stack: vec![FunctionId::new(0)],
-            function_by_span: &function_by_span,
-            symbol_to_binding: &symbol_to_binding,
-            hook_bindings: &hook_bindings,
-            namespace_imports: &namespace_imports,
-            imported_hook_member_paths: &imported_hook_member_paths,
-            reactive_bindings: &reactive_bindings,
-            reactive_namespace_sources: &reactive_namespace_sources,
-            configured_scope_names: &configured_scope_names,
-            configured_bindings: &configured_bindings,
-            immediate_invocations: &immediate_invocations,
-            context: PlacementContext::default(),
-            calls: Vec::new(),
-            effect_statements: BTreeMap::new(),
-            concise_arrow_functions: BTreeSet::new(),
-        };
-        calls.visit_program(program);
         let mutable_alias_symbols: BTreeSet<SymbolId> = self
             .frontend
             .bindings
@@ -2035,98 +2016,47 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         );
         generator_execution.visit_program(program);
         let generator_execution = generator_execution.finish();
-        let mut static_hook_aliases = StaticHookAliasCollector {
-            scoping: self.semantic.scoping(),
-            aliases: BTreeMap::new(),
-            alias_history: BTreeMap::new(),
-            array_lengths: BTreeMap::new(),
-            array_length_history: BTreeMap::new(),
-            structured_own_properties: BTreeMap::new(),
-            open_structured_containers: BTreeSet::new(),
-            local_getter_properties: BTreeSet::new(),
-            local_getter_property_history: BTreeSet::new(),
-            enumerable_getter_properties: BTreeSet::new(),
-            enumerable_getter_property_history: BTreeSet::new(),
-            dynamic_getter_properties: BTreeMap::new(),
-            dynamic_getter_property_history: BTreeMap::new(),
-            enumerable_dynamic_getter_properties: BTreeMap::new(),
-            enumerable_dynamic_getter_property_history: BTreeMap::new(),
-            local_getter_result_definedness: BTreeMap::new(),
-            local_getter_result_definedness_history: BTreeMap::new(),
-            local_getter_call_invocations: BTreeMap::new(),
-            handled_local_getter_read_spans: BTreeSet::new(),
-            handled_object_spread_getter_spans: BTreeSet::new(),
-            binding_owner_depths: BTreeMap::new(),
-            dynamic_path_owner_depths: BTreeMap::new(),
-            cross_scope_alias_targets: BTreeSet::new(),
-            ambiguous_alias_targets: BTreeSet::new(),
-            invalidated: BTreeSet::new(),
-            member_invalidated: BTreeSet::new(),
-            resolving_invalidated: BTreeSet::new(),
-            resolving_member_invalidated: BTreeSet::new(),
-            deferred_invalidated: BTreeSet::new(),
-            deferred_member_invalidated: BTreeSet::new(),
-            deferred_slot_invalidated: BTreeSet::new(),
-            deferred_slot_member_invalidated: BTreeSet::new(),
-            deferred_exposed_paths: BTreeSet::new(),
-            callable_exposures: BTreeMap::new(),
-            callable_exposure_history: BTreeMap::new(),
-            local_callable_parameters: BTreeMap::new(),
-            local_callable_parameter_history: BTreeMap::new(),
-            local_callable_receivers: BTreeMap::new(),
-            local_callable_receiver_history: BTreeMap::new(),
-            local_generator_callables: BTreeSet::new(),
-            local_generator_callable_history: BTreeMap::new(),
-            local_callable_results: BTreeMap::new(),
-            local_callable_result_history: BTreeMap::new(),
-            local_callable_effect_spans: BTreeMap::new(),
-            local_callable_effect_span_history: BTreeMap::new(),
-            local_callable_effect_creators: BTreeMap::new(),
-            local_callable_effect_creator_history: BTreeMap::new(),
-            returned_callable_spans: generator_execution.returned_callable_spans.clone(),
-            returned_callable_effects: BTreeMap::new(),
-            returned_callable_aliases: BTreeMap::new(),
-            returned_callable_ambiguous_targets: BTreeMap::new(),
-            generator_callable_body_spans: BTreeMap::new(),
-            active_returned_callable_instances: BTreeMap::new(),
-            active_returned_callable_creator_owners: BTreeMap::new(),
-            current_callable_spans: Vec::new(),
-            class_constructor_effect_spans: BTreeMap::new(),
-            returned_class_blueprint_targets: BTreeMap::new(),
-            pending_returned_class_materializations: BTreeMap::new(),
-            pending_class_instance_materializations: Vec::new(),
-            current_class_spans: Vec::new(),
-            class_effect_contexts: Vec::new(),
-            escaped_callable_effect_targets: BTreeSet::new(),
-            local_class_instances: BTreeSet::new(),
-            local_class_instance_fields: BTreeMap::new(),
-            local_class_instance_callables: BTreeMap::new(),
-            open_local_class_instance_fields: BTreeSet::new(),
-            closed_replacement_class_instances: BTreeSet::new(),
-            transient_callable_alias_targets: BTreeSet::new(),
-            local_bound_callables: BTreeMap::new(),
-            local_bound_callable_history: BTreeMap::new(),
-            default_derived_constructors: BTreeMap::new(),
-            default_derived_constructor_history: BTreeMap::new(),
-            unreferenced_callable_spans: BTreeSet::new(),
-            unexecuted_expression_spans: BTreeSet::new(),
-            merely_observed_callable_paths: generator_execution.merely_observed_callable_paths,
-            local_invocations: Vec::new(),
-            attached_callable_parameters: BTreeSet::new(),
-            parameter_member_invalidated: BTreeSet::new(),
-            parameter_slot_invalidated: BTreeSet::new(),
-            parameter_exposed: BTreeSet::new(),
-            reflective_mutations: Vec::new(),
-            external_callable_parameters: BTreeSet::new(),
-            control_depth: 0,
-            function_control_baselines: Vec::new(),
-            function_depth: 0,
-            dynamic_this_roots: Vec::new(),
-            discarded_invocation_spans: generator_execution.discarded_invocation_spans,
-            unexecuted_generator_body_spans: generator_execution.unexecuted_body_spans,
+        let mut unexecuted_expression_spans = BTreeSet::new();
+        let mut unexecuted_read_counts = BTreeMap::new();
+        let static_hook_aliases = loop {
+            let mut collector =
+                StaticHookAliasCollector::new(self.semantic.scoping(), &generator_execution);
+            collector
+                .unexecuted_expression_spans
+                .clone_from(&unexecuted_expression_spans);
+            collector
+                .unexecuted_read_counts
+                .clone_from(&unexecuted_read_counts);
+            collector.visit_program(program);
+            if collector.unexecuted_expression_spans == unexecuted_expression_spans
+                && collector.unexecuted_read_counts == unexecuted_read_counts
+            {
+                break collector;
+            }
+            unexecuted_expression_spans.clone_from(&collector.unexecuted_expression_spans);
+            unexecuted_read_counts.clone_from(&collector.unexecuted_read_counts);
         };
-        static_hook_aliases.visit_program(program);
         let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
+        let mut calls = CallCollector {
+            scoping: self.semantic.scoping(),
+            stack: vec![FunctionId::new(0)],
+            function_by_span: &function_by_span,
+            symbol_to_binding: &symbol_to_binding,
+            hook_bindings: &hook_bindings,
+            namespace_imports: &namespace_imports,
+            imported_hook_member_paths: &imported_hook_member_paths,
+            reactive_bindings: &reactive_bindings,
+            reactive_namespace_sources: &reactive_namespace_sources,
+            configured_scope_names: &configured_scope_names,
+            configured_bindings: &configured_bindings,
+            immediate_invocations: &immediate_invocations,
+            unexecuted_expression_spans: &static_hook_aliases.unexecuted_expression_spans,
+            context: PlacementContext::default(),
+            calls: Vec::new(),
+            effect_statements: BTreeMap::new(),
+            concise_arrow_functions: BTreeSet::new(),
+        };
+        calls.visit_program(program);
         for (function, statements) in &calls.effect_statements {
             self.functions[function.as_usize()].effect_statements =
                 statements.iter().copied().map(Origin::source).collect();
@@ -8273,6 +8203,7 @@ impl StaticAliasPath {
 struct StaticHookAliases {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
+    unexecuted_expression_spans: BTreeSet<(u32, u32)>,
 }
 
 fn resolve_static_alias_path(
@@ -8915,6 +8846,7 @@ struct CallCollector<'facts, 'semantic> {
     configured_scope_names: &'facts BTreeSet<String>,
     configured_bindings: &'facts BTreeSet<BindingId>,
     immediate_invocations: &'facts BTreeSet<FunctionId>,
+    unexecuted_expression_spans: &'facts BTreeSet<(u32, u32)>,
     context: PlacementContext,
     calls: Vec<CallFact>,
     effect_statements: BTreeMap<FunctionId, BTreeSet<SourceSpan>>,
@@ -8935,6 +8867,17 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
 
     fn leave_node(&mut self, kind: AstKind<'a>) {
         self.context.leave(kind);
+    }
+
+    fn visit_expression(&mut self, expression: &Expression<'a>) {
+        let span = expression.span();
+        if self
+            .unexecuted_expression_spans
+            .contains(&(span.start, span.end))
+        {
+            return;
+        }
+        walk_expression(self, expression);
     }
 
     fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
@@ -18270,6 +18213,11 @@ struct ReturnStatementPresenceCollector {
     found: bool,
 }
 
+struct UnexecutedReadCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    counts: BTreeMap<SymbolId, usize>,
+}
+
 #[derive(Default)]
 struct SuperCallCollector {
     found: bool,
@@ -18313,6 +18261,20 @@ impl<'a> Visit<'a> for ReturnStatementPresenceCollector {
 
     fn visit_return_statement(&mut self, _statement: &ReturnStatement<'a>) {
         self.found = true;
+    }
+}
+
+impl<'a> Visit<'a> for UnexecutedReadCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let Some(reference) = identifier.reference_id.get() else {
+            return;
+        };
+        let reference = self.scoping.get_reference(reference);
+        if reference.is_read()
+            && let Some(symbol) = reference.symbol_id()
+        {
+            *self.counts.entry(symbol).or_default() += 1;
+        }
     }
 }
 
@@ -18514,6 +18476,7 @@ struct StaticHookAliasCollector<'semantic> {
         BTreeMap<StaticAliasPath, Vec<Vec<DefaultDerivedConstructorAlternative>>>,
     unreferenced_callable_spans: BTreeSet<(u32, u32)>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
+    unexecuted_read_counts: BTreeMap<SymbolId, usize>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
@@ -19164,6 +19127,102 @@ impl LocalInvocationFact {
     }
 }
 
+impl<'semantic> StaticHookAliasCollector<'semantic> {
+    fn new(scoping: &'semantic Scoping, generator: &GeneratorExecutionProof) -> Self {
+        Self {
+            scoping,
+            aliases: BTreeMap::new(),
+            alias_history: BTreeMap::new(),
+            array_lengths: BTreeMap::new(),
+            array_length_history: BTreeMap::new(),
+            structured_own_properties: BTreeMap::new(),
+            open_structured_containers: BTreeSet::new(),
+            local_getter_properties: BTreeSet::new(),
+            local_getter_property_history: BTreeSet::new(),
+            enumerable_getter_properties: BTreeSet::new(),
+            enumerable_getter_property_history: BTreeSet::new(),
+            dynamic_getter_properties: BTreeMap::new(),
+            dynamic_getter_property_history: BTreeMap::new(),
+            enumerable_dynamic_getter_properties: BTreeMap::new(),
+            enumerable_dynamic_getter_property_history: BTreeMap::new(),
+            local_getter_result_definedness: BTreeMap::new(),
+            local_getter_result_definedness_history: BTreeMap::new(),
+            local_getter_call_invocations: BTreeMap::new(),
+            handled_local_getter_read_spans: BTreeSet::new(),
+            handled_object_spread_getter_spans: BTreeSet::new(),
+            binding_owner_depths: BTreeMap::new(),
+            dynamic_path_owner_depths: BTreeMap::new(),
+            cross_scope_alias_targets: BTreeSet::new(),
+            ambiguous_alias_targets: BTreeSet::new(),
+            invalidated: BTreeSet::new(),
+            member_invalidated: BTreeSet::new(),
+            resolving_invalidated: BTreeSet::new(),
+            resolving_member_invalidated: BTreeSet::new(),
+            deferred_invalidated: BTreeSet::new(),
+            deferred_member_invalidated: BTreeSet::new(),
+            deferred_slot_invalidated: BTreeSet::new(),
+            deferred_slot_member_invalidated: BTreeSet::new(),
+            deferred_exposed_paths: BTreeSet::new(),
+            callable_exposures: BTreeMap::new(),
+            callable_exposure_history: BTreeMap::new(),
+            local_callable_parameters: BTreeMap::new(),
+            local_callable_parameter_history: BTreeMap::new(),
+            local_callable_receivers: BTreeMap::new(),
+            local_callable_receiver_history: BTreeMap::new(),
+            local_generator_callables: BTreeSet::new(),
+            local_generator_callable_history: BTreeMap::new(),
+            local_callable_results: BTreeMap::new(),
+            local_callable_result_history: BTreeMap::new(),
+            local_callable_effect_spans: BTreeMap::new(),
+            local_callable_effect_span_history: BTreeMap::new(),
+            local_callable_effect_creators: BTreeMap::new(),
+            local_callable_effect_creator_history: BTreeMap::new(),
+            returned_callable_spans: generator.returned_callable_spans.clone(),
+            returned_callable_effects: BTreeMap::new(),
+            returned_callable_aliases: BTreeMap::new(),
+            returned_callable_ambiguous_targets: BTreeMap::new(),
+            generator_callable_body_spans: BTreeMap::new(),
+            active_returned_callable_instances: BTreeMap::new(),
+            active_returned_callable_creator_owners: BTreeMap::new(),
+            current_callable_spans: Vec::new(),
+            class_constructor_effect_spans: BTreeMap::new(),
+            returned_class_blueprint_targets: BTreeMap::new(),
+            pending_returned_class_materializations: BTreeMap::new(),
+            pending_class_instance_materializations: Vec::new(),
+            current_class_spans: Vec::new(),
+            class_effect_contexts: Vec::new(),
+            escaped_callable_effect_targets: BTreeSet::new(),
+            local_class_instances: BTreeSet::new(),
+            local_class_instance_fields: BTreeMap::new(),
+            local_class_instance_callables: BTreeMap::new(),
+            open_local_class_instance_fields: BTreeSet::new(),
+            closed_replacement_class_instances: BTreeSet::new(),
+            transient_callable_alias_targets: BTreeSet::new(),
+            local_bound_callables: BTreeMap::new(),
+            local_bound_callable_history: BTreeMap::new(),
+            default_derived_constructors: BTreeMap::new(),
+            default_derived_constructor_history: BTreeMap::new(),
+            unreferenced_callable_spans: BTreeSet::new(),
+            unexecuted_expression_spans: BTreeSet::new(),
+            unexecuted_read_counts: BTreeMap::new(),
+            merely_observed_callable_paths: generator.merely_observed_callable_paths.clone(),
+            local_invocations: Vec::new(),
+            attached_callable_parameters: BTreeSet::new(),
+            parameter_member_invalidated: BTreeSet::new(),
+            parameter_slot_invalidated: BTreeSet::new(),
+            parameter_exposed: BTreeSet::new(),
+            reflective_mutations: Vec::new(),
+            external_callable_parameters: BTreeSet::new(),
+            control_depth: 0,
+            function_control_baselines: Vec::new(),
+            function_depth: 0,
+            dynamic_this_roots: Vec::new(),
+            discarded_invocation_spans: generator.discarded_invocation_spans.clone(),
+            unexecuted_generator_body_spans: generator.unexecuted_body_spans.clone(),
+        }
+    }
+}
+
 impl StaticHookAliasCollector<'_> {
     fn record_external_callable_parameter(&mut self, pattern: &BindingPattern<'_>) {
         let mut bindings = PatternBindingCollector::default();
@@ -19582,14 +19641,39 @@ impl StaticHookAliasCollector<'_> {
     fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
         if self.merely_observed_callable_paths.contains(target)
             || target.binding_root().is_some_and(|symbol| {
-                !self
+                let read_count = self
                     .scoping
                     .get_resolved_references(symbol)
-                    .any(|reference| reference.is_read())
+                    .filter(|reference| reference.is_read())
+                    .count();
+                read_count
+                    <= self
+                        .unexecuted_read_counts
+                        .get(&symbol)
+                        .copied()
+                        .unwrap_or(0)
             })
         {
             self.unreferenced_callable_spans
                 .insert((span.start, span.end));
+        }
+    }
+
+    fn record_unexecuted_expression(&mut self, expression: &Expression<'_>) {
+        let span = expression.span();
+        if !self
+            .unexecuted_expression_spans
+            .insert((span.start, span.end))
+        {
+            return;
+        }
+        let mut reads = UnexecutedReadCollector {
+            scoping: self.scoping,
+            counts: BTreeMap::new(),
+        };
+        reads.visit_expression(expression);
+        for (symbol, count) in reads.counts {
+            *self.unexecuted_read_counts.entry(symbol).or_default() += count;
         }
     }
 
@@ -24739,8 +24823,7 @@ impl StaticHookAliasCollector<'_> {
         match definedness {
             LocalGetterResultDefinedness::Defined => {
                 self.record_local_getter_read(property, target);
-                self.unexecuted_expression_spans
-                    .insert((default.right.span().start, default.right.span().end));
+                self.record_unexecuted_expression(&default.right);
             }
             LocalGetterResultDefinedness::Undefined => {
                 self.record_local_getter_invocation(property);
@@ -24772,8 +24855,7 @@ impl StaticHookAliasCollector<'_> {
         match definedness {
             LocalGetterResultDefinedness::Defined => {
                 self.record_local_getter_read(property, alias_target);
-                self.unexecuted_expression_spans
-                    .insert((default.span().start, default.span().end));
+                self.record_unexecuted_expression(default);
             }
             LocalGetterResultDefinedness::Undefined => {
                 self.record_local_getter_invocation(property);
@@ -24804,8 +24886,7 @@ impl StaticHookAliasCollector<'_> {
         match definedness {
             LocalGetterResultDefinedness::Defined => {
                 self.record_local_getter_read(property, target);
-                self.unexecuted_expression_spans
-                    .insert((default.span().start, default.span().end));
+                self.record_unexecuted_expression(default);
             }
             LocalGetterResultDefinedness::Undefined => {
                 self.record_local_getter_invocation(property);
@@ -24857,8 +24938,7 @@ impl StaticHookAliasCollector<'_> {
                 && self.resolved_local_getter_result_definedness(&property_source)
                     == Some(LocalGetterResultDefinedness::Defined)
             {
-                self.unexecuted_expression_spans
-                    .insert((default.span().start, default.span().end));
+                self.record_unexecuted_expression(default);
             }
         }
     }
@@ -27536,6 +27616,7 @@ impl StaticHookAliasCollector<'_> {
         let resolver = StaticHookAliases {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
+            unexecuted_expression_spans: BTreeSet::new(),
         };
         let reflective_mutations = self
             .reflective_mutations
@@ -27618,6 +27699,7 @@ impl StaticHookAliasCollector<'_> {
         StaticHookAliases {
             aliases: self.aliases,
             member_invalidated,
+            unexecuted_expression_spans: self.unexecuted_expression_spans,
         }
     }
 }
@@ -30078,6 +30160,18 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
 }
 
 impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
+    fn visit_expression(&mut self, expression: &Expression<'a>) {
+        let span = expression.span();
+        if self
+            .callback_aliases
+            .unexecuted_expression_spans
+            .contains(&(span.start, span.end))
+        {
+            return;
+        }
+        walk_expression(self, expression);
+    }
+
     fn visit_class(&mut self, class: &Class<'a>) {
         if let Some(super_class) = &class.super_class {
             self.analyze_class_retained_expression(super_class);

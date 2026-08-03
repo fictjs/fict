@@ -6396,6 +6396,106 @@ fn unadvanced_destructured_generator_values_remain_unexecuted() {
 }
 
 #[test]
+fn unselected_destructuring_default_calls_remain_unexecuted() {
+    for (name, helper, binding) in [
+        (
+            "defined getter result skips a called default",
+            "const source = { get run() { return 1; } }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+        ),
+        (
+            "defined getter result skips a called assignment default",
+            "const source = { get run() { return 1; } }; const fallback = () => { values.forEach = null; return 0; }; let run;",
+            "({ run = fallback() } = source);",
+        ),
+        (
+            "an unselected default cannot invalidate its source getter",
+            "const source = { get run() { return 1; } }; const fallback = () => { source.run = undefined; values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {binding}
+                    void run;
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected default call to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn selected_or_referenced_destructuring_default_calls_propagate_effects() {
+    for (name, helper, binding, observation) in [
+        (
+            "undefined getter result calls a default",
+            "const source = { get run() { return undefined; } }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "void run;",
+        ),
+        (
+            "possibly undefined getter result preserves a default call",
+            "const flag = values.length > 0; const source = { get run() { return flag ? 1 : undefined; } }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "void run;",
+        ),
+        (
+            "undefined getter result calls an assignment default",
+            "const source = { get run() { return undefined; } }; const fallback = () => { values.forEach = null; return 0; }; let run;",
+            "({ run = fallback() } = source);",
+            "void run;",
+        ),
+        (
+            "an independently called fallback remains executed",
+            "const source = { get run() { return 1; } }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "fallback(); void run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {binding}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected default call effects to propagate"
+        );
+    }
+}
+
+#[test]
 fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
     for (name, helper, binding, observation) in [
         (
