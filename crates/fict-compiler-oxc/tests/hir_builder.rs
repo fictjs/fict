@@ -6891,6 +6891,422 @@ fn reflect_delete_property_preserves_accessors_when_deletion_is_uncertain() {
 }
 
 #[test]
+fn define_property_replaces_accessors_with_data_properties() {
+    for (name, declaration, definition, observation) in [
+        (
+            "Object.defineProperty replaces an own getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Object.defineProperty(source, 'run', { value: 1 });",
+            "void source.run;",
+        ),
+        (
+            "Reflect.defineProperty replaces an own getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Reflect.defineProperty(source, 'run', { value: 1 });",
+            "void source.run;",
+        ),
+        (
+            "an own data property shadows an inherited getter",
+            "class Source { get run() { values.forEach = null; return 1; } } const source = new Source();",
+            "Object.defineProperty(source, 'run', { value: 1 });",
+            "void source.run;",
+        ),
+        (
+            "a generic descriptor shadows an inherited getter with undefined",
+            "class Source { get run() { values.forEach = null; return 1; } } const source = new Source();",
+            "Object.defineProperty(source, 'run', {});",
+            "void source.run;",
+        ),
+        (
+            "a data property replaces a paired accessor",
+            "const source = { get run() { values.forEach = null; return 1; }, set run(value) { values.forEach = null; } };",
+            "Object.defineProperty(source, 'run', { value: 1, writable: true });",
+            "source.run = 2; void source.run;",
+        ),
+        (
+            "an aliased builtin replaces through a target alias",
+            "const source = { get run() { values.forEach = null; return 1; } }; const alias = source; const define = Object.defineProperty;",
+            "define(alias, 'run', { value: 1 });",
+            "void source.run;",
+        ),
+        (
+            "a new getter replaces an old getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Object.defineProperty(source, 'run', { get() { return 2; } });",
+            "void source.run;",
+        ),
+        (
+            "a new setter replaces an old setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "Object.defineProperty(source, 'run', { set(value) {} });",
+            "source.run = 1;",
+        ),
+        (
+            "an undefined getter removes an old getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Object.defineProperty(source, 'run', { get: undefined });",
+            "void source.run;",
+        ),
+        (
+            "an undefined setter removes an old setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "Reflect.defineProperty(source, 'run', { set: undefined });",
+            "source.run = 1;",
+        ),
+        (
+            "an enumerable attribute update suppresses getter execution during spread",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Object.defineProperty(source, 'run', { enumerable: false });",
+            "const copy = { ...source }; void copy.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {definition}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected replaced accessor effects to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn define_property_accessors_propagate_read_and_write_effects() {
+    for (name, declaration, definition, observation) in [
+        (
+            "inline getter",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "void source.run;",
+        ),
+        (
+            "aliased getter",
+            "const source = {}; const read = () => { values.forEach = null; return 1; };",
+            "Reflect.defineProperty(source, 'run', { get: read });",
+            "void source.run;",
+        ),
+        (
+            "inline setter",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { set(value) { values.forEach = null; } });",
+            "source.run = 1;",
+        ),
+        (
+            "aliased setter",
+            "const source = {}; const write = (value) => { values.forEach = null; };",
+            "Reflect.defineProperty(source, 'run', { set: write });",
+            "source.run = 1;",
+        ),
+        (
+            "existing getter retained by a setter-only descriptor",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Object.defineProperty(source, 'run', { set(value) {} });",
+            "void source.run;",
+        ),
+        (
+            "existing setter retained by a getter-only descriptor",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "Object.defineProperty(source, 'run', { get() { return 1; } });",
+            "source.run = 1;",
+        ),
+        (
+            "setter receives the assigned value",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { set(value) { value.forEach = null; } });",
+            "source.run = values;",
+        ),
+        (
+            "enumerable getter executes during object spread",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { enumerable: true, get() { values.forEach = null; return 1; } });",
+            "const copy = { ...source }; void copy.run;",
+        ),
+        (
+            "getter receives its property receiver",
+            "const source = { touch() { values.forEach = null; } };",
+            "Object.defineProperty(source, 'run', { get() { this.touch(); return 1; } });",
+            "void source.run;",
+        ),
+        (
+            "callable data value executes when called",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { value: () => { values.forEach = null; } });",
+            "source.run();",
+        ),
+        (
+            "getter added conditionally",
+            "const source = {};",
+            "if (Math.random() < 0.5) Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "void source.run;",
+        ),
+        (
+            "getter added under a dynamic key",
+            "const source = {}; const key = Math.random() < 0.5 ? 'run' : 'other';",
+            "Object.defineProperty(source, key, { get() { values.forEach = null; return 1; } });",
+            "void source.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {definition}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected defined accessor effects to propagate"
+        );
+    }
+}
+
+#[test]
+fn unread_define_property_accessors_remain_unexecuted() {
+    for (name, declaration, definition, observation) in [
+        (
+            "unread getter",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "void source;",
+        ),
+        (
+            "unwritten setter",
+            "const source = {};",
+            "Reflect.defineProperty(source, 'run', { set(value) { values.forEach = null; } });",
+            "void source;",
+        ),
+        (
+            "unread aliased getter",
+            "const source = {}; const read = () => { values.forEach = null; return 1; };",
+            "Object.defineProperty(source, 'run', { get: read });",
+            "void source;",
+        ),
+        (
+            "unwritten aliased setter",
+            "const source = {}; const write = (value) => { values.forEach = null; };",
+            "Reflect.defineProperty(source, 'run', { set: write });",
+            "void source;",
+        ),
+        (
+            "non-enumerable getter skipped by object spread",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "const copy = { ...source }; void copy.run;",
+        ),
+        (
+            "uncalled data function",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { value: () => { values.forEach = null; } });",
+            "void source.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {definition}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected an unused accessor body to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn define_property_data_values_control_destructuring_defaults() {
+    for (name, value, expected_hir) in [
+        ("defined value skips the default", "1", true),
+        ("undefined value selects the default", "undefined", false),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const source = {{}};
+                    const fallback = () => {{
+                        values.forEach = null;
+                        return 0;
+                    }};
+                    Object.defineProperty(source, 'run', {{ value: {value} }});
+                    const {{ run = fallback() }} = source;
+                    void run;
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected defineProperty data descriptor outcome: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn uncertain_define_property_calls_preserve_existing_getter_effects() {
+    for (name, setup, definition) in [
+        (
+            "conditional definition",
+            "",
+            "if (Math.random() < 0.5) Object.defineProperty(source, 'run', { value: 1 });",
+        ),
+        (
+            "dynamic key",
+            "const key = Math.random() < 0.5 ? 'run' : 'other';",
+            "Object.defineProperty(source, key, { value: 1 });",
+        ),
+        (
+            "shadowed builtin",
+            "const Object = { defineProperty() { return source; } };",
+            "Object.defineProperty(source, 'run', { value: 1 });",
+        ),
+        (
+            "frozen target",
+            "Object.freeze(source);",
+            "Reflect.defineProperty(source, 'run', { value: 1 });",
+        ),
+        (
+            "side-effecting target expression",
+            "",
+            "Reflect.defineProperty((Object.freeze(source), source), 'run', { value: 1 });",
+        ),
+        (
+            "side-effecting extra argument",
+            "",
+            "Reflect.defineProperty(source, 'run', { value: 1 }, Object.freeze(source));",
+        ),
+        (
+            "non-configurable attribute update before reflective deletion",
+            "",
+            "Object.defineProperty(source, 'run', { configurable: false }); Reflect.deleteProperty(source, 'run');",
+        ),
+        (
+            "conditional non-configurable update before reflective deletion",
+            "",
+            "if (Math.random() < 0.5) Object.defineProperty(source, 'run', { configurable: false }); Reflect.deleteProperty(source, 'run');",
+        ),
+        (
+            "defineProperties before reflective deletion",
+            "",
+            "Object.defineProperties(source, { run: { configurable: false } }); Reflect.deleteProperty(source, 'run');",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const source = {{
+                        get run() {{
+                            values.forEach = null;
+                            return 1;
+                        }},
+                    }};
+                    {setup}
+                    {definition}
+                    void source.run;
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected a potentially retained getter to propagate effects"
+        );
+    }
+}
+
+#[test]
+fn define_property_reads_accessor_fields_from_its_descriptor() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const source = {};
+            Object.defineProperty(source, 'run', {
+                get get() {
+                    values.forEach = null;
+                    return () => 1;
+                },
+            });
+            void source;
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.hir.is_none(),
+        "expected ToPropertyDescriptor to execute the descriptor's get accessor"
+    );
+}
+
+#[test]
 fn accessor_assignments_propagate_setter_and_retained_getter_effects() {
     for (name, declaration, assignment, observation) in [
         (

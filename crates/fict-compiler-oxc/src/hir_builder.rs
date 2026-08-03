@@ -2018,6 +2018,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let generator_execution = generator_execution.finish();
         let mut unexecuted_expression_spans = BTreeSet::new();
         let mut unexecuted_read_counts = BTreeMap::new();
+        let mut deferred_accessor_spans = BTreeSet::new();
+        let mut executed_descriptor_callable_spans = BTreeSet::new();
         let mut executed_setter_spans = BTreeSet::new();
         let static_hook_aliases = loop {
             let mut collector =
@@ -2029,17 +2031,29 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .unexecuted_read_counts
                 .clone_from(&unexecuted_read_counts);
             collector
+                .deferred_accessor_spans
+                .clone_from(&deferred_accessor_spans);
+            collector
+                .executed_descriptor_callable_spans
+                .clone_from(&executed_descriptor_callable_spans);
+            collector
                 .executed_setter_spans
                 .clone_from(&executed_setter_spans);
             collector.visit_program(program);
             if collector.unexecuted_expression_spans == unexecuted_expression_spans
                 && collector.unexecuted_read_counts == unexecuted_read_counts
+                && collector.deferred_accessor_spans == deferred_accessor_spans
+                && collector.executed_descriptor_callable_spans
+                    == executed_descriptor_callable_spans
                 && collector.executed_setter_spans == executed_setter_spans
             {
                 break collector;
             }
             unexecuted_expression_spans.clone_from(&collector.unexecuted_expression_spans);
             unexecuted_read_counts.clone_from(&collector.unexecuted_read_counts);
+            deferred_accessor_spans.clone_from(&collector.deferred_accessor_spans);
+            executed_descriptor_callable_spans
+                .clone_from(&collector.executed_descriptor_callable_spans);
             executed_setter_spans.clone_from(&collector.executed_setter_spans);
         };
         let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
@@ -18426,6 +18440,7 @@ struct StaticHookAliasCollector<'semantic> {
     dynamic_setter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     dynamic_setter_property_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     dynamic_accessor_excluded_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    descriptor_defined_properties: BTreeSet<StaticAliasPath>,
     local_value_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
     local_value_definedness_history:
         BTreeMap<StaticAliasPath, BTreeSet<LocalGetterResultDefinedness>>,
@@ -18489,8 +18504,10 @@ struct StaticHookAliasCollector<'semantic> {
     default_derived_constructor_history:
         BTreeMap<StaticAliasPath, Vec<Vec<DefaultDerivedConstructorAlternative>>>,
     unreferenced_callable_spans: BTreeSet<(u32, u32)>,
+    deferred_accessor_spans: BTreeSet<(u32, u32)>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     unexecuted_read_counts: BTreeMap<SymbolId, usize>,
+    executed_descriptor_callable_spans: BTreeSet<(u32, u32)>,
     executed_setter_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     local_invocations: Vec<LocalInvocationFact>,
@@ -18518,6 +18535,14 @@ struct ReflectiveMemberMutationFact {
     key: Option<String>,
     function_depth: usize,
     returned_callable_span: Option<(u32, u32)>,
+}
+
+struct LocalPropertyDescriptor<'reference, 'ast> {
+    getter: Option<&'reference Expression<'ast>>,
+    setter: Option<&'reference Expression<'ast>>,
+    value: Option<&'reference Expression<'ast>>,
+    writable: bool,
+    enumerable: Option<&'reference Expression<'ast>>,
 }
 
 #[derive(Clone, Copy)]
@@ -19167,6 +19192,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             dynamic_setter_properties: BTreeMap::new(),
             dynamic_setter_property_history: BTreeMap::new(),
             dynamic_accessor_excluded_properties: BTreeMap::new(),
+            descriptor_defined_properties: BTreeSet::new(),
             local_value_definedness: BTreeMap::new(),
             local_value_definedness_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
@@ -19225,8 +19251,10 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             default_derived_constructors: BTreeMap::new(),
             default_derived_constructor_history: BTreeMap::new(),
             unreferenced_callable_spans: BTreeSet::new(),
+            deferred_accessor_spans: BTreeSet::new(),
             unexecuted_expression_spans: BTreeSet::new(),
             unexecuted_read_counts: BTreeMap::new(),
+            executed_descriptor_callable_spans: BTreeSet::new(),
             executed_setter_spans: BTreeSet::new(),
             merely_observed_callable_paths: generator.merely_observed_callable_paths.clone(),
             local_invocations: Vec::new(),
@@ -23101,16 +23129,21 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn activate_local_setter(&mut self, setter: &StaticAliasPath) {
-        let spans = self
-            .local_callable_effect_spans
-            .get(setter)
+        let resolved = resolve_static_alias_path(&self.aliases, setter);
+        let spans = [setter, &resolved]
             .into_iter()
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
+            .flat_map(|setter| {
+                self.local_callable_effect_spans
+                    .get(setter)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+            })
+            .collect::<BTreeSet<_>>();
         for span in spans {
             self.executed_setter_spans.insert(span);
             self.unreferenced_callable_spans.remove(&span);
+            self.deferred_accessor_spans.remove(&span);
         }
     }
 
@@ -23250,6 +23283,9 @@ impl StaticHookAliasCollector<'_> {
         if getters.is_empty() {
             return false;
         }
+        for getter in &getters {
+            self.activate_local_getter(getter);
+        }
         let mut owner = property.clone();
         owner.properties.pop();
         let receiver = vec![self.collect_local_invocation_path(owner)];
@@ -23290,6 +23326,56 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         true
+    }
+
+    fn local_callable_path_effect_spans(&self, callable: &StaticAliasPath) -> BTreeSet<(u32, u32)> {
+        let resolved = resolve_static_alias_path(&self.aliases, callable);
+        [callable, &resolved]
+            .into_iter()
+            .flat_map(|callable| {
+                self.local_callable_effect_spans
+                    .get(callable)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .chain(
+                        self.local_callable_effect_span_history
+                            .get(callable)
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .copied(),
+                    )
+            })
+            .collect()
+    }
+
+    fn activate_local_getter(&mut self, getter: &StaticAliasPath) {
+        for span in self.local_callable_path_effect_spans(getter) {
+            self.executed_descriptor_callable_spans.insert(span);
+            self.deferred_accessor_spans.remove(&span);
+        }
+    }
+
+    fn activate_deferred_descriptor_invocations(&mut self, invocations: &[LocalInvocationFact]) {
+        let callables = invocations
+            .iter()
+            .flat_map(|invocation| {
+                invocation
+                    .raw_callee
+                    .iter()
+                    .chain(invocation.callee.iter())
+                    .cloned()
+            })
+            .collect::<BTreeSet<_>>();
+        for callable in callables {
+            for span in self.local_callable_path_effect_spans(&callable) {
+                if self.deferred_accessor_spans.remove(&span) {
+                    self.executed_descriptor_callable_spans.insert(span);
+                    self.unreferenced_callable_spans.remove(&span);
+                }
+            }
+        }
     }
 
     fn record_local_getter_call_invocations(
@@ -26641,6 +26727,486 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn local_define_property_descriptor<'reference, 'ast>(
+        &self,
+        call: &'reference CallExpression<'ast>,
+    ) -> Option<LocalPropertyDescriptor<'reference, 'ast>> {
+        let descriptor = call.arguments.get(2)?.as_expression()?;
+        let Expression::ObjectExpression(descriptor) = descriptor.get_inner_expression() else {
+            return None;
+        };
+        let mut getter = None;
+        let mut setter = None;
+        let mut value = None;
+        let mut writable = false;
+        let mut enumerable = None;
+        for entry in &descriptor.properties {
+            let OxcObjectPropertyKind::ObjectProperty(property) = entry else {
+                return None;
+            };
+            if property.computed || property.kind != PropertyKind::Init {
+                return None;
+            }
+            let name = property.key.static_name()?;
+            match name.as_ref() {
+                "get" => getter = Some(&property.value),
+                "set" => setter = Some(&property.value),
+                "value" => value = Some(&property.value),
+                "writable" => writable = true,
+                "enumerable" => enumerable = Some(&property.value),
+                _ => {}
+            }
+        }
+        let accessor = getter.is_some() || setter.is_some();
+        let data = value.is_some() || writable;
+        if accessor && data {
+            return None;
+        }
+        Some(LocalPropertyDescriptor {
+            getter,
+            setter,
+            value,
+            writable,
+            enumerable,
+        })
+    }
+
+    fn local_define_property_target(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
+        if call.arguments.len() != 3
+            || !matches!(
+                call.callee.get_inner_expression(),
+                Expression::Identifier(_)
+                    | Expression::StaticMemberExpression(_)
+                    | Expression::ComputedMemberExpression(_)
+            )
+        {
+            return None;
+        }
+        self.local_define_property_descriptor(call)?;
+        let raw_callee = static_alias_source_path(self.scoping, &call.callee)?;
+        let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
+        let direct_builtin = matches!(
+            (&raw_callee.root, raw_callee.properties.as_slice()),
+            (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                if matches!(root.as_str(), "Object" | "Reflect")
+                    && method == "defineProperty"
+        );
+        let resolved_builtin = matches!(
+            (&callee.root, callee.properties.as_slice()),
+            (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                if matches!(root.as_str(), "Object" | "Reflect")
+                    && method == "defineProperty"
+        );
+        if !(raw_callee.properties.is_empty() || direct_builtin)
+            || !resolved_builtin
+            || !self.path_is_currently_intact(&raw_callee)
+        {
+            return None;
+        }
+        let raw_target = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .filter(|target| matches!(target.get_inner_expression(), Expression::Identifier(_)))
+            .and_then(|target| self.alias_source_path(target))?;
+        if self.path_requires_historical_aliases(&raw_target, self.function_depth)
+            || !self.path_is_currently_intact(&raw_target)
+        {
+            return None;
+        }
+        let target = resolve_static_alias_path(&self.aliases, &raw_target);
+        let property = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_member_name)?;
+        if property == "length" && self.known_array_length(&target).is_some() {
+            return None;
+        }
+        let property = target.with_property(property);
+        if self
+            .descriptor_defined_properties
+            .iter()
+            .any(|defined| defined.overlaps(&property))
+            || (self.known_structured_own_properties(&target).is_none()
+                && !self.transient_callable_alias_targets.contains(&property))
+        {
+            return None;
+        }
+        Some(property)
+    }
+
+    fn local_descriptor_mutation_path(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
+        let raw_callee = static_alias_source_path(self.scoping, &call.callee)?;
+        let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
+        if !self.path_is_currently_intact(&raw_callee) {
+            return None;
+        }
+        let keyed = match (&callee.root, callee.properties.as_slice()) {
+            (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                if matches!(root.as_str(), "Object" | "Reflect") && method == "defineProperty" =>
+            {
+                true
+            }
+            (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                if root == "Object"
+                    && matches!(method.as_str(), "defineProperties" | "freeze" | "seal") =>
+            {
+                false
+            }
+            _ => return None,
+        };
+        let target = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(|target| self.alias_source_path(target))?;
+        let target = resolve_static_alias_path(&self.aliases, &target);
+        if !keyed {
+            return Some(target);
+        }
+        Some(
+            call.arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .and_then(static_member_name)
+                .map_or_else(|| target.clone(), |property| target.with_property(property)),
+        )
+    }
+
+    fn inline_callable_span(value: &Expression<'_>) -> Option<Span> {
+        match value.get_inner_expression() {
+            Expression::FunctionExpression(function) => Some(function.span),
+            Expression::ArrowFunctionExpression(function) => Some(function.span),
+            _ => None,
+        }
+    }
+
+    fn local_descriptor_callable_effect_spans(
+        &self,
+        value: &Expression<'_>,
+    ) -> BTreeSet<(u32, u32)> {
+        let mut spans = BTreeSet::new();
+        if let Some(span) = Self::inline_callable_span(value) {
+            spans.insert((span.start, span.end));
+        }
+        if let Some(bound) = self.local_bound_callable_initializer(value) {
+            spans.extend(bound.effect_instances.into_iter().map(|effect| effect.span));
+        }
+        let Some(raw) = self.alias_source_path(value) else {
+            return spans;
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        let historical = [&raw, &resolved]
+            .into_iter()
+            .any(|path| self.path_requires_historical_aliases(path, self.function_depth));
+        let candidates = if historical {
+            resolve_historical_alias_paths(&self.alias_history, &raw)
+        } else {
+            BTreeSet::from([raw, resolved])
+        };
+        for candidate in candidates {
+            if historical {
+                spans.extend(
+                    self.local_callable_effect_span_history
+                        .get(&candidate)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .copied(),
+                );
+            } else {
+                spans.extend(
+                    self.local_callable_effect_spans
+                        .get(&candidate)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+            }
+        }
+        spans
+    }
+
+    fn prepare_local_define_property(
+        &mut self,
+        call: &CallExpression<'_>,
+        property: &StaticAliasPath,
+    ) {
+        let Some(descriptor) = self.local_define_property_descriptor(call) else {
+            return;
+        };
+        if let Some(value) = descriptor.value {
+            for span in self.local_descriptor_callable_effect_spans(value) {
+                if !self.executed_descriptor_callable_spans.contains(&span) {
+                    self.deferred_accessor_spans.insert(span);
+                }
+            }
+        }
+        if let Some(getter) = descriptor.getter {
+            for span in self.local_descriptor_callable_effect_spans(getter) {
+                self.returned_callable_spans.insert(span);
+                self.unreferenced_callable_spans.remove(&span);
+                if !self.executed_descriptor_callable_spans.contains(&span) {
+                    self.deferred_accessor_spans.insert(span);
+                }
+            }
+        }
+        if let Some(setter) = descriptor.setter {
+            for span in self.local_descriptor_callable_effect_spans(setter) {
+                if !self.executed_setter_spans.contains(&span) {
+                    self.unreferenced_callable_spans.insert(span);
+                    self.deferred_accessor_spans.insert(span);
+                }
+            }
+            if let Some(span) = Self::inline_callable_span(setter) {
+                let setter = Self::local_setter_callable_path(property, span);
+                let owner_depth = self.path_owner_depth(&setter);
+                self.dynamic_path_owner_depths
+                    .entry((span.start, span.end))
+                    .or_insert(owner_depth);
+            }
+        }
+    }
+
+    fn cancel_local_define_property(&mut self, call: &CallExpression<'_>) {
+        let Some(descriptor) = self.local_define_property_descriptor(call) else {
+            return;
+        };
+        if let Some(value) = descriptor.value {
+            for span in self.local_descriptor_callable_effect_spans(value) {
+                self.deferred_accessor_spans.remove(&span);
+            }
+        }
+        if let Some(getter) = descriptor.getter {
+            for span in self.local_descriptor_callable_effect_spans(getter) {
+                self.returned_callable_spans.remove(&span);
+                self.deferred_accessor_spans.remove(&span);
+            }
+        }
+        if let Some(setter) = descriptor.setter {
+            for span in self.local_descriptor_callable_effect_spans(setter) {
+                self.unreferenced_callable_spans.remove(&span);
+                self.deferred_accessor_spans.remove(&span);
+            }
+        }
+    }
+
+    fn descriptor_accessor_supported(&self, value: &Expression<'_>) -> bool {
+        self.local_getter_expression_definedness(value) == LocalGetterResultDefinedness::Undefined
+            || Self::inline_callable_span(value).is_some()
+            || self.local_bound_callable_initializer(value).is_some()
+            || self.alias_source_path(value).is_some()
+    }
+
+    fn install_local_descriptor_getter(
+        &mut self,
+        property: StaticAliasPath,
+        value: &Expression<'_>,
+    ) -> bool {
+        if self.local_getter_expression_definedness(value)
+            == LocalGetterResultDefinedness::Undefined
+        {
+            return true;
+        }
+        let installed = self.collect_bound_callable_initializer(property.clone(), value)
+            || self.collect_callable_initializer(property.clone(), value)
+            || self.alias_source_path(value).is_some_and(|source| {
+                self.insert_alias(property.clone(), source);
+                true
+            });
+        if !installed {
+            return false;
+        }
+        self.local_getter_properties.insert(property.clone());
+        self.local_getter_property_history.insert(property.clone());
+        if let Expression::FunctionExpression(function) = value.get_inner_expression() {
+            self.record_local_getter_result_definedness(property.clone(), function);
+        }
+        if let Some(span) = Self::inline_callable_span(value) {
+            self.returned_callable_spans.insert((span.start, span.end));
+            self.unreferenced_callable_spans
+                .remove(&(span.start, span.end));
+        }
+        true
+    }
+
+    fn install_local_descriptor_setter(
+        &mut self,
+        property: StaticAliasPath,
+        value: &Expression<'_>,
+    ) -> bool {
+        if self.local_getter_expression_definedness(value)
+            == LocalGetterResultDefinedness::Undefined
+        {
+            return true;
+        }
+        let setter = Self::local_setter_callable_path(&property, value.span());
+        let installed = self.collect_bound_callable_initializer(setter.clone(), value)
+            || self.collect_callable_initializer(setter.clone(), value)
+            || self.alias_source_path(value).is_some_and(|source| {
+                self.insert_alias(setter.clone(), source);
+                true
+            });
+        if !installed {
+            return false;
+        }
+        self.replace_local_setter(property, setter);
+        if let Some(span) = Self::inline_callable_span(value) {
+            self.defer_local_setter(span);
+        }
+        true
+    }
+
+    fn clear_local_descriptor_setter(&mut self, property: &StaticAliasPath) {
+        if let Some(setter) = self.local_setter_properties.remove(property) {
+            self.clear_overlapping_aliases(&setter);
+        }
+    }
+
+    fn descriptor_enumerable_may_be_true(&self, value: &Expression<'_>) -> bool {
+        match value.get_inner_expression() {
+            Expression::BooleanLiteral(value) => value.value,
+            Expression::NullLiteral(_) => false,
+            Expression::NumericLiteral(value) => value.value != 0.0 && !value.value.is_nan(),
+            Expression::BigIntLiteral(_) => true,
+            Expression::StringLiteral(value) => !value.value.is_empty(),
+            Expression::UnaryExpression(value) if value.operator == OxcUnaryOperator::Void => false,
+            _ => {
+                self.local_getter_expression_definedness(value)
+                    != LocalGetterResultDefinedness::Undefined
+            }
+        }
+    }
+
+    fn apply_local_define_property(
+        &mut self,
+        call: &CallExpression<'_>,
+        property: &StaticAliasPath,
+    ) -> bool {
+        let Some(descriptor) = self.local_define_property_descriptor(call) else {
+            return false;
+        };
+        let mut owner = property.clone();
+        let Some(name) = owner.properties.pop() else {
+            return false;
+        };
+        let known_container = self.known_structured_own_properties(&owner).is_some()
+            || self.transient_callable_alias_targets.contains(property);
+        if !self.path_is_currently_intact(&owner) || !known_container {
+            return false;
+        }
+        let accessor = descriptor.getter.is_some() || descriptor.setter.is_some();
+        let data = descriptor.value.is_some() || descriptor.writable;
+        let existing_own = self
+            .structured_own_properties
+            .get(&owner)
+            .is_some_and(|properties| properties.contains(&name));
+        let existing_getter = existing_own && self.local_getter_properties.contains(property);
+        let old_enumerable = self.enumerable_getter_properties.contains(property);
+        if accessor
+            && descriptor
+                .getter
+                .into_iter()
+                .chain(descriptor.setter)
+                .any(|value| !self.descriptor_accessor_supported(value))
+        {
+            return false;
+        }
+        if data {
+            let Some(value) = descriptor.value else {
+                return false;
+            };
+            if self
+                .local_getter_source_path(value)
+                .is_some_and(|source| !self.local_getter_resolution(&source, false).1.is_empty())
+            {
+                return false;
+            }
+            self.clear_overlapping_aliases(property);
+            self.structured_own_properties
+                .entry(owner.clone())
+                .or_default()
+                .insert(name.clone());
+            self.exclude_dynamic_local_accessor_property(&owner, name);
+            self.collect_initializer(property.clone(), value);
+            self.descriptor_defined_properties.insert(property.clone());
+            return true;
+        }
+        if !accessor {
+            if !existing_own {
+                self.clear_overlapping_aliases(property);
+                self.local_value_definedness_history
+                    .entry(property.clone())
+                    .or_default()
+                    .insert(LocalGetterResultDefinedness::Undefined);
+                self.local_value_definedness
+                    .insert(property.clone(), LocalGetterResultDefinedness::Undefined);
+                self.structured_own_properties
+                    .entry(owner.clone())
+                    .or_default()
+                    .insert(name.clone());
+                self.exclude_dynamic_local_accessor_property(&owner, name);
+            } else if existing_getter && let Some(enumerable) = descriptor.enumerable {
+                if self.descriptor_enumerable_may_be_true(enumerable) {
+                    self.enumerable_getter_properties.insert(property.clone());
+                    self.enumerable_getter_property_history
+                        .insert(property.clone());
+                } else {
+                    self.enumerable_getter_properties.remove(property);
+                }
+            }
+            return true;
+        }
+        let existing_setter = existing_own
+            .then(|| self.local_setter_properties.get(property).cloned())
+            .flatten();
+        let existing_accessor = existing_getter || existing_setter.is_some();
+        if descriptor.getter.is_some() || !existing_accessor {
+            let retained_setter = (descriptor.setter.is_none())
+                .then_some(existing_setter)
+                .flatten();
+            self.clear_overlapping_aliases(property);
+            if let Some(setter) = retained_setter {
+                self.local_setter_properties
+                    .insert(property.clone(), setter);
+            }
+            if let Some(getter) = descriptor.getter
+                && !self.install_local_descriptor_getter(property.clone(), getter)
+            {
+                return false;
+            }
+            if let Some(setter) = descriptor.setter
+                && !self.install_local_descriptor_setter(property.clone(), setter)
+            {
+                return false;
+            }
+        } else if let Some(setter) = descriptor.setter {
+            self.clear_local_descriptor_setter(property);
+            if !self.install_local_descriptor_setter(property.clone(), setter) {
+                return false;
+            }
+        }
+        self.structured_own_properties
+            .entry(owner.clone())
+            .or_default()
+            .insert(name.clone());
+        self.exclude_dynamic_local_accessor_property(&owner, name);
+        let enumerable = descriptor
+            .enumerable
+            .map(|value| self.descriptor_enumerable_may_be_true(value))
+            .unwrap_or_else(|| existing_own && (old_enumerable || !existing_getter));
+        if self.local_getter_properties.contains(property) && enumerable {
+            self.enumerable_getter_properties.insert(property.clone());
+            self.enumerable_getter_property_history
+                .insert(property.clone());
+        } else {
+            self.enumerable_getter_properties.remove(property);
+        }
+        self.descriptor_defined_properties.insert(property.clone());
+        true
+    }
+
     fn local_reflect_delete_property(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
         if call.arguments.len() != 2
             || !matches!(
@@ -26681,7 +27247,11 @@ impl StaticHookAliasCollector<'_> {
             .get(1)
             .and_then(|argument| argument.as_expression())
             .and_then(static_member_name)?;
-        Some(target.with_property(property))
+        let property = target.with_property(property);
+        self.descriptor_defined_properties
+            .iter()
+            .all(|defined| !defined.overlaps(&property))
+            .then_some(property)
     }
 
     fn constructor_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
@@ -28559,9 +29129,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             }
         }
         if self.function_depth > 0
-            && self
+            && (self
                 .unreferenced_callable_spans
                 .contains(&(function.span.start, function.span.end))
+                || self
+                    .deferred_accessor_spans
+                    .contains(&(function.span.start, function.span.end)))
         {
             return;
         }
@@ -28949,9 +29522,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
         if self.function_depth > 0
-            && self
+            && (self
                 .unreferenced_callable_spans
                 .contains(&(function.span.start, function.span.end))
+                || self
+                    .deferred_accessor_spans
+                    .contains(&(function.span.start, function.span.end)))
         {
             return;
         }
@@ -29490,6 +30066,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .map_or(self.control_depth == 0, |baseline| {
                 self.control_depth == *baseline
             });
+        let local_define_property = unconditional
+            .then(|| self.local_define_property_target(call))
+            .flatten();
+        let local_descriptor_mutation = self.local_descriptor_mutation_path(call);
+        if let Some(property) = &local_define_property {
+            self.prepare_local_define_property(call, property);
+        }
         if unconditional && let Some(property) = self.local_reflect_delete_property(call) {
             self.remove_local_own_property(&property);
         }
@@ -29502,6 +30085,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             })
             .or_else(|| self.local_invocation_facts(&call.callee, &call.arguments))
             .unwrap_or_default();
+        self.activate_deferred_descriptor_invocations(&local_invocations);
         for invocation in &mut local_invocations {
             invocation.result_discarded = self
                 .discarded_invocation_spans
@@ -29562,6 +30146,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
+        if let Some(property) = &local_define_property
+            && !self.apply_local_define_property(call, property)
+        {
+            self.cancel_local_define_property(call);
+        }
+        if let Some(property) = local_descriptor_mutation {
+            self.descriptor_defined_properties.insert(property);
+        }
         self.local_invocations.extend(local_invocations);
         self.escaped_callable_effect_targets
             .extend(synchronous_callback_effect_targets);
@@ -29603,6 +30195,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 _ => self.local_invocation_facts_from_arguments(&expression.callee, arguments),
             })
             .unwrap_or_default();
+        self.activate_deferred_descriptor_invocations(&local_invocations);
         for invocation in &mut local_invocations {
             invocation.construct = true;
         }
@@ -29656,6 +30249,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 _ => self.local_invocation_facts_from_arguments(&expression.tag, local_arguments),
             })
             .unwrap_or_default();
+        self.activate_deferred_descriptor_invocations(&local_invocations);
         for invocation in &mut local_invocations {
             invocation.result_discarded = self
                 .discarded_invocation_spans
