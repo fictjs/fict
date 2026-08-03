@@ -24871,59 +24871,218 @@ impl StaticHookAliasCollector<'_> {
         &mut self,
         target: StaticAliasPath,
         source: &StaticAliasPath,
+        include_detached_identity: bool,
+        clear_target: bool,
     ) -> bool {
         let source = resolve_static_alias_path(&self.aliases, source);
-        if self.local_class_instances.contains(&source)
+        let local_class = self.local_class_instances.contains(&source);
+        if (local_class && !include_detached_identity)
+            || self
+                .local_class_instances
+                .iter()
+                .any(|path| path != &source && path.starts_with(&source))
             || self
                 .local_class_instance_fields
                 .keys()
-                .any(|path| path.starts_with(&source))
+                .any(|path| path != &source && path.starts_with(&source))
             || self
                 .local_class_instance_callables
                 .keys()
-                .any(|path| path.starts_with(&source))
+                .any(|path| path != &source && path.starts_with(&source))
         {
             return false;
         }
-        let bound = self.local_bound_callables.get(&source).cloned();
-        let parameters = self.local_callable_parameters.get(&source).cloned();
-        if bound.is_none() && parameters.is_none() {
+        let bound = self
+            .local_bound_callables
+            .get(&source)
+            .cloned()
+            .or_else(|| {
+                include_detached_identity
+                    .then(|| {
+                        self.local_bound_callable_history
+                            .get(&source)?
+                            .last()
+                            .cloned()
+                    })
+                    .flatten()
+            });
+        let parameters = self
+            .local_callable_parameters
+            .get(&source)
+            .cloned()
+            .or_else(|| {
+                include_detached_identity
+                    .then(|| {
+                        self.local_callable_parameter_history
+                            .get(&source)?
+                            .last()
+                            .cloned()
+                    })
+                    .flatten()
+            });
+        if bound.is_none() && parameters.is_none() && !local_class {
             return false;
         }
-        self.clear_overlapping_aliases(&target);
+        let class_fields = self.local_class_instance_fields.get(&source).cloned();
+        let mut class_callables = self.local_class_instance_callables.get(&source).cloned();
+        if let Some(callables) = &mut class_callables {
+            for alternatives in callables.values_mut() {
+                for callable in alternatives {
+                    if let Some(callable_source) = &mut callable.source {
+                        *callable_source =
+                            Self::rebase_returned_class_path(callable_source, &source, &target);
+                    }
+                    if let Some(receiver) = &mut callable.dynamic_receiver {
+                        *receiver = Self::rebase_returned_class_path(receiver, &source, &target);
+                    }
+                    callable.exposures = callable
+                        .exposures
+                        .iter()
+                        .map(|path| Self::rebase_returned_class_path(path, &source, &target))
+                        .collect();
+                }
+            }
+        }
+        let open_class = self.open_local_class_instance_fields.contains(&source);
+        let closed_replacement = self.closed_replacement_class_instances.contains(&source);
+        let default_derived = self
+            .default_derived_constructors
+            .get(&source)
+            .cloned()
+            .or_else(|| {
+                include_detached_identity
+                    .then(|| {
+                        self.default_derived_constructor_history
+                            .get(&source)?
+                            .last()
+                            .cloned()
+                    })
+                    .flatten()
+            });
+        if clear_target {
+            self.clear_overlapping_aliases(&target);
+        }
         if let Some(bound) = bound {
             self.record_local_bound_callable(target.clone(), bound);
         }
         if let Some(parameters) = parameters {
             self.record_local_callable_signature(target.clone(), parameters);
+        } else if local_class {
+            self.record_local_callable_signature(target.clone(), Vec::new());
         }
-        if let Some(receiver) = self.local_callable_receivers.get(&source).cloned() {
+        let receiver = self
+            .local_callable_receivers
+            .get(&source)
+            .cloned()
+            .or_else(|| {
+                include_detached_identity
+                    .then(|| {
+                        self.local_callable_receiver_history
+                            .get(&source)?
+                            .last()
+                            .cloned()
+                            .flatten()
+                    })
+                    .flatten()
+            });
+        if let Some(receiver) = receiver {
             self.record_local_callable_receiver(target.clone(), receiver);
         }
-        if self.local_generator_callables.contains(&source) {
+        let generator = self.local_generator_callables.contains(&source)
+            || (include_detached_identity
+                && self
+                    .local_generator_callable_history
+                    .get(&source)
+                    .and_then(|history| history.last())
+                    .copied()
+                    .unwrap_or(false));
+        if generator {
             self.record_local_generator(target.clone());
         }
-        if let Some(results) = self.local_callable_results.get(&source).cloned() {
+        let results = self
+            .local_callable_results
+            .get(&source)
+            .cloned()
+            .or_else(|| {
+                include_detached_identity
+                    .then(|| {
+                        self.local_callable_result_history
+                            .get(&source)?
+                            .last()
+                            .cloned()
+                    })
+                    .flatten()
+            });
+        if let Some(results) = results {
             self.record_local_callable_results(target.clone(), results);
         }
-        if let Some(exposures) = self.callable_exposures.get(&source).cloned() {
+        let exposures = self.callable_exposures.get(&source).cloned().or_else(|| {
+            include_detached_identity
+                .then(|| self.callable_exposure_history.get(&source).cloned())
+                .flatten()
+        });
+        if let Some(exposures) = exposures {
             self.record_callable_exposures(target.clone(), exposures);
         }
-        let effects = self
+        let mut effects = self
             .local_callable_effect_spans
             .get(&source)
             .cloned()
             .unwrap_or_default();
+        if effects.is_empty() && include_detached_identity {
+            effects.extend(
+                self.local_callable_effect_span_history
+                    .get(&source)
+                    .and_then(|history| history.last())
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            );
+        }
         for span in effects {
             self.record_local_callable_effect_span(target.clone(), span);
-            for creator in self
+            let mut creators = self
                 .local_callable_effect_creators
                 .get(&(source.clone(), span))
                 .cloned()
-                .unwrap_or_default()
-            {
+                .unwrap_or_default();
+            if creators.is_empty() && include_detached_identity {
+                creators.extend(
+                    self.local_callable_effect_creator_history
+                        .get(&(source.clone(), span))
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+            }
+            for creator in creators {
                 self.record_local_callable_effect_creator(target.clone(), span, creator);
             }
+        }
+        if local_class {
+            self.local_class_instances.insert(target.clone());
+        }
+        if let Some(fields) = class_fields {
+            self.local_class_instance_fields
+                .insert(target.clone(), fields);
+        }
+        if let Some(callables) = class_callables {
+            self.local_class_instance_callables
+                .insert(target.clone(), callables);
+        }
+        if open_class {
+            self.open_local_class_instance_fields.insert(target.clone());
+        }
+        if closed_replacement {
+            self.closed_replacement_class_instances
+                .insert(target.clone());
+        }
+        if let Some(constructors) = default_derived {
+            self.default_derived_constructor_history
+                .entry(target.clone())
+                .or_default()
+                .push(constructors.clone());
+            self.default_derived_constructors
+                .insert(target, constructors);
         }
         true
     }
@@ -24940,17 +25099,8 @@ impl StaticHookAliasCollector<'_> {
         }) {
             return false;
         }
-        if self.local_class_instances.contains(&resolved)
-            || self
-                .local_class_instance_fields
-                .keys()
-                .any(|path| path.starts_with(&resolved))
-            || self
-                .local_class_instance_callables
-                .keys()
-                .any(|path| path.starts_with(&resolved))
-            || (!self.local_callable_parameters.contains_key(&resolved)
-                && !self.local_bound_callables.contains_key(&resolved))
+        if !self.local_callable_parameters.contains_key(&resolved)
+            && !self.local_bound_callables.contains_key(&resolved)
         {
             return false;
         }
@@ -25015,7 +25165,8 @@ impl StaticHookAliasCollector<'_> {
             })
             .collect::<BTreeSet<_>>();
         for callable in callables {
-            for span in self.local_callable_path_effect_spans(&callable) {
+            let spans = self.local_callable_path_effect_spans(&callable);
+            for span in spans {
                 if self.deferred_accessor_spans.remove(&span) {
                     self.executed_descriptor_callable_spans.insert(span);
                     self.unreferenced_callable_spans.remove(&span);
@@ -30167,6 +30318,12 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn path_is_currently_intact(&self, path: &StaticAliasPath) -> bool {
+        let resolved = resolve_static_alias_path(&self.aliases, path);
+        if self.local_class_instances.contains(&resolved) {
+            return !self.member_invalidated.iter().any(|invalidated| {
+                path.starts_with(invalidated) || resolved.starts_with(invalidated)
+            });
+        }
         static_alias_path_is_intact(&self.aliases, &self.member_invalidated, path)
     }
 
@@ -30957,7 +31114,16 @@ impl StaticHookAliasCollector<'_> {
         let source = resolve_static_alias_path(&self.aliases, raw_source);
         let structured = self.structured_own_properties.contains_key(&source);
         let callable = self.local_callable_parameters.contains_key(&source)
-            || self.local_bound_callables.contains_key(&source);
+            || self.local_bound_callables.contains_key(&source)
+            || self.local_class_instances.contains(&source)
+            || self
+                .local_callable_parameter_history
+                .get(&source)
+                .is_some_and(|history| !history.is_empty())
+            || self
+                .local_bound_callable_history
+                .get(&source)
+                .is_some_and(|history| !history.is_empty());
         if target.overlaps(&source)
             || (!structured && !callable)
             || self
@@ -30992,7 +31158,7 @@ impl StaticHookAliasCollector<'_> {
             || self
                 .local_class_instances
                 .iter()
-                .any(|path| path.starts_with(&source))
+                .any(|path| path != &source && path.starts_with(&source))
             || self
                 .descriptor_defined_properties
                 .iter()
@@ -31000,21 +31166,55 @@ impl StaticHookAliasCollector<'_> {
         {
             return false;
         }
-        let callable_paths = self
+        let class_field_callable_paths = self
+            .local_class_instance_callables
+            .get(&source)
+            .into_iter()
+            .flat_map(|callables| callables.keys())
+            .map(|name| {
+                source
+                    .clone()
+                    .with_property("prototype".to_string())
+                    .with_property(name.clone())
+            })
+            .collect::<BTreeSet<_>>();
+        let mut callable_paths = self
             .local_callable_parameters
             .keys()
             .chain(self.local_callable_effect_spans.keys())
             .chain(self.local_bound_callables.keys())
-            .filter(|path| path.starts_with(&source))
+            .filter(|path| {
+                path.starts_with(&source)
+                    && (!class_field_callable_paths.contains(*path)
+                        || self.local_callable_parameters.contains_key(*path)
+                        || self.local_bound_callables.contains_key(*path))
+            })
             .cloned()
             .collect::<BTreeSet<_>>();
+        if callable {
+            callable_paths.insert(source.clone());
+        }
         if callable_paths.iter().any(|path| {
             (!self.local_callable_parameters.contains_key(path)
-                && !self.local_bound_callables.contains_key(path))
+                && !self.local_bound_callables.contains_key(path)
+                && !(path == &source
+                    && (self.local_class_instances.contains(&source)
+                        || self
+                            .local_callable_parameter_history
+                            .get(&source)
+                            .is_some_and(|history| !history.is_empty())
+                        || self
+                            .local_bound_callable_history
+                            .get(&source)
+                            .is_some_and(|history| !history.is_empty()))))
                 || self
                     .local_callable_results
                     .get(path)
-                    .is_some_and(|results| !results.is_empty())
+                    .is_some_and(|results| {
+                        results
+                            .iter()
+                            .any(|result| !matches!(result, LocalCallableResult::Unknown))
+                    })
                 || self
                     .callable_exposures
                     .get(path)
@@ -31070,10 +31270,27 @@ impl StaticHookAliasCollector<'_> {
             .filter(|(path, _)| path.starts_with(&source) && *path != &source)
             .map(|(path, value)| (path.clone(), value.clone()))
             .collect::<Vec<_>>();
+        let aliases_before_move = self.aliases.clone();
+        let rebase_paths = |paths: &BTreeSet<StaticAliasPath>| {
+            paths
+                .iter()
+                .filter(|path| path.starts_with(&source))
+                .map(|path| Self::rebase_returned_class_path(path, &source, target))
+                .collect::<BTreeSet<_>>()
+        };
+        let invalidated = rebase_paths(&self.invalidated);
+        let member_invalidated = rebase_paths(&self.member_invalidated);
+        let resolving_invalidated = rebase_paths(&self.resolving_invalidated);
+        let resolving_member_invalidated = rebase_paths(&self.resolving_member_invalidated);
+        let deferred_invalidated = rebase_paths(&self.deferred_invalidated);
+        let deferred_member_invalidated = rebase_paths(&self.deferred_member_invalidated);
+        let deferred_slot_invalidated = rebase_paths(&self.deferred_slot_invalidated);
+        let deferred_slot_member_invalidated = rebase_paths(&self.deferred_slot_member_invalidated);
+        let deferred_exposed_paths = rebase_paths(&self.deferred_exposed_paths);
         self.clear_overlapping_aliases(target);
         for path in &callable_paths {
             let destination = Self::rebase_returned_class_path(path, &source, target);
-            if !self.copy_local_callable_value(destination, path) {
+            if !self.copy_local_callable_value(destination, path, true, false) {
                 return false;
             }
         }
@@ -31142,6 +31359,28 @@ impl StaticHookAliasCollector<'_> {
                 Self::rebase_returned_class_path(&value, &source, target),
             );
         }
+        self.alias_history.retain(|path, history| {
+            if path.starts_with(target) {
+                history.retain(|candidate| {
+                    let resolved = resolve_static_alias_path(&aliases_before_move, candidate);
+                    !candidate.starts_with(&source) && !resolved.starts_with(&source)
+                });
+            }
+            !history.is_empty()
+        });
+        self.invalidated.extend(invalidated);
+        self.member_invalidated.extend(member_invalidated);
+        self.resolving_invalidated.extend(resolving_invalidated);
+        self.resolving_member_invalidated
+            .extend(resolving_member_invalidated);
+        self.deferred_invalidated.extend(deferred_invalidated);
+        self.deferred_member_invalidated
+            .extend(deferred_member_invalidated);
+        self.deferred_slot_invalidated
+            .extend(deferred_slot_invalidated);
+        self.deferred_slot_member_invalidated
+            .extend(deferred_slot_member_invalidated);
+        self.deferred_exposed_paths.extend(deferred_exposed_paths);
         self.insert_alias(source, target.clone());
         true
     }
@@ -31179,7 +31418,7 @@ impl StaticHookAliasCollector<'_> {
             let enumerable_getter = self.enumerable_getter_properties.contains(&target);
             let setter = self.local_setter_properties.get(&target).cloned();
             let detached = self.move_local_plain_value(&target, &current)
-                || self.copy_local_callable_value(target.clone(), &current)
+                || self.copy_local_callable_value(target.clone(), &current, false, true)
                 || self.copy_local_value_definedness(target.clone(), &current);
             if detached {
                 if getter {

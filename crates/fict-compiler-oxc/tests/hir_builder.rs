@@ -8702,6 +8702,171 @@ fn stored_callable_initializers_snapshot_reassigned_source_bindings() {
 }
 
 #[test]
+fn stored_class_initializers_snapshot_reassigned_source_bindings() {
+    for (name, declaration, replacement, observation, expected_hir) in [
+        (
+            "object property ignores a later dangerous constructor",
+            "let Run = class {}; const stored = { Run };",
+            "Run = class { constructor() { values.forEach = null; } };",
+            "new stored.Run();",
+            true,
+        ),
+        (
+            "object property keeps the earlier dangerous constructor",
+            "let Run = class { constructor() { values.forEach = null; } }; const stored = { Run };",
+            "Run = class {};",
+            "new stored.Run();",
+            false,
+        ),
+        (
+            "direct alias ignores a later dangerous constructor",
+            "let Run = class {}; const Stored = Run;",
+            "Run = class { constructor() { values.forEach = null; } };",
+            "new Stored();",
+            true,
+        ),
+        (
+            "descriptor value ignores a later dangerous constructor",
+            "let Run = class {}; const stored = {}; Object.defineProperty(stored, 'Run', { value: Run });",
+            "Run = class { constructor() { values.forEach = null; } };",
+            "new stored.Run();",
+            true,
+        ),
+        (
+            "descriptor value keeps the earlier dangerous constructor",
+            "let Run = class { constructor() { values.forEach = null; } }; const stored = {}; Object.defineProperty(stored, 'Run', { value: Run });",
+            "Run = class {};",
+            "new stored.Run();",
+            false,
+        ),
+        (
+            "object property ignores a later dangerous instance method",
+            "let Run = class { run() {} }; const stored = { Run };",
+            "Run = class { run() { values.forEach = null; } };",
+            "const instance = new stored.Run(); instance.run();",
+            true,
+        ),
+        (
+            "object property keeps the earlier dangerous instance method",
+            "let Run = class { run() { values.forEach = null; } }; const stored = { Run };",
+            "Run = class { run() {} };",
+            "const instance = new stored.Run(); instance.run();",
+            false,
+        ),
+        (
+            "object property ignores a later dangerous static method",
+            "let Run = class { static run() {} }; const stored = { Run };",
+            "Run = class { static run() { values.forEach = null; } };",
+            "stored.Run.run();",
+            true,
+        ),
+        (
+            "object property ignores a later dangerous instance field",
+            "let Run = class { run = () => {}; }; const stored = { Run };",
+            "Run = class { run = () => { values.forEach = null; }; };",
+            "const instance = new stored.Run(); instance.run();",
+            true,
+        ),
+        (
+            "object property ignores a later dangerous getter",
+            "let Run = class { get run() { return 1; } }; const stored = { Run };",
+            "Run = class { get run() { values.forEach = null; return 1; } };",
+            "const instance = new stored.Run(); void instance.run;",
+            true,
+        ),
+        (
+            "object property keeps the earlier dangerous getter",
+            "let Run = class { get run() { values.forEach = null; return 1; } }; const stored = { Run };",
+            "Run = class { get run() { return 1; } };",
+            "const instance = new stored.Run(); void instance.run;",
+            false,
+        ),
+        (
+            "object property ignores a later dangerous setter",
+            "let Run = class { set run(value) {} }; const stored = { Run };",
+            "Run = class { set run(value) { values.forEach = value; } };",
+            "const instance = new stored.Run(); instance.run = null;",
+            true,
+        ),
+        (
+            "object property keeps the earlier dangerous setter",
+            "let Run = class { set run(value) { values.forEach = value; } }; const stored = { Run };",
+            "Run = class { set run(value) {} };",
+            "const instance = new stored.Run(); instance.run = null;",
+            false,
+        ),
+        (
+            "object property ignores a later dangerous static getter",
+            "let Run = class { static get run() { return 1; } }; const stored = { Run };",
+            "Run = class { static get run() { values.forEach = null; return 1; } };",
+            "void stored.Run.run;",
+            true,
+        ),
+        (
+            "stored class keeps prototype mutations made before reassignment",
+            "let Run = class { run() {} }; const stored = { Run };",
+            "Run.prototype.run = () => { values.forEach = null; }; Run = class {};",
+            "const instance = new stored.Run(); instance.run();",
+            false,
+        ),
+        (
+            "stored class ignores prototype mutations on a replacement",
+            "let Run = class { run() {} }; const stored = { Run };",
+            "Run = class { run() {} }; Run.prototype.run = () => { values.forEach = null; };",
+            "const instance = new stored.Run(); instance.run();",
+            true,
+        ),
+        (
+            "stored class keeps its constructor after a prototype mutation",
+            "let Run = class { constructor() { values.forEach = null; } run() {} }; const stored = { Run };",
+            "Run.prototype.run = () => {}; Run = class {};",
+            "new stored.Run();",
+            false,
+        ),
+        (
+            "stored derived class ignores a later dangerous base",
+            "class Safe {} class Dangerous { constructor() { values.forEach = null; } } let Run = class extends Safe {}; const stored = { Run };",
+            "Run = class extends Dangerous {};",
+            "new stored.Run();",
+            true,
+        ),
+        (
+            "stored derived class keeps its earlier dangerous base",
+            "class Safe {} class Dangerous { constructor() { values.forEach = null; } } let Run = class extends Dangerous {}; const stored = { Run };",
+            "Run = class extends Safe {};",
+            "new stored.Run();",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {replacement}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected stored class outcome: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn accessor_assignments_propagate_setter_and_retained_getter_effects() {
     for (name, declaration, assignment, observation) in [
         (
