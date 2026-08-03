@@ -18552,6 +18552,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_object_create_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
     historical_local_object_prototype_snapshots: BTreeSet<StaticAliasPath>,
+    local_define_property_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_define_properties_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_set_prototype_of_results: BTreeMap<(u32, u32), StaticAliasPath>,
     binding_owner_depths: BTreeMap<SymbolId, usize>,
@@ -19397,6 +19398,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_object_create_results: BTreeMap::new(),
             local_object_prototypes: BTreeMap::new(),
             historical_local_object_prototype_snapshots: BTreeSet::new(),
+            local_define_property_results: BTreeMap::new(),
             local_define_properties_results: BTreeMap::new(),
             local_set_prototype_of_results: BTreeMap::new(),
             binding_owner_depths: BTreeMap::new(),
@@ -25714,6 +25716,13 @@ impl StaticHookAliasCollector<'_> {
             return;
         }
         if let Expression::CallExpression(call) = value.get_inner_expression()
+            && let Some(source) = self.record_local_define_property_result(call)
+        {
+            self.record_local_value_definedness(target.clone(), value);
+            self.insert_alias(target, source);
+            return;
+        }
+        if let Expression::CallExpression(call) = value.get_inner_expression()
             && let Some(source) = self.record_local_define_properties_result(call)
         {
             self.record_local_value_definedness(target.clone(), value);
@@ -26614,6 +26623,9 @@ impl StaticHookAliasCollector<'_> {
             return Some(target);
         }
         if let Some(target) = self.record_local_set_prototype_of_result(factory_call) {
+            return Some(target);
+        }
+        if let Some(target) = self.record_local_define_property_result(factory_call) {
             return Some(target);
         }
         if let Some(target) = self.record_local_define_properties_result(factory_call) {
@@ -30371,6 +30383,24 @@ impl StaticHookAliasCollector<'_> {
         Some(property)
     }
 
+    fn record_local_define_property_result(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<StaticAliasPath> {
+        let span = (call.span.start, call.span.end);
+        if let Some(target) = self.local_define_property_results.get(&span) {
+            return Some(target.clone());
+        }
+        if !self.is_intact_object_method_callee(&call.callee, "defineProperty") {
+            return None;
+        }
+        let mut target = self.local_define_property_target(call)?;
+        target.properties.pop()?;
+        self.local_define_property_results
+            .insert(span, target.clone());
+        Some(target)
+    }
+
     fn local_property_definitions<'reference, 'ast>(
         &self,
         call: &'reference CallExpression<'ast>,
@@ -32981,6 +33011,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                         .contains_key(&(call.span.start, call.span.end))
                         || self.local_set_prototype_of_results
                             .contains_key(&(call.span.start, call.span.end))
+                        || self.local_define_property_results
+                            .contains_key(&(call.span.start, call.span.end))
                         || self.local_define_properties_results
                             .contains_key(&(call.span.start, call.span.end))
             );
@@ -33007,6 +33039,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     if self.local_object_create_results
                         .contains_key(&(call.span.start, call.span.end))
                         || self.local_set_prototype_of_results
+                            .contains_key(&(call.span.start, call.span.end))
+                        || self.local_define_property_results
                             .contains_key(&(call.span.start, call.span.end))
                         || self.local_define_properties_results
                             .contains_key(&(call.span.start, call.span.end))
@@ -34251,6 +34285,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_object_assign(call);
         let local_object_create = self.record_local_object_create_result(call);
+        self.record_local_define_property_result(call);
         self.record_local_define_properties_result(call);
         self.record_local_set_prototype_of_result(call);
         let call_span = (call.span.start, call.span.end);

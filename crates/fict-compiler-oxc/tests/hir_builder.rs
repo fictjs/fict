@@ -7051,6 +7051,48 @@ fn define_property_accessors_propagate_read_and_write_effects() {
             "source.run();",
         ),
         (
+            "Object result preserves target identity",
+            "const source = {};",
+            "const target = Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "void target.run;",
+        ),
+        (
+            "aliased Object result preserves target identity",
+            "const source = {}; const define = Object.defineProperty;",
+            "const target = define(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "void target.run;",
+        ),
+        (
+            "Object result preserves the target evaluated before descriptor side effects",
+            "let source = {};",
+            "const target = Object.defineProperty(source, 'run', { get: (source = { run: 1 }, () => { values.forEach = null; return 1; }) });",
+            "void target.run;",
+        ),
+        (
+            "immediate Object result preserves target identity",
+            "const source = {};",
+            "void Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } }).run;",
+            "",
+        ),
+        (
+            "immediate Object result preserves callable data values",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { value() { values.forEach = null; } }).run();",
+            "",
+        ),
+        (
+            "immediate Object result preserves setters",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { set(value) { values.forEach = value; } }).run = null;",
+            "",
+        ),
+        (
+            "immediate fresh Object target preserves identity",
+            "",
+            "void Object.defineProperty({}, 'run', { get() { values.forEach = null; return 1; } }).run;",
+            "",
+        ),
+        (
             "enumerable callable data value is copied by object spread",
             "const source = {};",
             "Object.defineProperty(source, 'run', { enumerable: true, value: () => { values.forEach = null; } });",
@@ -7133,6 +7175,18 @@ fn unread_define_property_accessors_remain_unexecuted() {
             "const source = {}; const write = (value) => { values.forEach = null; };",
             "Reflect.defineProperty(source, 'run', { set: write });",
             "void source;",
+        ),
+        (
+            "Reflect result remains a boolean",
+            "const source = {};",
+            "const changed = Reflect.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "void changed.run;",
+        ),
+        (
+            "immediate Reflect result remains a boolean",
+            "const source = {};",
+            "void Reflect.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } }).run;",
+            "",
         ),
         (
             "non-enumerable getter skipped by object spread",
