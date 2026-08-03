@@ -2075,6 +2075,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             generator_callable_body_spans: BTreeMap::new(),
             active_returned_callable_instances: BTreeMap::new(),
             current_callable_spans: Vec::new(),
+            class_constructor_effect_spans: BTreeMap::new(),
+            current_class_spans: Vec::new(),
+            class_effect_contexts: Vec::new(),
+            escaped_callable_effect_targets: BTreeSet::new(),
             local_class_instances: BTreeSet::new(),
             local_class_instance_fields: BTreeMap::new(),
             local_class_instance_callables: BTreeMap::new(),
@@ -16662,6 +16666,27 @@ struct ConstructorValueReturnCollector {
     found: bool,
 }
 
+#[derive(Default)]
+struct SuperCallCollector {
+    found: bool,
+}
+
+impl<'a> Visit<'a> for SuperCallCollector {
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        if matches!(call.callee.get_inner_expression(), Expression::Super(_)) {
+            self.found = true;
+            return;
+        }
+        walk_call_expression(self, call);
+    }
+
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _class: &Class<'a>) {}
+}
+
 impl<'a> Visit<'a> for ConstructorValueReturnCollector {
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
 
@@ -16833,6 +16858,10 @@ struct StaticHookAliasCollector<'semantic> {
     generator_callable_body_spans: BTreeMap<(u32, u32), (u32, u32)>,
     active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
     current_callable_spans: Vec<(u32, u32)>,
+    class_constructor_effect_spans: BTreeMap<(u32, u32), (u32, u32)>,
+    current_class_spans: Vec<(u32, u32)>,
+    class_effect_contexts: Vec<Option<ClassEffectContext>>,
+    escaped_callable_effect_targets: BTreeSet<StaticAliasPath>,
     local_class_instances: BTreeSet<StaticAliasPath>,
     local_class_instance_fields: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     local_class_instance_callables:
@@ -16873,6 +16902,12 @@ struct ReflectiveMemberMutationFact {
     key: Option<String>,
     function_depth: usize,
     returned_callable_span: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Copy)]
+struct ClassEffectContext {
+    span: (u32, u32),
+    captures_same_depth: bool,
 }
 
 struct StoredSpreadAliasSources {
@@ -17850,12 +17885,19 @@ impl StaticHookAliasCollector<'_> {
 
     fn returned_callable_capture_span(&self, path: &StaticAliasPath) -> Option<(u32, u32)> {
         let span = self.current_returned_callable_span()?;
+        let captures_same_depth = self
+            .class_effect_contexts
+            .last()
+            .copied()
+            .flatten()
+            .is_some_and(|context| context.span == span && context.captures_same_depth);
         match &path.root {
             StaticAliasRoot::Binding(root)
                 if self
                     .binding_owner_depths
                     .get(root)
-                    .is_some_and(|owner| *owner >= self.function_depth) =>
+                    .is_some_and(|owner| *owner >= self.function_depth)
+                    && !captures_same_depth =>
             {
                 None
             }
@@ -17867,9 +17909,12 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn current_returned_callable_span(&self) -> Option<(u32, u32)> {
-        self.current_callable_spans
+        self.class_effect_contexts
             .last()
             .copied()
+            .flatten()
+            .map(|context| context.span)
+            .or_else(|| self.current_callable_spans.last().copied())
             .filter(|span| self.returned_callable_spans.contains(span))
     }
 
@@ -17972,6 +18017,22 @@ impl StaticHookAliasCollector<'_> {
                     if method.kind == MethodDefinitionKind::Constructor
             )
         })
+    }
+
+    fn class_explicit_constructor_calls_super(class: &Class<'_>) -> bool {
+        let Some(body) = class.body.body.iter().find_map(|element| {
+            let ClassElement::MethodDefinition(method) = element else {
+                return None;
+            };
+            (method.kind == MethodDefinitionKind::Constructor)
+                .then_some(method.value.body.as_ref())
+                .flatten()
+        }) else {
+            return false;
+        };
+        let mut calls = SuperCallCollector::default();
+        calls.visit_function_body(body);
+        calls.found
     }
 
     fn class_preserves_instance_prototype(class: &Class<'_>) -> bool {
@@ -18603,12 +18664,16 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_default_derived_constructor(&mut self, target: StaticAliasPath, class: &Class<'_>) {
-        if Self::class_has_explicit_constructor(class) {
-            return;
-        }
+        let explicit_constructor = Self::class_has_explicit_constructor(class);
         let Some(super_class) = &class.super_class else {
             return;
         };
+        if !explicit_constructor || Self::class_explicit_constructor_calls_super(class) {
+            self.record_default_derived_constructor_effects(&target, super_class);
+        }
+        if explicit_constructor {
+            return;
+        }
         let alternatives = self.default_derived_constructor_alternatives(super_class);
         if alternatives.is_empty() {
             return;
@@ -18619,6 +18684,33 @@ impl StaticHookAliasCollector<'_> {
             .push(alternatives.clone());
         self.default_derived_constructors
             .insert(target, alternatives);
+    }
+
+    fn record_default_derived_constructor_effects(
+        &mut self,
+        target: &StaticAliasPath,
+        super_class: &Expression<'_>,
+    ) {
+        let Some(raw_source) = static_alias_source_path(self.scoping, super_class) else {
+            return;
+        };
+        let source = resolve_static_alias_path(&self.aliases, &raw_source);
+        let spans = self
+            .local_callable_effect_spans
+            .get(&source)
+            .cloned()
+            .unwrap_or_default();
+        for span in spans {
+            self.record_local_callable_effect_span(target.clone(), span);
+            let creators = self
+                .local_callable_effect_creators
+                .get(&(source.clone(), span))
+                .cloned()
+                .unwrap_or_default();
+            for creator in creators {
+                self.record_local_callable_effect_creator(target.clone(), span, creator);
+            }
+        }
     }
 
     fn inline_callable_parameters(
@@ -20752,7 +20844,10 @@ impl StaticHookAliasCollector<'_> {
                     target.clone(),
                     (function.span.start, function.span.end),
                 ),
-            Expression::ClassExpression(_) => {}
+            Expression::ClassExpression(class) => self.record_local_callable_effect_span(
+                target.clone(),
+                (class.span.start, class.span.end),
+            ),
             _ => unreachable!("callable initializer was validated above"),
         }
         self.record_local_callable_signature(target.clone(), parameters);
@@ -22471,6 +22566,9 @@ impl StaticHookAliasCollector<'_> {
         if self.record_returned_callable_exposure(&path, &resolved) {
             return;
         }
+        self.escaped_callable_effect_targets.insert(path.clone());
+        self.escaped_callable_effect_targets
+            .insert(resolved.clone());
         if matches!(&path.root, StaticAliasRoot::DynamicThis { .. }) {
             self.parameter_exposed.insert(path.clone());
         }
@@ -23075,6 +23173,33 @@ impl StaticHookAliasCollector<'_> {
     fn activate_invoked_returned_callable_effects(&mut self) {
         let invocations = self.local_invocations.clone();
         let mut instances = BTreeMap::<(StaticAliasPath, (u32, u32)), bool>::new();
+        for target in &self.escaped_callable_effect_targets {
+            let historical = self.path_requires_historical_aliases(target, self.function_depth);
+            let targets = if historical {
+                resolve_historical_alias_paths(&self.alias_history, target)
+            } else {
+                BTreeSet::from([resolve_static_alias_path(&self.aliases, target)])
+            };
+            for target in targets {
+                let spans = if historical {
+                    self.local_callable_effect_span_history
+                        .get(&target)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .copied()
+                        .collect::<BTreeSet<_>>()
+                } else {
+                    self.local_callable_effect_spans
+                        .get(&target)
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                for span in spans {
+                    instances.insert((target.clone(), span), historical);
+                }
+            }
+        }
         for _ in 0..=invocations.len() {
             let previous_len = instances.len();
             self.active_returned_callable_instances
@@ -23797,23 +23922,37 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_class(&mut self, class: &Class<'a>) {
+        let class_span = (class.span.start, class.span.end);
+        self.returned_callable_spans.insert(class_span);
+        for element in &class.body.body {
+            if let ClassElement::MethodDefinition(method) = element
+                && method.kind == MethodDefinitionKind::Constructor
+            {
+                self.class_constructor_effect_spans
+                    .insert((method.value.span.start, method.value.span.end), class_span);
+            }
+        }
         if class.r#type == ClassType::ClassDeclaration
             && let Some(symbol) = class
                 .id
                 .as_ref()
                 .and_then(|identifier| identifier.symbol_id.get())
         {
+            let target = StaticAliasPath::root(symbol);
             self.binding_owner_depths
                 .entry(symbol)
                 .or_insert(self.function_depth);
             self.record_local_callable_signature(
-                StaticAliasPath::root(symbol),
+                target.clone(),
                 Self::class_constructor_parameters(class),
             );
-            self.record_default_derived_constructor(StaticAliasPath::root(symbol), class);
-            self.record_class_callables(&StaticAliasPath::root(symbol), class);
+            self.record_local_callable_effect_span(target.clone(), class_span);
+            self.record_default_derived_constructor(target.clone(), class);
+            self.record_class_callables(&target, class);
         }
+        self.current_class_spans.push(class_span);
         oxc::ast_visit::walk::walk_class(self, class);
+        self.current_class_spans.pop();
     }
 
     fn visit_property_definition(&mut self, property: &PropertyDefinition<'a>) {
@@ -23826,10 +23965,20 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
+            self.class_effect_contexts.push(
+                (!property.r#static)
+                    .then(|| self.current_class_spans.last().copied())
+                    .flatten()
+                    .map(|span| ClassEffectContext {
+                        span,
+                        captures_same_depth: true,
+                    }),
+            );
             self.dynamic_this_roots
                 .push((!property.r#static).then(|| StaticAliasPath::dynamic_this(property.span)));
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
+            self.class_effect_contexts.pop();
         }
         self.leave_node(kind);
     }
@@ -23844,9 +23993,19 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
+            self.class_effect_contexts.push(
+                (!property.r#static)
+                    .then(|| self.current_class_spans.last().copied())
+                    .flatten()
+                    .map(|span| ClassEffectContext {
+                        span,
+                        captures_same_depth: true,
+                    }),
+            );
             self.dynamic_this_roots.push(None);
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
+            self.class_effect_contexts.pop();
         }
         self.leave_node(kind);
     }
@@ -24011,10 +24170,20 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.function_depth = depth;
         self.current_callable_spans
             .push((function.span.start, function.span.end));
+        self.class_effect_contexts.push(
+            self.class_constructor_effect_spans
+                .get(&(function.span.start, function.span.end))
+                .copied()
+                .map(|span| ClassEffectContext {
+                    span,
+                    captures_same_depth: false,
+                }),
+        );
         self.dynamic_this_roots
             .push(Some(StaticAliasPath::dynamic_this(function.span)));
         walk_function(self, function, flags);
         self.dynamic_this_roots.pop();
+        self.class_effect_contexts.pop();
         self.current_callable_spans.pop();
         let changed_outer_targets = self
             .aliases
@@ -24272,7 +24441,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.function_depth = depth;
         self.current_callable_spans
             .push((function.span.start, function.span.end));
+        self.class_effect_contexts.push(None);
         walk_arrow_function_expression(self, function);
+        self.class_effect_contexts.pop();
         self.current_callable_spans.pop();
         let changed_outer_targets = self
             .aliases
