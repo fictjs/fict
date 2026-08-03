@@ -2086,6 +2086,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             default_derived_constructors: BTreeMap::new(),
             default_derived_constructor_history: BTreeMap::new(),
             unreferenced_callable_spans: BTreeSet::new(),
+            merely_observed_callable_paths: generator_execution.merely_observed_callable_paths,
             local_invocations: Vec::new(),
             attached_callable_parameters: BTreeSet::new(),
             parameter_member_invalidated: BTreeSet::new(),
@@ -9909,6 +9910,100 @@ fn static_member_name(expression: &Expression<'_>) -> Option<String> {
 struct GeneratorExecutionProof {
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_body_spans: BTreeSet<(u32, u32)>,
+    merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
+}
+
+#[derive(Default)]
+struct ReturnedCallableDefinition {
+    spans: BTreeSet<(u32, u32)>,
+    value_sources: BTreeSet<StaticAliasPath>,
+    result_sources: BTreeSet<StaticAliasPath>,
+}
+
+struct ReturnedCallableDefinitionCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    definition: ReturnedCallableDefinition,
+}
+
+impl<'semantic> ReturnedCallableDefinitionCollector<'semantic> {
+    fn new(scoping: &'semantic Scoping) -> Self {
+        Self {
+            scoping,
+            definition: ReturnedCallableDefinition::default(),
+        }
+    }
+
+    fn collect_expression(&mut self, expression: &Expression<'_>) {
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(function) => {
+                self.definition
+                    .spans
+                    .insert((function.span.start, function.span.end));
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                self.definition
+                    .spans
+                    .insert((function.span.start, function.span.end));
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_expression(&expression.consequent);
+                self.collect_expression(&expression.alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_expression(&expression.left);
+                self.collect_expression(&expression.right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(expression) = expression.expressions.last() {
+                    self.collect_expression(expression);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_expression(&expression.right);
+            }
+            Expression::CallExpression(call) => {
+                let bound = match unwrap_transparent_call_expression(&call.callee) {
+                    Expression::StaticMemberExpression(member)
+                        if member.property.name == "bind" =>
+                    {
+                        Some(&member.object)
+                    }
+                    Expression::ComputedMemberExpression(member)
+                        if static_member_name(&member.expression).as_deref() == Some("bind") =>
+                    {
+                        Some(&member.object)
+                    }
+                    _ => None,
+                };
+                if let Some(bound) = bound {
+                    self.collect_expression(bound);
+                } else if let Some(source) = static_alias_source_path(self.scoping, &call.callee) {
+                    self.definition.result_sources.insert(source);
+                }
+            }
+            _ => {
+                if let Some(source) = static_alias_source_path(self.scoping, expression) {
+                    self.definition.value_sources.insert(source);
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Visit<'a> for ReturnedCallableDefinitionCollector<'_> {
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if let Some(argument) = &statement.argument {
+            self.collect_expression(argument);
+        }
+    }
+
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _class: &Class<'a>) {}
 }
 
 struct ReturnedGeneratorBodyCollector<'semantic> {
@@ -10375,9 +10470,16 @@ struct GeneratorExecutionCollector<'semantic> {
     known_arrays: &'semantic BTreeSet<SymbolId>,
     strict_program: bool,
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    callable_targets_by_span: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
+    returned_callable_definitions_by_span: BTreeMap<(u32, u32), ReturnedCallableDefinition>,
+    returned_callable_result_forwardings: Vec<(StaticAliasPath, StaticAliasPath)>,
+    read_callable_owner_spans: BTreeMap<(u32, u32), Vec<(u32, u32)>>,
+    callable_owner_spans: Vec<(u32, u32)>,
+    function_depth: usize,
     direct_callable_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     discarded_invocation_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     discarded_value_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
+    merely_observed_value_reads: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     forwarded_callable_reads: Vec<ForwardedCallableRead>,
     retained_callable_reads: Vec<ForwardedCallableRead>,
     generator_argument_reads: Vec<ForwardedCallableRead>,
@@ -10419,9 +10521,16 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             known_arrays,
             strict_program,
             binding_reads: BTreeMap::new(),
+            callable_targets_by_span: BTreeMap::new(),
+            returned_callable_definitions_by_span: BTreeMap::new(),
+            returned_callable_result_forwardings: Vec::new(),
+            read_callable_owner_spans: BTreeMap::new(),
+            callable_owner_spans: Vec::new(),
+            function_depth: 0,
             direct_callable_reads: BTreeMap::new(),
             discarded_invocation_reads: BTreeMap::new(),
             discarded_value_reads: BTreeMap::new(),
+            merely_observed_value_reads: BTreeMap::new(),
             forwarded_callable_reads: Vec::new(),
             retained_callable_reads: Vec::new(),
             generator_argument_reads: Vec::new(),
@@ -10465,6 +10574,286 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let path = static_alias_path_from_place(&place, true)?;
         let span = place.root_reference_span?;
         Some((path, (span.start(), span.end())))
+    }
+
+    fn record_callable_target_span(&mut self, target: StaticAliasPath, span: Span) {
+        self.callable_targets_by_span
+            .entry((span.start, span.end))
+            .or_default()
+            .insert(target);
+    }
+
+    fn record_merely_observed_value_read(
+        &mut self,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+    ) {
+        self.discarded_value_reads
+            .entry(source.clone())
+            .or_default()
+            .insert(source_span);
+        self.merely_observed_value_reads
+            .entry(source)
+            .or_default()
+            .insert(source_span);
+    }
+
+    fn replace_callable_path_prefix(
+        path: &StaticAliasPath,
+        source: &StaticAliasPath,
+        target: &StaticAliasPath,
+    ) -> Option<StaticAliasPath> {
+        if !path.starts_with(source) {
+            return None;
+        }
+        let mut forwarded = target.clone();
+        forwarded
+            .properties
+            .extend_from_slice(&path.properties[source.properties.len()..]);
+        forwarded.element_wildcard |= path.element_wildcard;
+        Some(forwarded.canonicalized())
+    }
+
+    fn read_is_owned_by_merely_observed_callable(
+        &self,
+        span: &(u32, u32),
+        merely_observed: &BTreeSet<StaticAliasPath>,
+    ) -> bool {
+        self.read_callable_owner_spans
+            .get(span)
+            .into_iter()
+            .flatten()
+            .any(|owner| {
+                self.callable_targets_by_span
+                    .get(owner)
+                    .is_some_and(|targets| {
+                        !targets.is_empty()
+                            && targets
+                                .iter()
+                                .all(|target| merely_observed.contains(target))
+                    })
+            })
+    }
+
+    fn record_returned_callable_definition(
+        &mut self,
+        span: Span,
+        definition: ReturnedCallableDefinition,
+    ) {
+        if definition.spans.is_empty()
+            && definition.value_sources.is_empty()
+            && definition.result_sources.is_empty()
+        {
+            return;
+        }
+        self.returned_callable_definitions_by_span
+            .insert((span.start, span.end), definition);
+    }
+
+    fn returned_callable_definition_from_function(
+        &self,
+        function: &Function<'_>,
+    ) -> Option<ReturnedCallableDefinition> {
+        if function.generator || function.r#async {
+            return None;
+        }
+        let body = function.body.as_ref()?;
+        let mut collector = ReturnedCallableDefinitionCollector::new(self.scoping);
+        collector.visit_function_body(body);
+        Some(collector.definition)
+    }
+
+    fn returned_callable_definition_from_arrow(
+        &self,
+        function: &ArrowFunctionExpression<'_>,
+    ) -> Option<ReturnedCallableDefinition> {
+        if function.r#async {
+            return None;
+        }
+        let mut collector = ReturnedCallableDefinitionCollector::new(self.scoping);
+        if let Some(expression) = function.get_expression() {
+            collector.collect_expression(expression);
+        } else {
+            collector.visit_function_body(&function.body);
+        }
+        Some(collector.definition)
+    }
+
+    fn callable_invocation_source(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
+        let reflect_apply = StaticAliasPath::unresolved_global("Reflect".to_string())
+            .with_property("apply".to_string());
+        if static_alias_source_path(self.scoping, &call.callee)
+            .is_some_and(|callee| callee == reflect_apply)
+        {
+            return call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .and_then(|target| static_alias_source_path(self.scoping, target));
+        }
+        match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member)
+                if matches!(member.property.name.as_str(), "call" | "apply") =>
+            {
+                static_alias_source_path(self.scoping, &member.object)
+            }
+            Expression::ComputedMemberExpression(member)
+                if static_member_name(&member.expression)
+                    .is_some_and(|method| matches!(method.as_str(), "call" | "apply")) =>
+            {
+                static_alias_source_path(self.scoping, &member.object)
+            }
+            _ => static_alias_source_path(self.scoping, &call.callee),
+        }
+    }
+
+    fn collect_returned_callable_result_sources(
+        &self,
+        expression: &Expression<'_>,
+        sources: &mut BTreeSet<StaticAliasPath>,
+    ) {
+        match expression.get_inner_expression() {
+            Expression::CallExpression(call) => {
+                let bound = match unwrap_transparent_call_expression(&call.callee) {
+                    Expression::StaticMemberExpression(member)
+                        if member.property.name == "bind" =>
+                    {
+                        Some(&member.object)
+                    }
+                    Expression::ComputedMemberExpression(member)
+                        if static_member_name(&member.expression).as_deref() == Some("bind") =>
+                    {
+                        Some(&member.object)
+                    }
+                    _ => None,
+                };
+                if let Some(bound) = bound {
+                    self.collect_returned_callable_result_sources(bound, sources);
+                } else if let Some(source) = self.callable_invocation_source(call) {
+                    sources.insert(source);
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.collect_returned_callable_result_sources(&expression.consequent, sources);
+                self.collect_returned_callable_result_sources(&expression.alternate, sources);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.collect_returned_callable_result_sources(&expression.left, sources);
+                self.collect_returned_callable_result_sources(&expression.right, sources);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(expression) = expression.expressions.last() {
+                    self.collect_returned_callable_result_sources(expression, sources);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_returned_callable_result_sources(&expression.right, sources);
+            }
+            _ => {}
+        }
+    }
+
+    fn record_returned_callable_result_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let mut sources = BTreeSet::new();
+        self.collect_returned_callable_result_sources(initializer, &mut sources);
+        self.returned_callable_result_forwardings
+            .extend(sources.into_iter().map(|source| (target.clone(), source)));
+    }
+
+    fn propagate_callable_target_spans(
+        &mut self,
+        trusted_method_forwardings: &[bool],
+    ) -> BTreeSet<StaticAliasPath> {
+        let mut spans_by_target = BTreeMap::<StaticAliasPath, BTreeSet<(u32, u32)>>::new();
+        for (span, targets) in &self.callable_targets_by_span {
+            for target in targets {
+                spans_by_target
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(*span);
+            }
+        }
+        let mut returned_spans_by_callable = BTreeMap::<_, BTreeSet<_>>::new();
+        loop {
+            let mut changed = false;
+            for (index, forwarding) in self.forwarded_callable_reads.iter().enumerate() {
+                if !trusted_method_forwardings[index] {
+                    continue;
+                }
+                let forwardings = spans_by_target
+                    .iter()
+                    .filter_map(|(source, spans)| {
+                        Self::replace_callable_path_prefix(
+                            source,
+                            &forwarding.source,
+                            &forwarding.target,
+                        )
+                        .map(|target| (target, spans.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (target, spans) in forwardings {
+                    let target_spans = spans_by_target.entry(target).or_default();
+                    let before = target_spans.len();
+                    target_spans.extend(spans);
+                    changed |= target_spans.len() != before;
+                }
+            }
+            for (span, definition) in &self.returned_callable_definitions_by_span {
+                let mut returned = definition.spans.clone();
+                for source in &definition.value_sources {
+                    returned.extend(spans_by_target.get(source).into_iter().flatten().copied());
+                }
+                for source in &definition.result_sources {
+                    for source_span in spans_by_target.get(source).into_iter().flatten() {
+                        returned.extend(
+                            returned_spans_by_callable
+                                .get(source_span)
+                                .into_iter()
+                                .flatten()
+                                .copied(),
+                        );
+                    }
+                }
+                let target_spans = returned_spans_by_callable.entry(*span).or_default();
+                let before = target_spans.len();
+                target_spans.extend(returned);
+                changed |= target_spans.len() != before;
+            }
+            for (target, source) in &self.returned_callable_result_forwardings {
+                let mut returned = BTreeSet::new();
+                for source_span in spans_by_target.get(source).into_iter().flatten() {
+                    returned.extend(
+                        returned_spans_by_callable
+                            .get(source_span)
+                            .into_iter()
+                            .flatten()
+                            .copied(),
+                    );
+                }
+                let target_spans = spans_by_target.entry(target.clone()).or_default();
+                let before = target_spans.len();
+                target_spans.extend(returned);
+                changed |= target_spans.len() != before;
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (target, spans) in &spans_by_target {
+            for span in spans {
+                self.callable_targets_by_span
+                    .entry(*span)
+                    .or_default()
+                    .insert(target.clone());
+            }
+        }
+        spans_by_target.into_keys().collect()
     }
 
     fn generator_bind_target_forwardings(
@@ -11273,10 +11662,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         && method.decorators.is_empty()
                         && !matches!(&method.key, OxcPropertyKey::PrivateIdentifier(_)) =>
                 {
-                    let (Some(name), Some(span)) = (
-                        method.key.static_name(),
-                        Self::generator_body_span(&method.value),
-                    ) else {
+                    let Some(name) = method.key.static_name() else {
                         continue;
                     };
                     let method_target = if method.r#static {
@@ -11285,9 +11671,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         target.clone().with_property("prototype".to_string())
                     }
                     .with_property(name.into_owned());
-                    self.generator_callable_targets
-                        .insert(method_target.clone());
-                    self.generator_body_targets.push((span, method_target));
+                    self.record_callable_target_span(method_target.clone(), method.value.span);
+                    if let Some(span) = Self::generator_body_span(&method.value) {
+                        self.generator_callable_targets
+                            .insert(method_target.clone());
+                        self.generator_body_targets.push((span, method_target));
+                    } else {
+                        self.non_generator_callable_targets.insert(method_target);
+                    }
                 }
                 ClassElement::PropertyDefinition(property)
                     if property.r#static
@@ -11298,17 +11689,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     else {
                         continue;
                     };
-                    let Expression::FunctionExpression(function) = value.get_inner_expression()
-                    else {
+                    if !matches!(
+                        value.get_inner_expression(),
+                        Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
+                    ) {
                         continue;
-                    };
-                    let Some(span) = Self::generator_body_span(function) else {
-                        continue;
-                    };
+                    }
                     let method_target = target.clone().with_property(name.into_owned());
-                    self.generator_callable_targets
-                        .insert(method_target.clone());
-                    self.generator_body_targets.push((span, method_target));
+                    self.record_forwarded_callable(method_target, value);
                 }
                 _ => {}
             }
@@ -11937,10 +12325,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     Self::array_iterator_guard(),
                 ));
             } else {
-                self.discarded_value_reads
-                    .entry(source)
-                    .or_default()
-                    .insert(source_span);
+                self.record_merely_observed_value_read(source, source_span);
             }
             return;
         }
@@ -14847,16 +15232,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             {
                 direct_body_spans.insert(body_span);
             }
-            properties.insert(name.into_owned(), &property.value);
+            properties.insert(
+                name.into_owned(),
+                (&property.value, property.kind == PropertyKind::Init),
+            );
         }
         let exact_container = properties
             .values()
-            .all(|value| !Self::has_retained_callable_container(value));
+            .all(|(value, _)| !Self::has_retained_callable_container(value));
         let mut instance_bodies = BTreeMap::new();
         let mut reachable_body_spans = BTreeSet::new();
-        for (name, value) in properties {
+        for (name, (value, callable_value)) in properties {
             let method = target.clone().with_property(name.clone());
-            self.record_forwarded_callable(method.clone(), value);
+            if callable_value {
+                self.record_forwarded_callable(method.clone(), value);
+            }
             let body_spans = self.generator_body_spans_for_target(&method);
             reachable_body_spans.extend(&body_spans);
             if !body_spans.is_empty() {
@@ -14875,6 +15265,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
+        self.record_returned_callable_result_initializer(&target, initializer);
         self.record_returned_generator_factory_initializer(&target, initializer);
         self.record_local_non_consuming_initializer(&target, initializer);
         self.record_terminal_generator_method_alias(target.clone(), initializer);
@@ -15101,10 +15492,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
 
     fn record_discarded_value_read(&mut self, expression: &Expression<'_>) {
         if let Some((path, span)) = self.callable_reference(expression) {
-            self.discarded_value_reads
-                .entry(path)
-                .or_default()
-                .insert(span);
+            self.record_merely_observed_value_read(path, span);
             return;
         }
         match expression {
@@ -15356,12 +15744,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
         match expression {
             Expression::FunctionExpression(function) => {
+                self.record_callable_target_span(target.clone(), function.span);
                 if let Some(span) = Self::generator_body_span(function) {
                     self.generator_callable_targets.insert(target.clone());
                     self.generator_body_targets.push((span, target));
                 } else {
                     self.non_generator_callable_targets.insert(target);
                 }
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                self.record_callable_target_span(target.clone(), function.span);
+                self.non_generator_callable_targets.insert(target);
             }
             Expression::ClassExpression(class) => {
                 self.non_generator_callable_targets.insert(target.clone());
@@ -15711,7 +16104,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 (!self.method_guard_is_intact(guard)).then_some(target.clone())
             })
             .collect::<BTreeSet<_>>();
+        let propagated_callable_targets =
+            self.propagate_callable_target_spans(&trusted_method_forwardings);
         let mut candidates = self.forwarding_targets.clone();
+        candidates.extend(self.non_generator_callable_targets.iter().cloned());
+        candidates.extend(propagated_callable_targets);
         candidates.extend(
             self.generator_body_targets
                 .iter()
@@ -15797,52 +16194,62 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 break;
             }
         }
-        let mut merely_observed = BTreeSet::new();
+        let mut merely_observed = candidates
+            .iter()
+            .filter(|path| path.binding_root().is_some())
+            .cloned()
+            .collect::<BTreeSet<_>>();
         loop {
-            let mut changed = false;
+            let mut rejected = Vec::new();
             for path in &candidates {
-                if merely_observed.contains(path) {
+                if !merely_observed.contains(path) {
                     continue;
                 }
                 let Some(root) = path.binding_root() else {
                     continue;
                 };
-                let all_reads_are_observations = self
-                    .binding_reads
-                    .get(&root)
-                    .into_iter()
-                    .flatten()
-                    .chain(self.direct_callable_reads.get(path).into_iter().flatten())
-                    .all(|span| {
-                        self.discarded_value_reads
-                            .iter()
-                            .any(|(observed, observed_spans)| {
-                                (observed.starts_with(path) || path.starts_with(observed))
-                                    && observed_spans.contains(span)
-                            })
-                            || self.forwarded_callable_reads.iter().enumerate().any(
+                let all_reads_are_observations =
+                    self.binding_reads
+                        .get(&root)
+                        .into_iter()
+                        .flatten()
+                        .chain(self.direct_callable_reads.get(path).into_iter().flatten())
+                        .all(|span| {
+                            self.merely_observed_value_reads.iter().any(
+                                |(observed, observed_spans)| {
+                                    (observed.starts_with(path) || path.starts_with(observed))
+                                        && observed_spans.contains(span)
+                                },
+                            ) || self.forwarded_callable_reads.iter().enumerate().any(
                                 |(index, forwarding)| {
                                     trusted_method_forwardings[index]
-                                        && forwarding.source == *path
                                         && forwarding.source_span == *span
-                                        && merely_observed.contains(&forwarding.target)
+                                        && Self::replace_callable_path_prefix(
+                                            path,
+                                            &forwarding.source,
+                                            &forwarding.target,
+                                        )
+                                        .is_some_and(|target| merely_observed.contains(&target))
                                 },
-                            )
-                            || self.retained_callable_reads.iter().enumerate().any(
+                            ) || self.retained_callable_reads.iter().enumerate().any(
                                 |(index, forwarding)| {
                                     trusted_retained_reads[index]
                                         && forwarding.source.starts_with(path)
                                         && forwarding.source_span == *span
                                         && merely_observed.contains(&forwarding.target)
                                 },
-                            )
-                    });
-                if all_reads_are_observations {
-                    changed |= merely_observed.insert(path.clone());
+                            ) || self
+                                .read_is_owned_by_merely_observed_callable(span, &merely_observed)
+                        });
+                if !all_reads_are_observations {
+                    rejected.push(path.clone());
                 }
             }
-            if !changed {
+            if rejected.is_empty() {
                 break;
+            }
+            for path in rejected {
+                merely_observed.remove(&path);
             }
         }
         let mut unexecuted = BTreeSet::new();
@@ -15997,6 +16404,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         GeneratorExecutionProof {
             discarded_invocation_spans: self.discarded_invocation_spans,
             unexecuted_body_spans,
+            merely_observed_callable_paths: merely_observed,
         }
     }
 }
@@ -16015,10 +16423,12 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         if reference.is_read()
             && let Some(symbol) = reference.symbol_id()
         {
-            self.binding_reads
-                .entry(symbol)
-                .or_default()
-                .insert((identifier.span.start, identifier.span.end));
+            let span = (identifier.span.start, identifier.span.end);
+            self.binding_reads.entry(symbol).or_default().insert(span);
+            if !self.callable_owner_spans.is_empty() {
+                self.read_callable_owner_spans
+                    .insert(span, self.callable_owner_spans.clone());
+            }
         }
     }
 
@@ -16150,6 +16560,9 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if let Some(definition) = self.returned_callable_definition_from_function(function) {
+            self.record_returned_callable_definition(function.span, definition);
+        }
         if function.r#type == FunctionType::FunctionDeclaration
             && !function.generator
             && !function.r#async
@@ -16180,17 +16593,48 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
                 .insert(StaticAliasPath::root(target), parameters);
         }
         if function.r#type == FunctionType::FunctionDeclaration
-            && let Some(span) = Self::generator_body_span(function)
             && let Some(target) = function
                 .id
                 .as_ref()
                 .and_then(|identifier| identifier.symbol_id.get())
         {
             let target = StaticAliasPath::root(target);
-            self.generator_callable_targets.insert(target.clone());
-            self.generator_body_targets.push((span, target));
+            self.record_callable_target_span(target.clone(), function.span);
+            if let Some(span) = Self::generator_body_span(function) {
+                self.generator_callable_targets.insert(target.clone());
+                self.generator_body_targets.push((span, target));
+            } else {
+                self.non_generator_callable_targets.insert(target);
+            }
+        }
+        let deferred = self.function_depth > 0;
+        self.function_depth = self.function_depth.saturating_add(1);
+        if deferred {
+            self.callable_owner_spans
+                .push((function.span.start, function.span.end));
         }
         walk_function(self, function, flags);
+        if deferred {
+            self.callable_owner_spans.pop();
+        }
+        self.function_depth = self.function_depth.saturating_sub(1);
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        if let Some(definition) = self.returned_callable_definition_from_arrow(function) {
+            self.record_returned_callable_definition(function.span, definition);
+        }
+        let deferred = self.function_depth > 0;
+        self.function_depth = self.function_depth.saturating_add(1);
+        if deferred {
+            self.callable_owner_spans
+                .push((function.span.start, function.span.end));
+        }
+        oxc::ast_visit::walk::walk_arrow_function_expression(self, function);
+        if deferred {
+            self.callable_owner_spans.pop();
+        }
+        self.function_depth = self.function_depth.saturating_sub(1);
     }
 
     fn visit_class(&mut self, class: &Class<'a>) {
@@ -16403,6 +16847,7 @@ struct StaticHookAliasCollector<'semantic> {
     default_derived_constructor_history:
         BTreeMap<StaticAliasPath, Vec<Vec<DefaultDerivedConstructorAlternative>>>,
     unreferenced_callable_spans: BTreeSet<(u32, u32)>,
+    merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
     parameter_member_invalidated: BTreeSet<StaticAliasPath>,
@@ -17429,12 +17874,14 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
-        if target.binding_root().is_some_and(|symbol| {
-            !self
-                .scoping
-                .get_resolved_references(symbol)
-                .any(|reference| reference.is_read())
-        }) {
+        if self.merely_observed_callable_paths.contains(target)
+            || target.binding_root().is_some_and(|symbol| {
+                !self
+                    .scoping
+                    .get_resolved_references(symbol)
+                    .any(|reference| reference.is_read())
+            })
+        {
             self.unreferenced_callable_spans
                 .insert((span.start, span.end));
         }
