@@ -23836,7 +23836,7 @@ impl StaticHookAliasCollector<'_> {
                     prototypes.remove(&prototype);
                 }
             }
-            let moved = self.move_local_plain_structured_value(&snapshot, &prototype);
+            let moved = self.move_local_plain_value(&snapshot, &prototype);
             for target in targets {
                 self.local_object_prototypes
                     .entry(target)
@@ -24933,9 +24933,6 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         source: &StaticAliasPath,
     ) -> bool {
-        if target.properties.is_empty() && !target.element_wildcard {
-            return false;
-        }
         let resolved = resolve_static_alias_path(&self.aliases, source);
         if [source, &resolved].into_iter().any(|candidate| {
             self.path_requires_historical_aliases(candidate, self.function_depth)
@@ -24943,9 +24940,22 @@ impl StaticHookAliasCollector<'_> {
         }) {
             return false;
         }
-        if !self.copy_local_callable_value(target.clone(), &resolved) {
+        if self.local_class_instances.contains(&resolved)
+            || self
+                .local_class_instance_fields
+                .keys()
+                .any(|path| path.starts_with(&resolved))
+            || self
+                .local_class_instance_callables
+                .keys()
+                .any(|path| path.starts_with(&resolved))
+            || (!self.local_callable_parameters.contains_key(&resolved)
+                && !self.local_bound_callables.contains_key(&resolved))
+        {
             return false;
         }
+        self.insert_alias(target.clone(), source.clone());
+        self.record_local_descriptor_value_capture(source, &target);
         self.snapshotted_local_callable_targets.insert(target);
         self.snapshotted_local_callable_source_paths
             .insert(source.clone());
@@ -30939,14 +30949,17 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
-    fn move_local_plain_structured_value(
+    fn move_local_plain_value(
         &mut self,
         target: &StaticAliasPath,
         raw_source: &StaticAliasPath,
     ) -> bool {
         let source = resolve_static_alias_path(&self.aliases, raw_source);
+        let structured = self.structured_own_properties.contains_key(&source);
+        let callable = self.local_callable_parameters.contains_key(&source)
+            || self.local_bound_callables.contains_key(&source);
         if target.overlaps(&source)
-            || !self.structured_own_properties.contains_key(&source)
+            || (!structured && !callable)
             || self
                 .open_structured_containers
                 .iter()
@@ -30981,10 +30994,6 @@ impl StaticHookAliasCollector<'_> {
                 .iter()
                 .any(|path| path.starts_with(&source))
             || self
-                .local_bound_callables
-                .keys()
-                .any(|path| path.starts_with(&source))
-            || self
                 .descriptor_defined_properties
                 .iter()
                 .any(|path| path.starts_with(&source))
@@ -30995,11 +31004,13 @@ impl StaticHookAliasCollector<'_> {
             .local_callable_parameters
             .keys()
             .chain(self.local_callable_effect_spans.keys())
+            .chain(self.local_bound_callables.keys())
             .filter(|path| path.starts_with(&source))
             .cloned()
             .collect::<BTreeSet<_>>();
         if callable_paths.iter().any(|path| {
-            !self.local_callable_parameters.contains_key(path)
+            (!self.local_callable_parameters.contains_key(path)
+                && !self.local_bound_callables.contains_key(path))
                 || self
                     .local_callable_results
                     .get(path)
@@ -31167,7 +31178,7 @@ impl StaticHookAliasCollector<'_> {
             let getter = self.local_getter_properties.contains(&target);
             let enumerable_getter = self.enumerable_getter_properties.contains(&target);
             let setter = self.local_setter_properties.get(&target).cloned();
-            let detached = self.move_local_plain_structured_value(&target, &current)
+            let detached = self.move_local_plain_value(&target, &current)
                 || self.copy_local_callable_value(target.clone(), &current)
                 || self.copy_local_value_definedness(target.clone(), &current);
             if detached {

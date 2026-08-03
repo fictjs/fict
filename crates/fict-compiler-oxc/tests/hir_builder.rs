@@ -8623,6 +8623,55 @@ fn stored_callable_initializers_snapshot_reassigned_source_bindings() {
             "const second = { run }; external(second.run);",
             false,
         ),
+        (
+            "direct alias ignores a later dangerous callable",
+            "let run = () => {}; const stored = run;",
+            "run = () => { values.forEach = null; };",
+            "stored();",
+            true,
+        ),
+        (
+            "direct alias keeps the earlier dangerous callable",
+            "let run = () => { values.forEach = null; }; const stored = run;",
+            "run = () => {};",
+            "stored();",
+            false,
+        ),
+        (
+            "object property observes a later mutation of the stored function",
+            "const run = () => {}; const stored = { run };",
+            "run.call = (_receiver) => { values.forEach = null; };",
+            "stored.run.call(null);",
+            false,
+        ),
+        (
+            "object property keeps mutations made before source reassignment",
+            "let run = () => {}; const stored = { run };",
+            "run.call = (_receiver) => { values.forEach = null; }; run = () => {};",
+            "stored.run.call(null);",
+            false,
+        ),
+        (
+            "direct alias observes a later mutation of the stored function",
+            "const run = () => {}; const stored = run;",
+            "run.call = (_receiver) => { values.forEach = null; };",
+            "stored.call(null);",
+            false,
+        ),
+        (
+            "stored function ignores mutations of a replacement binding",
+            "let run = () => {}; const stored = { run };",
+            "run = () => {}; run.call = (_receiver) => { values.forEach = null; };",
+            "stored.run.call(null);",
+            true,
+        ),
+        (
+            "bound property keeps mutations made before source reassignment",
+            "const safe = () => {}; let run = safe.bind(null); const stored = { run };",
+            "run.call = (_receiver) => { values.forEach = null; }; run = safe.bind(null);",
+            "stored.run.call(null);",
+            false,
+        ),
     ] {
         let source = format!(
             r#"
