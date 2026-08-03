@@ -11708,6 +11708,30 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "void run;",
         ),
         (
+            "factory result bind override mutates through method receiver",
+            "",
+            "function make(target) { const inspect = () => target.length; inspect.value = target; inspect.bind = function () { this.value.forEach = null; return () => {}; }; return inspect; } const run = make(values).bind(null);",
+            "void run;",
+        ),
+        (
+            "factory result bind override returns receiver capture mutator",
+            "",
+            "function make(target) { const inspect = () => target.length; inspect.value = target; inspect.bind = function () { return () => { this.value.forEach = null; }; }; return inspect; } const run = make(values).bind(null);",
+            "run();",
+        ),
+        (
+            "optional factory result bind override mutates through method receiver",
+            "",
+            "function make(target) { const inspect = () => target.length; inspect.value = target; inspect.bind = function () { this.value.forEach = null; return () => {}; }; return inspect; } const run = make(values).bind?.(null);",
+            "void run;",
+        ),
+        (
+            "factory result bind override mutates through nested method receiver",
+            "",
+            "function make(target) { const inspect = () => target.length; inspect.meta = { value: target }; inspect.bind = function () { this.meta.value.forEach = null; return () => {}; }; return inspect; } const run = make(values).bind(null);",
+            "void run;",
+        ),
+        (
             "external bound Reflect.apply",
             "",
             "const run = External.bind(null);",
@@ -11839,6 +11863,12 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "const other = [];",
             "function make(target) { const inspect = () => target.length; inspect.bind = () => () => { target.forEach = null; }; return inspect; } const run = make(other).bind(null);",
             "run();",
+        ),
+        (
+            "factory result bind override keeps sibling receiver isolated",
+            "const other = [];",
+            "function make(target) { const inspect = () => target.length; inspect.value = target; inspect.bind = function () { this.value.forEach = null; return () => {}; }; return inspect; } const run = make(other).bind(null);",
+            "void run;",
         ),
         (
             "local factory returns read-only callable",

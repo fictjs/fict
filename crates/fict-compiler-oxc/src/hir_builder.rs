@@ -21867,6 +21867,54 @@ impl StaticHookAliasCollector<'_> {
         found
     }
 
+    fn factory_result_reference_receivers(
+        &self,
+        source: &StaticAliasPath,
+        creator: &LocalInvocationFact,
+    ) -> Vec<LocalInvocationArgument> {
+        let mut projections = BTreeSet::new();
+        for target in self
+            .aliases
+            .keys()
+            .chain(self.alias_history.keys())
+            .filter(|target| {
+                target.starts_with(source)
+                    && (target.properties.len() > source.properties.len()
+                        || target.element_wildcard)
+            })
+        {
+            let prefix = target.properties[source.properties.len()..].to_vec();
+            let mut candidates = resolve_historical_alias_paths(&self.alias_history, target);
+            candidates.insert(resolve_static_alias_path(&self.aliases, target));
+            for candidate in candidates {
+                projections.insert((prefix.clone(), candidate));
+            }
+        }
+        let creators = vec![creator.clone()];
+        let mut receivers = Vec::new();
+        for (prefix, candidate) in projections {
+            let mapped = self
+                .mapped_returned_callable_capture_paths(
+                    &candidate,
+                    LocalParameterInvalidationKind::Member,
+                    std::slice::from_ref(&creators),
+                )
+                .unwrap_or_else(|| BTreeSet::from([candidate]));
+            for source in mapped {
+                let mut receiver = self.collect_local_invocation_path(source);
+                receiver.source_projection = LocalInvocationSourceProjection::Value(
+                    prefix
+                        .iter()
+                        .cloned()
+                        .map(LocalInvocationSourceComponent::Exact)
+                        .collect(),
+                );
+                receivers.push(receiver);
+            }
+        }
+        receivers
+    }
+
     fn record_factory_result_member_invocations(
         &mut self,
         call: &CallExpression<'_>,
@@ -21905,12 +21953,13 @@ impl StaticHookAliasCollector<'_> {
                 let LocalCallableResult::Reference(source) = result else {
                     return None;
                 };
+                let receiver = self.factory_result_reference_receivers(&source, &invocation);
                 let result = self.bind_local_callable_result(
                     LocalCallableResult::Reference(source.with_property(method.clone())),
                     &invocation,
                 );
                 let LocalCallableResult::Bound {
-                    callables,
+                    mut callables,
                     exposures,
                     historical,
                     results,
@@ -21919,6 +21968,9 @@ impl StaticHookAliasCollector<'_> {
                 else {
                     return None;
                 };
+                for callable in &mut callables {
+                    callable.receiver.clone_from(&receiver);
+                }
                 alternatives.callables.extend(callables);
                 alternatives.exposures.extend(exposures);
                 alternatives.historical |= historical;
