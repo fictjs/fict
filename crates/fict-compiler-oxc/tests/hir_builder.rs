@@ -6007,6 +6007,24 @@ fn unadvanced_destructured_generator_values_remain_unexecuted() {
             "const { run } = { run: function* () { values.forEach = null; }, run() {} };",
             "void run;",
         ),
+        (
+            "assigned array generator",
+            "let run;",
+            "[run] = [function* () { values.forEach = null; }];",
+            "run();",
+        ),
+        (
+            "assigned object generator",
+            "let run;",
+            "({ run } = { run: function* () { values.forEach = null; } });",
+            "void run;",
+        ),
+        (
+            "assigned nested generator",
+            "let run;",
+            "[{ box: { run } }] = [{ box: { run: function* () { values.forEach = null; } } }];",
+            "run();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -6061,6 +6079,30 @@ fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
             "Array.prototype[Symbol.iterator] = function () { this[0].next(); return { next() { return { done: true }; } }; }; function* inspect() { values.forEach = null; }",
             "const [iterator] = [inspect()];",
             "void iterator;",
+        ),
+        (
+            "assigned array generator is advanced",
+            "let run;",
+            "[run] = [function* () { values.forEach = null; }];",
+            "run().next();",
+        ),
+        (
+            "assigned object generator is advanced",
+            "let run;",
+            "({ run } = { run: function* () { values.forEach = null; } });",
+            "run().next();",
+        ),
+        (
+            "assigned nested generator is advanced",
+            "let run;",
+            "[{ box: { run } }] = [{ box: { run: function* () { values.forEach = null; } } }];",
+            "run().next();",
+        ),
+        (
+            "assignment iterator override consumes generator",
+            "let run; Array.prototype[Symbol.iterator] = function () { this[0]().next(); return { next() { return { done: true }; } }; };",
+            "[run] = [function* () { values.forEach = null; }];",
+            "void run;",
         ),
     ] {
         let source = format!(

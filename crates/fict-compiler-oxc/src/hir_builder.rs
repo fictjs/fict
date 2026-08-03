@@ -15502,6 +15502,183 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_assignment_target_callable_initializer(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+        initializer: &Expression<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) {
+        match target {
+            AssignmentTarget::ArrayAssignmentTarget(pattern) => {
+                self.record_destructured_array_assignment_callable_initializers(
+                    pattern,
+                    initializer,
+                );
+            }
+            AssignmentTarget::ObjectAssignmentTarget(pattern) => {
+                self.record_destructured_object_assignment_callable_initializers(
+                    pattern,
+                    initializer,
+                    guard,
+                );
+            }
+            _ => {
+                let Some(place) = planned_assignment_target_place(self.scoping, target) else {
+                    return;
+                };
+                let Some(target) = static_alias_invalidation_path(&place) else {
+                    return;
+                };
+                if !place.projections.is_empty()
+                    || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. })
+                {
+                    self.member_invalidated
+                        .extend(prototype_sensitive_invalidation_paths(&target));
+                }
+                if let Some(span) = place.root_reference_span {
+                    self.discarded_invocation_reads
+                        .entry(target.clone())
+                        .or_default()
+                        .insert((span.start(), span.end()));
+                }
+                if let Some(guard) = guard {
+                    self.record_guarded_callable_initializer(target, initializer, guard);
+                } else {
+                    self.record_callable_initializer(target, initializer);
+                }
+            }
+        }
+    }
+
+    fn record_assignment_maybe_default_callable_initializer(
+        &mut self,
+        target: &AssignmentTargetMaybeDefault<'_>,
+        initializer: &Expression<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) {
+        if matches!(
+            target,
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(_)
+        ) {
+            return;
+        }
+        if let Some(target) = target.as_assignment_target() {
+            self.record_assignment_target_callable_initializer(target, initializer, guard);
+        }
+    }
+
+    fn record_destructured_array_assignment_callable_initializers(
+        &mut self,
+        pattern: &ArrayAssignmentTarget<'_>,
+        initializer: &Expression<'_>,
+    ) {
+        let Expression::ArrayExpression(initializer) = initializer.get_inner_expression() else {
+            return;
+        };
+        if pattern.rest.is_some()
+            || initializer
+                .elements
+                .iter()
+                .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+        {
+            return;
+        }
+        let guard = Self::array_iterator_guard();
+        for (index, value) in initializer.elements.iter().enumerate() {
+            if matches!(value, ArrayExpressionElement::Elision(_)) {
+                continue;
+            }
+            let Some(target) = pattern.elements.get(index).and_then(Option::as_ref) else {
+                self.record_static_container_generator_values(value.to_expression(), true);
+                continue;
+            };
+            self.record_assignment_maybe_default_callable_initializer(
+                target,
+                value.to_expression(),
+                Some(&guard),
+            );
+        }
+    }
+
+    fn record_destructured_object_assignment_callable_initializers(
+        &mut self,
+        pattern: &ObjectAssignmentTarget<'_>,
+        initializer: &Expression<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) {
+        let Expression::ObjectExpression(initializer) = initializer.get_inner_expression() else {
+            return;
+        };
+        if pattern.rest.is_some() {
+            return;
+        }
+        let mut values = BTreeMap::new();
+        for property in &initializer.properties {
+            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                return;
+            };
+            if property.kind != PropertyKind::Init {
+                return;
+            }
+            let Some(name) = property.key.static_name() else {
+                return;
+            };
+            if name == "__proto__" {
+                return;
+            }
+            if let Some(previous) = values.insert(name.into_owned(), &property.value) {
+                self.record_static_container_generator_values(previous, guard.is_some());
+            }
+        }
+        let mut selected = BTreeSet::new();
+        for property in &pattern.properties {
+            match property {
+                AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                    if property.init.is_some() {
+                        return;
+                    }
+                    let name = property.binding.name.to_string();
+                    selected.insert(name.clone());
+                    let Some(value) = values.get(&name) else {
+                        continue;
+                    };
+                    let Some(symbol) = identifier_symbol(self.scoping, &property.binding) else {
+                        continue;
+                    };
+                    let target = StaticAliasPath::root(symbol);
+                    self.discarded_invocation_reads
+                        .entry(target.clone())
+                        .or_default()
+                        .insert((property.binding.span.start, property.binding.span.end));
+                    if let Some(guard) = guard {
+                        self.record_guarded_callable_initializer(target, value, guard);
+                    } else {
+                        self.record_callable_initializer(target, value);
+                    }
+                }
+                AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                    let Some(name) = property.name.static_name() else {
+                        return;
+                    };
+                    selected.insert(name.to_string());
+                    let Some(value) = values.get(name.as_ref()) else {
+                        continue;
+                    };
+                    self.record_assignment_maybe_default_callable_initializer(
+                        &property.binding,
+                        value,
+                        guard,
+                    );
+                }
+            }
+        }
+        for (name, value) in values {
+            if !selected.contains(&name) {
+                self.record_static_container_generator_values(value, guard.is_some());
+            }
+        }
+    }
+
     fn record_nonexecuting_callable(&mut self, expression: &Expression<'_>) {
         if let Some((path, span)) = self.callable_reference(expression) {
             self.discarded_invocation_reads
@@ -16528,24 +16705,19 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-        if let Some(place) = planned_assignment_target_place(self.scoping, &assignment.left)
+        if assignment.operator == OxcAssignmentOperator::Assign {
+            self.record_assignment_target_callable_initializer(
+                &assignment.left,
+                &assignment.right,
+                None,
+            );
+        } else if let Some(place) = planned_assignment_target_place(self.scoping, &assignment.left)
             && let Some(target) = static_alias_invalidation_path(&place)
+            && (!place.projections.is_empty()
+                || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. }))
         {
-            if !place.projections.is_empty()
-                || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. })
-            {
-                self.member_invalidated
-                    .extend(prototype_sensitive_invalidation_paths(&target));
-            }
-            if assignment.operator == OxcAssignmentOperator::Assign {
-                if let Some(span) = place.root_reference_span {
-                    self.discarded_invocation_reads
-                        .entry(target.clone())
-                        .or_default()
-                        .insert((span.start(), span.end()));
-                }
-                self.record_callable_initializer(target, &assignment.right);
-            }
+            self.member_invalidated
+                .extend(prototype_sensitive_invalidation_paths(&target));
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
     }
