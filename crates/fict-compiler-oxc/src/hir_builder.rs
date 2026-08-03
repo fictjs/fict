@@ -18555,6 +18555,8 @@ struct StaticHookAliasCollector<'semantic> {
     local_define_property_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_define_properties_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_set_prototype_of_results: BTreeMap<(u32, u32), StaticAliasPath>,
+    captured_local_descriptor_value_paths: BTreeSet<StaticAliasPath>,
+    local_descriptor_value_captures: BTreeSet<(StaticAliasPath, StaticAliasPath, StaticAliasPath)>,
     binding_owner_depths: BTreeMap<SymbolId, usize>,
     dynamic_path_owner_depths: BTreeMap<(u32, u32), usize>,
     cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
@@ -19401,6 +19403,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_define_property_results: BTreeMap::new(),
             local_define_properties_results: BTreeMap::new(),
             local_set_prototype_of_results: BTreeMap::new(),
+            captured_local_descriptor_value_paths: BTreeSet::new(),
+            local_descriptor_value_captures: BTreeSet::new(),
             binding_owner_depths: BTreeMap::new(),
             dynamic_path_owner_depths: BTreeMap::new(),
             cross_scope_alias_targets: BTreeSet::new(),
@@ -23852,6 +23856,11 @@ impl StaticHookAliasCollector<'_> {
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
         let canonical_path = self.canonical_returned_structured_member_path(path);
         let path = &canonical_path;
+        let resolved_path = resolve_static_alias_path(&self.aliases, path);
+        self.detach_overwritten_local_descriptor_values(path);
+        if resolved_path != *path {
+            self.detach_overwritten_local_descriptor_values(&resolved_path);
+        }
         self.detach_overwritten_local_object_prototypes(path);
         self.record_cross_scope_target(path);
         let excluded_structured_roots = self
@@ -24837,6 +24846,91 @@ impl StaticHookAliasCollector<'_> {
                     )
             })
             .collect()
+    }
+
+    fn copy_local_callable_value(
+        &mut self,
+        target: StaticAliasPath,
+        source: &StaticAliasPath,
+    ) -> bool {
+        let source = resolve_static_alias_path(&self.aliases, source);
+        if self.local_class_instances.contains(&source)
+            || self
+                .local_class_instance_fields
+                .keys()
+                .any(|path| path.starts_with(&source))
+            || self
+                .local_class_instance_callables
+                .keys()
+                .any(|path| path.starts_with(&source))
+        {
+            return false;
+        }
+        let bound = self.local_bound_callables.get(&source).cloned();
+        let parameters = self.local_callable_parameters.get(&source).cloned();
+        if bound.is_none() && parameters.is_none() {
+            return false;
+        }
+        self.clear_overlapping_aliases(&target);
+        if let Some(bound) = bound {
+            self.record_local_bound_callable(target.clone(), bound);
+        }
+        if let Some(parameters) = parameters {
+            self.record_local_callable_signature(target.clone(), parameters);
+        }
+        if let Some(receiver) = self.local_callable_receivers.get(&source).cloned() {
+            self.record_local_callable_receiver(target.clone(), receiver);
+        }
+        if self.local_generator_callables.contains(&source) {
+            self.record_local_generator(target.clone());
+        }
+        if let Some(results) = self.local_callable_results.get(&source).cloned() {
+            self.record_local_callable_results(target.clone(), results);
+        }
+        if let Some(exposures) = self.callable_exposures.get(&source).cloned() {
+            self.record_callable_exposures(target.clone(), exposures);
+        }
+        let effects = self
+            .local_callable_effect_spans
+            .get(&source)
+            .cloned()
+            .unwrap_or_default();
+        for span in effects {
+            self.record_local_callable_effect_span(target.clone(), span);
+            for creator in self
+                .local_callable_effect_creators
+                .get(&(source.clone(), span))
+                .cloned()
+                .unwrap_or_default()
+            {
+                self.record_local_callable_effect_creator(target.clone(), span, creator);
+            }
+        }
+        true
+    }
+
+    fn copy_local_value_definedness(
+        &mut self,
+        target: StaticAliasPath,
+        source: &StaticAliasPath,
+    ) -> bool {
+        let source = resolve_static_alias_path(&self.aliases, source);
+        if self.structured_own_properties.contains_key(&source)
+            || self.local_callable_parameters.contains_key(&source)
+            || self.local_bound_callables.contains_key(&source)
+        {
+            return false;
+        }
+        let Some(definedness) = self.local_value_definedness.get(&source).copied() else {
+            return false;
+        };
+        self.clear_overlapping_aliases(&target);
+        self.local_value_definedness_history
+            .entry(target.clone())
+            .or_default()
+            .insert(definedness);
+        self.local_value_definedness.insert(target, definedness);
+        true
     }
 
     fn activate_local_getter(&mut self, getter: &StaticAliasPath) {
@@ -26018,6 +26112,22 @@ impl StaticHookAliasCollector<'_> {
                 (class.span.start, class.span.end),
             ),
             _ => unreachable!("callable initializer was validated above"),
+        }
+        let resolved_target = resolve_static_alias_path(&self.aliases, &target);
+        if self
+            .captured_local_descriptor_value_paths
+            .iter()
+            .any(|captured| target.starts_with(captured) || resolved_target.starts_with(captured))
+        {
+            let span = match inner {
+                Expression::FunctionExpression(function) => function.span,
+                Expression::ArrowFunctionExpression(function) => function.span,
+                Expression::ClassExpression(class) => class.span,
+                _ => unreachable!("callable initializer was validated above"),
+            };
+            self.unreferenced_callable_spans
+                .insert((span.start, span.end));
+            self.deferred_accessor_spans.insert((span.start, span.end));
         }
         self.record_local_callable_signature(target.clone(), parameters);
         self.record_local_callable_results(target.clone(), results);
@@ -30767,6 +30877,216 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn move_local_plain_structured_value(
+        &mut self,
+        target: &StaticAliasPath,
+        raw_source: &StaticAliasPath,
+    ) -> bool {
+        let source = resolve_static_alias_path(&self.aliases, raw_source);
+        if target.overlaps(&source)
+            || !self.structured_own_properties.contains_key(&source)
+            || self
+                .open_structured_containers
+                .iter()
+                .any(|path| path.starts_with(&source))
+            || self
+                .ambiguous_alias_targets
+                .iter()
+                .any(|path| path.overlaps(&source))
+            || self
+                .local_getter_properties
+                .iter()
+                .any(|path| path.starts_with(&source))
+            || self
+                .local_setter_properties
+                .keys()
+                .any(|path| path.starts_with(&source))
+            || self
+                .dynamic_getter_properties
+                .keys()
+                .any(|path| path.starts_with(&source))
+            || self
+                .dynamic_setter_properties
+                .keys()
+                .any(|path| path.starts_with(&source))
+            || self
+                .local_object_prototypes
+                .iter()
+                .any(|(owner, prototypes)| {
+                    owner.starts_with(&source)
+                        || prototypes
+                            .keys()
+                            .any(|prototype| prototype.starts_with(&source))
+                })
+            || self
+                .returned_structured_value_instances
+                .keys()
+                .any(|path| path.starts_with(&source))
+            || self
+                .local_class_instances
+                .iter()
+                .any(|path| path.starts_with(&source))
+            || self
+                .local_bound_callables
+                .keys()
+                .any(|path| path.starts_with(&source))
+            || self
+                .descriptor_defined_properties
+                .iter()
+                .any(|path| path.starts_with(&source))
+        {
+            return false;
+        }
+        let callable_paths = self
+            .local_callable_parameters
+            .keys()
+            .chain(self.local_callable_effect_spans.keys())
+            .filter(|path| path.starts_with(&source))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if callable_paths.iter().any(|path| {
+            !self.local_callable_parameters.contains_key(path)
+                || self
+                    .local_callable_results
+                    .get(path)
+                    .is_some_and(|results| !results.is_empty())
+                || self
+                    .callable_exposures
+                    .get(path)
+                    .is_some_and(|exposures| exposures.iter().any(|path| path.starts_with(&source)))
+        }) {
+            return false;
+        }
+        let structured = self
+            .structured_own_properties
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source))
+            .map(|(path, properties)| (path.clone(), properties.clone()))
+            .collect::<Vec<_>>();
+        let lengths = self
+            .array_lengths
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source))
+            .map(|(path, length)| (path.clone(), *length))
+            .collect::<Vec<_>>();
+        let definedness = self
+            .local_value_definedness
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source))
+            .map(|(path, value)| (path.clone(), *value))
+            .collect::<Vec<_>>();
+        let exclusions = self
+            .dynamic_accessor_excluded_properties
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source))
+            .map(|(path, properties)| (path.clone(), properties.clone()))
+            .collect::<Vec<_>>();
+        let aliases = self
+            .aliases
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source) && *path != &source)
+            .map(|(path, value)| (path.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        self.clear_overlapping_aliases(target);
+        for path in &callable_paths {
+            let destination = Self::rebase_returned_class_path(path, &source, target);
+            if !self.copy_local_callable_value(destination, path) {
+                return false;
+            }
+        }
+        for value in self.aliases.values_mut() {
+            if value.starts_with(&source) {
+                *value = Self::rebase_returned_class_path(value, &source, target);
+            }
+        }
+        self.clear_overlapping_aliases(&source);
+        for (path, properties) in structured {
+            self.structured_own_properties.insert(
+                Self::rebase_returned_class_path(&path, &source, target),
+                properties,
+            );
+        }
+        for (path, length) in lengths {
+            self.array_lengths.insert(
+                Self::rebase_returned_class_path(&path, &source, target),
+                length,
+            );
+        }
+        for (path, value) in definedness {
+            let path = Self::rebase_returned_class_path(&path, &source, target);
+            self.local_value_definedness_history
+                .entry(path.clone())
+                .or_default()
+                .insert(value);
+            self.local_value_definedness.insert(path, value);
+        }
+        for (path, properties) in exclusions {
+            self.dynamic_accessor_excluded_properties.insert(
+                Self::rebase_returned_class_path(&path, &source, target),
+                properties,
+            );
+        }
+        for (path, value) in aliases {
+            self.insert_alias(
+                Self::rebase_returned_class_path(&path, &source, target),
+                Self::rebase_returned_class_path(&value, &source, target),
+            );
+        }
+        self.insert_alias(source, target.clone());
+        true
+    }
+
+    fn record_local_descriptor_value_capture(
+        &mut self,
+        source: &StaticAliasPath,
+        target: &StaticAliasPath,
+    ) {
+        self.local_descriptor_value_captures.insert((
+            source.clone(),
+            resolve_static_alias_path(&self.aliases, source),
+            target.clone(),
+        ));
+    }
+
+    fn detach_overwritten_local_descriptor_values(&mut self, path: &StaticAliasPath) {
+        let captures = self
+            .local_descriptor_value_captures
+            .iter()
+            .filter(|(source, resolved, target)| {
+                !target.starts_with(path)
+                    && (source.starts_with(path) || resolved.starts_with(path))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for capture in &captures {
+            self.local_descriptor_value_captures.remove(capture);
+        }
+        self.local_descriptor_value_captures
+            .retain(|(_, _, target)| !target.starts_with(path));
+        for (source, _, target) in captures {
+            let current = resolve_static_alias_path(&self.aliases, &source);
+            let getter = self.local_getter_properties.contains(&target);
+            let enumerable_getter = self.enumerable_getter_properties.contains(&target);
+            let setter = self.local_setter_properties.get(&target).cloned();
+            let detached = self.move_local_plain_structured_value(&target, &current)
+                || self.copy_local_callable_value(target.clone(), &current)
+                || self.copy_local_value_definedness(target.clone(), &current);
+            if detached {
+                if getter {
+                    self.local_getter_properties.insert(target.clone());
+                }
+                if enumerable_getter {
+                    self.enumerable_getter_properties.insert(target.clone());
+                }
+                if let Some(setter) = setter {
+                    self.local_setter_properties.insert(target, setter);
+                }
+                continue;
+            }
+            self.mark_alias_target_ambiguous(target);
+        }
+    }
+
     fn local_descriptor_inline_callable_span(value: &LocalDescriptorValue<'_, '_>) -> Option<Span> {
         let LocalDescriptorValue::Expression(value) = value else {
             return None;
@@ -30801,6 +31121,22 @@ impl StaticHookAliasCollector<'_> {
             .chain(descriptor.setter.iter())
         {
             self.prepare_local_descriptor_field_getter_read(value);
+            if let LocalDescriptorValue::Path(path) = value {
+                let aliases = self
+                    .aliases
+                    .keys()
+                    .filter_map(|alias| {
+                        let resolved = resolve_static_alias_path(&self.aliases, alias);
+                        path.starts_with(&resolved)
+                            .then(|| Self::rebase_returned_class_path(path, &resolved, alias))
+                    })
+                    .collect::<Vec<_>>();
+                self.captured_local_descriptor_value_paths
+                    .insert(path.clone());
+                self.captured_local_descriptor_value_paths
+                    .insert(resolve_static_alias_path(&self.aliases, path));
+                self.captured_local_descriptor_value_paths.extend(aliases);
+            }
         }
         if let Some(value) = descriptor.value.as_ref() {
             self.prepare_local_descriptor_structured_value(value);
@@ -30926,6 +31262,7 @@ impl StaticHookAliasCollector<'_> {
             }
             LocalDescriptorValue::Path(value) => {
                 self.insert_alias(property.clone(), value.clone());
+                self.record_local_descriptor_value_capture(value, &property);
                 true
             }
             LocalDescriptorValue::GetterResult { target, .. } => {
@@ -30985,6 +31322,7 @@ impl StaticHookAliasCollector<'_> {
             }
             LocalDescriptorValue::Path(value) => {
                 self.insert_alias(setter.clone(), value.clone());
+                self.record_local_descriptor_value_capture(value, &setter);
                 true
             }
             LocalDescriptorValue::GetterResult { target, .. } => {
@@ -31095,6 +31433,7 @@ impl StaticHookAliasCollector<'_> {
                 }
                 LocalDescriptorValue::Path(value) => {
                     self.insert_alias(property.clone(), value.clone());
+                    self.record_local_descriptor_value_capture(value, property);
                 }
                 LocalDescriptorValue::GetterResult { target, .. } => {
                     self.insert_alias(property.clone(), target.clone());
