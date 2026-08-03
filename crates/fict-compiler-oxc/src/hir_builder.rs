@@ -15318,7 +15318,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         for (name, (value, callable_value)) in properties {
             let method = target.clone().with_property(name.clone());
             if callable_value {
-                self.record_forwarded_callable(method.clone(), value);
+                self.record_callable_initializer(method.clone(), value);
             }
             let body_spans = self.generator_body_spans_for_target(&method);
             reachable_body_spans.extend(&body_spans);
@@ -15331,6 +15331,29 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         self.instance_generator_bodies
             .insert(target.clone(), instance_bodies);
         exact_container
+    }
+
+    fn record_array_callable_values(
+        &mut self,
+        target: &StaticAliasPath,
+        array: &ArrayExpression<'_>,
+    ) {
+        if array
+            .elements
+            .iter()
+            .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+        {
+            return;
+        }
+        for (index, value) in array.elements.iter().enumerate() {
+            if matches!(value, ArrayExpressionElement::Elision(_)) {
+                continue;
+            }
+            self.record_callable_initializer(
+                target.clone().with_property(index.to_string()),
+                value.to_expression(),
+            );
+        }
     }
 
     fn record_callable_initializer(
@@ -15346,6 +15369,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let exact_object = match initializer.get_inner_expression() {
             Expression::ObjectExpression(object) => {
                 self.record_object_generator_bodies(&target, object)
+            }
+            Expression::ArrayExpression(array) => {
+                self.record_array_callable_values(&target, array);
+                false
             }
             _ => false,
         };
@@ -15407,6 +15434,92 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             _ => {}
         }
+    }
+
+    fn record_callable_path_initializer(
+        &mut self,
+        target: StaticAliasPath,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: Option<&GeneratorMethodGuard>,
+    ) {
+        self.forwarding_targets.insert(target.clone());
+        self.forwarded_callable_reads.push(ForwardedCallableRead {
+            source,
+            source_span,
+            target,
+            method_guard: guard.cloned(),
+            parameter_offset: Some(0),
+        });
+    }
+
+    fn stored_array_iterator_guard(source: &StaticAliasPath) -> GeneratorMethodGuard {
+        GeneratorMethodGuard {
+            source: Some(source.clone()),
+            owner: StaticAliasPath::unresolved_global("Array".to_string())
+                .with_property("prototype".to_string()),
+            method: "[Symbol.iterator]",
+        }
+    }
+
+    fn record_stored_binding_destructuring(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                let Some(target) = binding.symbol_id.get().map(StaticAliasPath::root) else {
+                    return false;
+                };
+                self.record_callable_path_initializer(target, source, source_span, guard);
+            }
+            BindingPattern::ArrayPattern(pattern) => {
+                if pattern.rest.is_some() {
+                    return false;
+                }
+                let guard = Self::stored_array_iterator_guard(&source);
+                for (index, binding) in pattern.elements.iter().enumerate() {
+                    let Some(binding) = binding else {
+                        continue;
+                    };
+                    if matches!(binding, BindingPattern::AssignmentPattern(_))
+                        || !self.record_stored_binding_destructuring(
+                            binding,
+                            source.clone().with_property(index.to_string()),
+                            source_span,
+                            Some(&guard),
+                        )
+                    {
+                        return false;
+                    }
+                }
+            }
+            BindingPattern::ObjectPattern(pattern) => {
+                if pattern.rest.is_some() {
+                    return false;
+                }
+                for property in &pattern.properties {
+                    let Some(name) = property.key.static_name() else {
+                        return false;
+                    };
+                    if matches!(&property.value, BindingPattern::AssignmentPattern(_))
+                        || !self.record_stored_binding_destructuring(
+                            &property.value,
+                            source.clone().with_property(name.into_owned()),
+                            source_span,
+                            guard,
+                        )
+                    {
+                        return false;
+                    }
+                }
+            }
+            BindingPattern::AssignmentPattern(_) => return false,
+        }
+        true
     }
 
     fn destructuring_value_is_undefined(&self, expression: &Expression<'_>) -> Option<bool> {
@@ -15559,6 +15672,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         initializer: &Expression<'_>,
         guard: Option<&GeneratorMethodGuard>,
     ) {
+        let stored_source = matches!(
+            (pattern, initializer.get_inner_expression()),
+            (BindingPattern::ArrayPattern(_), expression)
+                if !matches!(expression, Expression::ArrayExpression(_))
+        ) || matches!(
+            (pattern, initializer.get_inner_expression()),
+            (BindingPattern::ObjectPattern(_), expression)
+                if !matches!(expression, Expression::ObjectExpression(_))
+        );
+        if stored_source {
+            if let Some((source, source_span)) = self.callable_reference(initializer) {
+                self.record_stored_binding_destructuring(pattern, source, source_span, guard);
+            }
+            return;
+        }
         match pattern {
             BindingPattern::BindingIdentifier(binding) => {
                 let Some(target) = binding.symbol_id.get().map(StaticAliasPath::root) else {
@@ -15715,24 +15843,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 );
             }
             _ => {
-                let Some(place) = planned_assignment_target_place(self.scoping, target) else {
+                let Some(target) = self.assignment_callable_target_path(target) else {
                     return;
                 };
-                let Some(target) = static_alias_invalidation_path(&place) else {
-                    return;
-                };
-                if !place.projections.is_empty()
-                    || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. })
-                {
-                    self.member_invalidated
-                        .extend(prototype_sensitive_invalidation_paths(&target));
-                }
-                if let Some(span) = place.root_reference_span {
-                    self.discarded_invocation_reads
-                        .entry(target.clone())
-                        .or_default()
-                        .insert((span.start(), span.end()));
-                }
                 if let Some(guard) = guard {
                     self.record_guarded_callable_initializer(target, initializer, guard);
                 } else {
@@ -15742,7 +15855,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
-    fn assignment_callable_container_target(
+    fn assignment_callable_target_path(
         &mut self,
         target: &AssignmentTarget<'_>,
     ) -> Option<StaticAliasPath> {
@@ -15760,9 +15873,158 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .or_default()
                 .insert((span.start(), span.end()));
         }
+        Some(target)
+    }
+
+    fn assignment_callable_container_target(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+    ) -> Option<StaticAliasPath> {
+        let target = self.assignment_callable_target_path(target)?;
         self.forwarding_targets.insert(target.clone());
         self.non_generator_callable_targets.insert(target.clone());
         Some(target)
+    }
+
+    fn record_stored_assignment_identifier(
+        &mut self,
+        binding: &IdentifierReference<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        let Some(symbol) = identifier_symbol(self.scoping, binding) else {
+            return false;
+        };
+        let target = StaticAliasPath::root(symbol);
+        self.discarded_invocation_reads
+            .entry(target.clone())
+            .or_default()
+            .insert((binding.span.start, binding.span.end));
+        self.record_callable_path_initializer(target, source, source_span, guard);
+        true
+    }
+
+    fn record_stored_assignment_maybe_default_destructuring(
+        &mut self,
+        target: &AssignmentTargetMaybeDefault<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        if matches!(
+            target,
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(_)
+        ) {
+            return false;
+        }
+        target.as_assignment_target().is_some_and(|target| {
+            self.record_stored_assignment_destructuring(target, source, source_span, guard)
+        })
+    }
+
+    fn record_stored_array_assignment_destructuring(
+        &mut self,
+        pattern: &ArrayAssignmentTarget<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+    ) -> bool {
+        if pattern.rest.is_some() {
+            return false;
+        }
+        let guard = Self::stored_array_iterator_guard(&source);
+        for (index, target) in pattern.elements.iter().enumerate() {
+            let Some(target) = target else {
+                continue;
+            };
+            if !self.record_stored_assignment_maybe_default_destructuring(
+                target,
+                source.clone().with_property(index.to_string()),
+                source_span,
+                Some(&guard),
+            ) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn record_stored_object_assignment_destructuring(
+        &mut self,
+        pattern: &ObjectAssignmentTarget<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        if pattern.rest.is_some() {
+            return false;
+        }
+        for property in &pattern.properties {
+            match property {
+                AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                    if property.init.is_some()
+                        || !self.record_stored_assignment_identifier(
+                            &property.binding,
+                            source
+                                .clone()
+                                .with_property(property.binding.name.to_string()),
+                            source_span,
+                            guard,
+                        )
+                    {
+                        return false;
+                    }
+                }
+                AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                    let Some(name) = property.name.static_name() else {
+                        return false;
+                    };
+                    if !self.record_stored_assignment_maybe_default_destructuring(
+                        &property.binding,
+                        source.clone().with_property(name.into_owned()),
+                        source_span,
+                        guard,
+                    ) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn record_stored_assignment_destructuring(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        match target {
+            AssignmentTarget::ArrayAssignmentTarget(pattern) => {
+                if !self.record_stored_array_assignment_destructuring(pattern, source, source_span)
+                {
+                    return false;
+                }
+            }
+            AssignmentTarget::ObjectAssignmentTarget(pattern) => {
+                if !self.record_stored_object_assignment_destructuring(
+                    pattern,
+                    source,
+                    source_span,
+                    guard,
+                ) {
+                    return false;
+                }
+            }
+            _ => {
+                let Some(target) = self.assignment_callable_target_path(target) else {
+                    return false;
+                };
+                self.record_callable_path_initializer(target, source, source_span, guard);
+            }
+        }
+        true
     }
 
     fn record_assignment_maybe_default_callable_initializer(
@@ -15797,6 +16059,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         initializer: &Expression<'_>,
     ) {
         let Expression::ArrayExpression(initializer) = initializer.get_inner_expression() else {
+            if let Some((source, source_span)) = self.callable_reference(initializer) {
+                self.record_stored_array_assignment_destructuring(pattern, source, source_span);
+            }
             return;
         };
         let mut values = Vec::new();
@@ -15856,6 +16121,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         guard: Option<&GeneratorMethodGuard>,
     ) {
         let Expression::ObjectExpression(initializer) = initializer.get_inner_expression() else {
+            if let Some((source, source_span)) = self.callable_reference(initializer) {
+                self.record_stored_object_assignment_destructuring(
+                    pattern,
+                    source,
+                    source_span,
+                    guard,
+                );
+            }
             return;
         };
         let rest_target = if let Some(rest) = &pattern.rest {
@@ -16680,14 +16953,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .forwarded_callable_reads
                     .iter()
                     .enumerate()
-                    .filter(|(_, forwarding)| forwarding.target == *path)
+                    .filter_map(|(index, forwarding)| {
+                        Self::replace_callable_path_prefix(
+                            path,
+                            &forwarding.target,
+                            &forwarding.source,
+                        )
+                        .map(|source| (index, source))
+                    })
                     .collect::<Vec<_>>();
                 if !self.generator_callable_targets.contains(path) && dependencies.is_empty() {
                     continue;
                 }
-                if dependencies.iter().all(|(index, forwarding)| {
+                if dependencies.iter().all(|(index, source)| {
                     trusted_method_forwardings[*index]
-                        && definite_generator_callables.contains(&forwarding.source)
+                        && definite_generator_callables.contains(source)
                 }) {
                     changed |= definite_generator_callables.insert(path.clone());
                 }

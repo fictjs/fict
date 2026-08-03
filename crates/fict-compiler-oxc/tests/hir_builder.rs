@@ -6115,6 +6115,42 @@ fn unadvanced_destructured_generator_values_remain_unexecuted() {
             "[first] = [...[function* () { values.forEach = null; }]]; ({ run: second } = { ...{ run: function* () { values.forEach = null; } } });",
             "first(); second();",
         ),
+        (
+            "stored array destructuring remains unadvanced",
+            "const source = [function* () { values.forEach = null; }];",
+            "const [run] = source;",
+            "run();",
+        ),
+        (
+            "stored object destructuring remains unadvanced",
+            "const source = { run: function* () { values.forEach = null; } };",
+            "const { run } = source;",
+            "void run;",
+        ),
+        (
+            "aliased stored destructuring remains unadvanced",
+            "const source = { run: function* () { values.forEach = null; } }; const alias = source;",
+            "const { run } = alias;",
+            "run();",
+        ),
+        (
+            "assigned stored destructuring remains unadvanced",
+            "const source = [function* () { values.forEach = null; }]; let run;",
+            "[run] = source;",
+            "run();",
+        ),
+        (
+            "nested stored destructuring remains unadvanced",
+            "const source = { box: { run: function* () { values.forEach = null; } } };",
+            "const { box: { run } } = source;",
+            "run();",
+        ),
+        (
+            "stored array object destructuring remains unadvanced",
+            "const source = [{ run: function* () { values.forEach = null; } }];",
+            "const [{ run }] = source;",
+            "void run;",
+        ),
     ] {
         let source = format!(
             r#"
@@ -6259,6 +6295,36 @@ fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
             "let run;",
             "[run] = [...[function* () { values.forEach = null; }]];",
             "run().next();",
+        ),
+        (
+            "stored array destructuring is advanced",
+            "const source = [function* () { values.forEach = null; }];",
+            "const [run] = source;",
+            "run().next();",
+        ),
+        (
+            "stored object destructuring is advanced",
+            "const source = { run: function* () { values.forEach = null; } };",
+            "const { run } = source;",
+            "run().next();",
+        ),
+        (
+            "assigned stored destructuring is advanced",
+            "const source = { run: function* () { values.forEach = null; } }; let run;",
+            "({ run } = source);",
+            "run().next();",
+        ),
+        (
+            "nested stored destructuring is advanced",
+            "const source = { box: { run: function* () { values.forEach = null; } } };",
+            "const { box: { run } } = source;",
+            "run().next();",
+        ),
+        (
+            "stored own iterator consumes generator",
+            "const source = [function* () { values.forEach = null; }]; source[Symbol.iterator] = function () { this[0]().next(); return { next() { return { done: true }; } }; };",
+            "const [run] = source;",
+            "void run;",
         ),
     ] {
         let source = format!(
