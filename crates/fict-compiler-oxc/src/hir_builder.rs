@@ -18554,6 +18554,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_object_create_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
     historical_local_object_prototype_snapshots: BTreeSet<StaticAliasPath>,
+    detached_local_object_prototype_source_paths: BTreeSet<StaticAliasPath>,
     local_define_property_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_define_properties_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_set_prototype_of_results: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -19404,6 +19405,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_object_create_results: BTreeMap::new(),
             local_object_prototypes: BTreeMap::new(),
             historical_local_object_prototype_snapshots: BTreeSet::new(),
+            detached_local_object_prototype_source_paths: BTreeSet::new(),
             local_define_property_results: BTreeMap::new(),
             local_define_properties_results: BTreeMap::new(),
             local_set_prototype_of_results: BTreeMap::new(),
@@ -23819,6 +23821,8 @@ impl StaticHookAliasCollector<'_> {
         let mut detached = detached.into_iter().collect::<Vec<_>>();
         detached.sort_by_key(|(prototype, _)| std::cmp::Reverse(prototype.properties.len()));
         for (prototype, (snapshot, targets)) in detached {
+            self.detached_local_object_prototype_source_paths
+                .insert(prototype.clone());
             let identity_aliases = aliases
                 .keys()
                 .filter(|alias| resolve_static_alias_path(&aliases, alias) == prototype)
@@ -23827,11 +23831,20 @@ impl StaticHookAliasCollector<'_> {
             let own_properties = self.structured_own_properties.get(&prototype).cloned();
             let open = self.open_structured_containers.contains(&prototype);
             let inherited = self.local_object_prototypes.get(&prototype).cloned();
-            for target in targets {
-                if let Some(prototypes) = self.local_object_prototypes.get_mut(&target) {
+            for target in &targets {
+                if let Some(prototypes) = self.local_object_prototypes.get_mut(target) {
                     prototypes.remove(&prototype);
-                    prototypes.insert(snapshot.clone(), snapshot.clone());
                 }
+            }
+            let moved = self.move_local_plain_structured_value(&snapshot, &prototype);
+            for target in targets {
+                self.local_object_prototypes
+                    .entry(target)
+                    .or_default()
+                    .insert(snapshot.clone(), snapshot.clone());
+            }
+            if moved {
+                continue;
             }
             let history = self.alias_history.entry(snapshot.clone()).or_default();
             history.insert(prototype.clone());
@@ -26154,6 +26167,7 @@ impl StaticHookAliasCollector<'_> {
             .captured_local_descriptor_value_paths
             .iter()
             .chain(self.snapshotted_local_callable_source_paths.iter())
+            .chain(self.detached_local_object_prototype_source_paths.iter())
             .any(|captured| target.starts_with(captured) || resolved_target.starts_with(captured))
         {
             let span = match inner {
@@ -28440,6 +28454,7 @@ impl StaticHookAliasCollector<'_> {
             .captured_local_descriptor_value_paths
             .iter()
             .chain(self.snapshotted_local_callable_source_paths.iter())
+            .chain(self.detached_local_object_prototype_source_paths.iter())
             .any(|captured| target.starts_with(captured) || resolved_target.starts_with(captured));
         for effect in &alternatives.effect_instances {
             if defer_replacement {
@@ -30941,14 +30956,6 @@ impl StaticHookAliasCollector<'_> {
                 .iter()
                 .any(|path| path.overlaps(&source))
             || self
-                .local_getter_properties
-                .iter()
-                .any(|path| path.starts_with(&source))
-            || self
-                .local_setter_properties
-                .keys()
-                .any(|path| path.starts_with(&source))
-            || self
                 .dynamic_getter_properties
                 .keys()
                 .any(|path| path.starts_with(&source))
@@ -31004,6 +31011,24 @@ impl StaticHookAliasCollector<'_> {
         }) {
             return false;
         }
+        let getters = self
+            .local_getter_properties
+            .iter()
+            .filter(|path| path.starts_with(&source))
+            .map(|path| {
+                (
+                    path.clone(),
+                    self.enumerable_getter_properties.contains(path),
+                    self.local_getter_result_definedness.get(path).copied(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let setters = self
+            .local_setter_properties
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source))
+            .map(|(path, setter)| (path.clone(), setter.clone()))
+            .collect::<Vec<_>>();
         let structured = self
             .structured_own_properties
             .iter()
@@ -31047,6 +31072,33 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         self.clear_overlapping_aliases(&source);
+        for (path, enumerable, definedness) in getters {
+            let path = Self::rebase_returned_class_path(&path, &source, target);
+            self.local_getter_properties.insert(path.clone());
+            self.local_getter_property_history.insert(path.clone());
+            if enumerable {
+                self.enumerable_getter_properties.insert(path.clone());
+                self.enumerable_getter_property_history.insert(path.clone());
+            }
+            if let Some(definedness) = definedness {
+                self.local_getter_result_definedness_history
+                    .entry(path.clone())
+                    .or_default()
+                    .insert(definedness);
+                self.local_getter_result_definedness
+                    .insert(path, definedness);
+            }
+        }
+        for (path, setter) in setters {
+            let path = Self::rebase_returned_class_path(&path, &source, target);
+            let setter = Self::rebase_returned_class_path(&setter, &source, target);
+            self.local_setter_properties
+                .insert(path.clone(), setter.clone());
+            self.local_setter_property_history
+                .entry(path)
+                .or_default()
+                .insert(setter);
+        }
         for (path, properties) in structured {
             self.structured_own_properties.insert(
                 Self::rebase_returned_class_path(&path, &source, target),
@@ -31784,6 +31836,7 @@ impl StaticHookAliasCollector<'_> {
                 .snapshotted_local_callable_source_paths
                 .iter()
                 .chain(self.snapshotted_local_callable_targets.iter())
+                .chain(self.detached_local_object_prototype_source_paths.iter())
                 .any(|source| {
                     path.starts_with(source)
                         || source.starts_with(path)
@@ -31793,7 +31846,21 @@ impl StaticHookAliasCollector<'_> {
             {
                 continue;
             }
-            for span in self.local_callable_path_effect_spans(path) {
+            let mut callables = BTreeSet::from([path.clone(), resolved.clone()]);
+            callables.extend(
+                self.local_callable_effect_spans
+                    .keys()
+                    .chain(self.local_callable_effect_span_history.keys())
+                    .filter(|callable| {
+                        callable.starts_with(path) || callable.starts_with(&resolved)
+                    })
+                    .cloned(),
+            );
+            let spans = callables
+                .iter()
+                .flat_map(|callable| self.local_callable_path_effect_spans(callable))
+                .collect::<BTreeSet<_>>();
+            for span in spans {
                 if self.deferred_accessor_spans.remove(&span) {
                     self.executed_descriptor_callable_spans.insert(span);
                     self.unreferenced_callable_spans.remove(&span);

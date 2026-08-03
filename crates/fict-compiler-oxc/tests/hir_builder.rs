@@ -7828,6 +7828,13 @@ fn object_create_preserves_descriptor_accessor_timing() {
             false,
         ),
         (
+            "inherited identity ignores a later dangerous prototype binding",
+            "let proto = { run: 1 };",
+            "const source = Object.create(proto); proto = { get run() { values.forEach = null; return 1; } };",
+            "void source.run;",
+            true,
+        ),
+        (
             "inherited getter skipped by object spread",
             "const proto = { get run() { values.forEach = null; return 1; } };",
             "const source = Object.create(proto);",
@@ -8028,6 +8035,13 @@ fn set_prototype_of_updates_local_accessor_lookup() {
             false,
         ),
         (
+            "prototype identity ignores a later dangerous binding",
+            "let proto = { run: 1 }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { get run() { values.forEach = null; return 1; } };",
+            "void source.run;",
+            true,
+        ),
+        (
             "prototype setter survives binding reassignment",
             "let proto = { set run(value) { values.forEach = value; } }; const source = Object.create(null);",
             "Object.setPrototypeOf(source, proto); proto = { run: 1 };",
@@ -8035,10 +8049,38 @@ fn set_prototype_of_updates_local_accessor_lookup() {
             false,
         ),
         (
+            "prototype identity ignores a later dangerous setter binding",
+            "let proto = { run: 1 }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { set run(value) { values.forEach = value; } };",
+            "source.run = null;",
+            true,
+        ),
+        (
             "prototype data callable survives binding reassignment",
             "let proto = { run() { values.forEach = null; } }; const source = Object.create(null);",
             "Object.setPrototypeOf(source, proto); proto = { run() {} };",
             "source.run();",
+            false,
+        ),
+        (
+            "prototype data callable ignores a later dangerous binding",
+            "let proto = { run() {} }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { run() { values.forEach = null; } };",
+            "source.run();",
+            true,
+        ),
+        (
+            "later replacement prototype getter still executes",
+            "let proto = { run: 1 }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { get run() { values.forEach = null; return 1; } };",
+            "void proto.run;",
+            false,
+        ),
+        (
+            "later replacement prototype exposure stays conservative",
+            "let proto = { run: 1 }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { run() { values.forEach = null; } };",
+            "external(proto);",
             false,
         ),
         (
