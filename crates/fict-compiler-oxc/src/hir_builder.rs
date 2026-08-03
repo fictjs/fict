@@ -11685,8 +11685,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     }
                 }
                 ClassElement::PropertyDefinition(property)
-                    if property.r#static
-                        && property.decorators.is_empty()
+                    if property.decorators.is_empty()
                         && !matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) =>
                 {
                     let (Some(name), Some(value)) = (property.key.static_name(), &property.value)
@@ -11699,7 +11698,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     ) {
                         continue;
                     }
-                    let method_target = target.clone().with_property(name.into_owned());
+                    let method_target = if property.r#static {
+                        target.clone()
+                    } else {
+                        target.clone().with_property("prototype".to_string())
+                    }
+                    .with_property(name.into_owned());
                     self.record_forwarded_callable(method_target, value);
                 }
                 _ => {}
@@ -11835,6 +11839,30 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let Some((class, source_span)) = self.callable_reference(&expression.callee) else {
             return;
         };
+        let prototype = class.clone().with_property("prototype".to_string());
+        let callable_paths = self
+            .callable_targets_by_span
+            .values()
+            .flatten()
+            .filter(|path| {
+                path.starts_with(&prototype) && path.properties.len() > prototype.properties.len()
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for source in callable_paths {
+            let mut instance_method = target.clone();
+            instance_method
+                .properties
+                .extend_from_slice(&source.properties[prototype.properties.len()..]);
+            self.forwarding_targets.insert(instance_method.clone());
+            self.forwarded_callable_reads.push(ForwardedCallableRead {
+                source,
+                source_span,
+                target: instance_method,
+                method_guard: None,
+                parameter_offset: None,
+            });
+        }
         let bodies = self
             .class_instance_generator_bodies
             .get(&class)
@@ -17023,6 +17051,7 @@ struct LocalClassInstanceCallable {
     bound_callables: Vec<LocalBoundCallable>,
     bound_historical: bool,
     exposures: BTreeSet<StaticAliasPath>,
+    effect_instances: Vec<LocalCallableEffectResult>,
 }
 
 #[derive(Clone)]
@@ -18091,6 +18120,7 @@ impl StaticHookAliasCollector<'_> {
                 bound_callables: alternatives.callables,
                 bound_historical: alternatives.historical,
                 exposures: alternatives.exposures,
+                effect_instances: alternatives.effect_instances,
             }];
         }
         let (source, parameters, dynamic_receiver, lexical_receiver, generator, unknown) =
@@ -18120,6 +18150,20 @@ impl StaticHookAliasCollector<'_> {
                     true,
                 ),
             };
+        let effect_instances = match value.get_inner_expression() {
+            Expression::FunctionExpression(function) if !function.generator => {
+                vec![LocalCallableEffectResult {
+                    span: (function.span.start, function.span.end),
+                    capture_invocations: Vec::new(),
+                }]
+            }
+            Expression::FunctionExpression(_) => Vec::new(),
+            Expression::ArrowFunctionExpression(function) => vec![LocalCallableEffectResult {
+                span: (function.span.start, function.span.end),
+                capture_invocations: Vec::new(),
+            }],
+            _ => Vec::new(),
+        };
         vec![LocalClassInstanceCallable {
             source,
             parameters,
@@ -18130,6 +18174,7 @@ impl StaticHookAliasCollector<'_> {
             bound_callables: Vec::new(),
             bound_historical: false,
             exposures: self.returned_function_paths(value).unwrap_or_default(),
+            effect_instances,
         }]
     }
 
@@ -18239,6 +18284,10 @@ impl StaticHookAliasCollector<'_> {
             if method.kind != MethodDefinitionKind::Method {
                 continue;
             }
+            if !method.value.generator {
+                self.returned_callable_spans
+                    .insert((method.value.span.start, method.value.span.end));
+            }
             self.record_unreferenced_callable_span(&method_target, method.value.span);
             self.record_local_callable_effect_span(
                 method_target.clone(),
@@ -18313,6 +18362,24 @@ impl StaticHookAliasCollector<'_> {
             ) {
                 continue;
             }
+            let span = match value.get_inner_expression() {
+                Expression::FunctionExpression(function) => function.span,
+                Expression::ArrowFunctionExpression(function) => function.span,
+                _ => unreachable!("class field callable was validated above"),
+            };
+            let field_target = target
+                .clone()
+                .with_property("prototype".to_string())
+                .with_property(name.clone());
+            self.record_unreferenced_callable_span(&field_target, span);
+            let generator = matches!(
+                value.get_inner_expression(),
+                Expression::FunctionExpression(function) if function.generator
+            );
+            if !generator {
+                self.returned_callable_spans.insert((span.start, span.end));
+                self.record_local_callable_effect_span(field_target, (span.start, span.end));
+            }
             let callable = self.local_class_instance_callables(value, property.span);
             self.local_class_instance_callables
                 .entry(target.clone())
@@ -18383,6 +18450,16 @@ impl StaticHookAliasCollector<'_> {
             self.clear_overlapping_aliases(&instance_field);
             let ambiguous = callables.len() > 1;
             for callable in callables {
+                for effect in callable.effect_instances.clone() {
+                    self.record_local_callable_effect_span(instance_field.clone(), effect.span);
+                    if !effect.capture_invocations.is_empty() {
+                        self.record_local_callable_effect_creator(
+                            instance_field.clone(),
+                            effect.span,
+                            effect.capture_invocations,
+                        );
+                    }
+                }
                 if let Some(source) = callable.source.clone() {
                     self.insert_alias(instance_field.clone(), source);
                     self.transient_callable_alias_targets
@@ -22343,6 +22420,60 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn known_synchronous_callback_indices(&self, call: &CallExpression<'_>) -> Vec<usize> {
+        let (receiver, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Some(method) = static_member_name(&member.expression) else {
+                    return Vec::new();
+                };
+                (&member.object, method)
+            }
+            _ => return Vec::new(),
+        };
+        let callback_index = match method.as_str() {
+            "forEach" | "map" | "flatMap" | "filter" | "some" | "every" | "find" | "findIndex"
+            | "findLast" | "findLastIndex" | "reduce" | "reduceRight" | "sort" | "toSorted" => 0,
+            _ => return Vec::new(),
+        };
+        let known_array = match receiver.get_inner_expression() {
+            Expression::ArrayExpression(array) => !array.elements.is_empty(),
+            _ => self
+                .alias_source_path(receiver)
+                .and_then(|path| self.known_array_length(&path))
+                .is_some_and(|length| length > 0),
+        };
+        if !known_array {
+            return Vec::new();
+        }
+        if let Some(receiver) = self.alias_source_path(receiver)
+            && !self.path_is_currently_intact(&receiver.with_property(method))
+        {
+            return Vec::new();
+        }
+        vec![callback_index]
+    }
+
+    fn synchronous_callback_effect_targets(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> BTreeSet<StaticAliasPath> {
+        let mut targets = BTreeSet::new();
+        for index in self.known_synchronous_callback_indices(call) {
+            let Some(callback) = call
+                .arguments
+                .get(index)
+                .and_then(|argument| argument.as_expression())
+            else {
+                continue;
+            };
+            self.collect_exposed_argument_paths(callback, &mut targets);
+        }
+        self.expand_exposed_paths(targets)
+    }
+
     fn assignment_detaches_parameter(
         &self,
         target: &StaticAliasPath,
@@ -24651,6 +24782,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let synchronous_callback_effect_targets = self.synchronous_callback_effect_targets(call);
         let mut local_invocations = self
             .local_reflect_apply_invocation_facts(&call.callee, &call.arguments)
             .or_else(|| {
@@ -24719,6 +24851,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         };
         walk_call_expression(self, call);
         self.local_invocations.extend(local_invocations);
+        self.escaped_callable_effect_targets
+            .extend(synchronous_callback_effect_targets);
         for path in exposed_arguments {
             self.invalidate_exposed_path(path);
         }
