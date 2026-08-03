@@ -31,7 +31,7 @@ use oxc::{
     allocator::{Allocator, Vec as ArenaVec},
     ast::{
         ast::{
-            AccessorProperty, ArrayAssignmentTarget, ArrayExpressionElement,
+            AccessorProperty, ArrayAssignmentTarget, ArrayExpression, ArrayExpressionElement,
             ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
             AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
@@ -43,12 +43,12 @@ use oxc::{
             JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
             JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
             MetaProperty, MethodDefinitionKind, NewExpression, ObjectAssignmentTarget,
-            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyDefinition,
-            PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement, SimpleAssignmentTarget,
-            Statement, StaticBlock, Super, TSImportEqualsDeclaration, TSLiteral, TSModuleReference,
-            TSType, TSTypeName, TSTypeOperatorOperator, TaggedTemplateExpression, TemplateLiteral,
-            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
-            VariableDeclarator,
+            ObjectExpression, ObjectPropertyKind as OxcObjectPropertyKind, Program,
+            PropertyDefinition, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
+            SimpleAssignmentTarget, Statement, StaticBlock, Super, TSImportEqualsDeclaration,
+            TSLiteral, TSModuleReference, TSType, TSTypeName, TSTypeOperatorOperator,
+            TaggedTemplateExpression, TemplateLiteral, ThisExpression, UpdateExpression,
+            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -15493,6 +15493,66 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn collect_static_array_destructuring_values<'a>(
+        initializer: &'a ArrayExpression<'a>,
+        values: &mut Vec<Option<&'a Expression<'a>>>,
+    ) -> bool {
+        for element in &initializer.elements {
+            match element {
+                ArrayExpressionElement::Elision(_) => values.push(None),
+                ArrayExpressionElement::SpreadElement(spread) => {
+                    let Expression::ArrayExpression(spread) =
+                        spread.argument.get_inner_expression()
+                    else {
+                        return false;
+                    };
+                    if !Self::collect_static_array_destructuring_values(spread, values) {
+                        return false;
+                    }
+                }
+                _ => values.push(Some(element.to_expression())),
+            }
+        }
+        true
+    }
+
+    fn collect_static_object_destructuring_values<'a>(
+        &mut self,
+        initializer: &'a ObjectExpression<'a>,
+        guard: Option<&GeneratorMethodGuard>,
+        values: &mut BTreeMap<String, &'a Expression<'a>>,
+    ) -> bool {
+        for property in &initializer.properties {
+            let property = match property {
+                OxcObjectPropertyKind::ObjectProperty(property) => property,
+                OxcObjectPropertyKind::SpreadProperty(spread) => {
+                    let Expression::ObjectExpression(spread) =
+                        spread.argument.get_inner_expression()
+                    else {
+                        return false;
+                    };
+                    if !self.collect_static_object_destructuring_values(spread, guard, values) {
+                        return false;
+                    }
+                    continue;
+                }
+            };
+            if property.kind != PropertyKind::Init {
+                return false;
+            }
+            let Some(name) = property.key.static_name() else {
+                return false;
+            };
+            if name == "__proto__" {
+                return false;
+            }
+            if let Some(previous) = values.insert(name.into_owned(), &property.value) {
+                self.record_static_container_generator_values(previous, guard.is_some());
+            }
+        }
+        true
+    }
+
     fn record_destructured_callable_initializers(
         &mut self,
         pattern: &BindingPattern<'_>,
@@ -15515,11 +15575,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 else {
                     return;
                 };
-                if initializer
-                    .elements
-                    .iter()
-                    .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
-                {
+                let mut values = Vec::new();
+                if !Self::collect_static_array_destructuring_values(initializer, &mut values) {
                     return;
                 }
                 let guard = Self::array_iterator_guard();
@@ -15532,8 +15589,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 } else {
                     None
                 };
-                for (index, value) in initializer.elements.iter().enumerate() {
-                    if matches!(value, ArrayExpressionElement::Elision(_)) {
+                for (index, value) in values.iter().enumerate() {
+                    let Some(value) = *value else {
                         if let Some(binding) = pattern.elements.get(index).and_then(Option::as_ref)
                         {
                             self.record_missing_destructured_callable_initializer(
@@ -15542,7 +15599,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                             );
                         }
                         continue;
-                    }
+                    };
                     let Some(binding) = pattern.elements.get(index).and_then(Option::as_ref) else {
                         if index >= pattern.elements.len()
                             && let Some(rest_target) = &rest_target
@@ -15550,29 +15607,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                             self.record_callable_container_property(
                                 rest_target,
                                 (index - pattern.elements.len()).to_string(),
-                                value.to_expression(),
+                                value,
                                 Some(&guard),
                             );
                         } else {
-                            self.record_static_container_generator_values(
-                                value.to_expression(),
-                                true,
-                            );
+                            self.record_static_container_generator_values(value, true);
                         }
                         continue;
                     };
-                    self.record_destructured_callable_initializers(
-                        binding,
-                        value.to_expression(),
-                        Some(&guard),
-                    );
+                    self.record_destructured_callable_initializers(binding, value, Some(&guard));
                 }
-                for binding in pattern
-                    .elements
-                    .iter()
-                    .skip(initializer.elements.len())
-                    .flatten()
-                {
+                for binding in pattern.elements.iter().skip(values.len()).flatten() {
                     self.record_missing_destructured_callable_initializer(binding, Some(&guard));
                 }
             }
@@ -15591,22 +15636,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     None
                 };
                 let mut values = BTreeMap::new();
-                for property in &initializer.properties {
-                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
-                        return;
-                    };
-                    if property.kind != PropertyKind::Init {
-                        return;
-                    }
-                    let Some(name) = property.key.static_name() else {
-                        return;
-                    };
-                    if name == "__proto__" {
-                        return;
-                    }
-                    if let Some(previous) = values.insert(name.into_owned(), &property.value) {
-                        self.record_static_container_generator_values(previous, guard.is_some());
-                    }
+                if !self.collect_static_object_destructuring_values(initializer, guard, &mut values)
+                {
+                    return;
                 }
                 let mut selected = BTreeSet::new();
                 for property in &pattern.properties {
@@ -15767,11 +15799,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let Expression::ArrayExpression(initializer) = initializer.get_inner_expression() else {
             return;
         };
-        if initializer
-            .elements
-            .iter()
-            .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
-        {
+        let mut values = Vec::new();
+        if !Self::collect_static_array_destructuring_values(initializer, &mut values) {
             return;
         }
         let guard = Self::array_iterator_guard();
@@ -15783,8 +15812,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         } else {
             None
         };
-        for (index, value) in initializer.elements.iter().enumerate() {
-            if matches!(value, ArrayExpressionElement::Elision(_)) {
+        for (index, value) in values.iter().enumerate() {
+            let Some(value) = *value else {
                 if let Some(target) = pattern.elements.get(index).and_then(Option::as_ref) {
                     self.record_assignment_maybe_default_callable_initializer(
                         target,
@@ -15793,7 +15822,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     );
                 }
                 continue;
-            }
+            };
             let Some(target) = pattern.elements.get(index).and_then(Option::as_ref) else {
                 if index >= pattern.elements.len()
                     && let Some(rest_target) = &rest_target
@@ -15801,26 +15830,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     self.record_callable_container_property(
                         rest_target,
                         (index - pattern.elements.len()).to_string(),
-                        value.to_expression(),
+                        value,
                         Some(&guard),
                     );
                 } else {
-                    self.record_static_container_generator_values(value.to_expression(), true);
+                    self.record_static_container_generator_values(value, true);
                 }
                 continue;
             };
             self.record_assignment_maybe_default_callable_initializer(
                 target,
-                Some(value.to_expression()),
+                Some(value),
                 Some(&guard),
             );
         }
-        for target in pattern
-            .elements
-            .iter()
-            .skip(initializer.elements.len())
-            .flatten()
-        {
+        for target in pattern.elements.iter().skip(values.len()).flatten() {
             self.record_assignment_maybe_default_callable_initializer(target, None, Some(&guard));
         }
     }
@@ -15843,22 +15867,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             None
         };
         let mut values = BTreeMap::new();
-        for property in &initializer.properties {
-            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
-                return;
-            };
-            if property.kind != PropertyKind::Init {
-                return;
-            }
-            let Some(name) = property.key.static_name() else {
-                return;
-            };
-            if name == "__proto__" {
-                return;
-            }
-            if let Some(previous) = values.insert(name.into_owned(), &property.value) {
-                self.record_static_container_generator_values(previous, guard.is_some());
-            }
+        if !self.collect_static_object_destructuring_values(initializer, guard, &mut values) {
+            return;
         }
         let mut selected = BTreeSet::new();
         for property in &pattern.properties {

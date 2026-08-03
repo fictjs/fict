@@ -6085,6 +6085,36 @@ fn unadvanced_destructured_generator_values_remain_unexecuted() {
             "const { first, ...box } = { first: 0, run: function* () { values.forEach = null; } };",
             "box.run();",
         ),
+        (
+            "inline array spread generator remains unadvanced",
+            "",
+            "const [run] = [...[function* () { values.forEach = null; }]];",
+            "run();",
+        ),
+        (
+            "offset inline array spread generator remains unadvanced",
+            "",
+            "const [, run] = [0, ...[function* () { values.forEach = null; }]];",
+            "void run;",
+        ),
+        (
+            "inline object spread generator remains unadvanced",
+            "",
+            "const { run } = { ...{ run: function* () { values.forEach = null; } } };",
+            "run();",
+        ),
+        (
+            "object spread overwrites generator",
+            "",
+            "const { run } = { run: function* () { values.forEach = null; }, ...{ run: function* () {} } };",
+            "run();",
+        ),
+        (
+            "assigned inline spreads remain unadvanced",
+            "let first; let second;",
+            "[first] = [...[function* () { values.forEach = null; }]]; ({ run: second } = { ...{ run: function* () { values.forEach = null; } } });",
+            "first(); second();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -6211,6 +6241,24 @@ fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
             "",
             "const [, ...runs] = [0, function* () { values.forEach = null; }];",
             "runs[0]().next();",
+        ),
+        (
+            "inline array spread generator is advanced",
+            "",
+            "const [run] = [...[function* () { values.forEach = null; }]];",
+            "run().next();",
+        ),
+        (
+            "inline object spread generator is advanced",
+            "",
+            "const { run } = { ...{ run: function* () { values.forEach = null; } } };",
+            "run().next();",
+        ),
+        (
+            "assigned inline spread generator is advanced",
+            "let run;",
+            "[run] = [...[function* () { values.forEach = null; }]];",
+            "run().next();",
         ),
     ] {
         let source = format!(
