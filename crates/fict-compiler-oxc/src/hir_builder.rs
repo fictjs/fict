@@ -2047,6 +2047,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_getter_property_history: BTreeSet::new(),
             enumerable_getter_properties: BTreeSet::new(),
             enumerable_getter_property_history: BTreeSet::new(),
+            dynamic_getter_properties: BTreeMap::new(),
+            dynamic_getter_property_history: BTreeMap::new(),
+            enumerable_dynamic_getter_properties: BTreeMap::new(),
+            enumerable_dynamic_getter_property_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
             handled_local_getter_read_spans: BTreeSet::new(),
             handled_object_spread_getter_spans: BTreeSet::new(),
@@ -18421,6 +18425,11 @@ struct StaticHookAliasCollector<'semantic> {
     local_getter_property_history: BTreeSet<StaticAliasPath>,
     enumerable_getter_properties: BTreeSet<StaticAliasPath>,
     enumerable_getter_property_history: BTreeSet<StaticAliasPath>,
+    dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    dynamic_getter_property_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    enumerable_dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    enumerable_dynamic_getter_property_history:
+        BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     local_getter_call_invocations: BTreeMap<(u32, u32), Vec<LocalInvocationFact>>,
     handled_local_getter_read_spans: BTreeSet<(u32, u32)>,
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
@@ -19791,6 +19800,52 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn record_class_function_callable(
+        &mut self,
+        target: StaticAliasPath,
+        function: &Function<'_>,
+        unreferenced: bool,
+    ) {
+        if !function.generator {
+            self.returned_callable_spans
+                .insert((function.span.start, function.span.end));
+        }
+        if unreferenced {
+            self.record_unreferenced_callable_span(&target, function.span);
+        }
+        self.record_local_callable_effect_span(
+            target.clone(),
+            (function.span.start, function.span.end),
+        );
+        self.record_local_callable_parameters(target.clone(), &function.params);
+        self.record_local_callable_receiver(
+            target.clone(),
+            StaticAliasPath::dynamic_this(function.span),
+        );
+        if function.generator {
+            self.record_local_generator(target.clone());
+        }
+        let results = if function.generator || function.r#async {
+            Vec::new()
+        } else if let Some(body) = &function.body {
+            let mut collector = LocalCallableResultCollector {
+                owner: self,
+                lexical_receiver: Some(StaticAliasPath::dynamic_this(function.span)),
+                function_depth: self.function_depth.saturating_add(1),
+                results: Vec::new(),
+            };
+            collector.visit_function_body(body);
+            collector.results
+        } else {
+            Vec::new()
+        };
+        self.record_local_callable_results(target.clone(), results);
+        if let Some(body) = &function.body {
+            let paths = self.returned_function_body_paths(body);
+            self.record_callable_exposures(target, paths);
+        }
+    }
+
     fn record_class_callables(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
         self.local_class_instance_fields.remove(target);
         self.local_class_instance_callables.remove(target);
@@ -19832,6 +19887,7 @@ impl StaticHookAliasCollector<'_> {
             }
             let super_prototype = super_class.with_property("prototype".to_string());
             let prototype = target.clone().with_property("prototype".to_string());
+            self.copy_dynamic_local_getters(&prototype, &super_prototype);
             let inherited = self
                 .local_callable_parameters
                 .keys()
@@ -19857,6 +19913,23 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             let Some(name) = method.key.static_name() else {
+                let owner = if method.r#static {
+                    target.clone()
+                } else {
+                    target.clone().with_property("prototype".to_string())
+                };
+                if method.kind == MethodDefinitionKind::Get {
+                    let span = method.value.span;
+                    let getter = StaticAliasPath::dynamic_this(span)
+                        .with_property("computed-getter".to_string());
+                    self.dynamic_path_owner_depths
+                        .insert((span.start, span.end), self.function_depth);
+                    self.record_dynamic_local_getter(owner, getter.clone(), false);
+                    self.record_class_function_callable(getter, &method.value, false);
+                } else if method.kind == MethodDefinitionKind::Set {
+                    self.unreferenced_callable_spans
+                        .insert((method.value.span.start, method.value.span.end));
+                }
                 if !method.r#static {
                     self.open_local_class_instance_fields.insert(target.clone());
                 }
@@ -19894,44 +19967,11 @@ impl StaticHookAliasCollector<'_> {
             ) {
                 continue;
             }
-            if !method.value.generator {
-                self.returned_callable_spans
-                    .insert((method.value.span.start, method.value.span.end));
-            }
-            if method.kind == MethodDefinitionKind::Method {
-                self.record_unreferenced_callable_span(&method_target, method.value.span);
-            }
-            self.record_local_callable_effect_span(
-                method_target.clone(),
-                (method.value.span.start, method.value.span.end),
+            self.record_class_function_callable(
+                method_target,
+                &method.value,
+                method.kind == MethodDefinitionKind::Method,
             );
-            self.record_local_callable_parameters(method_target.clone(), &method.value.params);
-            self.record_local_callable_receiver(
-                method_target.clone(),
-                StaticAliasPath::dynamic_this(method.value.span),
-            );
-            if method.value.generator {
-                self.record_local_generator(method_target.clone());
-            }
-            let results = if method.value.generator || method.value.r#async {
-                Vec::new()
-            } else if let Some(body) = &method.value.body {
-                let mut collector = LocalCallableResultCollector {
-                    owner: self,
-                    lexical_receiver: Some(StaticAliasPath::dynamic_this(method.value.span)),
-                    function_depth: self.function_depth.saturating_add(1),
-                    results: Vec::new(),
-                };
-                collector.visit_function_body(body);
-                collector.results
-            } else {
-                Vec::new()
-            };
-            self.record_local_callable_results(method_target.clone(), results);
-            if let Some(body) = &method.value.body {
-                let paths = self.returned_function_body_paths(body);
-                self.record_callable_exposures(method_target, paths);
-            }
         }
         for element in &class.body.body {
             let ClassElement::PropertyDefinition(property) = element else {
@@ -20039,6 +20079,11 @@ impl StaticHookAliasCollector<'_> {
         if self.local_class_instances.contains(&source) {
             self.local_class_instances.insert(target.clone());
         }
+        self.copy_dynamic_local_getters(target, &source);
+        self.copy_dynamic_local_getters(
+            &target.clone().with_property("prototype".to_string()),
+            &source.with_property("prototype".to_string()),
+        );
         if let Some(parameters) = self.local_callable_parameters.get(&source).cloned() {
             self.record_local_callable_signature(target.clone(), parameters);
         }
@@ -20271,6 +20316,7 @@ impl StaticHookAliasCollector<'_> {
             return;
         }
         let prototype = class.with_property("prototype".to_string());
+        self.copy_dynamic_local_getters(target, &prototype);
         let fields = self
             .local_class_instance_fields
             .get(class)
@@ -22221,6 +22267,20 @@ impl StaticHookAliasCollector<'_> {
         paths.extend(outer);
     }
 
+    fn restore_outer_path_map(
+        paths: &mut BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+        outer: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+        binding_owner_depths: &BTreeMap<SymbolId, usize>,
+        dynamic_path_owner_depths: &BTreeMap<(u32, u32), usize>,
+        depth: usize,
+    ) {
+        paths.retain(|path, _| {
+            Self::path_owner_depth_from_maps(binding_owner_depths, dynamic_path_owner_depths, path)
+                >= depth
+        });
+        paths.extend(outer);
+    }
+
     fn attached_parameter_path(
         &self,
         raw: &StaticAliasPath,
@@ -22313,6 +22373,10 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target| !target.overlaps(path));
         self.enumerable_getter_properties
             .retain(|target| !target.overlaps(path));
+        self.dynamic_getter_properties
+            .retain(|owner, _| !owner.starts_with(path));
+        self.enumerable_dynamic_getter_properties
+            .retain(|owner, _| !owner.starts_with(path));
         self.callable_exposures
             .retain(|target, _| !target.overlaps(path));
         self.local_callable_parameters
@@ -22466,13 +22530,86 @@ impl StaticHookAliasCollector<'_> {
         } else {
             &self.local_getter_properties
         };
-        (
-            historical,
-            candidates
-                .into_iter()
-                .filter(|candidate| getters.contains(candidate))
-                .collect(),
-        )
+        let mut resolved_getters = candidates
+            .iter()
+            .filter(|candidate| getters.contains(*candidate))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let dynamic_getters = if enumerable_only {
+            if historical {
+                &self.enumerable_dynamic_getter_property_history
+            } else {
+                &self.enumerable_dynamic_getter_properties
+            }
+        } else if historical {
+            &self.dynamic_getter_property_history
+        } else {
+            &self.dynamic_getter_properties
+        };
+        for candidate in candidates {
+            if candidate.properties.is_empty() {
+                continue;
+            }
+            let mut owner = candidate;
+            owner.properties.pop();
+            if let Some(getters) = dynamic_getters.get(&owner) {
+                resolved_getters.extend(getters.iter().cloned());
+            }
+        }
+        (historical, resolved_getters)
+    }
+
+    fn record_dynamic_local_getter(
+        &mut self,
+        owner: StaticAliasPath,
+        getter: StaticAliasPath,
+        enumerable: bool,
+    ) {
+        self.dynamic_getter_property_history
+            .entry(owner.clone())
+            .or_default()
+            .insert(getter.clone());
+        self.dynamic_getter_properties
+            .entry(owner.clone())
+            .or_default()
+            .insert(getter.clone());
+        if enumerable {
+            self.enumerable_dynamic_getter_property_history
+                .entry(owner.clone())
+                .or_default()
+                .insert(getter.clone());
+            self.enumerable_dynamic_getter_properties
+                .entry(owner)
+                .or_default()
+                .insert(getter);
+        }
+    }
+
+    fn copy_dynamic_local_getters(&mut self, target: &StaticAliasPath, source: &StaticAliasPath) {
+        if let Some(getters) = self.dynamic_getter_properties.get(source).cloned() {
+            self.dynamic_getter_property_history
+                .entry(target.clone())
+                .or_default()
+                .extend(getters.iter().cloned());
+            self.dynamic_getter_properties
+                .entry(target.clone())
+                .or_default()
+                .extend(getters);
+        }
+        if let Some(getters) = self
+            .enumerable_dynamic_getter_properties
+            .get(source)
+            .cloned()
+        {
+            self.enumerable_dynamic_getter_property_history
+                .entry(target.clone())
+                .or_default()
+                .extend(getters.iter().cloned());
+            self.enumerable_dynamic_getter_properties
+                .entry(target.clone())
+                .or_default()
+                .extend(getters);
+        }
     }
 
     fn enumerable_local_getter_names(&self, source: &StaticAliasPath) -> BTreeSet<String> {
@@ -22505,6 +22642,30 @@ impl StaticHookAliasCollector<'_> {
             .collect()
     }
 
+    fn enumerable_dynamic_local_getters(
+        &self,
+        source: &StaticAliasPath,
+    ) -> BTreeSet<StaticAliasPath> {
+        let resolved = resolve_static_alias_path(&self.aliases, source);
+        let historical = [source, &resolved]
+            .into_iter()
+            .any(|path| self.path_requires_historical_aliases(path, self.function_depth));
+        let bases = if historical {
+            resolve_historical_alias_paths(&self.alias_history, source)
+        } else {
+            BTreeSet::from([source.clone(), resolved])
+        };
+        let getters = if historical {
+            &self.enumerable_dynamic_getter_property_history
+        } else {
+            &self.enumerable_dynamic_getter_properties
+        };
+        bases
+            .iter()
+            .flat_map(|base| getters.get(base).into_iter().flatten().cloned())
+            .collect()
+    }
+
     fn record_local_getter_read(
         &mut self,
         property: StaticAliasPath,
@@ -22514,33 +22675,39 @@ impl StaticHookAliasCollector<'_> {
         if getters.is_empty() {
             return false;
         }
-        let callee = resolve_static_alias_path(&self.aliases, &property);
         let mut owner = property.clone();
         owner.properties.pop();
-        let invocation = LocalInvocationFact {
-            parameters: self.current_invocation_parameters(&property, &callee),
-            parameters_resolved: false,
-            owner_returned_callable_span: self.current_returned_callable_span(),
-            creator_owner: None,
-            arguments: Vec::new(),
-            argument_offset: 0,
-            raw_callee: Some(property),
-            callee: Some(callee.clone()),
-            function_depth: self.function_depth,
-            bound_receiver: vec![self.collect_local_invocation_path(owner)],
-            dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
-            generator: LocalInvocationGenerator::ResolveFromCallee,
-            result_discarded: target.is_none(),
-            force_argument_exposure: false,
-            construct: false,
-        };
-        let invocation = self.with_current_bound_callable(invocation, &callee);
-        self.local_invocations.push(invocation.clone());
+        let receiver = vec![self.collect_local_invocation_path(owner)];
+        let invocations = getters
+            .iter()
+            .map(|getter| {
+                let callee = resolve_static_alias_path(&self.aliases, getter);
+                let invocation = LocalInvocationFact {
+                    parameters: self.current_invocation_parameters(getter, &callee),
+                    parameters_resolved: false,
+                    owner_returned_callable_span: self.current_returned_callable_span(),
+                    creator_owner: None,
+                    arguments: Vec::new(),
+                    argument_offset: 0,
+                    raw_callee: Some(getter.clone()),
+                    callee: Some(callee.clone()),
+                    function_depth: self.function_depth,
+                    bound_receiver: receiver.clone(),
+                    dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
+                    generator: LocalInvocationGenerator::ResolveFromCallee,
+                    result_discarded: target.is_none(),
+                    force_argument_exposure: false,
+                    construct: false,
+                };
+                self.with_current_bound_callable(invocation, &callee)
+            })
+            .collect::<Vec<_>>();
+        self.local_invocations.extend(invocations.iter().cloned());
         if let Some(target) = target {
             self.clear_overlapping_aliases(&target);
             self.record_callable_result_initializer_from_invocations(
                 target.clone(),
-                vec![invocation],
+                invocations,
                 None,
             );
             if historical || getters.len() > 1 {
@@ -22579,7 +22746,7 @@ impl StaticHookAliasCollector<'_> {
         receiver: Vec<LocalInvocationArgument>,
         construct: bool,
     ) -> Option<Vec<LocalInvocationFact>> {
-        let property = self.alias_source_path(callee_expression)?;
+        let property = self.local_getter_source_path(callee_expression)?;
         let target = StaticAliasPath::dynamic_this(span).with_property("getter-result".to_string());
         self.dynamic_path_owner_depths
             .insert((span.start, span.end), self.function_depth);
@@ -22614,6 +22781,33 @@ impl StaticHookAliasCollector<'_> {
         self.record_local_getter_read(property, None)
     }
 
+    fn record_dynamic_local_getter_invocation(
+        &mut self,
+        owner: &StaticAliasPath,
+        getter: StaticAliasPath,
+    ) {
+        let callee = resolve_static_alias_path(&self.aliases, &getter);
+        let invocation = LocalInvocationFact {
+            parameters: self.current_invocation_parameters(&getter, &callee),
+            parameters_resolved: false,
+            owner_returned_callable_span: self.current_returned_callable_span(),
+            creator_owner: None,
+            arguments: Vec::new(),
+            argument_offset: 0,
+            raw_callee: Some(getter),
+            callee: Some(callee.clone()),
+            function_depth: self.function_depth,
+            bound_receiver: vec![self.collect_local_invocation_path(owner.clone())],
+            dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
+            generator: LocalInvocationGenerator::ResolveFromCallee,
+            result_discarded: true,
+            force_argument_exposure: false,
+            construct: false,
+        };
+        self.local_invocations
+            .push(self.with_current_bound_callable(invocation, &callee));
+    }
+
     fn record_enumerable_local_getter_invocations(
         &mut self,
         source: &StaticAliasPath,
@@ -22623,6 +22817,9 @@ impl StaticHookAliasCollector<'_> {
             if !excluded.contains(&property) {
                 self.record_local_getter_invocation(source.clone().with_property(property));
             }
+        }
+        for getter in self.enumerable_dynamic_local_getters(source) {
+            self.record_dynamic_local_getter_invocation(source, getter);
         }
     }
 
@@ -22640,6 +22837,10 @@ impl StaticHookAliasCollector<'_> {
                 source.clone().with_property(property.clone()),
                 Some(target.clone().with_property(property)),
             );
+        }
+        for getter in self.enumerable_dynamic_local_getters(source) {
+            self.record_dynamic_local_getter_invocation(source, getter.clone());
+            self.record_dynamic_local_getter(target.clone(), getter, true);
         }
     }
 
@@ -23075,7 +23276,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
-        let property_source = self.alias_source_path(value);
+        let property_source = self.local_getter_source_path(value);
         self.clear_overlapping_aliases(&target);
         if let Some(source) = property_source
             && self.record_local_getter_read(source, Some(target.clone()))
@@ -23188,6 +23389,21 @@ impl StaticHookAliasCollector<'_> {
                 )
             })
             .or_else(|| self.prototype_derived_path(expression))
+    }
+
+    fn local_getter_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
+        self.alias_source_path(expression).or_else(|| {
+            let Expression::ComputedMemberExpression(member) = expression.get_inner_expression()
+            else {
+                return None;
+            };
+            self.alias_source_path(&member.object).map(|source| {
+                source.with_property(
+                    static_member_name(&member.expression)
+                        .unwrap_or_else(|| "<computed>".to_string()),
+                )
+            })
+        })
     }
 
     fn returned_function_paths(
@@ -25105,6 +25321,21 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             };
             let Some(name) = property.key.static_name() else {
+                let span = property.value.span();
+                if property.kind == PropertyKind::Get {
+                    let getter = StaticAliasPath::dynamic_this(span)
+                        .with_property("computed-getter".to_string());
+                    self.dynamic_path_owner_depths
+                        .insert((span.start, span.end), self.function_depth);
+                    self.record_dynamic_local_getter(target.clone(), getter.clone(), true);
+                    self.collect_callable_initializer(getter, &property.value);
+                    self.returned_callable_spans.insert((span.start, span.end));
+                    self.unreferenced_callable_spans
+                        .remove(&(span.start, span.end));
+                } else if property.kind == PropertyKind::Set {
+                    self.unreferenced_callable_spans
+                        .insert((span.start, span.end));
+                }
                 self.ambiguous_alias_targets.extend(
                     self.aliases
                         .keys()
@@ -27100,9 +27331,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
         let span = (member.span.start, member.span.end);
         if !self.handled_local_getter_read_spans.contains(&span)
-            && let Some(property) = static_member_name(&member.expression)
             && let Some(source) = self.alias_source_path(&member.object)
-            && self.record_local_getter_invocation(source.with_property(property))
+            && self.record_local_getter_invocation(source.with_property(
+                static_member_name(&member.expression).unwrap_or_else(|| "<computed>".to_string()),
+            ))
         {
             self.handled_local_getter_read_spans.insert(span);
         }
@@ -27355,6 +27587,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
             .collect::<BTreeSet<_>>();
+        let outer_dynamic_getter_properties = self
+            .dynamic_getter_properties
+            .iter()
+            .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
+            .map(|(owner, getters)| (owner.clone(), getters.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let outer_enumerable_dynamic_getter_properties = self
+            .enumerable_dynamic_getter_properties
+            .iter()
+            .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
+            .map(|(owner, getters)| (owner.clone(), getters.clone()))
+            .collect::<BTreeMap<_, _>>();
         let outer_callable_exposures = self
             .callable_exposures
             .iter()
@@ -27472,6 +27716,20 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         Self::restore_outer_path_set(
             &mut self.enumerable_getter_properties,
             outer_enumerable_getter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.dynamic_getter_properties,
+            outer_dynamic_getter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.enumerable_dynamic_getter_properties,
+            outer_enumerable_dynamic_getter_properties,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
@@ -27654,6 +27912,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|target| self.path_owner_depth(target) < depth)
             .cloned()
             .collect::<BTreeSet<_>>();
+        let outer_dynamic_getter_properties = self
+            .dynamic_getter_properties
+            .iter()
+            .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
+            .map(|(owner, getters)| (owner.clone(), getters.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let outer_enumerable_dynamic_getter_properties = self
+            .enumerable_dynamic_getter_properties
+            .iter()
+            .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
+            .map(|(owner, getters)| (owner.clone(), getters.clone()))
+            .collect::<BTreeMap<_, _>>();
         let outer_callable_exposures = self
             .callable_exposures
             .iter()
@@ -27760,6 +28030,20 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         Self::restore_outer_path_set(
             &mut self.enumerable_getter_properties,
             outer_enumerable_getter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.dynamic_getter_properties,
+            outer_dynamic_getter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.enumerable_dynamic_getter_properties,
+            outer_enumerable_dynamic_getter_properties,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
