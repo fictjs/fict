@@ -32,18 +32,19 @@ use oxc::{
     ast::{
         ast::{
             AccessorProperty, ArrayAssignmentTarget, ArrayExpression, ArrayExpressionElement,
-            ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
-            AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
-            AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
-            CallExpression, ChainElement, Class, ClassElement, ClassType, ComputedMemberExpression,
-            Decorator, Expression, ExpressionStatement, FormalParameter, FormalParameterRest,
-            FormalParameters, Function, FunctionBody, FunctionType, IdentifierReference,
-            ImportExpression, ImportOrExportKind, ImportPhase as OxcImportPhase, JSXAttributeItem,
-            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
-            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
-            JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
-            MetaProperty, MethodDefinitionKind, NewExpression, ObjectAssignmentTarget,
-            ObjectExpression, ObjectPropertyKind as OxcObjectPropertyKind, Program,
+            ArrayPattern, ArrowFunctionExpression, AssignmentExpression, AssignmentPattern,
+            AssignmentTarget, AssignmentTargetMaybeDefault, AssignmentTargetProperty,
+            AssignmentTargetRest, AssignmentTargetWithDefault, BindingIdentifier, BindingPattern,
+            BindingRestElement, CallExpression, ChainElement, Class, ClassElement, ClassType,
+            ComputedMemberExpression, Decorator, Expression, ExpressionStatement, FormalParameter,
+            FormalParameterRest, FormalParameters, Function, FunctionBody, FunctionType,
+            IdentifierReference, ImportExpression, ImportOrExportKind,
+            ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
+            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
+            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
+            MethodDefinitionKind, NewExpression, ObjectAssignmentTarget, ObjectExpression,
+            ObjectPattern, ObjectPropertyKind as OxcObjectPropertyKind, Program,
             PropertyDefinition, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
             SimpleAssignmentTarget, Statement, StaticBlock, Super, TSImportEqualsDeclaration,
             TSLiteral, TSModuleReference, TSType, TSTypeName, TSTypeOperatorOperator,
@@ -10453,6 +10454,19 @@ struct GeneratorMethodGuard {
     method: &'static str,
 }
 
+enum ObjectDestructuringCandidate<'a> {
+    Expression(&'a Expression<'a>),
+    Stored {
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+    },
+}
+
+enum EitherAssignmentBinding<'a, 'ast> {
+    Identifier(&'a IdentifierReference<'ast>),
+    Target(&'a AssignmentTargetMaybeDefault<'ast>),
+}
+
 enum GeneratorBindForwarding {
     Source {
         source: StaticAliasPath,
@@ -15462,6 +15476,217 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_stored_array_binding_destructuring(
+        &mut self,
+        pattern: &ArrayPattern<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+    ) -> bool {
+        let rest_target = if let Some(rest) = &pattern.rest {
+            let Some(target) = self.binding_callable_container_target(&rest.argument) else {
+                return false;
+            };
+            Some(target)
+        } else {
+            None
+        };
+        let guard = Self::stored_array_iterator_guard(&source);
+        for (index, binding) in pattern.elements.iter().enumerate() {
+            let Some(binding) = binding else {
+                continue;
+            };
+            if matches!(binding, BindingPattern::AssignmentPattern(_))
+                || !self.record_stored_binding_destructuring(
+                    binding,
+                    source.clone().with_property(index.to_string()),
+                    source_span,
+                    Some(&guard),
+                )
+            {
+                return false;
+            }
+        }
+        if let Some(rest_target) = &rest_target {
+            for property in self.known_callable_child_properties(&source) {
+                let Ok(index) = property.parse::<usize>() else {
+                    continue;
+                };
+                if index < pattern.elements.len() {
+                    continue;
+                }
+                self.record_callable_path_initializer(
+                    rest_target
+                        .clone()
+                        .with_property((index - pattern.elements.len()).to_string()),
+                    source.clone().with_property(property),
+                    source_span,
+                    Some(&guard),
+                );
+            }
+        }
+        true
+    }
+
+    fn record_trailing_stored_array_binding_destructuring(
+        &mut self,
+        pattern: &ArrayPattern<'_>,
+        initializer: &ArrayExpression<'_>,
+        spread_index: usize,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+    ) -> bool {
+        let rest_target = if let Some(rest) = &pattern.rest {
+            let Some(target) = self.binding_callable_container_target(&rest.argument) else {
+                return false;
+            };
+            Some(target)
+        } else {
+            None
+        };
+        let outer_guard = Self::array_iterator_guard();
+        let spread_guard = Self::stored_array_iterator_guard(&source);
+        for (index, binding) in pattern.elements.iter().enumerate() {
+            let Some(binding) = binding else {
+                if index < spread_index
+                    && let Some(value) = initializer.elements.get(index)
+                    && !matches!(value, ArrayExpressionElement::Elision(_))
+                {
+                    self.record_static_container_generator_values(value.to_expression(), true);
+                }
+                continue;
+            };
+            if index < spread_index {
+                let Some(value) = initializer.elements.get(index) else {
+                    self.record_missing_destructured_callable_initializer(
+                        binding,
+                        Some(&outer_guard),
+                    );
+                    continue;
+                };
+                if matches!(value, ArrayExpressionElement::Elision(_)) {
+                    self.record_missing_destructured_callable_initializer(
+                        binding,
+                        Some(&outer_guard),
+                    );
+                } else {
+                    self.record_destructured_callable_initializers(
+                        binding,
+                        value.to_expression(),
+                        Some(&outer_guard),
+                    );
+                }
+            } else if matches!(binding, BindingPattern::AssignmentPattern(_))
+                || !self.record_stored_binding_destructuring(
+                    binding,
+                    source
+                        .clone()
+                        .with_property((index - spread_index).to_string()),
+                    source_span,
+                    Some(&spread_guard),
+                )
+            {
+                return false;
+            }
+        }
+        for value in initializer
+            .elements
+            .iter()
+            .take(spread_index)
+            .skip(pattern.elements.len())
+            .enumerate()
+        {
+            let (rest_index, value) = value;
+            if matches!(value, ArrayExpressionElement::Elision(_)) {
+                continue;
+            }
+            if let Some(rest_target) = &rest_target {
+                self.record_callable_container_property(
+                    rest_target,
+                    rest_index.to_string(),
+                    value.to_expression(),
+                    Some(&outer_guard),
+                );
+            } else {
+                self.record_static_container_generator_values(value.to_expression(), true);
+            }
+        }
+        if let Some(rest_target) = &rest_target {
+            for property in self.known_callable_child_properties(&source) {
+                let Ok(index) = property.parse::<usize>() else {
+                    continue;
+                };
+                let output_index = spread_index + index;
+                if output_index < pattern.elements.len() {
+                    continue;
+                }
+                self.record_callable_path_initializer(
+                    rest_target
+                        .clone()
+                        .with_property((output_index - pattern.elements.len()).to_string()),
+                    source.clone().with_property(property),
+                    source_span,
+                    Some(&spread_guard),
+                );
+            }
+        }
+        true
+    }
+
+    fn record_stored_object_binding_destructuring(
+        &mut self,
+        pattern: &ObjectPattern<'_>,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        let rest_target = if let Some(rest) = &pattern.rest {
+            if guard.is_some() {
+                return false;
+            }
+            let Some(target) = self.binding_callable_container_target(&rest.argument) else {
+                return false;
+            };
+            Some(target)
+        } else {
+            None
+        };
+        let mut selected = BTreeSet::new();
+        for property in &pattern.properties {
+            let Some(name) = property.key.static_name() else {
+                return false;
+            };
+            selected.insert(name.to_string());
+            let source = source.clone().with_property(name.into_owned());
+            let property_guard = Self::stored_object_property_guard(&source);
+            if matches!(&property.value, BindingPattern::AssignmentPattern(_))
+                || !self.record_stored_binding_destructuring(
+                    &property.value,
+                    source,
+                    source_span,
+                    guard.or(Some(&property_guard)),
+                )
+            {
+                return false;
+            }
+        }
+        if let Some(rest_target) = &rest_target {
+            for property in self.known_callable_child_properties(&source) {
+                if selected.contains(&property) {
+                    continue;
+                }
+                let property_source = source.clone().with_property(property.clone());
+                let property_guard = Self::stored_object_property_guard(&property_source);
+                self.record_callable_path_initializer(
+                    rest_target.clone().with_property(property),
+                    property_source,
+                    source_span,
+                    Some(&property_guard),
+                );
+            }
+        }
+        true
+    }
+
     fn record_stored_binding_destructuring(
         &mut self,
         pattern: &BindingPattern<'_>,
@@ -15477,44 +15702,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 self.record_callable_path_initializer(target, source, source_span, guard);
             }
             BindingPattern::ArrayPattern(pattern) => {
-                if pattern.rest.is_some() {
+                if !self.record_stored_array_binding_destructuring(pattern, source, source_span) {
                     return false;
-                }
-                let guard = Self::stored_array_iterator_guard(&source);
-                for (index, binding) in pattern.elements.iter().enumerate() {
-                    let Some(binding) = binding else {
-                        continue;
-                    };
-                    if matches!(binding, BindingPattern::AssignmentPattern(_))
-                        || !self.record_stored_binding_destructuring(
-                            binding,
-                            source.clone().with_property(index.to_string()),
-                            source_span,
-                            Some(&guard),
-                        )
-                    {
-                        return false;
-                    }
                 }
             }
             BindingPattern::ObjectPattern(pattern) => {
-                if pattern.rest.is_some() {
+                if !self.record_stored_object_binding_destructuring(
+                    pattern,
+                    source,
+                    source_span,
+                    guard,
+                ) {
                     return false;
-                }
-                for property in &pattern.properties {
-                    let Some(name) = property.key.static_name() else {
-                        return false;
-                    };
-                    if matches!(&property.value, BindingPattern::AssignmentPattern(_))
-                        || !self.record_stored_binding_destructuring(
-                            &property.value,
-                            source.clone().with_property(name.into_owned()),
-                            source_span,
-                            guard,
-                        )
-                    {
-                        return false;
-                    }
                 }
             }
             BindingPattern::AssignmentPattern(_) => return false,
@@ -15629,6 +15828,33 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         true
     }
 
+    fn trailing_stored_array_spread(
+        &self,
+        initializer: &ArrayExpression<'_>,
+    ) -> Option<(usize, StaticAliasPath, (u32, u32))> {
+        let (spread_index, last) = initializer
+            .elements
+            .len()
+            .checked_sub(1)
+            .and_then(|index| {
+                initializer
+                    .elements
+                    .get(index)
+                    .map(|element| (index, element))
+            })?;
+        if initializer.elements[..spread_index]
+            .iter()
+            .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+        {
+            return None;
+        }
+        let ArrayExpressionElement::SpreadElement(spread) = last else {
+            return None;
+        };
+        self.callable_reference(&spread.argument)
+            .map(|(source, source_span)| (spread_index, source, source_span))
+    }
+
     fn collect_static_object_destructuring_values<'a>(
         &mut self,
         initializer: &'a ObjectExpression<'a>,
@@ -15661,6 +15887,261 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             if let Some(previous) = values.insert(name.into_owned(), &property.value) {
                 self.record_static_container_generator_values(previous, guard.is_some());
+            }
+        }
+        true
+    }
+
+    fn object_has_stored_spread(initializer: &ObjectExpression<'_>) -> bool {
+        initializer.properties.iter().any(|property| {
+            let OxcObjectPropertyKind::SpreadProperty(spread) = property else {
+                return false;
+            };
+            match spread.argument.get_inner_expression() {
+                Expression::ObjectExpression(object) => Self::object_has_stored_spread(object),
+                _ => true,
+            }
+        })
+    }
+
+    fn sole_stored_object_spread(
+        &self,
+        initializer: &ObjectExpression<'_>,
+    ) -> Option<(StaticAliasPath, (u32, u32))> {
+        let [OxcObjectPropertyKind::SpreadProperty(spread)] = initializer.properties.as_slice()
+        else {
+            return None;
+        };
+        self.callable_reference(&spread.argument)
+    }
+
+    fn callable_property_is_known(&self, source: &StaticAliasPath) -> bool {
+        self.related_callable_paths(source).iter().any(|source| {
+            self.generator_callable_targets.contains(source)
+                || self.non_generator_callable_targets.contains(source)
+                || self.forwarding_targets.contains(source)
+        })
+    }
+
+    fn known_callable_child_properties(&self, source: &StaticAliasPath) -> BTreeSet<String> {
+        self.generator_callable_targets
+            .iter()
+            .chain(self.non_generator_callable_targets.iter())
+            .chain(self.forwarding_targets.iter())
+            .flat_map(|candidate| self.related_callable_paths(candidate))
+            .filter(|candidate| {
+                candidate.starts_with(source)
+                    && candidate.properties.len() == source.properties.len() + 1
+                    && !candidate.element_wildcard
+            })
+            .map(|candidate| candidate.properties[source.properties.len()].clone())
+            .collect()
+    }
+
+    fn discard_object_destructuring_candidates<'a>(
+        &mut self,
+        candidates: impl IntoIterator<Item = ObjectDestructuringCandidate<'a>>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        for candidate in candidates {
+            match candidate {
+                ObjectDestructuringCandidate::Expression(expression) => {
+                    if let Some(guard) = guard {
+                        if !self.record_guarded_nonexecuting_callable(
+                            expression,
+                            &guard.owner,
+                            guard.method,
+                            guard.source.is_some(),
+                        ) {
+                            return false;
+                        }
+                    } else {
+                        self.record_static_container_generator_values(expression, false);
+                    }
+                }
+                ObjectDestructuringCandidate::Stored {
+                    source,
+                    source_span,
+                } => {
+                    if let Some(guard) = guard {
+                        self.guarded_discarded_invocation_reads.push((
+                            source,
+                            source_span,
+                            guard.clone(),
+                        ));
+                    } else {
+                        self.record_merely_observed_value_read(source, source_span);
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn collect_object_destructuring_candidates<'a>(
+        &mut self,
+        initializer: &'a ObjectExpression<'a>,
+        property_name: &str,
+        guard: Option<&GeneratorMethodGuard>,
+        candidates: &mut Vec<ObjectDestructuringCandidate<'a>>,
+    ) -> Option<bool> {
+        let mut definitely_present = false;
+        for property in &initializer.properties {
+            match property {
+                OxcObjectPropertyKind::ObjectProperty(property) => {
+                    if property.kind != PropertyKind::Init {
+                        return None;
+                    }
+                    let name = property.key.static_name()?;
+                    if name == "__proto__" {
+                        return None;
+                    }
+                    if name != property_name {
+                        continue;
+                    }
+                    if !self
+                        .discard_object_destructuring_candidates(std::mem::take(candidates), guard)
+                    {
+                        return None;
+                    }
+                    candidates.push(ObjectDestructuringCandidate::Expression(&property.value));
+                    definitely_present = true;
+                }
+                OxcObjectPropertyKind::SpreadProperty(spread) => {
+                    if let Expression::ObjectExpression(object) =
+                        spread.argument.get_inner_expression()
+                    {
+                        if Self::object_has_stored_spread(object) {
+                            return None;
+                        }
+                        let mut spread_candidates = Vec::new();
+                        let spread_definitely_present = self
+                            .collect_object_destructuring_candidates(
+                                object,
+                                property_name,
+                                guard,
+                                &mut spread_candidates,
+                            )?;
+                        if spread_definitely_present {
+                            if !self.discard_object_destructuring_candidates(
+                                std::mem::take(candidates),
+                                guard,
+                            ) {
+                                return None;
+                            }
+                            definitely_present = true;
+                        }
+                        candidates.extend(spread_candidates);
+                        continue;
+                    }
+                    let (source, source_span) = self.callable_reference(&spread.argument)?;
+                    let source = source.with_property(property_name.to_string());
+                    if self.callable_property_is_known(&source) {
+                        let property_guard = Self::stored_object_property_guard(&source);
+                        if !self.discard_object_destructuring_candidates(
+                            std::mem::take(candidates),
+                            Some(&property_guard),
+                        ) {
+                            return None;
+                        }
+                        definitely_present = true;
+                    }
+                    candidates.push(ObjectDestructuringCandidate::Stored {
+                        source,
+                        source_span,
+                    });
+                }
+            }
+        }
+        Some(definitely_present)
+    }
+
+    fn stored_object_property_guard(source: &StaticAliasPath) -> GeneratorMethodGuard {
+        GeneratorMethodGuard {
+            source: None,
+            owner: source.clone(),
+            method: "",
+        }
+    }
+
+    fn record_mixed_object_binding_destructuring(
+        &mut self,
+        pattern: &ObjectPattern<'_>,
+        initializer: &ObjectExpression<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        let rest = if let Some(rest) = &pattern.rest {
+            if guard.is_some() {
+                return false;
+            }
+            let Some((source, source_span)) = self.sole_stored_object_spread(initializer) else {
+                return false;
+            };
+            let Some(target) = self.binding_callable_container_target(&rest.argument) else {
+                return false;
+            };
+            Some((target, source, source_span))
+        } else {
+            None
+        };
+        let mut selected = BTreeSet::new();
+        for property in &pattern.properties {
+            if matches!(&property.value, BindingPattern::AssignmentPattern(_)) {
+                return false;
+            }
+            let Some(name) = property.key.static_name() else {
+                return false;
+            };
+            selected.insert(name.to_string());
+            let mut candidates = Vec::new();
+            if self
+                .collect_object_destructuring_candidates(initializer, &name, guard, &mut candidates)
+                .is_none()
+                || candidates.is_empty()
+            {
+                return false;
+            }
+            for candidate in candidates {
+                match candidate {
+                    ObjectDestructuringCandidate::Expression(initializer) => self
+                        .record_destructured_callable_initializers(
+                            &property.value,
+                            initializer,
+                            guard,
+                        ),
+                    ObjectDestructuringCandidate::Stored {
+                        source,
+                        source_span,
+                    } => {
+                        if guard.is_some() {
+                            return false;
+                        }
+                        let property_guard = Self::stored_object_property_guard(&source);
+                        if !self.record_stored_binding_destructuring(
+                            &property.value,
+                            source,
+                            source_span,
+                            Some(&property_guard),
+                        ) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some((target, source, source_span)) = rest {
+            for property in self.known_callable_child_properties(&source) {
+                if selected.contains(&property) {
+                    continue;
+                }
+                let property_source = source.clone().with_property(property.clone());
+                let property_guard = Self::stored_object_property_guard(&property_source);
+                self.record_callable_path_initializer(
+                    target.clone().with_property(property),
+                    property_source,
+                    source_span,
+                    Some(&property_guard),
+                );
             }
         }
         true
@@ -15703,6 +16184,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 else {
                     return;
                 };
+                if let Some((spread_index, source, source_span)) =
+                    self.trailing_stored_array_spread(initializer)
+                {
+                    self.record_trailing_stored_array_binding_destructuring(
+                        pattern,
+                        initializer,
+                        spread_index,
+                        source,
+                        source_span,
+                    );
+                    return;
+                }
                 let mut values = Vec::new();
                 if !Self::collect_static_array_destructuring_values(initializer, &mut values) {
                     return;
@@ -15754,6 +16247,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 else {
                     return;
                 };
+                if Self::object_has_stored_spread(initializer) {
+                    self.record_mixed_object_binding_destructuring(pattern, initializer, guard);
+                    return;
+                }
                 let rest_target = if let Some(rest) = &pattern.rest {
                     let Some(target) = self.binding_callable_container_target(&rest.argument)
                     else {
@@ -15929,9 +16426,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         source: StaticAliasPath,
         source_span: (u32, u32),
     ) -> bool {
-        if pattern.rest.is_some() {
-            return false;
-        }
+        let rest_target = if let Some(rest) = &pattern.rest {
+            let Some(target) = self.assignment_callable_container_target(&rest.target) else {
+                return false;
+            };
+            Some(target)
+        } else {
+            None
+        };
         let guard = Self::stored_array_iterator_guard(&source);
         for (index, target) in pattern.elements.iter().enumerate() {
             let Some(target) = target else {
@@ -15946,6 +16448,117 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 return false;
             }
         }
+        if let Some(rest_target) = &rest_target {
+            for property in self.known_callable_child_properties(&source) {
+                let Ok(index) = property.parse::<usize>() else {
+                    continue;
+                };
+                if index < pattern.elements.len() {
+                    continue;
+                }
+                self.record_callable_path_initializer(
+                    rest_target
+                        .clone()
+                        .with_property((index - pattern.elements.len()).to_string()),
+                    source.clone().with_property(property),
+                    source_span,
+                    Some(&guard),
+                );
+            }
+        }
+        true
+    }
+
+    fn record_trailing_stored_array_assignment_destructuring(
+        &mut self,
+        pattern: &ArrayAssignmentTarget<'_>,
+        initializer: &ArrayExpression<'_>,
+        spread_index: usize,
+        source: StaticAliasPath,
+        source_span: (u32, u32),
+    ) -> bool {
+        let rest_target = if let Some(rest) = &pattern.rest {
+            let Some(target) = self.assignment_callable_container_target(&rest.target) else {
+                return false;
+            };
+            Some(target)
+        } else {
+            None
+        };
+        let outer_guard = Self::array_iterator_guard();
+        let spread_guard = Self::stored_array_iterator_guard(&source);
+        for (index, target) in pattern.elements.iter().enumerate() {
+            let Some(target) = target else {
+                if index < spread_index
+                    && let Some(value) = initializer.elements.get(index)
+                    && !matches!(value, ArrayExpressionElement::Elision(_))
+                {
+                    self.record_static_container_generator_values(value.to_expression(), true);
+                }
+                continue;
+            };
+            if index < spread_index {
+                let initializer = initializer.elements.get(index).and_then(|value| {
+                    (!matches!(value, ArrayExpressionElement::Elision(_)))
+                        .then(|| value.to_expression())
+                });
+                self.record_assignment_maybe_default_callable_initializer(
+                    target,
+                    initializer,
+                    Some(&outer_guard),
+                );
+            } else if !self.record_stored_assignment_maybe_default_destructuring(
+                target,
+                source
+                    .clone()
+                    .with_property((index - spread_index).to_string()),
+                source_span,
+                Some(&spread_guard),
+            ) {
+                return false;
+            }
+        }
+        for value in initializer
+            .elements
+            .iter()
+            .take(spread_index)
+            .skip(pattern.elements.len())
+            .enumerate()
+        {
+            let (rest_index, value) = value;
+            if matches!(value, ArrayExpressionElement::Elision(_)) {
+                continue;
+            }
+            if let Some(rest_target) = &rest_target {
+                self.record_callable_container_property(
+                    rest_target,
+                    rest_index.to_string(),
+                    value.to_expression(),
+                    Some(&outer_guard),
+                );
+            } else {
+                self.record_static_container_generator_values(value.to_expression(), true);
+            }
+        }
+        if let Some(rest_target) = &rest_target {
+            for property in self.known_callable_child_properties(&source) {
+                let Ok(index) = property.parse::<usize>() else {
+                    continue;
+                };
+                let output_index = spread_index + index;
+                if output_index < pattern.elements.len() {
+                    continue;
+                }
+                self.record_callable_path_initializer(
+                    rest_target
+                        .clone()
+                        .with_property((output_index - pattern.elements.len()).to_string()),
+                    source.clone().with_property(property),
+                    source_span,
+                    Some(&spread_guard),
+                );
+            }
+        }
         true
     }
 
@@ -15956,20 +16569,32 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         source_span: (u32, u32),
         guard: Option<&GeneratorMethodGuard>,
     ) -> bool {
-        if pattern.rest.is_some() {
-            return false;
-        }
+        let rest_target = if let Some(rest) = &pattern.rest {
+            if guard.is_some() {
+                return false;
+            }
+            let Some(target) = self.assignment_callable_container_target(&rest.target) else {
+                return false;
+            };
+            Some(target)
+        } else {
+            None
+        };
+        let mut selected = BTreeSet::new();
         for property in &pattern.properties {
             match property {
                 AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                    selected.insert(property.binding.name.to_string());
+                    let property_source = source
+                        .clone()
+                        .with_property(property.binding.name.to_string());
+                    let property_guard = Self::stored_object_property_guard(&property_source);
                     if property.init.is_some()
                         || !self.record_stored_assignment_identifier(
                             &property.binding,
-                            source
-                                .clone()
-                                .with_property(property.binding.name.to_string()),
+                            property_source,
                             source_span,
-                            guard,
+                            guard.or(Some(&property_guard)),
                         )
                     {
                         return false;
@@ -15979,15 +16604,179 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     let Some(name) = property.name.static_name() else {
                         return false;
                     };
+                    selected.insert(name.to_string());
+                    let property_source = source.clone().with_property(name.into_owned());
+                    let property_guard = Self::stored_object_property_guard(&property_source);
                     if !self.record_stored_assignment_maybe_default_destructuring(
                         &property.binding,
-                        source.clone().with_property(name.into_owned()),
+                        property_source,
                         source_span,
-                        guard,
+                        guard.or(Some(&property_guard)),
                     ) {
                         return false;
                     }
                 }
+            }
+        }
+        if let Some(rest_target) = &rest_target {
+            for property in self.known_callable_child_properties(&source) {
+                if selected.contains(&property) {
+                    continue;
+                }
+                let property_source = source.clone().with_property(property.clone());
+                let property_guard = Self::stored_object_property_guard(&property_source);
+                self.record_callable_path_initializer(
+                    rest_target.clone().with_property(property),
+                    property_source,
+                    source_span,
+                    Some(&property_guard),
+                );
+            }
+        }
+        true
+    }
+
+    fn record_mixed_object_assignment_destructuring(
+        &mut self,
+        pattern: &ObjectAssignmentTarget<'_>,
+        initializer: &ObjectExpression<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) -> bool {
+        let rest = if let Some(rest) = &pattern.rest {
+            if guard.is_some() {
+                return false;
+            }
+            let Some((source, source_span)) = self.sole_stored_object_spread(initializer) else {
+                return false;
+            };
+            let Some(target) = self.assignment_callable_container_target(&rest.target) else {
+                return false;
+            };
+            Some((target, source, source_span))
+        } else {
+            None
+        };
+        let mut selected = BTreeSet::new();
+        for property in &pattern.properties {
+            let (name, binding) = match property {
+                AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                    if property.init.is_some() {
+                        return false;
+                    }
+                    (
+                        property.binding.name.to_string(),
+                        EitherAssignmentBinding::Identifier(&property.binding),
+                    )
+                }
+                AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                    if matches!(
+                        &property.binding,
+                        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(_)
+                    ) {
+                        return false;
+                    }
+                    let Some(name) = property.name.static_name() else {
+                        return false;
+                    };
+                    (
+                        name.into_owned(),
+                        EitherAssignmentBinding::Target(&property.binding),
+                    )
+                }
+            };
+            selected.insert(name.clone());
+            let mut candidates = Vec::new();
+            if self
+                .collect_object_destructuring_candidates(initializer, &name, guard, &mut candidates)
+                .is_none()
+                || candidates.is_empty()
+            {
+                return false;
+            }
+            for candidate in candidates {
+                match (&binding, candidate) {
+                    (
+                        EitherAssignmentBinding::Identifier(binding),
+                        ObjectDestructuringCandidate::Expression(initializer),
+                    ) => {
+                        let Some(symbol) = identifier_symbol(self.scoping, binding) else {
+                            return false;
+                        };
+                        let target = StaticAliasPath::root(symbol);
+                        self.discarded_invocation_reads
+                            .entry(target.clone())
+                            .or_default()
+                            .insert((binding.span.start, binding.span.end));
+                        if let Some(guard) = guard {
+                            self.record_guarded_callable_initializer(target, initializer, guard);
+                        } else {
+                            self.record_callable_initializer(target, initializer);
+                        }
+                    }
+                    (
+                        EitherAssignmentBinding::Target(binding),
+                        ObjectDestructuringCandidate::Expression(initializer),
+                    ) => self.record_assignment_maybe_default_callable_initializer(
+                        binding,
+                        Some(initializer),
+                        guard,
+                    ),
+                    (
+                        EitherAssignmentBinding::Identifier(binding),
+                        ObjectDestructuringCandidate::Stored {
+                            source,
+                            source_span,
+                        },
+                    ) => {
+                        if guard.is_some() {
+                            return false;
+                        }
+                        let property_guard = Self::stored_object_property_guard(&source);
+                        if !self.record_stored_assignment_identifier(
+                            binding,
+                            source,
+                            source_span,
+                            Some(&property_guard),
+                        ) {
+                            return false;
+                        }
+                    }
+                    (
+                        EitherAssignmentBinding::Target(binding),
+                        ObjectDestructuringCandidate::Stored {
+                            source,
+                            source_span,
+                        },
+                    ) => {
+                        if guard.is_some() {
+                            return false;
+                        }
+                        let property_guard = Self::stored_object_property_guard(&source);
+                        if !self.record_stored_assignment_maybe_default_destructuring(
+                            binding,
+                            source,
+                            source_span,
+                            Some(&property_guard),
+                        ) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some((target, source, source_span)) = rest {
+            for property in self.known_callable_child_properties(&source) {
+                if selected.contains(&property) {
+                    continue;
+                }
+                let property_source = source.clone().with_property(property.clone());
+                let property_guard = Self::stored_object_property_guard(&property_source);
+                self.record_callable_path_initializer(
+                    target.clone().with_property(property),
+                    property_source,
+                    source_span,
+                    Some(&property_guard),
+                );
             }
         }
         true
@@ -16064,6 +16853,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             return;
         };
+        if let Some((spread_index, source, source_span)) =
+            self.trailing_stored_array_spread(initializer)
+        {
+            self.record_trailing_stored_array_assignment_destructuring(
+                pattern,
+                initializer,
+                spread_index,
+                source,
+                source_span,
+            );
+            return;
+        }
         let mut values = Vec::new();
         if !Self::collect_static_array_destructuring_values(initializer, &mut values) {
             return;
@@ -16131,6 +16932,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             return;
         };
+        if Self::object_has_stored_spread(initializer) {
+            self.record_mixed_object_assignment_destructuring(pattern, initializer, guard);
+            return;
+        }
         let rest_target = if let Some(rest) = &pattern.rest {
             let Some(target) = self.assignment_callable_container_target(&rest.target) else {
                 return;
@@ -16629,7 +17434,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
         sources
             .iter()
-            .map(|source| source.with_property(method.to_string()))
+            .map(|source| {
+                if method.is_empty() {
+                    source.clone()
+                } else {
+                    source.with_property(method.to_string())
+                }
+            })
             .all(|method| {
                 self.member_invalidated
                     .iter()
