@@ -11702,6 +11702,18 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "make(values).bind(null).apply(null, []);",
         ),
         (
+            "Function call on factory result bind override mutates capture",
+            "",
+            "function make(target) { const inspect = () => target.length; inspect.bind = () => () => { target.forEach = null; }; return inspect; }",
+            "make(values).bind(null).call(null);",
+        ),
+        (
+            "Function apply on factory result bind override mutates capture",
+            "",
+            "function make(target) { const inspect = () => target.length; inspect.bind = () => () => { target.forEach = null; }; return inspect; }",
+            "make(values).bind(null).apply(null, []);",
+        ),
+        (
             "local factory conditionally returns mutating callable",
             "",
             "function make() { return choose ? function (target) { return target.length; } : function (target) { target.forEach = null; }; } const run = make();",
@@ -11995,6 +12007,18 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "const other = [];",
             "function make(target) { return function () { target.forEach = null; }; } function makeClass(target) { return class { constructor() { target.forEach = null; } }; }",
             "new (makeClass(other).bind(null))(); make(other).bind(null)``; Reflect.apply(make(other).bind(null), null, []); Reflect.construct(makeClass(other).bind(null), []); make(other).bind(null).call(null); make(other).bind(null).apply(null, []);",
+        ),
+        (
+            "Function indirections on sibling bind overrides preserve capture",
+            "const other = [];",
+            "function make(target) { const inspect = () => target.length; inspect.bind = () => () => { target.forEach = null; }; return inspect; }",
+            "make(other).bind(null).call(null); make(other).bind(null).apply(null, []);",
+        ),
+        (
+            "own call override on bind override result hides capture mutation",
+            "",
+            "function make(target) { const inspect = () => target.length; inspect.bind = () => { const run = () => { target.forEach = null; }; run.call = () => {}; return run; }; return inspect; }",
+            "make(values).bind(null).call(null);",
         ),
         (
             "invoked sibling closure does not activate capture mutation",

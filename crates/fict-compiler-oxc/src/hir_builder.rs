@@ -21834,9 +21834,17 @@ impl StaticHookAliasCollector<'_> {
         let Some(invocations) = self.local_invocation_facts(&call.callee, &call.arguments) else {
             return false;
         };
+        self.invocation_results_support_function_method(&invocations, method)
+    }
+
+    fn invocation_results_support_function_method(
+        &self,
+        invocations: &[LocalInvocationFact],
+        method: &str,
+    ) -> bool {
         let mut found = false;
         for invocation in invocations {
-            let (results, _) = self.local_callable_results_for_invocation(&invocation);
+            let (results, _) = self.local_callable_results_for_invocation(invocation);
             for result in results {
                 found = true;
                 match result {
@@ -22003,6 +22011,23 @@ impl StaticHookAliasCollector<'_> {
             .or_else(|| {
                 self.local_invocation_facts(&factory_call.callee, &factory_call.arguments)
             })?;
+        self.record_callable_result_invocations_from_invocations(
+            invocations,
+            span,
+            arguments,
+            receiver,
+            construct,
+        )
+    }
+
+    fn record_callable_result_invocations_from_invocations(
+        &mut self,
+        invocations: Vec<LocalInvocationFact>,
+        span: Span,
+        arguments: Vec<LocalInvocationArgumentSegment>,
+        receiver: Vec<LocalInvocationArgument>,
+        construct: bool,
+    ) -> Option<Vec<LocalInvocationFact>> {
         let alternatives = self.local_bound_callable_invocation_alternatives_from_invocations(
             invocations,
             &receiver,
@@ -22208,11 +22233,16 @@ impl StaticHookAliasCollector<'_> {
         let Expression::CallExpression(factory_call) = factory.get_inner_expression() else {
             return None;
         };
-        if !self.factory_call_results_support_function_method(factory_call, &method) {
+        let invocations = self
+            .immediate_callable_result_invocation_facts(factory_call)
+            .or_else(|| {
+                self.local_invocation_facts(&factory_call.callee, &factory_call.arguments)
+            })?;
+        if !self.invocation_results_support_function_method(&invocations, &method) {
             return None;
         }
-        self.record_immediate_callable_result_invocations(
-            factory_call,
+        self.record_callable_result_invocations_from_invocations(
+            invocations,
             factory_call.span,
             arguments,
             receiver,
