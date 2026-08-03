@@ -21047,7 +21047,10 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         call: &CallExpression<'_>,
     ) {
-        let Some(invocations) = self.local_invocation_facts(&call.callee, &call.arguments) else {
+        let Some(invocations) = self
+            .immediate_callable_result_invocation_facts(call)
+            .or_else(|| self.local_invocation_facts(&call.callee, &call.arguments))
+        else {
             self.record_local_bound_callable(
                 target,
                 LocalBoundCallable {
@@ -21247,6 +21250,11 @@ impl StaticHookAliasCollector<'_> {
                 if let Some(source) = self.alias_source_path(value) {
                     self.insert_alias(target, source);
                 } else {
+                    self.record_callable_result_initializer(target, call);
+                }
+            }
+            Expression::ChainExpression(chain) => {
+                if let ChainElement::CallExpression(call) = &chain.expression {
                     self.record_callable_result_initializer(target, call);
                 }
             }
@@ -21465,6 +21473,9 @@ impl StaticHookAliasCollector<'_> {
                 return self.local_bound_callable_alternatives(&expression.right, receiver);
             }
             Expression::CallExpression(call) => {
+                if !self.factory_call_results_support_function_method(call, "bind") {
+                    return None;
+                }
                 return self.local_bound_callable_invocation_alternatives(call, receiver);
             }
             _ => {}
@@ -21856,6 +21867,77 @@ impl StaticHookAliasCollector<'_> {
         found
     }
 
+    fn record_factory_result_member_invocations(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<Vec<LocalInvocationFact>> {
+        let (factory, method) = match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        if method != "bind" {
+            return None;
+        }
+        let Expression::CallExpression(factory_call) = factory.get_inner_expression() else {
+            return None;
+        };
+        let factory_invocations = self
+            .immediate_callable_result_invocation_facts(factory_call)
+            .or_else(|| {
+                self.local_invocation_facts(&factory_call.callee, &factory_call.arguments)
+            })?;
+        let mut alternatives = LocalBoundCallableAlternatives {
+            callables: Vec::new(),
+            exposures: BTreeSet::new(),
+            historical: factory_invocations.len() > 1,
+            results: Vec::new(),
+            effect_instances: Vec::new(),
+        };
+        for invocation in factory_invocations {
+            let (results, historical) = self.local_callable_results_for_invocation(&invocation);
+            alternatives.historical |= historical || results.len() > 1;
+            for result in results {
+                let LocalCallableResult::Reference(source) = result else {
+                    return None;
+                };
+                let result = self.bind_local_callable_result(
+                    LocalCallableResult::Reference(source.with_property(method.clone())),
+                    &invocation,
+                );
+                let LocalCallableResult::Bound {
+                    callables,
+                    exposures,
+                    historical,
+                    results,
+                    effect_instances,
+                } = result
+                else {
+                    return None;
+                };
+                alternatives.callables.extend(callables);
+                alternatives.exposures.extend(exposures);
+                alternatives.historical |= historical;
+                alternatives.results.extend(results);
+                alternatives.effect_instances.extend(effect_instances);
+            }
+        }
+        if alternatives.callables.is_empty() {
+            return None;
+        }
+        let arguments = self.collect_local_invocation_arguments(&call.arguments);
+        Some(self.record_bound_callable_alternative_invocations(
+            alternatives,
+            call.span,
+            arguments,
+            false,
+        ))
+    }
+
     fn record_immediate_callable_result_invocations(
         &mut self,
         factory_call: &CallExpression<'_>,
@@ -21947,6 +22029,9 @@ impl StaticHookAliasCollector<'_> {
                 arguments,
                 false,
             ));
+        }
+        if let Some(invocations) = self.record_factory_result_member_invocations(call) {
+            return Some(invocations);
         }
         if let Expression::CallExpression(factory_call) = call.callee.get_inner_expression() {
             return self.record_immediate_callable_result_invocations(
