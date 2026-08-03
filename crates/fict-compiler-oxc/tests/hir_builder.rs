@@ -7495,6 +7495,290 @@ fn define_properties_installs_local_accessors() {
 }
 
 #[test]
+fn object_create_preserves_descriptor_accessor_timing() {
+    for (name, setup, creation, observation, expected_hir) in [
+        (
+            "unread getter",
+            "",
+            "const source = Object.create(null, { run: { get() { values.forEach = null; return 1; } } });",
+            "void source;",
+            true,
+        ),
+        (
+            "read getter",
+            "",
+            "const source = Object.create(null, { run: { get() { values.forEach = null; return 1; } } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "unwritten setter",
+            "",
+            "const source = Object.create(null, { run: { set(value) { values.forEach = value; } } });",
+            "void source;",
+            true,
+        ),
+        (
+            "written setter",
+            "",
+            "const source = Object.create(null, { run: { set(value) { values.forEach = value; } } });",
+            "source.run = null;",
+            false,
+        ),
+        (
+            "setter receives the assigned value",
+            "",
+            "const source = Object.create(null, { run: { set(value) { value.forEach = null; } } });",
+            "source.run = values;",
+            false,
+        ),
+        (
+            "uncalled data function",
+            "",
+            "const source = Object.create(null, { run: { value: () => { values.forEach = null; } } });",
+            "void source.run;",
+            true,
+        ),
+        (
+            "called data function",
+            "",
+            "const source = Object.create(null, { run: { value: () => { values.forEach = null; } } });",
+            "source.run();",
+            false,
+        ),
+        (
+            "stored descriptor",
+            "const descriptor = { get() { values.forEach = null; return 1; } };",
+            "const source = Object.create(null, { run: descriptor });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "unread stored descriptor map",
+            "const descriptors = { run: { get() { values.forEach = null; return 1; } } };",
+            "const source = Object.create(null, descriptors);",
+            "void source;",
+            true,
+        ),
+        (
+            "read stored descriptor map",
+            "const descriptors = { run: { get() { values.forEach = null; return 1; } } };",
+            "const source = Object.create(null, descriptors);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "stored descriptor field getter runs during creation",
+            "const descriptor = {}; Object.defineProperty(descriptor, 'get', { get() { values.forEach = null; return () => 1; } });",
+            "const source = Object.create(null, { run: descriptor });",
+            "void source;",
+            false,
+        ),
+        (
+            "accessor returned by a stored field getter remains deferred",
+            "const actual = () => { values.forEach = null; return 1; }; const descriptor = {}; Object.defineProperty(descriptor, 'get', { get() { return actual; } });",
+            "const source = Object.create(null, { run: descriptor });",
+            "void source;",
+            true,
+        ),
+        (
+            "accessor returned by a stored field getter runs when read",
+            "const actual = () => { values.forEach = null; return 1; }; const descriptor = {}; Object.defineProperty(descriptor, 'get', { get() { return actual; } });",
+            "const source = Object.create(null, { run: descriptor });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "aliased builtin",
+            "const create = Object.create;",
+            "const source = create(null, { run: { get() { values.forEach = null; return 1; } } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "multiple descriptors",
+            "",
+            "const source = Object.create(null, { first: { get() { values.forEach = null; return 1; } }, second: { set(value) { values.forEach = value; } } });",
+            "void source.first; source.second = null;",
+            false,
+        ),
+        (
+            "non-enumerable getter skipped by object spread",
+            "",
+            "const source = Object.create(null, { run: { get() { values.forEach = null; return 1; } } });",
+            "const copy = { ...source }; void copy.run;",
+            true,
+        ),
+        (
+            "enumerable getter invoked by object spread",
+            "",
+            "const source = Object.create(null, { run: { enumerable: true, get() { values.forEach = null; return 1; } } });",
+            "const copy = { ...source }; void copy.run;",
+            false,
+        ),
+        (
+            "immediate result preserves descriptor semantics",
+            "",
+            "void Object.create(null, { run: { get() { values.forEach = null; return 1; } } }).run;",
+            "",
+            false,
+        ),
+        (
+            "immediate result data callable",
+            "",
+            "Object.create(null, { run: { value: () => { values.forEach = null; } } }).run();",
+            "",
+            false,
+        ),
+        (
+            "immediate result setter write",
+            "",
+            "Object.create(null, { run: { set(value) { values.forEach = value; } } }).run = null;",
+            "",
+            false,
+        ),
+        (
+            "immediate Reflect.get",
+            "",
+            "Reflect.get(Object.create(null, { run: { get() { values.forEach = null; return 1; } } }), 'run');",
+            "",
+            false,
+        ),
+        (
+            "immediate Reflect.set",
+            "",
+            "Reflect.set(Object.create(null, { run: { set(value) { values.forEach = value; } } }), 'run', null);",
+            "",
+            false,
+        ),
+        (
+            "immediate enumerable spread",
+            "",
+            "const copy = { ...Object.create(null, { run: { enumerable: true, get() { values.forEach = null; return 1; } } }) };",
+            "void copy.run;",
+            false,
+        ),
+        (
+            "immediate destructuring",
+            "",
+            "const { run } = Object.create(null, { run: { get() { values.forEach = null; return 1; } } });",
+            "void run;",
+            false,
+        ),
+        (
+            "null prototype without descriptors",
+            "",
+            "const source = Object.create(null);",
+            "void source;",
+            true,
+        ),
+        (
+            "unread inherited getter",
+            "const proto = { get run() { values.forEach = null; return 1; } };",
+            "const source = Object.create(proto);",
+            "void source;",
+            true,
+        ),
+        (
+            "read inherited getter",
+            "const proto = { get run() { values.forEach = null; return 1; } };",
+            "const source = Object.create(proto);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "inherited getter skipped by object spread",
+            "const proto = { get run() { values.forEach = null; return 1; } };",
+            "const source = Object.create(proto);",
+            "const copy = { ...source }; void copy.run;",
+            true,
+        ),
+        (
+            "own descriptor shadows inherited getter",
+            "const proto = { get run() { values.forEach = null; return 1; } };",
+            "const source = Object.create(proto, { run: { value: 1 } });",
+            "void source.run;",
+            true,
+        ),
+        (
+            "later own descriptor shadows inherited getter",
+            "const proto = { get run() { values.forEach = null; return 1; } };",
+            "const source = Object.create(proto); Object.defineProperty(source, 'run', { value: 1 });",
+            "void source.run;",
+            true,
+        ),
+        (
+            "written inherited setter",
+            "const proto = { set run(value) { values.forEach = value; } };",
+            "const source = Object.create(proto);",
+            "source.run = null;",
+            false,
+        ),
+        (
+            "getter added to prototype after creation",
+            "const proto = {};",
+            "const source = Object.create(proto); Object.defineProperty(proto, 'run', { get() { values.forEach = null; return 1; } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "setter added to prototype after creation",
+            "const proto = {};",
+            "const source = Object.create(proto); Object.defineProperty(proto, 'run', { set(value) { values.forEach = value; } });",
+            "source.run = null;",
+            false,
+        ),
+        (
+            "data callable added to prototype after creation",
+            "const proto = {};",
+            "const source = Object.create(proto); Object.defineProperty(proto, 'run', { value: () => { values.forEach = null; } });",
+            "source.run();",
+            false,
+        ),
+        (
+            "nested prototype observes a later root getter",
+            "const root = {}; const proto = Object.create(root);",
+            "const source = Object.create(proto); Object.defineProperty(root, 'run', { get() { values.forEach = null; return 1; } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "inline prototype getter",
+            "",
+            "const source = Object.create({ get run() { values.forEach = null; return 1; } });",
+            "void source.run;",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {creation}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected Object.create accessor timing: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn stored_define_property_descriptors_preserve_accessor_timing() {
     for (name, declaration, definition, observation, expected_hir) in [
         (
