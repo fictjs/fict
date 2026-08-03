@@ -6964,6 +6964,125 @@ fn replaced_or_unread_setters_remain_unexecuted() {
 }
 
 #[test]
+fn later_static_properties_shadow_dynamic_accessors() {
+    for (name, declaration, observation) in [
+        (
+            "object data shadows a dynamic getter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { get [key]() { values.forEach = null; return 1; }, run: 1 };",
+            "void source.run;",
+        ),
+        (
+            "object method shadows a dynamic getter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { get [key]() { values.forEach = null; return 1; }, run() {} };",
+            "void source.run;",
+        ),
+        (
+            "object data shadows a dynamic setter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { set [key](value) { values.forEach = null; }, run: 0 };",
+            "source.run = 1;",
+        ),
+        (
+            "known object spread shadows a dynamic getter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { get [key]() { values.forEach = null; return 1; }, ...{ run: 1 } };",
+            "void source.run;",
+        ),
+        (
+            "class method shadows a dynamic getter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; class Source { get [key]() { values.forEach = null; return 1; } run() {} } const source = new Source();",
+            "void source.run;",
+        ),
+        (
+            "class method shadows a dynamic setter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; class Source { set [key](value) { values.forEach = null; } run() {} } const source = new Source();",
+            "source.run = 1;",
+        ),
+        (
+            "instance field shadows a dynamic prototype getter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; class Source { get [key]() { values.forEach = null; return 1; } run = 1; } const source = new Source();",
+            "void source.run;",
+        ),
+        (
+            "static field shadows a dynamic static getter",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; class Source { static get [key]() { values.forEach = null; return 1; } static run = 1; } const source = Source;",
+            "void source.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected the shadowed dynamic accessor to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn later_dynamic_accessors_can_replace_static_properties() {
+    for (name, declaration, observation) in [
+        (
+            "dynamic getter after object data",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { run: 1, get [key]() { values.forEach = null; return 1; } };",
+            "void source.run;",
+        ),
+        (
+            "dynamic setter after object data",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { run: 0, set [key](value) { values.forEach = null; } };",
+            "source.run = 1;",
+        ),
+        (
+            "later dynamic getter after a static override",
+            "const first = 'other'; const second = Math.random() < 0.5 ? 'run' : 'other'; const source = { get [first]() { return 1; }, run: 1, get [second]() { values.forEach = null; return 1; } };",
+            "void source.run;",
+        ),
+        (
+            "dynamic class getter after a method",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; class Source { run() {} get [key]() { values.forEach = null; return 1; } } const source = new Source();",
+            "void source.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected potentially active dynamic accessor effects to propagate"
+        );
+    }
+}
+
+#[test]
 fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
     for (name, helper, binding, observation) in [
         (

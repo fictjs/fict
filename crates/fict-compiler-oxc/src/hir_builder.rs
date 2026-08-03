@@ -18425,6 +18425,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_setter_property_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     dynamic_setter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     dynamic_setter_property_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    dynamic_accessor_excluded_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     local_value_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
     local_value_definedness_history:
         BTreeMap<StaticAliasPath, BTreeSet<LocalGetterResultDefinedness>>,
@@ -19165,6 +19166,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_setter_property_history: BTreeMap::new(),
             dynamic_setter_properties: BTreeMap::new(),
             dynamic_setter_property_history: BTreeMap::new(),
+            dynamic_accessor_excluded_properties: BTreeMap::new(),
             local_value_definedness: BTreeMap::new(),
             local_value_definedness_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
@@ -20031,6 +20033,7 @@ impl StaticHookAliasCollector<'_> {
             let prototype = target.clone().with_property("prototype".to_string());
             self.copy_dynamic_local_getters(&prototype, &super_prototype);
             self.copy_dynamic_local_setters(&prototype, &super_prototype);
+            self.copy_dynamic_local_accessor_exclusions(&prototype, &super_prototype);
             let inherited = self
                 .local_callable_parameters
                 .keys()
@@ -20084,12 +20087,14 @@ impl StaticHookAliasCollector<'_> {
                 }
                 continue;
             };
-            let method_target = if method.r#static {
+            let method_owner = if method.r#static {
                 target.clone()
             } else {
                 target.clone().with_property("prototype".to_string())
-            }
-            .with_property(name.into_owned());
+            };
+            let name = name.into_owned();
+            self.exclude_dynamic_local_accessor_property(&method_owner, name.clone());
+            let method_target = method_owner.with_property(name);
             if method.kind == MethodDefinitionKind::Set {
                 if !self.local_getter_properties.contains(&method_target) {
                     self.clear_overlapping_aliases(&method_target);
@@ -20143,6 +20148,7 @@ impl StaticHookAliasCollector<'_> {
             };
             let name = name.into_owned();
             if property.r#static {
+                self.exclude_dynamic_local_accessor_property(target, name.clone());
                 let property_target = target.clone().with_property(name);
                 self.clear_overlapping_aliases(&property_target);
                 if let Some(value) = &property.value {
@@ -20236,11 +20242,16 @@ impl StaticHookAliasCollector<'_> {
         }
         self.copy_dynamic_local_getters(target, &source);
         self.copy_dynamic_local_setters(target, &source);
+        self.copy_dynamic_local_accessor_exclusions(target, &source);
         self.copy_dynamic_local_getters(
             &target.clone().with_property("prototype".to_string()),
             &source.with_property("prototype".to_string()),
         );
         self.copy_dynamic_local_setters(
+            &target.clone().with_property("prototype".to_string()),
+            &source.with_property("prototype".to_string()),
+        );
+        self.copy_dynamic_local_accessor_exclusions(
             &target.clone().with_property("prototype".to_string()),
             &source.with_property("prototype".to_string()),
         );
@@ -20490,11 +20501,15 @@ impl StaticHookAliasCollector<'_> {
         let prototype = class.with_property("prototype".to_string());
         self.copy_dynamic_local_getters(target, &prototype);
         self.copy_dynamic_local_setters(target, &prototype);
+        self.copy_dynamic_local_accessor_exclusions(target, &prototype);
         let fields = self
             .local_class_instance_fields
             .get(class)
             .cloned()
             .unwrap_or_default();
+        for field in &fields {
+            self.exclude_dynamic_local_accessor_property(target, field.clone());
+        }
         let open_fields = self.open_local_class_instance_fields.contains(class);
         if open_fields && !self.closed_replacement_class_instances.contains(class) {
             self.open_structured_containers.insert(target.clone());
@@ -22557,6 +22572,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|property, _| !property.overlaps(path));
         self.dynamic_setter_properties
             .retain(|owner, _| !owner.starts_with(path));
+        self.dynamic_accessor_excluded_properties
+            .retain(|owner, _| !owner.starts_with(path));
         self.local_value_definedness
             .retain(|value, _| !value.overlaps(path));
         self.callable_exposures
@@ -22958,7 +22975,15 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             let mut owner = candidate;
-            owner.properties.pop();
+            let property = owner.properties.pop().expect("getter property");
+            if !historical
+                && self
+                    .dynamic_accessor_excluded_properties
+                    .get(&owner)
+                    .is_some_and(|excluded| excluded.contains(&property))
+            {
+                continue;
+            }
             if let Some(getters) = dynamic_getters.get(&owner) {
                 resolved_getters.extend(getters.iter().cloned());
             }
@@ -22972,6 +22997,7 @@ impl StaticHookAliasCollector<'_> {
         getter: StaticAliasPath,
         enumerable: bool,
     ) {
+        self.dynamic_accessor_excluded_properties.remove(&owner);
         self.dynamic_getter_property_history
             .entry(owner.clone())
             .or_default()
@@ -23019,6 +23045,34 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn exclude_dynamic_local_accessor_property(
+        &mut self,
+        owner: &StaticAliasPath,
+        property: String,
+    ) {
+        self.dynamic_accessor_excluded_properties
+            .entry(owner.clone())
+            .or_default()
+            .insert(property);
+    }
+
+    fn copy_dynamic_local_accessor_exclusions(
+        &mut self,
+        target: &StaticAliasPath,
+        source: &StaticAliasPath,
+    ) {
+        if let Some(excluded) = self
+            .dynamic_accessor_excluded_properties
+            .get(source)
+            .cloned()
+        {
+            self.dynamic_accessor_excluded_properties
+                .entry(target.clone())
+                .or_default()
+                .extend(excluded);
+        }
+    }
+
     fn local_setter_callable_path(property: &StaticAliasPath, span: Span) -> StaticAliasPath {
         let mut setter = property.clone();
         setter.properties.pop();
@@ -23061,6 +23115,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_dynamic_local_setter(&mut self, owner: StaticAliasPath, setter: StaticAliasPath) {
+        self.dynamic_accessor_excluded_properties.remove(&owner);
         self.dynamic_setter_property_history
             .entry(owner.clone())
             .or_default()
@@ -23111,7 +23166,15 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             let mut owner = candidate;
-            owner.properties.pop();
+            let property = owner.properties.pop().expect("setter property");
+            if !historical
+                && self
+                    .dynamic_accessor_excluded_properties
+                    .get(&owner)
+                    .is_some_and(|excluded| excluded.contains(&property))
+            {
+                continue;
+            }
             let dynamic = if historical {
                 &self.dynamic_setter_property_history
             } else {
@@ -23456,6 +23519,7 @@ impl StaticHookAliasCollector<'_> {
                 .entry(target.clone())
                 .or_default()
                 .insert(property.clone());
+            self.exclude_dynamic_local_accessor_property(target, property.clone());
             self.insert_alias(property_target, source.clone().with_property(property));
         }
         self.record_enumerable_local_getter_copies(target, source, &BTreeSet::new());
@@ -25837,7 +25901,8 @@ impl StaticHookAliasCollector<'_> {
                     self.structured_own_properties
                         .entry(target.clone())
                         .or_default()
-                        .insert(property);
+                        .insert(property.clone());
+                    self.exclude_dynamic_local_accessor_property(target, property);
                 }
             } else {
                 let known_properties = self
@@ -26203,6 +26268,7 @@ impl StaticHookAliasCollector<'_> {
                 .entry(target.clone())
                 .or_default()
                 .insert(name.clone());
+            self.exclude_dynamic_local_accessor_property(target, name.clone());
             let property_target = target.with_property(name);
             if property.kind == PropertyKind::Set {
                 if !self.local_getter_properties.contains(&property_target) {
@@ -28499,6 +28565,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
             .map(|(owner, setters)| (owner.clone(), setters.clone()))
             .collect::<BTreeMap<_, _>>();
+        let outer_dynamic_accessor_excluded_properties = self
+            .dynamic_accessor_excluded_properties
+            .iter()
+            .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
+            .map(|(owner, excluded)| (owner.clone(), excluded.clone()))
+            .collect::<BTreeMap<_, _>>();
         let outer_local_getter_result_definedness = self
             .local_getter_result_definedness
             .iter()
@@ -28656,6 +28728,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         Self::restore_outer_path_map(
             &mut self.dynamic_setter_properties,
             outer_dynamic_setter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.dynamic_accessor_excluded_properties,
+            outer_dynamic_accessor_excluded_properties,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
@@ -28876,6 +28955,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
             .map(|(owner, setters)| (owner.clone(), setters.clone()))
             .collect::<BTreeMap<_, _>>();
+        let outer_dynamic_accessor_excluded_properties = self
+            .dynamic_accessor_excluded_properties
+            .iter()
+            .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
+            .map(|(owner, excluded)| (owner.clone(), excluded.clone()))
+            .collect::<BTreeMap<_, _>>();
         let outer_local_getter_result_definedness = self
             .local_getter_result_definedness
             .iter()
@@ -29022,6 +29107,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         Self::restore_outer_path_map(
             &mut self.dynamic_setter_properties,
             outer_dynamic_setter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.dynamic_accessor_excluded_properties,
+            outer_dynamic_accessor_excluded_properties,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
