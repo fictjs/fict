@@ -15409,6 +15409,62 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn destructuring_value_is_undefined(&self, expression: &Expression<'_>) -> Option<bool> {
+        let expression = expression.get_inner_expression();
+        if matches!(
+            expression,
+            Expression::UnaryExpression(unary) if unary.operator == OxcUnaryOperator::Void
+        ) || static_alias_source_path(self.scoping, expression)
+            .is_some_and(|path| path == StaticAliasPath::unresolved_global("undefined".to_string()))
+        {
+            return Some(true);
+        }
+        matches!(
+            expression,
+            Expression::NullLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NumericLiteral(_)
+                | Expression::BigIntLiteral(_)
+                | Expression::StringLiteral(_)
+                | Expression::RegExpLiteral(_)
+                | Expression::TemplateLiteral(_)
+                | Expression::ArrayExpression(_)
+                | Expression::ObjectExpression(_)
+                | Expression::FunctionExpression(_)
+                | Expression::ArrowFunctionExpression(_)
+                | Expression::ClassExpression(_)
+                | Expression::NewExpression(_)
+                | Expression::ThisExpression(_)
+                | Expression::MetaProperty(_)
+        )
+        .then_some(false)
+    }
+
+    fn select_destructuring_default<'a>(
+        &self,
+        initializer: Option<&'a Expression<'a>>,
+        default: &'a Expression<'a>,
+    ) -> Option<(&'a Expression<'a>, bool)> {
+        let Some(initializer) = initializer else {
+            return Some((default, true));
+        };
+        match self.destructuring_value_is_undefined(initializer) {
+            Some(true) => Some((default, true)),
+            Some(false) => Some((initializer, false)),
+            None => None,
+        }
+    }
+
+    fn record_missing_destructured_callable_initializer(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) {
+        if let BindingPattern::AssignmentPattern(default) = pattern {
+            self.record_destructured_callable_initializers(&default.left, &default.right, guard);
+        }
+    }
+
     fn record_destructured_callable_initializers(
         &mut self,
         pattern: &BindingPattern<'_>,
@@ -15442,6 +15498,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 let guard = Self::array_iterator_guard();
                 for (index, value) in initializer.elements.iter().enumerate() {
                     if matches!(value, ArrayExpressionElement::Elision(_)) {
+                        if let Some(binding) = pattern.elements.get(index).and_then(Option::as_ref)
+                        {
+                            self.record_missing_destructured_callable_initializer(
+                                binding,
+                                Some(&guard),
+                            );
+                        }
                         continue;
                     }
                     let Some(binding) = pattern.elements.get(index).and_then(Option::as_ref) else {
@@ -15453,6 +15516,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         value.to_expression(),
                         Some(&guard),
                     );
+                }
+                for binding in pattern
+                    .elements
+                    .iter()
+                    .skip(initializer.elements.len())
+                    .flatten()
+                {
+                    self.record_missing_destructured_callable_initializer(binding, Some(&guard));
                 }
             }
             BindingPattern::ObjectPattern(pattern) => {
@@ -15487,10 +15558,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         return;
                     };
                     selected.insert(name.to_string());
-                    let Some(value) = values.get(name.as_ref()) else {
-                        continue;
-                    };
-                    self.record_destructured_callable_initializers(&property.value, value, guard);
+                    if let Some(value) = values.get(name.as_ref()) {
+                        self.record_destructured_callable_initializers(
+                            &property.value,
+                            value,
+                            guard,
+                        );
+                    } else {
+                        self.record_missing_destructured_callable_initializer(
+                            &property.value,
+                            guard,
+                        );
+                    }
                 }
                 for (name, value) in values {
                     if !selected.contains(&name) {
@@ -15498,7 +15577,23 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     }
                 }
             }
-            BindingPattern::AssignmentPattern(_) => {}
+            BindingPattern::AssignmentPattern(default) => {
+                if let Some((initializer, selected_default)) =
+                    self.select_destructuring_default(Some(initializer), &default.right)
+                {
+                    if !selected_default {
+                        self.record_static_container_generator_values(
+                            &default.right,
+                            guard.is_some(),
+                        );
+                    }
+                    self.record_destructured_callable_initializers(
+                        &default.left,
+                        initializer,
+                        guard,
+                    );
+                }
+            }
         }
     }
 
@@ -15553,16 +15648,25 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     fn record_assignment_maybe_default_callable_initializer(
         &mut self,
         target: &AssignmentTargetMaybeDefault<'_>,
-        initializer: &Expression<'_>,
+        initializer: Option<&Expression<'_>>,
         guard: Option<&GeneratorMethodGuard>,
     ) {
-        if matches!(
-            target,
-            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(_)
-        ) {
-            return;
-        }
-        if let Some(target) = target.as_assignment_target() {
+        if let AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) = target {
+            if let Some((initializer, selected_default)) =
+                self.select_destructuring_default(initializer, &default.init)
+            {
+                if !selected_default {
+                    self.record_static_container_generator_values(&default.init, guard.is_some());
+                }
+                self.record_assignment_target_callable_initializer(
+                    &default.binding,
+                    initializer,
+                    guard,
+                );
+            }
+        } else if let Some(initializer) = initializer
+            && let Some(target) = target.as_assignment_target()
+        {
             self.record_assignment_target_callable_initializer(target, initializer, guard);
         }
     }
@@ -15586,6 +15690,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let guard = Self::array_iterator_guard();
         for (index, value) in initializer.elements.iter().enumerate() {
             if matches!(value, ArrayExpressionElement::Elision(_)) {
+                if let Some(target) = pattern.elements.get(index).and_then(Option::as_ref) {
+                    self.record_assignment_maybe_default_callable_initializer(
+                        target,
+                        None,
+                        Some(&guard),
+                    );
+                }
                 continue;
             }
             let Some(target) = pattern.elements.get(index).and_then(Option::as_ref) else {
@@ -15594,9 +15705,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             };
             self.record_assignment_maybe_default_callable_initializer(
                 target,
-                value.to_expression(),
+                Some(value.to_expression()),
                 Some(&guard),
             );
+        }
+        for target in pattern
+            .elements
+            .iter()
+            .skip(initializer.elements.len())
+            .flatten()
+        {
+            self.record_assignment_maybe_default_callable_initializer(target, None, Some(&guard));
         }
     }
 
@@ -15634,12 +15753,23 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         for property in &pattern.properties {
             match property {
                 AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
-                    if property.init.is_some() {
-                        return;
-                    }
                     let name = property.binding.name.to_string();
                     selected.insert(name.clone());
-                    let Some(value) = values.get(&name) else {
+                    let initializer = if let Some(default) = &property.init {
+                        self.select_destructuring_default(values.get(&name).copied(), default)
+                            .map(|(initializer, selected_default)| {
+                                if !selected_default {
+                                    self.record_static_container_generator_values(
+                                        default,
+                                        guard.is_some(),
+                                    );
+                                }
+                                initializer
+                            })
+                    } else {
+                        values.get(&name).copied()
+                    };
+                    let Some(initializer) = initializer else {
                         continue;
                     };
                     let Some(symbol) = identifier_symbol(self.scoping, &property.binding) else {
@@ -15651,9 +15781,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         .or_default()
                         .insert((property.binding.span.start, property.binding.span.end));
                     if let Some(guard) = guard {
-                        self.record_guarded_callable_initializer(target, value, guard);
+                        self.record_guarded_callable_initializer(target, initializer, guard);
                     } else {
-                        self.record_callable_initializer(target, value);
+                        self.record_callable_initializer(target, initializer);
                     }
                 }
                 AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
@@ -15661,12 +15791,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         return;
                     };
                     selected.insert(name.to_string());
-                    let Some(value) = values.get(name.as_ref()) else {
-                        continue;
-                    };
                     self.record_assignment_maybe_default_callable_initializer(
                         &property.binding,
-                        value,
+                        values.get(name.as_ref()).copied(),
                         guard,
                     );
                 }

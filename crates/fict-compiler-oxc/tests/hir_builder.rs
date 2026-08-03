@@ -6025,6 +6025,30 @@ fn unadvanced_destructured_generator_values_remain_unexecuted() {
             "[{ box: { run } }] = [{ box: { run: function* () { values.forEach = null; } } }];",
             "run();",
         ),
+        (
+            "defined array value bypasses generator default",
+            "",
+            "const [run = function* () { values.forEach = null; }] = [function* () {}];",
+            "run();",
+        ),
+        (
+            "array generator default remains unadvanced",
+            "",
+            "const [run = function* () { values.forEach = null; }] = [];",
+            "run();",
+        ),
+        (
+            "object generator default remains unadvanced",
+            "",
+            "const { run = function* () { values.forEach = null; } } = {};",
+            "void run;",
+        ),
+        (
+            "assigned generator default remains unadvanced",
+            "let run;",
+            "[run = function* () { values.forEach = null; }] = [void 0];",
+            "run();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -6103,6 +6127,24 @@ fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
             "let run; Array.prototype[Symbol.iterator] = function () { this[0]().next(); return { next() { return { done: true }; } }; };",
             "[run] = [function* () { values.forEach = null; }];",
             "void run;",
+        ),
+        (
+            "array generator default is advanced",
+            "",
+            "const [run = function* () { values.forEach = null; }] = [];",
+            "run().next();",
+        ),
+        (
+            "object generator default is advanced",
+            "",
+            "const { run = function* () { values.forEach = null; } } = {};",
+            "run().next();",
+        ),
+        (
+            "assigned generator default is advanced",
+            "let run;",
+            "({ run = function* () { values.forEach = null; } } = { run: undefined });",
+            "run().next();",
         ),
     ] {
         let source = format!(
