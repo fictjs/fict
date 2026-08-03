@@ -26641,6 +26641,49 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn local_reflect_delete_property(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
+        if call.arguments.len() != 2
+            || !matches!(
+                call.callee.get_inner_expression(),
+                Expression::Identifier(_)
+                    | Expression::StaticMemberExpression(_)
+                    | Expression::ComputedMemberExpression(_)
+            )
+        {
+            return None;
+        }
+        let raw_callee = static_alias_source_path(self.scoping, &call.callee)?;
+        let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
+        let direct_or_bound_builtin = raw_callee.properties.is_empty()
+            || matches!(
+                (&raw_callee.root, raw_callee.properties.as_slice()),
+                (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                    if root == "Reflect" && method == "deleteProperty"
+            );
+        if !direct_or_bound_builtin
+            || !self.path_is_currently_intact(&raw_callee)
+            || !matches!(
+                (&callee.root, callee.properties.as_slice()),
+                (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                    if root == "Reflect" && method == "deleteProperty"
+            )
+        {
+            return None;
+        }
+        let target = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .filter(|target| matches!(target.get_inner_expression(), Expression::Identifier(_)))
+            .and_then(|target| self.alias_source_path(target))?;
+        let property = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_member_name)?;
+        Some(target.with_property(property))
+    }
+
     fn constructor_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
         let resolved = resolve_static_alias_path(&self.aliases, path);
         if matches!(
@@ -29441,6 +29484,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let unconditional = self
+            .function_control_baselines
+            .last()
+            .map_or(self.control_depth == 0, |baseline| {
+                self.control_depth == *baseline
+            });
+        if unconditional && let Some(property) = self.local_reflect_delete_property(call) {
+            self.remove_local_own_property(&property);
+        }
         let synchronous_callback_effect_targets = self.synchronous_callback_effect_targets(call);
         let mut local_invocations = self
             .immediate_callable_result_invocation_facts(call)

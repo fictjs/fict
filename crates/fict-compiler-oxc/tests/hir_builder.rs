@@ -6729,6 +6729,168 @@ fn conditionally_deleting_an_own_getter_preserves_its_effects() {
 }
 
 #[test]
+fn reflect_delete_property_forgets_unconditionally_deleted_own_accessors() {
+    for (name, declaration, deletion, observation) in [
+        (
+            "own getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Reflect.deleteProperty(source, 'run');",
+            "void source.run;",
+        ),
+        (
+            "own getter through an object alias",
+            "const source = { get run() { values.forEach = null; return 1; } }; const alias = source;",
+            "Reflect.deleteProperty(alias, 'run');",
+            "void source.run;",
+        ),
+        (
+            "own getter through an aliased builtin",
+            "const source = { get run() { values.forEach = null; return 1; } }; const remove = Reflect.deleteProperty;",
+            "remove(source, 'run');",
+            "void source.run;",
+        ),
+        (
+            "own setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "Reflect.deleteProperty(source, 'run');",
+            "source.run = 1;",
+        ),
+        (
+            "object rest after deleting an own getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Reflect.deleteProperty(source, 'run');",
+            "const { ...copy } = source; void copy.run;",
+        ),
+        (
+            "optional call after deleting an own getter",
+            "const source = { get run() { values.forEach = null; return () => 1; } };",
+            "Reflect.deleteProperty(source, 'run');",
+            "source.run?.();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {deletion}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected the deleted own accessor to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn reflect_delete_property_selects_a_deleted_data_property_default() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const source = { run: 1 };
+            const fallback = () => {
+                values.forEach = null;
+                return 0;
+            };
+            Reflect.deleteProperty(source, 'run');
+            const { run = fallback() } = source;
+            void run;
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.hir.is_none(),
+        "expected a deleted data property to select its destructuring default"
+    );
+}
+
+#[test]
+fn reflect_delete_property_preserves_accessors_when_deletion_is_uncertain() {
+    for (name, declaration, deletion) in [
+        (
+            "inherited getter",
+            "class Source { get run() { values.forEach = null; return 1; } } const source = new Source();",
+            "Reflect.deleteProperty(source, 'run');",
+        ),
+        (
+            "conditional deletion",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "if (Math.random() < 0.5) Reflect.deleteProperty(source, 'run');",
+        ),
+        (
+            "dynamic property key",
+            "const source = { get run() { values.forEach = null; return 1; } }; const key = Math.random() < 0.5 ? 'run' : 'other';",
+            "Reflect.deleteProperty(source, key);",
+        ),
+        (
+            "shadowed Reflect binding",
+            "const source = { get run() { values.forEach = null; return 1; } }; const Reflect = { deleteProperty() { return true; } };",
+            "Reflect.deleteProperty(source, 'run');",
+        ),
+        (
+            "frozen object",
+            "const source = { get run() { values.forEach = null; return 1; } }; Object.freeze(source);",
+            "Reflect.deleteProperty(source, 'run');",
+        ),
+        (
+            "target expression freezes before deletion",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Reflect.deleteProperty((Object.freeze(source), source), 'run');",
+        ),
+        (
+            "extra argument freezes before deletion",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Reflect.deleteProperty(source, 'run', Object.freeze(source));",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {deletion}
+                    void source.run;
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected potentially retained accessor effects to propagate"
+        );
+    }
+}
+
+#[test]
 fn accessor_assignments_propagate_setter_and_retained_getter_effects() {
     for (name, declaration, assignment, observation) in [
         (
