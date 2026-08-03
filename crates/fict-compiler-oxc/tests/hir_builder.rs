@@ -11705,6 +11705,65 @@ fn immediately_invoked_functions_propagate_parameter_invalidations() {
 }
 
 #[test]
+fn iife_initializers_resolve_nested_invocation_results() {
+    let source = r#"
+        import { $state } from 'fict';
+        function identity(value) { return value; }
+        function App() {
+            const count = $state(0);
+            const value = (() => identity(1))();
+            return count() + value;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.hir.is_some(),
+        "unexpected diagnostics: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn iife_initializers_preserve_nested_callable_result_effects() {
+    for (name, observation, expected_hir) in [
+        ("uninvoked nested result", "void run;", true),
+        ("invoked nested result", "run();", false),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    function create() {{
+                        return () => {{ values.forEach = null; }};
+                    }}
+                    const run = (() => create())();
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected nested callable result outcome: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn pure_immediately_invoked_functions_preserve_receiver_methods() {
     for (name, call) in [
         ("read-only IIFE", "(target => target.length)(values);"),

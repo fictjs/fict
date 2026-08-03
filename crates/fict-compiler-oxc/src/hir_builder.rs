@@ -23670,6 +23670,34 @@ impl StaticHookAliasCollector<'_> {
         self.local_callable_results_for_invocation_inner(invocation, &mut BTreeSet::new())
     }
 
+    fn resolve_local_callable_result_invocations(
+        &self,
+        callable_results: Vec<LocalCallableResult>,
+        visiting: &mut BTreeSet<StaticAliasPath>,
+    ) -> (Vec<LocalCallableResult>, bool) {
+        let mut results = Vec::new();
+        let mut historical = false;
+        for result in callable_results {
+            match result {
+                LocalCallableResult::Invocation(invocations) => {
+                    historical |= invocations.len() > 1;
+                    for invocation in invocations {
+                        let (nested_results, nested_historical) =
+                            self.local_callable_results_for_invocation_inner(&invocation, visiting);
+                        historical |= nested_historical;
+                        results.extend(
+                            nested_results
+                                .into_iter()
+                                .map(|result| self.bind_local_callable_result(result, &invocation)),
+                        );
+                    }
+                }
+                result => results.push(result),
+            }
+        }
+        (results, historical)
+    }
+
     fn local_callable_results_for_invocation_inner(
         &self,
         invocation: &LocalInvocationFact,
@@ -23701,25 +23729,10 @@ impl StaticHookAliasCollector<'_> {
             } else {
                 callable_results.push(LocalCallableResult::Unknown);
             }
-            for result in callable_results {
-                match result {
-                    LocalCallableResult::Invocation(invocations) => {
-                        nested_historical |= invocations.len() > 1;
-                        for nested_invocation in invocations {
-                            let (nested_results, nested_was_historical) = self
-                                .local_callable_results_for_invocation_inner(
-                                    &nested_invocation,
-                                    visiting,
-                                );
-                            nested_historical |= nested_was_historical;
-                            results.extend(nested_results.into_iter().map(|result| {
-                                self.bind_local_callable_result(result, &nested_invocation)
-                            }));
-                        }
-                    }
-                    result => results.push(result),
-                }
-            }
+            let (resolved, resolved_historical) =
+                self.resolve_local_callable_result_invocations(callable_results, visiting);
+            nested_historical |= resolved_historical;
+            results.extend(resolved);
             visiting.remove(&callee);
         }
         (results, historical || nested_historical)
@@ -23890,7 +23903,7 @@ impl StaticHookAliasCollector<'_> {
                     })
                     .filter(|results| !results.is_empty())
                     .unwrap_or_else(|| vec![LocalCallableResult::Unknown]);
-                (results, false)
+                self.resolve_local_callable_result_invocations(results, &mut BTreeSet::new())
             } else {
                 self.local_callable_results_for_invocation(&invocation)
             };
