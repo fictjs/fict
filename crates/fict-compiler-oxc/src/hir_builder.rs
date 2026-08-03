@@ -2043,6 +2043,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             structured_own_properties: BTreeMap::new(),
             open_structured_containers: BTreeSet::new(),
             binding_owner_depths: BTreeMap::new(),
+            dynamic_path_owner_depths: BTreeMap::new(),
             cross_scope_alias_targets: BTreeSet::new(),
             ambiguous_alias_targets: BTreeSet::new(),
             invalidated: BTreeSet::new(),
@@ -2076,6 +2077,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             active_returned_callable_instances: BTreeMap::new(),
             current_callable_spans: Vec::new(),
             class_constructor_effect_spans: BTreeMap::new(),
+            returned_class_blueprint_targets: BTreeMap::new(),
+            pending_returned_class_materializations: BTreeMap::new(),
+            pending_class_instance_materializations: Vec::new(),
             current_class_spans: Vec::new(),
             class_effect_contexts: Vec::new(),
             escaped_callable_effect_targets: BTreeSet::new(),
@@ -16854,6 +16858,7 @@ struct StaticHookAliasCollector<'semantic> {
     structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     open_structured_containers: BTreeSet<StaticAliasPath>,
     binding_owner_depths: BTreeMap<SymbolId, usize>,
+    dynamic_path_owner_depths: BTreeMap<(u32, u32), usize>,
     cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
     ambiguous_alias_targets: BTreeSet<StaticAliasPath>,
     invalidated: BTreeSet<StaticAliasPath>,
@@ -16887,6 +16892,9 @@ struct StaticHookAliasCollector<'semantic> {
     active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
     current_callable_spans: Vec<(u32, u32)>,
     class_constructor_effect_spans: BTreeMap<(u32, u32), (u32, u32)>,
+    returned_class_blueprint_targets: BTreeMap<(u32, u32), StaticAliasPath>,
+    pending_returned_class_materializations: PendingReturnedClassMaterializationMap,
+    pending_class_instance_materializations: Vec<(StaticAliasPath, StaticAliasPath)>,
     current_class_spans: Vec<(u32, u32)>,
     class_effect_contexts: Vec<Option<ClassEffectContext>>,
     escaped_callable_effect_targets: BTreeSet<StaticAliasPath>,
@@ -17004,6 +17012,7 @@ struct LocalBoundCallableAlternatives {
 struct LocalCallableEffectResult {
     span: (u32, u32),
     capture_invocations: Vec<LocalInvocationFact>,
+    class: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -17021,6 +17030,7 @@ enum LocalCallableResult {
     Direct {
         span: (u32, u32),
         capture_invocations: Vec<LocalInvocationFact>,
+        class: bool,
         parameters: Vec<LocalCallableParameter>,
         dynamic_receiver: Option<StaticAliasPath>,
         bound_receiver: Option<Vec<LocalInvocationArgument>>,
@@ -17416,6 +17426,8 @@ struct LocalInvocationFact {
 
 type LocalCallableEffectCreatorMap =
     BTreeMap<(StaticAliasPath, (u32, u32)), Vec<Vec<LocalInvocationFact>>>;
+type PendingReturnedClassMaterializationMap =
+    BTreeMap<(u32, u32), Vec<(StaticAliasPath, Vec<LocalInvocationFact>)>>;
 
 #[derive(Clone)]
 enum LocalInvocationDynamicReceiver {
@@ -17635,6 +17647,7 @@ impl StaticHookAliasCollector<'_> {
                 vec![LocalCallableResult::Direct {
                     span: (function.span.start, function.span.end),
                     capture_invocations: Vec::new(),
+                    class: false,
                     parameters: Self::local_callable_parameters(&function.params),
                     dynamic_receiver: Some(StaticAliasPath::dynamic_this(function.span)),
                     bound_receiver: None,
@@ -17654,6 +17667,7 @@ impl StaticHookAliasCollector<'_> {
                 vec![LocalCallableResult::Direct {
                     span: (function.span.start, function.span.end),
                     capture_invocations: Vec::new(),
+                    class: false,
                     parameters: Self::local_callable_parameters(&function.params),
                     dynamic_receiver: lexical_receiver.cloned(),
                     bound_receiver: None,
@@ -17672,6 +17686,7 @@ impl StaticHookAliasCollector<'_> {
             Expression::ClassExpression(class) => vec![LocalCallableResult::Direct {
                 span: (class.span.start, class.span.end),
                 capture_invocations: Vec::new(),
+                class: true,
                 parameters: Self::class_constructor_parameters(class),
                 dynamic_receiver: None,
                 bound_receiver: None,
@@ -18155,12 +18170,14 @@ impl StaticHookAliasCollector<'_> {
                 vec![LocalCallableEffectResult {
                     span: (function.span.start, function.span.end),
                     capture_invocations: Vec::new(),
+                    class: false,
                 }]
             }
             Expression::FunctionExpression(_) => Vec::new(),
             Expression::ArrowFunctionExpression(function) => vec![LocalCallableEffectResult {
                 span: (function.span.start, function.span.end),
                 capture_invocations: Vec::new(),
+                class: false,
             }],
             _ => Vec::new(),
         };
@@ -18391,6 +18408,247 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn rebase_returned_class_path(
+        path: &StaticAliasPath,
+        source: &StaticAliasPath,
+        target: &StaticAliasPath,
+    ) -> StaticAliasPath {
+        if !path.starts_with(source) {
+            return path.clone();
+        }
+        let mut rebased = target.clone();
+        rebased
+            .properties
+            .extend_from_slice(&path.properties[source.properties.len()..]);
+        rebased.element_wildcard |= path.element_wildcard;
+        rebased.canonicalized()
+    }
+
+    fn materialize_returned_class_callables(
+        &mut self,
+        target: &StaticAliasPath,
+        class_span: (u32, u32),
+        capture_invocations: &[LocalInvocationFact],
+    ) {
+        let Some(source) = self
+            .returned_class_blueprint_targets
+            .get(&class_span)
+            .cloned()
+        else {
+            self.pending_returned_class_materializations
+                .entry(class_span)
+                .or_default()
+                .push((target.clone(), capture_invocations.to_vec()));
+            return;
+        };
+        if self.local_class_instances.contains(&source) {
+            self.local_class_instances.insert(target.clone());
+        }
+        if let Some(parameters) = self.local_callable_parameters.get(&source).cloned() {
+            self.record_local_callable_signature(target.clone(), parameters);
+        }
+        if let Some(fields) = self.local_class_instance_fields.get(&source).cloned() {
+            self.local_class_instance_fields
+                .insert(target.clone(), fields);
+        }
+        if let Some(mut callables) = self.local_class_instance_callables.get(&source).cloned() {
+            for alternatives in callables.values_mut() {
+                for callable in alternatives {
+                    if let Some(callable_source) = &mut callable.source {
+                        *callable_source =
+                            Self::rebase_returned_class_path(callable_source, &source, target);
+                    }
+                    callable.exposures = callable
+                        .exposures
+                        .iter()
+                        .map(|path| Self::rebase_returned_class_path(path, &source, target))
+                        .collect();
+                    for effect in &mut callable.effect_instances {
+                        if class_span.0 <= effect.span.0 && effect.span.1 <= class_span.1 {
+                            effect
+                                .capture_invocations
+                                .extend_from_slice(capture_invocations);
+                        }
+                    }
+                }
+            }
+            self.local_class_instance_callables
+                .insert(target.clone(), callables);
+        }
+        if self.open_local_class_instance_fields.contains(&source) {
+            self.open_local_class_instance_fields.insert(target.clone());
+        }
+        if self.closed_replacement_class_instances.contains(&source) {
+            self.closed_replacement_class_instances
+                .insert(target.clone());
+        }
+
+        let aliases = self
+            .aliases
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source) && *path != &source)
+            .map(|(path, alias)| (path.clone(), alias.clone()))
+            .collect::<Vec<_>>();
+        for (path, alias) in aliases {
+            self.insert_alias(
+                Self::rebase_returned_class_path(&path, &source, target),
+                Self::rebase_returned_class_path(&alias, &source, target),
+            );
+        }
+        let exposures = self
+            .callable_exposures
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source) && *path != &source)
+            .map(|(path, exposures)| (path.clone(), exposures.clone()))
+            .collect::<Vec<_>>();
+        for (path, exposures) in exposures {
+            self.record_callable_exposures(
+                Self::rebase_returned_class_path(&path, &source, target),
+                exposures
+                    .iter()
+                    .map(|path| Self::rebase_returned_class_path(path, &source, target))
+                    .collect(),
+            );
+        }
+        let signatures = self
+            .local_callable_parameters
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source) && *path != &source)
+            .map(|(path, parameters)| (path.clone(), parameters.clone()))
+            .collect::<Vec<_>>();
+        for (path, parameters) in signatures {
+            let destination = Self::rebase_returned_class_path(&path, &source, target);
+            self.record_local_callable_signature(destination.clone(), parameters);
+            if let Some(receiver) = self.local_callable_receivers.get(&path).cloned() {
+                self.record_local_callable_receiver(
+                    destination.clone(),
+                    Self::rebase_returned_class_path(&receiver, &source, target),
+                );
+            }
+            if self.local_generator_callables.contains(&path) {
+                self.record_local_generator(destination);
+            }
+        }
+        let results = self
+            .local_callable_results
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source) && *path != &source)
+            .map(|(path, results)| (path.clone(), results.clone()))
+            .collect::<Vec<_>>();
+        for (path, results) in results {
+            self.record_local_callable_results(
+                Self::rebase_returned_class_path(&path, &source, target),
+                results,
+            );
+        }
+        let bound_callables = self
+            .local_bound_callables
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source) && *path != &source)
+            .map(|(path, callable)| (path.clone(), callable.clone()))
+            .collect::<Vec<_>>();
+        for (path, callable) in bound_callables {
+            self.record_local_bound_callable(
+                Self::rebase_returned_class_path(&path, &source, target),
+                callable,
+            );
+        }
+        let effect_spans = self
+            .local_callable_effect_spans
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source))
+            .map(|(path, spans)| (path.clone(), spans.clone()))
+            .collect::<Vec<_>>();
+        for (path, spans) in effect_spans {
+            let destination = Self::rebase_returned_class_path(&path, &source, target);
+            for span in spans {
+                self.record_local_callable_effect_span(destination.clone(), span);
+                let creators = self
+                    .local_callable_effect_creators
+                    .get(&(path.clone(), span))
+                    .cloned()
+                    .unwrap_or_default();
+                if creators.is_empty() && class_span.0 <= span.0 && span.1 <= class_span.1 {
+                    self.record_local_callable_effect_creator(
+                        destination.clone(),
+                        span,
+                        capture_invocations.to_vec(),
+                    );
+                } else {
+                    for mut creator in creators {
+                        if class_span.0 <= span.0 && span.1 <= class_span.1 {
+                            creator.extend_from_slice(capture_invocations);
+                        }
+                        self.record_local_callable_effect_creator(
+                            destination.clone(),
+                            span,
+                            creator,
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(constructors) = self.default_derived_constructors.get(&source).cloned() {
+            self.default_derived_constructor_history
+                .entry(target.clone())
+                .or_default()
+                .push(constructors.clone());
+            self.default_derived_constructors
+                .insert(target.clone(), constructors);
+        }
+    }
+
+    fn materialize_ready_returned_classes(&mut self) {
+        let spans = self
+            .pending_returned_class_materializations
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for span in spans {
+            if !self.returned_class_blueprint_targets.contains_key(&span) {
+                continue;
+            }
+            let Some(pending) = self.pending_returned_class_materializations.remove(&span) else {
+                continue;
+            };
+            let mut deferred = Vec::new();
+            for (target, capture_invocations) in pending {
+                if self
+                    .ambiguous_alias_targets
+                    .iter()
+                    .any(|candidate| candidate.overlaps(&target))
+                {
+                    continue;
+                }
+                if self.path_owner_depth(&target) < self.function_depth {
+                    deferred.push((target, capture_invocations));
+                    continue;
+                }
+                self.materialize_returned_class_callables(&target, span, &capture_invocations);
+            }
+            if !deferred.is_empty() {
+                self.pending_returned_class_materializations
+                    .insert(span, deferred);
+            }
+        }
+        self.materialize_ready_class_instances();
+    }
+
+    fn materialize_ready_class_instances(&mut self) {
+        let pending = std::mem::take(&mut self.pending_class_instance_materializations);
+        for (target, class) in pending {
+            if self.path_owner_depth(&target) < self.function_depth
+                || (!self.local_class_instances.contains(&class)
+                    && !self.open_local_class_instance_fields.contains(&class))
+            {
+                self.pending_class_instance_materializations
+                    .push((target, class));
+                continue;
+            }
+            self.collect_class_instance_aliases_from_path(&target, &class);
+        }
+    }
+
     fn collect_class_instance_aliases(
         &mut self,
         target: &StaticAliasPath,
@@ -18403,8 +18661,16 @@ impl StaticHookAliasCollector<'_> {
         if !self.path_is_currently_intact(&raw_class) {
             return;
         }
-        if !self.local_class_instances.contains(&class) {
-            if self.open_local_class_instance_fields.contains(&class) {
+        self.collect_class_instance_aliases_from_path(target, &class);
+    }
+
+    fn collect_class_instance_aliases_from_path(
+        &mut self,
+        target: &StaticAliasPath,
+        class: &StaticAliasPath,
+    ) {
+        if !self.local_class_instances.contains(class) {
+            if self.open_local_class_instance_fields.contains(class) {
                 self.open_structured_containers.insert(target.clone());
             }
             return;
@@ -18412,11 +18678,11 @@ impl StaticHookAliasCollector<'_> {
         let prototype = class.with_property("prototype".to_string());
         let fields = self
             .local_class_instance_fields
-            .get(&class)
+            .get(class)
             .cloned()
             .unwrap_or_default();
-        let open_fields = self.open_local_class_instance_fields.contains(&class);
-        if open_fields && !self.closed_replacement_class_instances.contains(&class) {
+        let open_fields = self.open_local_class_instance_fields.contains(class);
+        if open_fields && !self.closed_replacement_class_instances.contains(class) {
             self.open_structured_containers.insert(target.clone());
         }
         let methods = self
@@ -18442,7 +18708,7 @@ impl StaticHookAliasCollector<'_> {
         }
         let callables = self
             .local_class_instance_callables
-            .get(&class)
+            .get(class)
             .cloned()
             .unwrap_or_default();
         for (name, callables) in callables {
@@ -20318,9 +20584,26 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn path_owner_depth(&self, path: &StaticAliasPath) -> usize {
-        path.binding_root()
-            .and_then(|root| self.binding_owner_depths.get(&root).copied())
-            .unwrap_or(0)
+        Self::path_owner_depth_from_maps(
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            path,
+        )
+    }
+
+    fn path_owner_depth_from_maps(
+        binding_owner_depths: &BTreeMap<SymbolId, usize>,
+        dynamic_path_owner_depths: &BTreeMap<(u32, u32), usize>,
+        path: &StaticAliasPath,
+    ) -> usize {
+        match &path.root {
+            StaticAliasRoot::Binding(root) => binding_owner_depths.get(root).copied().unwrap_or(0),
+            StaticAliasRoot::DynamicThis { start, end } => dynamic_path_owner_depths
+                .get(&(*start, *end))
+                .copied()
+                .unwrap_or(0),
+            StaticAliasRoot::UnresolvedGlobal(_) => 0,
+        }
     }
 
     fn attached_parameter_path(
@@ -20657,8 +20940,26 @@ impl StaticHookAliasCollector<'_> {
         };
         let mut alternatives = 0usize;
         let mut ambiguous = false;
+        let mut materialized_class = false;
         for invocation in invocations {
-            let (results, historical) = self.local_callable_results_for_invocation(&invocation);
+            let (results, historical) = if invocation.callee.is_none() {
+                let lexical_receiver = self
+                    .dynamic_this_roots
+                    .last()
+                    .and_then(Option::as_ref)
+                    .cloned();
+                let results = self
+                    .callable_definition_results(
+                        &call.callee,
+                        lexical_receiver.as_ref(),
+                        invocation.function_depth.saturating_add(1),
+                    )
+                    .filter(|results| !results.is_empty())
+                    .unwrap_or_else(|| vec![LocalCallableResult::Unknown]);
+                (results, false)
+            } else {
+                self.local_callable_results_for_invocation(&invocation)
+            };
             ambiguous |= historical;
             for result in results {
                 match self.bind_local_callable_result(result, &invocation) {
@@ -20669,6 +20970,7 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Direct {
                         span,
                         capture_invocations,
+                        class,
                         parameters,
                         dynamic_receiver,
                         bound_receiver,
@@ -20678,6 +20980,14 @@ impl StaticHookAliasCollector<'_> {
                         results,
                     } => {
                         alternatives = alternatives.saturating_add(1);
+                        if class {
+                            materialized_class = true;
+                            self.materialize_returned_class_callables(
+                                &target,
+                                span,
+                                &capture_invocations,
+                            );
+                        }
                         self.record_local_callable_effect_span(target.clone(), span);
                         self.record_local_callable_effect_creator(
                             target.clone(),
@@ -20718,6 +21028,14 @@ impl StaticHookAliasCollector<'_> {
                         alternatives = alternatives.saturating_add(callables.len());
                         ambiguous |= historical || callables.len() > 1;
                         for effect in effect_instances {
+                            if effect.class {
+                                materialized_class = true;
+                                self.materialize_returned_class_callables(
+                                    &target,
+                                    effect.span,
+                                    &effect.capture_invocations,
+                                );
+                            }
                             self.record_local_callable_effect_span(target.clone(), effect.span);
                             self.record_local_callable_effect_creator(
                                 target.clone(),
@@ -20751,7 +21069,7 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
         }
-        if ambiguous || alternatives > 1 {
+        if alternatives > 1 || (ambiguous && !materialized_class) {
             self.mark_alias_target_ambiguous(target);
         }
     }
@@ -20766,7 +21084,31 @@ impl StaticHookAliasCollector<'_> {
         }
         match value.get_inner_expression() {
             Expression::NewExpression(expression) => {
-                self.collect_class_instance_aliases(&target, expression);
+                match expression.callee.get_inner_expression() {
+                    Expression::ClassExpression(class) => {
+                        self.pending_class_instance_materializations
+                            .push((target, StaticAliasPath::dynamic_this(class.span)));
+                    }
+                    Expression::CallExpression(call) => {
+                        let class_target = StaticAliasPath::dynamic_this(expression.span);
+                        self.dynamic_path_owner_depths.insert(
+                            (expression.span.start, expression.span.end),
+                            self.function_depth,
+                        );
+                        self.record_callable_result_initializer(class_target.clone(), call);
+                        if self.local_class_instances.contains(&class_target)
+                            || self
+                                .open_local_class_instance_fields
+                                .contains(&class_target)
+                        {
+                            self.collect_class_instance_aliases_from_path(&target, &class_target);
+                        } else {
+                            self.pending_class_instance_materializations
+                                .push((target, class_target));
+                        }
+                    }
+                    _ => self.collect_class_instance_aliases(&target, expression),
+                }
             }
             Expression::ObjectExpression(object) => {
                 self.structured_own_properties
@@ -20943,6 +21285,11 @@ impl StaticHookAliasCollector<'_> {
         if let Expression::ClassExpression(class) = inner {
             self.record_default_derived_constructor(target.clone(), class);
             self.record_class_callables(&target, class);
+            self.materialize_returned_class_callables(
+                &target,
+                (class.span.start, class.span.end),
+                &[],
+            );
         }
         let Some(paths) = self.returned_function_paths(value) else {
             return true;
@@ -21022,6 +21369,7 @@ impl StaticHookAliasCollector<'_> {
                 BTreeSet::from([source])
             };
             for source in sources {
+                let local_class = self.local_class_instances.contains(&source);
                 if historical {
                     if let Some(history) = self.local_callable_effect_span_history.get(&source) {
                         for span in history.iter().flatten() {
@@ -21035,12 +21383,18 @@ impl StaticHookAliasCollector<'_> {
                                     LocalCallableEffectResult {
                                         span: *span,
                                         capture_invocations: creators,
+                                        class: local_class
+                                            && self
+                                                .returned_class_blueprint_targets
+                                                .contains_key(span),
                                     }
                                 }));
                             } else {
                                 effect_instances.push(LocalCallableEffectResult {
                                     span: *span,
                                     capture_invocations: Vec::new(),
+                                    class: local_class
+                                        && self.returned_class_blueprint_targets.contains_key(span),
                                 });
                             }
                         }
@@ -21057,12 +21411,16 @@ impl StaticHookAliasCollector<'_> {
                                 LocalCallableEffectResult {
                                     span: *span,
                                     capture_invocations: creators,
+                                    class: local_class
+                                        && self.returned_class_blueprint_targets.contains_key(span),
                                 }
                             }));
                         } else {
                             effect_instances.push(LocalCallableEffectResult {
                                 span: *span,
                                 capture_invocations: Vec::new(),
+                                class: local_class
+                                    && self.returned_class_blueprint_targets.contains_key(span),
                             });
                         }
                     }
@@ -21157,18 +21515,21 @@ impl StaticHookAliasCollector<'_> {
                     effect_instances.push(LocalCallableEffectResult {
                         span: (function.span.start, function.span.end),
                         capture_invocations: Vec::new(),
+                        class: false,
                     });
                 }
                 Expression::ArrowFunctionExpression(function) => {
                     effect_instances.push(LocalCallableEffectResult {
                         span: (function.span.start, function.span.end),
                         capture_invocations: Vec::new(),
+                        class: false,
                     });
                 }
                 Expression::ClassExpression(class) => {
                     effect_instances.push(LocalCallableEffectResult {
                         span: (class.span.start, class.span.end),
                         capture_invocations: Vec::new(),
+                        class: true,
                     });
                 }
                 _ => {}
@@ -21233,6 +21594,7 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Direct {
                         span,
                         capture_invocations,
+                        class,
                         parameters,
                         dynamic_receiver,
                         bound_receiver,
@@ -21260,6 +21622,7 @@ impl StaticHookAliasCollector<'_> {
                             .push(LocalCallableEffectResult {
                                 span,
                                 capture_invocations,
+                                class,
                             });
                     }
                     LocalCallableResult::Bound {
@@ -21373,6 +21736,13 @@ impl StaticHookAliasCollector<'_> {
             return false;
         };
         for effect in &alternatives.effect_instances {
+            if effect.class {
+                self.materialize_returned_class_callables(
+                    &target,
+                    effect.span,
+                    &effect.capture_invocations,
+                );
+            }
             self.record_local_callable_effect_span(target.clone(), effect.span);
             if !effect.capture_invocations.is_empty() {
                 self.record_local_callable_effect_creator(
@@ -24025,6 +24395,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             }
         }
         walk_variable_declarator(self, declarator);
+        self.materialize_ready_returned_classes();
     }
 
     fn visit_expression_statement(&mut self, statement: &ExpressionStatement<'a>) {
@@ -24054,6 +24425,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_class(&mut self, class: &Class<'a>) {
         let class_span = (class.span.start, class.span.end);
+        let class_expression = class.r#type == ClassType::ClassExpression;
         self.returned_callable_spans.insert(class_span);
         for element in &class.body.body {
             if let ClassElement::MethodDefinition(method) = element
@@ -24080,10 +24452,56 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.record_local_callable_effect_span(target.clone(), class_span);
             self.record_default_derived_constructor(target.clone(), class);
             self.record_class_callables(&target, class);
+            self.returned_class_blueprint_targets
+                .insert(class_span, target);
+        }
+        if class_expression {
+            let target = StaticAliasPath::dynamic_this(class.span);
+            self.dynamic_path_owner_depths
+                .insert(class_span, self.function_depth);
+            self.record_local_callable_signature(
+                target.clone(),
+                Self::class_constructor_parameters(class),
+            );
+            self.record_local_callable_effect_span(target.clone(), class_span);
+            self.record_default_derived_constructor(target.clone(), class);
+            self.record_class_callables(&target, class);
+            self.returned_class_blueprint_targets
+                .insert(class_span, target);
         }
         self.current_class_spans.push(class_span);
         oxc::ast_visit::walk::walk_class(self, class);
         self.current_class_spans.pop();
+        if class_expression
+            && let Some(target) = self
+                .returned_class_blueprint_targets
+                .get(&class_span)
+                .cloned()
+        {
+            self.local_callable_parameters
+                .insert(target.clone(), Self::class_constructor_parameters(class));
+            self.local_callable_effect_spans
+                .entry(target)
+                .or_default()
+                .insert(class_span);
+        }
+        if class.r#type == ClassType::ClassDeclaration
+            && let Some(symbol) = class
+                .id
+                .as_ref()
+                .and_then(|identifier| identifier.symbol_id.get())
+        {
+            let target = StaticAliasPath::root(symbol);
+            self.local_callable_parameters
+                .insert(target.clone(), Self::class_constructor_parameters(class));
+            self.local_callable_effect_spans
+                .entry(target)
+                .or_default()
+                .insert(class_span);
+        }
+        if class_expression {
+            self.materialize_ready_returned_classes();
+        }
     }
 
     fn visit_property_definition(&mut self, property: &PropertyDefinition<'a>) {
@@ -24392,13 +24810,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_callable_effect_spans
             .extend(outer_local_callable_effect_spans);
         let binding_owner_depths = &self.binding_owner_depths;
+        let dynamic_path_owner_depths = &self.dynamic_path_owner_depths;
         self.local_callable_effect_creators
             .retain(|(target, _), _| {
-                target
-                    .binding_root()
-                    .and_then(|root| binding_owner_depths.get(&root).copied())
-                    .unwrap_or(0)
-                    >= depth
+                Self::path_owner_depth_from_maps(
+                    binding_owner_depths,
+                    dynamic_path_owner_depths,
+                    target,
+                ) >= depth
             });
         self.local_callable_effect_creators
             .extend(outer_local_callable_effect_creators);
@@ -24414,39 +24833,40 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_class_instances
             .extend(outer_local_class_instances);
         let binding_owner_depths = &self.binding_owner_depths;
+        let dynamic_path_owner_depths = &self.dynamic_path_owner_depths;
         self.local_class_instance_fields.retain(|target, _| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.local_class_instance_fields
             .extend(outer_local_class_instance_fields);
         self.local_class_instance_callables.retain(|target, _| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.local_class_instance_callables
             .extend(outer_local_class_instance_callables);
         self.open_local_class_instance_fields.retain(|target| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.open_local_class_instance_fields
             .extend(outer_open_local_class_instance_fields);
         self.closed_replacement_class_instances.retain(|target| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.closed_replacement_class_instances
             .extend(outer_closed_replacement_class_instances);
@@ -24652,13 +25072,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_callable_effect_spans
             .extend(outer_local_callable_effect_spans);
         let binding_owner_depths = &self.binding_owner_depths;
+        let dynamic_path_owner_depths = &self.dynamic_path_owner_depths;
         self.local_callable_effect_creators
             .retain(|(target, _), _| {
-                target
-                    .binding_root()
-                    .and_then(|root| binding_owner_depths.get(&root).copied())
-                    .unwrap_or(0)
-                    >= depth
+                Self::path_owner_depth_from_maps(
+                    binding_owner_depths,
+                    dynamic_path_owner_depths,
+                    target,
+                ) >= depth
             });
         self.local_callable_effect_creators
             .extend(outer_local_callable_effect_creators);
@@ -24674,39 +25095,40 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_class_instances
             .extend(outer_local_class_instances);
         let binding_owner_depths = &self.binding_owner_depths;
+        let dynamic_path_owner_depths = &self.dynamic_path_owner_depths;
         self.local_class_instance_fields.retain(|target, _| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.local_class_instance_fields
             .extend(outer_local_class_instance_fields);
         self.local_class_instance_callables.retain(|target, _| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.local_class_instance_callables
             .extend(outer_local_class_instance_callables);
         self.open_local_class_instance_fields.retain(|target| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.open_local_class_instance_fields
             .extend(outer_open_local_class_instance_fields);
         self.closed_replacement_class_instances.retain(|target| {
-            target
-                .binding_root()
-                .and_then(|root| binding_owner_depths.get(&root).copied())
-                .unwrap_or(0)
-                >= depth
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
         });
         self.closed_replacement_class_instances
             .extend(outer_closed_replacement_class_instances);
