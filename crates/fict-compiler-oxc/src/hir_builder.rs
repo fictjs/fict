@@ -2051,6 +2051,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             dynamic_getter_property_history: BTreeMap::new(),
             enumerable_dynamic_getter_properties: BTreeMap::new(),
             enumerable_dynamic_getter_property_history: BTreeMap::new(),
+            local_getter_result_definedness: BTreeMap::new(),
+            local_getter_result_definedness_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
             handled_local_getter_read_spans: BTreeSet::new(),
             handled_object_spread_getter_spans: BTreeSet::new(),
@@ -2107,6 +2109,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             default_derived_constructors: BTreeMap::new(),
             default_derived_constructor_history: BTreeMap::new(),
             unreferenced_callable_spans: BTreeSet::new(),
+            unexecuted_expression_spans: BTreeSet::new(),
             merely_observed_callable_paths: generator_execution.merely_observed_callable_paths,
             local_invocations: Vec::new(),
             attached_callable_parameters: BTreeSet::new(),
@@ -18263,6 +18266,11 @@ struct ConstructorValueReturnCollector {
 }
 
 #[derive(Default)]
+struct ReturnStatementPresenceCollector {
+    found: bool,
+}
+
+#[derive(Default)]
 struct SuperCallCollector {
     found: bool,
 }
@@ -18293,6 +18301,18 @@ impl<'a> Visit<'a> for ConstructorValueReturnCollector {
             .argument
             .as_ref()
             .is_some_and(constructor_return_may_replace_instance);
+    }
+}
+
+impl<'a> Visit<'a> for ReturnStatementPresenceCollector {
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _class: &Class<'a>) {}
+
+    fn visit_return_statement(&mut self, _statement: &ReturnStatement<'a>) {
+        self.found = true;
     }
 }
 
@@ -18430,6 +18450,9 @@ struct StaticHookAliasCollector<'semantic> {
     enumerable_dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     enumerable_dynamic_getter_property_history:
         BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    local_getter_result_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
+    local_getter_result_definedness_history:
+        BTreeMap<StaticAliasPath, BTreeSet<LocalGetterResultDefinedness>>,
     local_getter_call_invocations: BTreeMap<(u32, u32), Vec<LocalInvocationFact>>,
     handled_local_getter_read_spans: BTreeSet<(u32, u32)>,
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
@@ -18490,6 +18513,7 @@ struct StaticHookAliasCollector<'semantic> {
     default_derived_constructor_history:
         BTreeMap<StaticAliasPath, Vec<Vec<DefaultDerivedConstructorAlternative>>>,
     unreferenced_callable_spans: BTreeSet<(u32, u32)>,
+    unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
@@ -18626,6 +18650,19 @@ enum LocalCallableResult {
     },
     Invocation(Vec<LocalInvocationFact>),
     Unknown,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LocalGetterResultDefinedness {
+    Defined,
+    Undefined,
+    Unknown,
+}
+
+impl LocalGetterResultDefinedness {
+    fn merge(self, other: Self) -> Self {
+        if self == other { self } else { Self::Unknown }
+    }
 }
 
 #[derive(Clone)]
@@ -19925,6 +19962,7 @@ impl StaticHookAliasCollector<'_> {
                     self.dynamic_path_owner_depths
                         .insert((span.start, span.end), self.function_depth);
                     self.record_dynamic_local_getter(owner, getter.clone(), false);
+                    self.record_local_getter_result_definedness(getter.clone(), &method.value);
                     self.record_class_function_callable(getter, &method.value, false);
                 } else if method.kind == MethodDefinitionKind::Set {
                     self.unreferenced_callable_spans
@@ -19955,6 +19993,7 @@ impl StaticHookAliasCollector<'_> {
             if method.kind == MethodDefinitionKind::Get {
                 self.local_getter_property_history
                     .insert(method_target.clone());
+                self.record_local_getter_result_definedness(method_target.clone(), &method.value);
             }
             if method.kind == MethodDefinitionKind::Set {
                 self.unreferenced_callable_spans
@@ -22267,9 +22306,9 @@ impl StaticHookAliasCollector<'_> {
         paths.extend(outer);
     }
 
-    fn restore_outer_path_map(
-        paths: &mut BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
-        outer: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    fn restore_outer_path_map<T>(
+        paths: &mut BTreeMap<StaticAliasPath, T>,
+        outer: BTreeMap<StaticAliasPath, T>,
         binding_owner_depths: &BTreeMap<SymbolId, usize>,
         dynamic_path_owner_depths: &BTreeMap<(u32, u32), usize>,
         depth: usize,
@@ -22377,6 +22416,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|owner, _| !owner.starts_with(path));
         self.enumerable_dynamic_getter_properties
             .retain(|owner, _| !owner.starts_with(path));
+        self.local_getter_result_definedness
+            .retain(|getter, _| !getter.overlaps(path));
         self.callable_exposures
             .retain(|target, _| !target.overlaps(path));
         self.local_callable_parameters
@@ -22503,6 +22544,132 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         None
+    }
+
+    fn local_getter_expression_definedness(
+        &self,
+        expression: &Expression<'_>,
+    ) -> LocalGetterResultDefinedness {
+        let expression = expression.get_inner_expression();
+        if static_alias_source_path(self.scoping, expression)
+            .is_some_and(|path| path == StaticAliasPath::unresolved_global("undefined".to_string()))
+        {
+            return LocalGetterResultDefinedness::Undefined;
+        }
+        match expression {
+            Expression::UnaryExpression(unary) => {
+                if unary.operator == OxcUnaryOperator::Void {
+                    LocalGetterResultDefinedness::Undefined
+                } else {
+                    LocalGetterResultDefinedness::Defined
+                }
+            }
+            Expression::NullLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BigIntLiteral(_)
+            | Expression::StringLiteral(_)
+            | Expression::RegExpLiteral(_)
+            | Expression::TemplateLiteral(_)
+            | Expression::ArrayExpression(_)
+            | Expression::ObjectExpression(_)
+            | Expression::FunctionExpression(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::ClassExpression(_)
+            | Expression::NewExpression(_)
+            | Expression::ThisExpression(_)
+            | Expression::MetaProperty(_)
+            | Expression::BinaryExpression(_)
+            | Expression::UpdateExpression(_)
+            | Expression::ImportExpression(_) => LocalGetterResultDefinedness::Defined,
+            Expression::ConditionalExpression(expression) => self
+                .local_getter_expression_definedness(&expression.consequent)
+                .merge(self.local_getter_expression_definedness(&expression.alternate)),
+            Expression::LogicalExpression(expression) => self
+                .local_getter_expression_definedness(&expression.left)
+                .merge(self.local_getter_expression_definedness(&expression.right)),
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .map_or(LocalGetterResultDefinedness::Undefined, |expression| {
+                    self.local_getter_expression_definedness(expression)
+                }),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.local_getter_expression_definedness(&expression.right)
+            }
+            _ => LocalGetterResultDefinedness::Unknown,
+        }
+    }
+
+    fn local_getter_function_definedness(
+        &self,
+        function: &Function<'_>,
+    ) -> LocalGetterResultDefinedness {
+        let Some(body) = &function.body else {
+            return LocalGetterResultDefinedness::Unknown;
+        };
+        if let [Statement::ReturnStatement(statement)] = body.statements.as_slice() {
+            return statement
+                .argument
+                .as_ref()
+                .map_or(LocalGetterResultDefinedness::Undefined, |expression| {
+                    self.local_getter_expression_definedness(expression)
+                });
+        }
+        let mut returns = ReturnStatementPresenceCollector::default();
+        returns.visit_function_body(body);
+        if returns.found {
+            LocalGetterResultDefinedness::Unknown
+        } else {
+            LocalGetterResultDefinedness::Undefined
+        }
+    }
+
+    fn record_local_getter_result_definedness(
+        &mut self,
+        getter: StaticAliasPath,
+        function: &Function<'_>,
+    ) {
+        let definedness = self.local_getter_function_definedness(function);
+        self.local_getter_result_definedness_history
+            .entry(getter.clone())
+            .or_default()
+            .insert(definedness);
+        self.local_getter_result_definedness
+            .insert(getter, definedness);
+    }
+
+    fn resolved_local_getter_result_definedness(
+        &self,
+        property: &StaticAliasPath,
+    ) -> Option<LocalGetterResultDefinedness> {
+        let (historical, getters) = self.local_getter_resolution(property, false);
+        if getters.is_empty() {
+            return None;
+        }
+        let mut values = BTreeSet::new();
+        for getter in getters {
+            if historical {
+                values.extend(
+                    self.local_getter_result_definedness_history
+                        .get(&getter)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+            } else if let Some(definedness) =
+                self.local_getter_result_definedness.get(&getter).copied()
+            {
+                values.insert(definedness);
+            }
+        }
+        Some(if values.len() == 1 {
+            *values.first().expect("single getter result definedness")
+        } else {
+            LocalGetterResultDefinedness::Unknown
+        })
     }
 
     fn local_getter_resolution(
@@ -24523,6 +24690,179 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn binding_pattern_alias_target(pattern: &BindingPattern<'_>) -> Option<StaticAliasPath> {
+        let BindingPattern::BindingIdentifier(binding) = pattern else {
+            return None;
+        };
+        binding.symbol_id.get().map(StaticAliasPath::root)
+    }
+
+    fn assignment_alias_target(&self, target: &AssignmentTarget<'_>) -> Option<StaticAliasPath> {
+        planned_assignment_target_place(self.scoping, target)
+            .as_ref()
+            .and_then(static_alias_invalidation_path)
+    }
+
+    fn collect_binding_default_initializer(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        initializer: &Expression<'_>,
+    ) {
+        if let Some(target) = Self::binding_pattern_alias_target(pattern) {
+            self.collect_initializer(target, initializer);
+        } else if let Some(source) = self.alias_source_path(initializer) {
+            self.collect_pattern_initializer(pattern, &source);
+        }
+    }
+
+    fn collect_assignment_default_initializer(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+        initializer: &Expression<'_>,
+    ) {
+        if let Some(target) = self.assignment_alias_target(target) {
+            self.collect_initializer(target, initializer);
+        } else if let Some(source) = self.alias_source_path(initializer) {
+            self.collect_assignment_target_initializer(target, &source);
+        }
+    }
+
+    fn collect_getter_binding_default(
+        &mut self,
+        property: StaticAliasPath,
+        default: &AssignmentPattern<'_>,
+    ) -> bool {
+        let Some(definedness) = self.resolved_local_getter_result_definedness(&property) else {
+            return false;
+        };
+        let target = Self::binding_pattern_alias_target(&default.left);
+        match definedness {
+            LocalGetterResultDefinedness::Defined => {
+                self.record_local_getter_read(property, target);
+                self.unexecuted_expression_spans
+                    .insert((default.right.span().start, default.right.span().end));
+            }
+            LocalGetterResultDefinedness::Undefined => {
+                self.record_local_getter_invocation(property);
+                self.collect_binding_default_initializer(&default.left, &default.right);
+            }
+            LocalGetterResultDefinedness::Unknown => {
+                if let Some(target) = target {
+                    self.record_local_getter_read(property, Some(target.clone()));
+                    self.collect_binding_default_initializer(&default.left, &default.right);
+                    self.mark_alias_target_ambiguous(target);
+                } else {
+                    self.record_local_getter_invocation(property);
+                }
+            }
+        }
+        true
+    }
+
+    fn collect_getter_assignment_default(
+        &mut self,
+        property: StaticAliasPath,
+        target: &AssignmentTarget<'_>,
+        default: &Expression<'_>,
+    ) -> bool {
+        let Some(definedness) = self.resolved_local_getter_result_definedness(&property) else {
+            return false;
+        };
+        let alias_target = self.assignment_alias_target(target);
+        match definedness {
+            LocalGetterResultDefinedness::Defined => {
+                self.record_local_getter_read(property, alias_target);
+                self.unexecuted_expression_spans
+                    .insert((default.span().start, default.span().end));
+            }
+            LocalGetterResultDefinedness::Undefined => {
+                self.record_local_getter_invocation(property);
+                self.collect_assignment_default_initializer(target, default);
+            }
+            LocalGetterResultDefinedness::Unknown => {
+                if let Some(alias_target) = alias_target {
+                    self.record_local_getter_read(property, Some(alias_target.clone()));
+                    self.collect_assignment_default_initializer(target, default);
+                    self.mark_alias_target_ambiguous(alias_target);
+                } else {
+                    self.record_local_getter_invocation(property);
+                }
+            }
+        }
+        true
+    }
+
+    fn collect_getter_assignment_identifier_default(
+        &mut self,
+        property: StaticAliasPath,
+        target: Option<StaticAliasPath>,
+        default: &Expression<'_>,
+    ) -> bool {
+        let Some(definedness) = self.resolved_local_getter_result_definedness(&property) else {
+            return false;
+        };
+        match definedness {
+            LocalGetterResultDefinedness::Defined => {
+                self.record_local_getter_read(property, target);
+                self.unexecuted_expression_spans
+                    .insert((default.span().start, default.span().end));
+            }
+            LocalGetterResultDefinedness::Undefined => {
+                self.record_local_getter_invocation(property);
+                if let Some(target) = target {
+                    self.collect_initializer(target, default);
+                }
+            }
+            LocalGetterResultDefinedness::Unknown => {
+                if let Some(target) = target {
+                    self.record_local_getter_read(property, Some(target.clone()));
+                    self.collect_initializer(target.clone(), default);
+                    self.mark_alias_target_ambiguous(target);
+                } else {
+                    self.record_local_getter_invocation(property);
+                }
+            }
+        }
+        true
+    }
+
+    fn record_unexecuted_getter_assignment_defaults(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+        source: &StaticAliasPath,
+    ) {
+        let AssignmentTarget::ObjectAssignmentTarget(object) = target else {
+            return;
+        };
+        for property in &object.properties {
+            let (property_source, default) = match property {
+                AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => (
+                    source.with_property(property.binding.name.to_string()),
+                    property.init.as_ref(),
+                ),
+                AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                    let Some(name) = property.name.static_name() else {
+                        continue;
+                    };
+                    let default = match &property.binding {
+                        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
+                            Some(&default.init)
+                        }
+                        _ => None,
+                    };
+                    (source.with_property(name.into_owned()), default)
+                }
+            };
+            if let Some(default) = default
+                && self.resolved_local_getter_result_definedness(&property_source)
+                    == Some(LocalGetterResultDefinedness::Defined)
+            {
+                self.unexecuted_expression_spans
+                    .insert((default.span().start, default.span().end));
+            }
+        }
+    }
+
     fn collect_pattern_initializer(
         &mut self,
         pattern: &BindingPattern<'_>,
@@ -24543,6 +24883,11 @@ impl StaticHookAliasCollector<'_> {
                     };
                     selected.insert(property_name.to_string());
                     let property_source = source.with_property(property_name.into_owned());
+                    if let BindingPattern::AssignmentPattern(default) = &property.value
+                        && self.collect_getter_binding_default(property_source.clone(), default)
+                    {
+                        continue;
+                    }
                     let getter_target = match &property.value {
                         BindingPattern::BindingIdentifier(binding) => {
                             binding.symbol_id.get().map(StaticAliasPath::root)
@@ -24615,9 +24960,18 @@ impl StaticHookAliasCollector<'_> {
                             selected.insert(property.binding.name.to_string());
                             let property_source =
                                 source.with_property(property.binding.name.to_string());
-                            if let Some(symbol) = identifier_symbol(self.scoping, &property.binding)
+                            let target = identifier_symbol(self.scoping, &property.binding)
+                                .map(StaticAliasPath::root);
+                            if let Some(default) = &property.init
+                                && self.collect_getter_assignment_identifier_default(
+                                    property_source.clone(),
+                                    target.clone(),
+                                    default,
+                                )
                             {
-                                let target = StaticAliasPath::root(symbol);
+                                continue;
+                            }
+                            if let Some(target) = target {
                                 if !self.record_local_getter_read(
                                     property_source.clone(),
                                     Some(target.clone()),
@@ -24633,6 +24987,17 @@ impl StaticHookAliasCollector<'_> {
                                 selected.insert(property_name.to_string());
                                 let property_source =
                                     source.with_property(property_name.into_owned());
+                                if let AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
+                                    default,
+                                ) = &property.binding
+                                    && self.collect_getter_assignment_default(
+                                        property_source.clone(),
+                                        &default.binding,
+                                        &default.init,
+                                    )
+                                {
+                                    continue;
+                                }
                                 let getter_target = property
                                     .binding
                                     .as_assignment_target()
@@ -25328,6 +25693,11 @@ impl StaticHookAliasCollector<'_> {
                     self.dynamic_path_owner_depths
                         .insert((span.start, span.end), self.function_depth);
                     self.record_dynamic_local_getter(target.clone(), getter.clone(), true);
+                    if let Expression::FunctionExpression(function) =
+                        property.value.get_inner_expression()
+                    {
+                        self.record_local_getter_result_definedness(getter.clone(), function);
+                    }
                     self.collect_callable_initializer(getter, &property.value);
                     self.returned_callable_spans.insert((span.start, span.end));
                     self.unreferenced_callable_spans
@@ -25376,6 +25746,11 @@ impl StaticHookAliasCollector<'_> {
                     .insert(property_target.clone());
                 self.enumerable_getter_property_history
                     .insert(property_target.clone());
+                if let Expression::FunctionExpression(function) =
+                    property.value.get_inner_expression()
+                {
+                    self.record_local_getter_result_definedness(property_target.clone(), function);
+                }
             }
             if property.kind == PropertyKind::Set {
                 let span = property.value.span();
@@ -27260,6 +27635,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
     }
 
+    fn visit_expression(&mut self, expression: &Expression<'a>) {
+        let span = expression.span();
+        if self
+            .unexecuted_expression_spans
+            .contains(&(span.start, span.end))
+        {
+            return;
+        }
+        walk_expression(self, expression);
+    }
+
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
         self.record_pattern_owner(&declarator.id);
         if let Some(initializer) = &declarator.init {
@@ -27599,6 +27985,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
             .map(|(owner, getters)| (owner.clone(), getters.clone()))
             .collect::<BTreeMap<_, _>>();
+        let outer_local_getter_result_definedness = self
+            .local_getter_result_definedness
+            .iter()
+            .filter(|(getter, _)| self.path_owner_depth(getter) < depth)
+            .map(|(getter, definedness)| (getter.clone(), *definedness))
+            .collect::<BTreeMap<_, _>>();
         let outer_callable_exposures = self
             .callable_exposures
             .iter()
@@ -27730,6 +28122,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         Self::restore_outer_path_map(
             &mut self.enumerable_dynamic_getter_properties,
             outer_enumerable_dynamic_getter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.local_getter_result_definedness,
+            outer_local_getter_result_definedness,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
@@ -27924,6 +28323,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(owner, _)| self.path_owner_depth(owner) < depth)
             .map(|(owner, getters)| (owner.clone(), getters.clone()))
             .collect::<BTreeMap<_, _>>();
+        let outer_local_getter_result_definedness = self
+            .local_getter_result_definedness
+            .iter()
+            .filter(|(getter, _)| self.path_owner_depth(getter) < depth)
+            .map(|(getter, definedness)| (getter.clone(), *definedness))
+            .collect::<BTreeMap<_, _>>();
         let outer_callable_exposures = self
             .callable_exposures
             .iter()
@@ -28044,6 +28449,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         Self::restore_outer_path_map(
             &mut self.enumerable_dynamic_getter_properties,
             outer_enumerable_dynamic_getter_properties,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.local_getter_result_definedness,
+            outer_local_getter_result_definedness,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
@@ -28192,6 +28604,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
         let prototype_path = self.prototype_assignment_target_path(&assignment.left);
+        if assignment.operator == OxcAssignmentOperator::Assign
+            && matches!(assignment.left, AssignmentTarget::ObjectAssignmentTarget(_))
+            && !matches!(
+                assignment.right.get_inner_expression(),
+                Expression::ObjectExpression(_)
+            )
+            && let Some(source) = self.alias_source_path(&assignment.right)
+        {
+            self.record_unexecuted_getter_assignment_defaults(&assignment.left, &source);
+        }
         let destructuring_source = if assignment.operator == OxcAssignmentOperator::Assign
             && matches!(assignment.left, AssignmentTarget::ObjectAssignmentTarget(_))
             && let Expression::ObjectExpression(object) = assignment.right.get_inner_expression()
