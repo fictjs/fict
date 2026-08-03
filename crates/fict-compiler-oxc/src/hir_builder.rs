@@ -8220,6 +8220,7 @@ impl StaticAliasPath {
 }
 
 const DYNAMIC_STRUCTURED_MEMBER: &str = "<computed-structured>";
+const LOCAL_OBJECT_PROTOTYPE_LOOKUP: &str = "<object-prototype>";
 
 #[derive(Debug, Default)]
 struct StaticHookAliases {
@@ -18549,8 +18550,10 @@ struct StaticHookAliasCollector<'semantic> {
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
     local_object_assign_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_create_results: BTreeMap<(u32, u32), StaticAliasPath>,
-    local_object_prototypes: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
+    historical_local_object_prototype_snapshots: BTreeSet<StaticAliasPath>,
     local_define_properties_results: BTreeMap<(u32, u32), StaticAliasPath>,
+    local_set_prototype_of_results: BTreeMap<(u32, u32), StaticAliasPath>,
     binding_owner_depths: BTreeMap<SymbolId, usize>,
     dynamic_path_owner_depths: BTreeMap<(u32, u32), usize>,
     cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
@@ -19205,6 +19208,7 @@ enum LocalInvocationArgumentSegment {
 struct LocalInvocationFact {
     raw_callee: Option<StaticAliasPath>,
     callee: Option<StaticAliasPath>,
+    historical_callee: bool,
     parameters: Option<Vec<LocalCallableParameter>>,
     parameters_resolved: bool,
     owner_returned_callable_span: Option<(u32, u32)>,
@@ -19218,6 +19222,17 @@ struct LocalInvocationFact {
     result_discarded: bool,
     force_argument_exposure: bool,
     construct: bool,
+}
+
+struct LocalObjectPrototype {
+    path: StaticAliasPath,
+    snapshot: StaticAliasPath,
+}
+
+struct LocalSetPrototypeOf {
+    target: StaticAliasPath,
+    prototype: Option<LocalObjectPrototype>,
+    returns_target: bool,
 }
 
 type LocalCallableEffectCreatorMap =
@@ -19381,7 +19396,9 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_object_assign_results: BTreeMap::new(),
             local_object_create_results: BTreeMap::new(),
             local_object_prototypes: BTreeMap::new(),
+            historical_local_object_prototype_snapshots: BTreeSet::new(),
             local_define_properties_results: BTreeMap::new(),
+            local_set_prototype_of_results: BTreeMap::new(),
             binding_owner_depths: BTreeMap::new(),
             dynamic_path_owner_depths: BTreeMap::new(),
             cross_scope_alias_targets: BTreeSet::new(),
@@ -22181,6 +22198,7 @@ impl StaticHookAliasCollector<'_> {
                     argument_offset: 0,
                     raw_callee: Some(raw_callee.clone()),
                     callee: Some(callee.clone()),
+                    historical_callee: false,
                     function_depth: self.function_depth,
                     bound_receiver: Vec::new(),
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -22384,7 +22402,7 @@ impl StaticHookAliasCollector<'_> {
         Some(target)
     }
 
-    fn local_object_create_prototype(
+    fn local_object_prototype_value(
         &mut self,
         expression: &Expression<'_>,
     ) -> Option<Option<StaticAliasPath>> {
@@ -22419,30 +22437,12 @@ impl StaticHookAliasCollector<'_> {
         &mut self,
         target: &StaticAliasPath,
         prototype: &StaticAliasPath,
+        snapshot: StaticAliasPath,
     ) {
-        self.local_object_prototypes
-            .insert(target.clone(), prototype.clone());
-        let properties = self
-            .known_structured_own_properties(prototype)
-            .expect("Object.create prototype was checked before recording");
-        for property in properties {
-            self.insert_alias(
-                target.clone().with_property(property.clone()),
-                prototype.clone().with_property(property),
-            );
-        }
-        if let Some(getters) = self.dynamic_getter_properties.get(prototype).cloned() {
-            self.dynamic_getter_property_history
-                .entry(target.clone())
-                .or_default()
-                .extend(getters.iter().cloned());
-            self.dynamic_getter_properties
-                .entry(target.clone())
-                .or_default()
-                .extend(getters);
-        }
-        self.copy_dynamic_local_setters(target, prototype);
-        self.copy_dynamic_local_accessor_exclusions(target, prototype);
+        self.local_object_prototypes.insert(
+            target.clone(),
+            BTreeMap::from([(prototype.clone(), snapshot)]),
+        );
     }
 
     fn record_local_object_create_result(
@@ -22462,7 +22462,7 @@ impl StaticHookAliasCollector<'_> {
             .arguments
             .first()
             .and_then(|argument| argument.as_expression())
-            .and_then(|prototype| self.local_object_create_prototype(prototype))?;
+            .and_then(|prototype| self.local_object_prototype_value(prototype))?;
         let target = StaticAliasPath::dynamic_this(call.span)
             .with_property("object-create-result".to_string());
         let definitions = if let Some(descriptors) = call
@@ -22479,7 +22479,9 @@ impl StaticHookAliasCollector<'_> {
         self.structured_own_properties
             .insert(target.clone(), BTreeSet::new());
         if let Some(prototype) = prototype {
-            self.inherit_local_object_prototype(&target, &prototype);
+            let snapshot = StaticAliasPath::dynamic_this(call.span)
+                .with_property("object-create-prototype-snapshot".to_string());
+            self.inherit_local_object_prototype(&target, &prototype, snapshot);
         }
         for (property, descriptor) in &definitions {
             self.prepare_local_property_descriptor(descriptor, property);
@@ -22500,6 +22502,113 @@ impl StaticHookAliasCollector<'_> {
         self.local_object_create_results
             .insert(span, target.clone());
         Some(target)
+    }
+
+    fn local_set_prototype_of_target(
+        &mut self,
+        expression: &Expression<'_>,
+    ) -> Option<StaticAliasPath> {
+        let targets = self.local_object_assign_value_paths(expression);
+        let [raw_target] = targets.as_slice() else {
+            return None;
+        };
+        if self.path_requires_historical_aliases(raw_target, self.function_depth)
+            || !self.path_is_currently_intact(raw_target)
+        {
+            return None;
+        }
+        let target = if self
+            .returned_structured_instances_for_path(raw_target)
+            .is_empty()
+        {
+            resolve_static_alias_path(&self.aliases, raw_target)
+        } else {
+            self.canonical_returned_structured_value_path(raw_target)
+        };
+        self.known_structured_own_properties(&target)?;
+        Some(target)
+    }
+
+    fn local_set_prototype_of(&mut self, call: &CallExpression<'_>) -> Option<LocalSetPrototypeOf> {
+        if call.arguments.len() != 2 {
+            return None;
+        }
+        let returns_target = if self.is_intact_object_method_callee(&call.callee, "setPrototypeOf")
+        {
+            true
+        } else if self.is_intact_reflect_method_callee(&call.callee, "setPrototypeOf") {
+            false
+        } else {
+            return None;
+        };
+        let target = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(|target| self.local_set_prototype_of_target(target))?;
+        let prototype = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(|prototype| self.local_object_prototype_value(prototype))?;
+        if prototype
+            .as_ref()
+            .is_some_and(|prototype| prototype == &target)
+        {
+            return None;
+        }
+        let prototype = prototype.map(|path| {
+            self.dynamic_path_owner_depths
+                .insert((call.span.start, call.span.end), self.function_depth);
+            let snapshot = StaticAliasPath::dynamic_this(call.span)
+                .with_property("set-prototype-of-snapshot".to_string());
+            LocalObjectPrototype { path, snapshot }
+        });
+        Some(LocalSetPrototypeOf {
+            target,
+            prototype,
+            returns_target,
+        })
+    }
+
+    fn record_local_set_prototype_of_result(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<StaticAliasPath> {
+        let span = (call.span.start, call.span.end);
+        if let Some(target) = self.local_set_prototype_of_results.get(&span) {
+            return Some(target.clone());
+        }
+        let mutation = self.local_set_prototype_of(call)?;
+        if !mutation.returns_target {
+            return None;
+        }
+        self.local_set_prototype_of_results
+            .insert(span, mutation.target.clone());
+        Some(mutation.target)
+    }
+
+    fn apply_local_set_prototype_of(
+        &mut self,
+        target: StaticAliasPath,
+        prototype: Option<LocalObjectPrototype>,
+        conditional: bool,
+    ) {
+        if conditional {
+            if let Some(prototype) = prototype {
+                self.local_object_prototypes
+                    .entry(target)
+                    .or_default()
+                    .insert(prototype.path, prototype.snapshot);
+            }
+        } else if let Some(prototype) = prototype {
+            self.local_object_prototypes.insert(
+                target,
+                BTreeMap::from([(prototype.path, prototype.snapshot)]),
+            );
+        } else {
+            self.local_object_prototypes.remove(&target);
+        }
     }
 
     fn local_reflect_apply_invocation_facts(
@@ -22740,6 +22849,7 @@ impl StaticHookAliasCollector<'_> {
                 argument_offset,
                 raw_callee: Some(raw_target),
                 callee: Some(target.clone()),
+                historical_callee: false,
                 function_depth: self.function_depth,
                 bound_receiver: receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -22759,6 +22869,7 @@ impl StaticHookAliasCollector<'_> {
             argument_offset,
             raw_callee: None,
             callee: None,
+            historical_callee: false,
             function_depth: self.function_depth,
             bound_receiver: receiver,
             dynamic_receiver: LocalInvocationDynamicReceiver::Known(
@@ -22860,6 +22971,17 @@ impl StaticHookAliasCollector<'_> {
             .flatten()
     }
 
+    fn invocation_requires_historical_callee(&self, invocation: &LocalInvocationFact) -> bool {
+        invocation.historical_callee
+            || invocation
+                .raw_callee
+                .iter()
+                .chain(invocation.callee.iter())
+                .any(|callee| {
+                    self.path_requires_historical_aliases(callee, invocation.function_depth)
+                })
+    }
+
     fn local_invocation_fact_from_arguments(
         &self,
         callee: &Expression<'_>,
@@ -22876,6 +22998,7 @@ impl StaticHookAliasCollector<'_> {
                 argument_offset: 1,
                 raw_callee: None,
                 callee: None,
+                historical_callee: false,
                 function_depth: self.function_depth,
                 bound_receiver: call_receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::Known(
@@ -22890,10 +23013,15 @@ impl StaticHookAliasCollector<'_> {
             });
         }
         if let Some(raw_callee) = static_alias_source_path(self.scoping, callee) {
-            let resolved_callee = self
-                .local_object_prototype_member_path(&raw_callee)
-                .map(|prototype| resolve_static_alias_path(&self.aliases, &prototype))
-                .unwrap_or_else(|| resolve_static_alias_path(&self.aliases, &raw_callee));
+            let prototypes = self.local_object_prototype_member_paths(&raw_callee);
+            let resolved_callee = if prototypes.len() == 1 {
+                resolve_static_alias_path(
+                    &self.aliases,
+                    prototypes.first().expect("one prototype candidate"),
+                )
+            } else {
+                resolve_static_alias_path(&self.aliases, &raw_callee)
+            };
             if let Some((raw_target, target)) =
                 self.intact_function_call_target(&raw_callee, &resolved_callee)
             {
@@ -22906,6 +23034,7 @@ impl StaticHookAliasCollector<'_> {
                     argument_offset: 1,
                     raw_callee: Some(raw_target),
                     callee: Some(target.clone()),
+                    historical_callee: false,
                     function_depth: self.function_depth,
                     bound_receiver: call_receiver,
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -22925,6 +23054,7 @@ impl StaticHookAliasCollector<'_> {
                 argument_offset: 0,
                 raw_callee: Some(raw_callee.clone()),
                 callee: Some(resolved_callee.clone()),
+                historical_callee: false,
                 function_depth: self.function_depth,
                 bound_receiver: self.invocation_reference_receiver(callee),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -22944,6 +23074,7 @@ impl StaticHookAliasCollector<'_> {
             argument_offset: 0,
             raw_callee: None,
             callee: None,
+            historical_callee: false,
             function_depth: self.function_depth,
             bound_receiver: self.invocation_reference_receiver(callee),
             dynamic_receiver: LocalInvocationDynamicReceiver::Known(
@@ -22961,9 +23092,7 @@ impl StaticHookAliasCollector<'_> {
         invocation: LocalInvocationFact,
         target: &StaticAliasPath,
     ) -> LocalInvocationFact {
-        if invocation.raw_callee.as_ref().is_some_and(|raw_callee| {
-            self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
-        }) {
+        if self.invocation_requires_historical_callee(&invocation) {
             return invocation;
         }
         if let Some(bound) = self.local_bound_callables.get(target) {
@@ -23556,6 +23685,10 @@ impl StaticHookAliasCollector<'_> {
                 .ambiguous_alias_targets
                 .iter()
                 .any(|target| target.overlaps(path))
+            || self
+                .historical_local_object_prototype_snapshots
+                .iter()
+                .any(|snapshot| path.starts_with(snapshot))
     }
 
     fn canonical_returned_structured_member_path(&self, path: &StaticAliasPath) -> StaticAliasPath {
@@ -23650,9 +23783,74 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn detach_overwritten_local_object_prototypes(&mut self, path: &StaticAliasPath) {
+        let mut detached =
+            BTreeMap::<StaticAliasPath, (StaticAliasPath, BTreeSet<StaticAliasPath>)>::new();
+        for (target, prototypes) in &self.local_object_prototypes {
+            if target.starts_with(path) {
+                continue;
+            }
+            for (prototype, snapshot) in prototypes {
+                if !prototype.starts_with(path) {
+                    continue;
+                }
+                let (canonical_snapshot, targets) = detached
+                    .entry(prototype.clone())
+                    .or_insert_with(|| (snapshot.clone(), BTreeSet::new()));
+                if snapshot < canonical_snapshot {
+                    canonical_snapshot.clone_from(snapshot);
+                }
+                targets.insert(target.clone());
+            }
+        }
+        let aliases = self.aliases.clone();
+        let mut detached = detached.into_iter().collect::<Vec<_>>();
+        detached.sort_by_key(|(prototype, _)| std::cmp::Reverse(prototype.properties.len()));
+        for (prototype, (snapshot, targets)) in detached {
+            let identity_aliases = aliases
+                .keys()
+                .filter(|alias| resolve_static_alias_path(&aliases, alias) == prototype)
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let own_properties = self.structured_own_properties.get(&prototype).cloned();
+            let open = self.open_structured_containers.contains(&prototype);
+            let inherited = self.local_object_prototypes.get(&prototype).cloned();
+            for target in targets {
+                if let Some(prototypes) = self.local_object_prototypes.get_mut(&target) {
+                    prototypes.remove(&prototype);
+                    prototypes.insert(snapshot.clone(), snapshot.clone());
+                }
+            }
+            let history = self.alias_history.entry(snapshot.clone()).or_default();
+            history.insert(prototype.clone());
+            history.extend(identity_aliases);
+            self.historical_local_object_prototype_snapshots
+                .insert(snapshot.clone());
+            if let Some(properties) = own_properties {
+                self.structured_own_properties
+                    .insert(snapshot.clone(), properties);
+            }
+            if open {
+                self.open_structured_containers.insert(snapshot.clone());
+            }
+            if let Some(inherited) = inherited {
+                self.local_object_prototypes
+                    .entry(snapshot.clone())
+                    .or_default()
+                    .extend(inherited);
+            }
+            for source in self.aliases.values_mut() {
+                if source.starts_with(&prototype) {
+                    *source = Self::rebase_returned_class_path(source, &prototype, &snapshot);
+                }
+            }
+        }
+    }
+
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
         let canonical_path = self.canonical_returned_structured_member_path(path);
         let path = &canonical_path;
+        self.detach_overwritten_local_object_prototypes(path);
         self.record_cross_scope_target(path);
         let excluded_structured_roots = self
             .returned_structured_value_instances
@@ -24111,53 +24309,80 @@ impl StaticHookAliasCollector<'_> {
             })
     }
 
-    fn local_object_prototype_member_path(
+    fn local_object_prototype_member_paths(
         &self,
         path: &StaticAliasPath,
-    ) -> Option<StaticAliasPath> {
-        let mut current = path.clone().canonicalized();
-        let mut visited = BTreeSet::from([current.clone()]);
-        let mut inherited = false;
-        loop {
-            let resolution_chain = resolve_static_alias_path_chain(&self.aliases, &current);
-            let fallback = resolution_chain
-                .iter()
-                .flat_map(|candidate| {
-                    self.local_object_prototypes
-                        .iter()
-                        .filter_map(move |(owner, prototype)| {
-                            if !candidate.starts_with(owner)
-                                || candidate.properties.len() <= owner.properties.len()
-                            {
-                                return None;
-                            }
-                            let property = &candidate.properties[owner.properties.len()];
-                            if self
-                                .structured_own_properties
-                                .get(owner)
-                                .is_some_and(|properties| properties.contains(property))
-                            {
-                                return None;
-                            }
-                            Some((owner.properties.len(), candidate, prototype))
-                        })
-                })
-                .max_by_key(|(owner_length, _, _)| *owner_length);
-            let Some((owner_length, candidate, prototype)) = fallback else {
-                return inherited.then_some(current);
-            };
-            let mut mapped = prototype.clone();
-            mapped
-                .properties
-                .extend_from_slice(&candidate.properties[owner_length..]);
-            mapped.element_wildcard |= candidate.element_wildcard;
-            let mapped = mapped.canonicalized();
-            inherited = true;
-            if !visited.insert(mapped.clone()) {
-                return Some(current);
+    ) -> BTreeSet<StaticAliasPath> {
+        let original = path.clone().canonicalized();
+        let mut pending = VecDeque::from([(original.clone(), false)]);
+        let mut visited = BTreeSet::from([original]);
+        let mut inherited_paths = BTreeSet::new();
+        while let Some((current, inherited)) = pending.pop_front() {
+            let mut resolution_chain = resolve_static_alias_path_chain(&self.aliases, &current);
+            if self.path_requires_historical_aliases(&current, self.function_depth) {
+                resolution_chain.extend(resolve_historical_alias_paths(
+                    &self.alias_history,
+                    &current,
+                ));
             }
-            current = mapped;
+            let mut mapped_paths = BTreeSet::new();
+            for candidate in &resolution_chain {
+                let mut owner_length = None;
+                let mut candidate_mapped_paths = BTreeSet::new();
+                for (owner, prototypes) in &self.local_object_prototypes {
+                    if !candidate.starts_with(owner)
+                        || candidate.properties.len() <= owner.properties.len()
+                    {
+                        continue;
+                    }
+                    let property = &candidate.properties[owner.properties.len()];
+                    let prototype_lookup = property == LOCAL_OBJECT_PROTOTYPE_LOOKUP;
+                    if !prototype_lookup
+                        && self
+                            .structured_own_properties
+                            .get(owner)
+                            .is_some_and(|properties| properties.contains(property))
+                    {
+                        continue;
+                    }
+                    let length = owner.properties.len();
+                    if owner_length.is_some_and(|current| current > length) {
+                        continue;
+                    }
+                    if owner_length.is_none_or(|current| current < length) {
+                        owner_length = Some(length);
+                        candidate_mapped_paths.clear();
+                    }
+                    for prototype in prototypes.keys() {
+                        let mut mapped = prototype.clone();
+                        let relative_start = owner
+                            .properties
+                            .len()
+                            .saturating_add(usize::from(prototype_lookup));
+                        mapped
+                            .properties
+                            .extend_from_slice(&candidate.properties[relative_start..]);
+                        mapped.element_wildcard |= candidate.element_wildcard;
+                        candidate_mapped_paths.insert(mapped.canonicalized());
+                    }
+                }
+                mapped_paths.extend(candidate_mapped_paths);
+            }
+            if mapped_paths.is_empty() {
+                if inherited {
+                    inherited_paths.insert(current);
+                }
+                continue;
+            }
+            for mapped in mapped_paths {
+                if visited.insert(mapped.clone()) {
+                    pending.push_back((mapped, true));
+                } else {
+                    inherited_paths.insert(mapped);
+                }
+            }
         }
+        inherited_paths
     }
 
     fn local_getter_resolution(
@@ -24166,8 +24391,8 @@ impl StaticHookAliasCollector<'_> {
         enumerable_only: bool,
     ) -> (bool, BTreeSet<StaticAliasPath>) {
         let mut resolution_chain = resolve_static_alias_path_chain(&self.aliases, path);
-        let prototype = self.local_object_prototype_member_path(path);
-        if let Some(prototype) = &prototype {
+        let prototypes = self.local_object_prototype_member_paths(path);
+        for prototype in &prototypes {
             resolution_chain.extend(resolve_static_alias_path_chain(&self.aliases, prototype));
         }
         let structured = self
@@ -24176,6 +24401,7 @@ impl StaticHookAliasCollector<'_> {
             .map(|(source, _)| source)
             .collect::<BTreeSet<_>>();
         let historical = structured.len() > 1
+            || prototypes.len() > 1
             || resolution_chain
                 .iter()
                 .any(|path| self.path_requires_historical_aliases(path, self.function_depth));
@@ -24184,11 +24410,13 @@ impl StaticHookAliasCollector<'_> {
         } else {
             resolution_chain.into_iter().collect()
         };
-        if historical && let Some(prototype) = prototype {
-            candidates.extend(resolve_historical_alias_paths(
-                &self.alias_history,
-                &prototype,
-            ));
+        if historical {
+            for prototype in &prototypes {
+                candidates.extend(resolve_historical_alias_paths(
+                    &self.alias_history,
+                    prototype,
+                ));
+            }
         }
         candidates.extend(structured);
         let getters = if enumerable_only {
@@ -24349,18 +24577,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn activate_local_setter(&mut self, setter: &StaticAliasPath) {
-        let resolved = resolve_static_alias_path(&self.aliases, setter);
-        let spans = [setter, &resolved]
-            .into_iter()
-            .flat_map(|setter| {
-                self.local_callable_effect_spans
-                    .get(setter)
-                    .into_iter()
-                    .flatten()
-                    .copied()
-            })
-            .collect::<BTreeSet<_>>();
-        for span in spans {
+        for span in self.local_callable_path_effect_spans(setter) {
             self.executed_setter_spans.insert(span);
             self.unreferenced_callable_spans.remove(&span);
             self.deferred_accessor_spans.remove(&span);
@@ -24394,8 +24611,8 @@ impl StaticHookAliasCollector<'_> {
 
     fn local_setter_resolution(&self, path: &StaticAliasPath) -> (bool, BTreeSet<StaticAliasPath>) {
         let mut resolution_chain = resolve_static_alias_path_chain(&self.aliases, path);
-        let prototype = self.local_object_prototype_member_path(path);
-        if let Some(prototype) = &prototype {
+        let prototypes = self.local_object_prototype_member_paths(path);
+        for prototype in &prototypes {
             resolution_chain.extend(resolve_static_alias_path_chain(&self.aliases, prototype));
         }
         let structured = self
@@ -24404,6 +24621,7 @@ impl StaticHookAliasCollector<'_> {
             .map(|(source, _)| source)
             .collect::<BTreeSet<_>>();
         let historical = structured.len() > 1
+            || prototypes.len() > 1
             || resolution_chain
                 .iter()
                 .any(|path| self.path_requires_historical_aliases(path, self.function_depth));
@@ -24412,11 +24630,13 @@ impl StaticHookAliasCollector<'_> {
         } else {
             resolution_chain.into_iter().collect()
         };
-        if historical && let Some(prototype) = prototype {
-            candidates.extend(resolve_historical_alias_paths(
-                &self.alias_history,
-                &prototype,
-            ));
+        if historical {
+            for prototype in prototypes {
+                candidates.extend(resolve_historical_alias_paths(
+                    &self.alias_history,
+                    &prototype,
+                ));
+            }
         }
         candidates.extend(structured);
         let mut setters = BTreeSet::new();
@@ -24580,6 +24800,7 @@ impl StaticHookAliasCollector<'_> {
                     argument_offset: 0,
                     raw_callee: Some(getter.clone()),
                     callee: Some(callee.clone()),
+                    historical_callee: historical,
                     function_depth: self.function_depth,
                     bound_receiver: receiver.clone(),
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -24782,6 +25003,7 @@ impl StaticHookAliasCollector<'_> {
                 argument_offset: 0,
                 raw_callee: Some(target),
                 callee: Some(callee.clone()),
+                historical_callee: false,
                 function_depth: self.function_depth,
                 bound_receiver: receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -24817,6 +25039,7 @@ impl StaticHookAliasCollector<'_> {
             argument_offset: 0,
             raw_callee: Some(callee),
             callee: Some(resolved_callee.clone()),
+            historical_callee: false,
             function_depth: self.function_depth,
             bound_receiver: receiver,
             dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -24871,7 +25094,7 @@ impl StaticHookAliasCollector<'_> {
         receiver_override: Option<Vec<LocalInvocationArgument>>,
     ) -> bool {
         let structured_sources = self.returned_structured_instances_for_path(property);
-        let (_, setters) = self.local_setter_resolution(property);
+        let (historical, setters) = self.local_setter_resolution(property);
         if setters.is_empty() {
             return false;
         }
@@ -24920,6 +25143,7 @@ impl StaticHookAliasCollector<'_> {
                 argument_offset: 0,
                 raw_callee: Some(raw_callee),
                 callee: Some(callee.clone()),
+                historical_callee: historical,
                 function_depth: self.function_depth,
                 bound_receiver: bound_receiver.clone(),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -24949,6 +25173,7 @@ impl StaticHookAliasCollector<'_> {
             argument_offset: 0,
             raw_callee: Some(getter),
             callee: Some(callee.clone()),
+            historical_callee: false,
             function_depth: self.function_depth,
             bound_receiver: vec![self.collect_local_invocation_path(owner.clone())],
             dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -25129,11 +25354,7 @@ impl StaticHookAliasCollector<'_> {
         invocation: &LocalInvocationFact,
         visiting: &mut BTreeSet<StaticAliasPath>,
     ) -> (Vec<LocalCallableResult>, bool) {
-        let historical = invocation
-            .raw_callee
-            .iter()
-            .chain(invocation.callee.iter())
-            .any(|callee| self.path_requires_historical_aliases(callee, invocation.function_depth));
+        let historical = self.invocation_requires_historical_callee(invocation);
         let callees = self.invocation_callees(invocation);
         if callees.is_empty() {
             return (vec![LocalCallableResult::Unknown], historical);
@@ -25480,6 +25701,13 @@ impl StaticHookAliasCollector<'_> {
         }
         if let Expression::CallExpression(call) = value.get_inner_expression()
             && let Some(source) = self.record_local_object_create_result(call)
+        {
+            self.record_local_value_definedness(target.clone(), value);
+            self.insert_alias(target, source);
+            return;
+        }
+        if let Expression::CallExpression(call) = value.get_inner_expression()
+            && let Some(source) = self.record_local_set_prototype_of_result(call)
         {
             self.record_local_value_definedness(target.clone(), value);
             self.insert_alias(target, source);
@@ -26385,6 +26613,9 @@ impl StaticHookAliasCollector<'_> {
         if let Some(target) = self.record_local_object_create_result(factory_call) {
             return Some(target);
         }
+        if let Some(target) = self.record_local_set_prototype_of_result(factory_call) {
+            return Some(target);
+        }
         if let Some(target) = self.record_local_define_properties_result(factory_call) {
             return Some(target);
         }
@@ -26575,6 +26806,7 @@ impl StaticHookAliasCollector<'_> {
             argument_offset,
             raw_callee: Some(callee),
             callee: Some(resolved_callee.clone()),
+            historical_callee: false,
             function_depth: self.function_depth,
             bound_receiver,
             dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -26750,6 +26982,7 @@ impl StaticHookAliasCollector<'_> {
                     argument_offset: 0,
                     raw_callee: Some(invocation_target.clone()),
                     callee: Some(resolved_callee.clone()),
+                    historical_callee: false,
                     function_depth: self.function_depth,
                     bound_receiver: receiver.clone(),
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
@@ -27328,6 +27561,7 @@ impl StaticHookAliasCollector<'_> {
             let invocation = LocalInvocationFact {
                 raw_callee: Some(target.clone()),
                 callee: Some(target),
+                historical_callee: false,
                 parameters: Some(callable.parameters.clone()),
                 parameters_resolved: true,
                 owner_returned_callable_span: self.current_returned_callable_span(),
@@ -27398,6 +27632,7 @@ impl StaticHookAliasCollector<'_> {
             return Some(vec![LocalInvocationFact {
                 raw_callee: Some(target.clone()),
                 callee: Some(target),
+                historical_callee: false,
                 parameters: None,
                 parameters_resolved: false,
                 owner_returned_callable_span: self.current_returned_callable_span(),
@@ -27445,6 +27680,7 @@ impl StaticHookAliasCollector<'_> {
             return Some(vec![LocalInvocationFact {
                 raw_callee: Some(target.clone()),
                 callee: Some(target),
+                historical_callee: false,
                 parameters: None,
                 parameters_resolved: false,
                 owner_returned_callable_span: self.current_returned_callable_span(),
@@ -28091,7 +28327,17 @@ impl StaticHookAliasCollector<'_> {
             .first()
             .and_then(|argument| argument.as_expression())
             .and_then(|receiver| self.alias_source_path(receiver))?;
-        Some(receiver.with_property("__proto__".to_string()))
+        let local_lookup = receiver
+            .clone()
+            .with_property(LOCAL_OBJECT_PROTOTYPE_LOOKUP.to_string());
+        if self
+            .local_object_prototype_member_paths(&local_lookup)
+            .is_empty()
+        {
+            Some(receiver.with_property("__proto__".to_string()))
+        } else {
+            Some(local_lookup)
+        }
     }
 
     fn prototype_derived_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
@@ -29731,9 +29977,13 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn callable_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
-        let resolved = self
-            .local_object_prototype_member_path(path)
-            .map(|prototype| resolve_static_alias_path(&self.aliases, &prototype))
+        let prototypes = self.local_object_prototype_member_paths(path);
+        if prototypes.len() > 1 {
+            return true;
+        }
+        let resolved = prototypes
+            .first()
+            .map(|prototype| resolve_static_alias_path(&self.aliases, prototype))
             .unwrap_or_else(|| resolve_static_alias_path(&self.aliases, path));
         if self.open_structured_containers.iter().any(|container| {
             [path, &resolved].into_iter().any(|candidate| {
@@ -31224,7 +31474,9 @@ impl StaticHookAliasCollector<'_> {
         if !structured.is_empty() {
             return structured;
         }
-        if self.path_requires_historical_aliases(raw_callee, invocation.function_depth) {
+        if invocation.historical_callee
+            || self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
+        {
             resolve_historical_alias_paths(&self.alias_history, raw_callee)
         } else if self.path_requires_historical_aliases(callee, invocation.function_depth) {
             resolve_historical_alias_paths(&self.alias_history, callee)
@@ -31290,11 +31542,7 @@ impl StaticHookAliasCollector<'_> {
         &self,
         invocation: &LocalInvocationFact,
     ) -> BTreeSet<(StaticAliasPath, (u32, u32), bool)> {
-        let historical = invocation
-            .raw_callee
-            .iter()
-            .chain(invocation.callee.iter())
-            .any(|callee| self.path_requires_historical_aliases(callee, invocation.function_depth));
+        let historical = self.invocation_requires_historical_callee(invocation);
         let dynamic_structured_owner = invocation.raw_callee.as_ref().and_then(|callee| {
             if !callee
                 .properties
@@ -32028,9 +32276,7 @@ impl StaticHookAliasCollector<'_> {
             }
             LocalInvocationDynamicReceiver::ResolveFromCallee => {}
         }
-        let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
-            self.path_requires_historical_aliases(callee, invocation.function_depth)
-        });
+        let historical = self.invocation_requires_historical_callee(invocation);
         self.invocation_callees(invocation)
             .iter()
             .flat_map(|callee| {
@@ -32058,9 +32304,7 @@ impl StaticHookAliasCollector<'_> {
             LocalInvocationGenerator::Known(generator) => return generator,
             LocalInvocationGenerator::ResolveFromCallee => {}
         }
-        let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
-            self.path_requires_historical_aliases(callee, invocation.function_depth)
-        });
+        let historical = self.invocation_requires_historical_callee(invocation);
         let mut generators = Vec::new();
         for callee in self.invocation_callees(invocation) {
             if historical {
@@ -32158,9 +32402,7 @@ impl StaticHookAliasCollector<'_> {
         &self,
         invocation: &LocalInvocationFact,
     ) -> Vec<LocalInvocationFact> {
-        let historical = invocation.raw_callee.as_ref().is_some_and(|callee| {
-            self.path_requires_historical_aliases(callee, invocation.function_depth)
-        });
+        let historical = self.invocation_requires_historical_callee(invocation);
         let mut alternatives = Vec::new();
         for callee in self.invocation_callees(invocation) {
             if historical {
@@ -32184,9 +32426,7 @@ impl StaticHookAliasCollector<'_> {
     ) -> Vec<LocalInvocationFact> {
         let mut variants = self.default_derived_invocation_variants(&invocation);
         let requires_historical_parameters =
-            invocation.raw_callee.as_ref().is_some_and(|raw_callee| {
-                self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
-            });
+            self.invocation_requires_historical_callee(&invocation);
         if invocation.parameters.is_some()
             && (invocation.parameters_resolved || !requires_historical_parameters)
         {
@@ -32219,10 +32459,7 @@ impl StaticHookAliasCollector<'_> {
         &self,
         invocation: &LocalInvocationFact,
     ) -> Vec<Vec<LocalCallableParameter>> {
-        let requires_historical_parameters =
-            invocation.raw_callee.as_ref().is_some_and(|raw_callee| {
-                self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
-            });
+        let requires_historical_parameters = self.invocation_requires_historical_callee(invocation);
         if let Some(parameters) = &invocation.parameters
             && (invocation.parameters_resolved || !requires_historical_parameters)
         {
@@ -32240,7 +32477,9 @@ impl StaticHookAliasCollector<'_> {
                 .is_empty()
         {
             self.invocation_callees(invocation)
-        } else if self.path_requires_historical_aliases(raw_callee, invocation.function_depth) {
+        } else if invocation.historical_callee
+            || self.path_requires_historical_aliases(raw_callee, invocation.function_depth)
+        {
             resolve_historical_alias_paths(&self.alias_history, raw_callee)
         } else {
             BTreeSet::from([callee.clone()])
@@ -32740,6 +32979,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 Expression::CallExpression(call)
                     if self.local_object_create_results
                         .contains_key(&(call.span.start, call.span.end))
+                        || self.local_set_prototype_of_results
+                            .contains_key(&(call.span.start, call.span.end))
                         || self.local_define_properties_results
                             .contains_key(&(call.span.start, call.span.end))
             );
@@ -32765,6 +33006,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 Expression::CallExpression(call)
                     if self.local_object_create_results
                         .contains_key(&(call.span.start, call.span.end))
+                        || self.local_set_prototype_of_results
+                            .contains_key(&(call.span.start, call.span.end))
                         || self.local_define_properties_results
                             .contains_key(&(call.span.start, call.span.end))
             );
@@ -34009,6 +34252,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.record_local_object_assign(call);
         let local_object_create = self.record_local_object_create_result(call);
         self.record_local_define_properties_result(call);
+        self.record_local_set_prototype_of_result(call);
         let call_span = (call.span.start, call.span.end);
         let local_reflect_get = if self.handled_local_getter_read_spans.contains(&call_span) {
             self.is_intact_reflect_method_callee(&call.callee, "get")
@@ -34031,6 +34275,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         let local_define_properties = unconditional
             .then(|| self.local_define_properties(call))
             .flatten();
+        let local_set_prototype_of = self.local_set_prototype_of(call);
         let local_descriptor_mutation = self.local_descriptor_mutation_path(call);
         if let Some(property) = &local_define_property {
             self.prepare_local_define_property(call, property);
@@ -34148,6 +34393,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         walk_call_expression(self, call);
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
+        if let Some(mutation) = local_set_prototype_of {
+            self.apply_local_set_prototype_of(mutation.target, mutation.prototype, !unconditional);
+        }
         if let Some(property) = &local_define_property
             && !self.apply_local_define_property(call, property)
         {

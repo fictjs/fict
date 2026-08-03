@@ -7687,6 +7687,13 @@ fn object_create_preserves_descriptor_accessor_timing() {
             false,
         ),
         (
+            "inherited identity survives prototype binding reassignment",
+            "let proto = { get run() { values.forEach = null; return 1; } };",
+            "const source = Object.create(proto); proto = { run: 1 };",
+            "void source.run;",
+            false,
+        ),
+        (
             "inherited getter skipped by object spread",
             "const proto = { get run() { values.forEach = null; return 1; } };",
             "const source = Object.create(proto);",
@@ -7743,6 +7750,13 @@ fn object_create_preserves_descriptor_accessor_timing() {
             false,
         ),
         (
+            "nested prototype identity survives binding reassignment",
+            "const root = { get run() { values.forEach = null; return 1; } }; let proto = Object.create(root);",
+            "const source = Object.create(proto); proto = {};",
+            "void source.run;",
+            false,
+        ),
+        (
             "inline prototype getter",
             "",
             "const source = Object.create({ get run() { values.forEach = null; return 1; } });",
@@ -7773,6 +7787,255 @@ fn object_create_preserves_descriptor_accessor_timing() {
             output.hir.is_some(),
             expected_hir,
             "{name}: unexpected Object.create accessor timing: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn set_prototype_of_updates_local_accessor_lookup() {
+    for (name, setup, mutation, observation, expected_hir) in [
+        (
+            "unread Object prototype getter",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto);",
+            "void source;",
+            true,
+        ),
+        (
+            "read Object prototype getter",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "read Reflect prototype getter",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "Reflect.setPrototypeOf(source, proto);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "written inherited setter",
+            "const proto = { set run(value) { values.forEach = value; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto);",
+            "source.run = null;",
+            false,
+        ),
+        (
+            "called inherited data function",
+            "const proto = { run() { values.forEach = null; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto);",
+            "source.run();",
+            false,
+        ),
+        (
+            "Object result preserves target identity",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "const target = Object.setPrototypeOf(source, proto);",
+            "void target.run;",
+            false,
+        ),
+        (
+            "Object result preserves the target evaluated before prototype side effects",
+            "const proto = { get run() { values.forEach = null; return 1; } }; let source = Object.create(null);",
+            "const target = Object.setPrototypeOf(source, (source = { run: 1 }, proto));",
+            "void target.run;",
+            false,
+        ),
+        (
+            "Reflect result remains a boolean",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "const changed = Reflect.setPrototypeOf(source, proto);",
+            "void changed.run;",
+            true,
+        ),
+        (
+            "aliased Object builtin",
+            "const setPrototypeOf = Object.setPrototypeOf; const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "setPrototypeOf(source, proto);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "null removes a previous prototype",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(proto);",
+            "Object.setPrototypeOf(source, null);",
+            "void source.run;",
+            true,
+        ),
+        (
+            "replacement forgets the previous prototype",
+            "const dangerous = { get run() { values.forEach = null; return 1; } }; const safe = { run: 1 }; const source = Object.create(dangerous);",
+            "Object.setPrototypeOf(source, safe);",
+            "void source.run;",
+            true,
+        ),
+        (
+            "own property shadows the installed prototype",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = { run: 1 };",
+            "Object.setPrototypeOf(source, proto);",
+            "void source.run;",
+            true,
+        ),
+        (
+            "prototype getter added after installation",
+            "const proto = {}; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); Object.defineProperty(proto, 'run', { get() { values.forEach = null; return 1; } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "prototype identity survives binding reassignment",
+            "let proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { run: 1 };",
+            "void source.run;",
+            false,
+        ),
+        (
+            "prototype setter survives binding reassignment",
+            "let proto = { set run(value) { values.forEach = value; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { run: 1 };",
+            "source.run = null;",
+            false,
+        ),
+        (
+            "prototype data callable survives binding reassignment",
+            "let proto = { run() { values.forEach = null; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = { run() {} };",
+            "source.run();",
+            false,
+        ),
+        (
+            "detached prototype remains live through an old alias",
+            "let proto = {}; const saved = proto; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); proto = {}; Object.defineProperty(saved, 'run', { get() { values.forEach = null; return 1; } });",
+            "void source.run;",
+            false,
+        ),
+        (
+            "shared detached prototype keeps every installed relation",
+            "let proto = { get run() { values.forEach = null; return 1; } }; const first = Object.create(null); const second = Object.create(null);",
+            "Object.setPrototypeOf(first, proto); Object.setPrototypeOf(second, proto); proto = {};",
+            "void first.run; void second.run;",
+            false,
+        ),
+        (
+            "target binding reassignment drops the old prototype relation",
+            "const proto = { get run() { values.forEach = null; return 1; } }; let source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); source = { run: 1 };",
+            "void source.run;",
+            true,
+        ),
+        (
+            "conditional target reassignment preserves the old prototype relation",
+            "const proto = { get run() { values.forEach = null; return 1; } }; let source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); if (Math.random() < 0.5) source = {};",
+            "void source.run;",
+            false,
+        ),
+        (
+            "getPrototypeOf preserves installed prototype identity",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); const current = Object.getPrototypeOf(source);",
+            "void current.run;",
+            false,
+        ),
+        (
+            "own __proto__ data property remains an ordinary property",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto); Object.defineProperty(source, '__proto__', { value: { run: 1 } });",
+            "void source.__proto__.run;",
+            true,
+        ),
+        (
+            "conditional prototype installation",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "if (Math.random() < 0.5) Object.setPrototypeOf(source, proto);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "conditional prototype replacement preserves both getters",
+            "const dangerous = { get run() { values.forEach = null; return 1; } }; const safe = { run: 1 }; const source = Object.create(dangerous);",
+            "if (Math.random() < 0.5) Object.setPrototypeOf(source, safe);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "conditional null prototype preserves the old getter",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(proto);",
+            "if (Math.random() < 0.5) Object.setPrototypeOf(source, null);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "conditional prototype data callable",
+            "const safe = { run() {} }; const dangerous = { run() { values.forEach = null; } }; const source = Object.create(safe);",
+            "if (Math.random() < 0.5) Object.setPrototypeOf(source, dangerous);",
+            "source.run();",
+            false,
+        ),
+        (
+            "immediate Object result getter",
+            "const proto = { get run() { values.forEach = null; return 1; } }; const source = Object.create(null);",
+            "void Object.setPrototypeOf(source, proto).run;",
+            "",
+            false,
+        ),
+        (
+            "immediate Object result data callable",
+            "const proto = { run() { values.forEach = null; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto).run();",
+            "",
+            false,
+        ),
+        (
+            "immediate Object result setter",
+            "const proto = { set run(value) { values.forEach = value; } }; const source = Object.create(null);",
+            "Object.setPrototypeOf(source, proto).run = null;",
+            "",
+            false,
+        ),
+        (
+            "immediate fresh target getter",
+            "const proto = { get run() { values.forEach = null; return 1; } };",
+            "void Object.setPrototypeOf({}, proto).run;",
+            "",
+            false,
+        ),
+        (
+            "immediate Object.create target data callable",
+            "const proto = { run() { values.forEach = null; } };",
+            "Object.setPrototypeOf(Object.create(null), proto).run();",
+            "",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {mutation}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected setPrototypeOf accessor timing: {:?}",
             output.diagnostics
         );
     }
