@@ -30724,6 +30724,49 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn local_descriptor_structured_expression_path(
+        value: &Expression<'_>,
+    ) -> Option<StaticAliasPath> {
+        matches!(
+            value.get_inner_expression(),
+            Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
+        )
+        .then(|| StaticAliasPath::dynamic_this(value.span()))
+    }
+
+    fn prepare_local_descriptor_structured_value(&mut self, value: &LocalDescriptorValue<'_, '_>) {
+        let target = match value {
+            LocalDescriptorValue::Expression(value) => {
+                let Some(target) = Self::local_descriptor_structured_expression_path(value) else {
+                    return;
+                };
+                if !self.structured_own_properties.contains_key(&target) {
+                    let span = value.span();
+                    self.dynamic_path_owner_depths
+                        .insert((span.start, span.end), self.function_depth);
+                    self.structured_own_properties
+                        .insert(target.clone(), BTreeSet::new());
+                    match value.get_inner_expression() {
+                        Expression::ObjectExpression(object) => {
+                            self.collect_object(&target, object)
+                        }
+                        Expression::ArrayExpression(array) => self.collect_array(&target, array),
+                        _ => unreachable!("structured descriptor value was matched above"),
+                    }
+                }
+                target
+            }
+            LocalDescriptorValue::Path(value) => value.clone(),
+            LocalDescriptorValue::GetterResult { target, .. } => target.clone(),
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &target);
+        for target in BTreeSet::from([target, resolved]) {
+            if self.known_structured_own_properties(&target).is_some() {
+                self.defer_structured_value_callables(&target);
+            }
+        }
+    }
+
     fn local_descriptor_inline_callable_span(value: &LocalDescriptorValue<'_, '_>) -> Option<Span> {
         let LocalDescriptorValue::Expression(value) = value else {
             return None;
@@ -30760,6 +30803,7 @@ impl StaticHookAliasCollector<'_> {
             self.prepare_local_descriptor_field_getter_read(value);
         }
         if let Some(value) = descriptor.value.as_ref() {
+            self.prepare_local_descriptor_structured_value(value);
             for span in self.local_descriptor_callable_effect_spans(value) {
                 if !self.executed_descriptor_callable_spans.contains(&span) {
                     self.deferred_accessor_spans.insert(span);
@@ -31043,7 +31087,11 @@ impl StaticHookAliasCollector<'_> {
             self.exclude_dynamic_local_accessor_property(&owner, name);
             match value {
                 LocalDescriptorValue::Expression(value) => {
-                    self.collect_initializer(property.clone(), value);
+                    if let Some(source) = Self::local_descriptor_structured_expression_path(value) {
+                        self.insert_alias(property.clone(), source);
+                    } else {
+                        self.collect_initializer(property.clone(), value);
+                    }
                 }
                 LocalDescriptorValue::Path(value) => {
                     self.insert_alias(property.clone(), value.clone());
