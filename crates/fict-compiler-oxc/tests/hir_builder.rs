@@ -7307,6 +7307,178 @@ fn define_property_reads_accessor_fields_from_its_descriptor() {
 }
 
 #[test]
+fn stored_define_property_descriptors_preserve_accessor_timing() {
+    for (name, declaration, definition, observation, expected_hir) in [
+        (
+            "unread stored getter",
+            "const source = {}; const descriptor = { get() { values.forEach = null; return 1; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            true,
+        ),
+        (
+            "read stored getter",
+            "const source = {}; const descriptor = { get() { values.forEach = null; return 1; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "unwritten stored setter",
+            "const source = {}; const descriptor = { set(value) { values.forEach = null; } };",
+            "Reflect.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            true,
+        ),
+        (
+            "written stored setter",
+            "const source = {}; const descriptor = { set(value) { values.forEach = null; } };",
+            "Reflect.defineProperty(source, 'run', descriptor);",
+            "source.run = 1;",
+            false,
+        ),
+        (
+            "uncalled stored data function",
+            "const source = {}; const descriptor = { value: () => { values.forEach = null; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source.run;",
+            true,
+        ),
+        (
+            "called stored data function",
+            "const source = {}; const descriptor = { value: () => { values.forEach = null; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "source.run();",
+            false,
+        ),
+        (
+            "stored data descriptor replaces an old getter",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = { value: 1 };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source.run;",
+            true,
+        ),
+        (
+            "stored descriptor alias",
+            "const source = {}; const descriptor = { get() { values.forEach = null; return 1; } }; const alias = descriptor;",
+            "Object.defineProperty(source, 'run', alias);",
+            "void source;",
+            true,
+        ),
+        (
+            "stored descriptor field getter",
+            "const source = {}; const descriptor = { get get() { values.forEach = null; return () => 1; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            false,
+        ),
+        (
+            "stored descriptor field getter result",
+            "const source = {}; const descriptor = { get get() { return () => { values.forEach = null; }; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source.run;",
+            false,
+        ),
+        (
+            "unread stored descriptor field getter result",
+            "const source = {}; const descriptor = { get get() { return () => { values.forEach = null; }; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            true,
+        ),
+        (
+            "stored descriptor field getter returns undefined",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = { get get() { return undefined; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source.run;",
+            true,
+        ),
+        (
+            "unwritten stored descriptor setter field getter result",
+            "const source = {}; const descriptor = { get set() { return value => { values.forEach = null; }; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            true,
+        ),
+        (
+            "written stored descriptor setter field getter result",
+            "const source = {}; const descriptor = { get set() { return value => { values.forEach = null; }; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "source.run = 1;",
+            false,
+        ),
+        (
+            "uncalled stored descriptor value field getter result",
+            "const source = {}; const descriptor = { get value() { return () => { values.forEach = null; }; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source.run;",
+            true,
+        ),
+        (
+            "called stored descriptor value field getter result",
+            "const source = {}; const descriptor = { get value() { return () => { values.forEach = null; }; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "source.run();",
+            false,
+        ),
+        (
+            "stored enumerable field getter",
+            "const source = {}; const descriptor = { get enumerable() { values.forEach = null; return true; }, get() { return 1; } };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            false,
+        ),
+        (
+            "stored configurable field getter",
+            "const source = {}; const descriptor = { get configurable() { values.forEach = null; return true; }, value: 1 };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            false,
+        ),
+        (
+            "stored writable field getter",
+            "const source = {}; const descriptor = { get writable() { values.forEach = null; return true; }, value: 1 };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source;",
+            false,
+        ),
+        (
+            "stored descriptor with a custom prototype falls back conservatively",
+            "const source = {}; const prototype = { get() { values.forEach = null; return 1; } }; const descriptor = { __proto__: prototype };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "void source.run;",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {definition}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected stored descriptor outcome: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn accessor_assignments_propagate_setter_and_retained_getter_effects() {
     for (name, declaration, assignment, observation) in [
         (
