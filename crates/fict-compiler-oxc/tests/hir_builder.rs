@@ -6049,6 +6049,42 @@ fn unadvanced_destructured_generator_values_remain_unexecuted() {
             "[run = function* () { values.forEach = null; }] = [void 0];",
             "run();",
         ),
+        (
+            "array rest generator remains unadvanced",
+            "",
+            "const [...runs] = [function* () { values.forEach = null; }];",
+            "runs[0]();",
+        ),
+        (
+            "object rest generator remains unadvanced",
+            "",
+            "const { ...box } = { run: function* () { values.forEach = null; } };",
+            "box.run();",
+        ),
+        (
+            "assigned array rest generator remains unadvanced",
+            "let runs;",
+            "[...runs] = [function* () { values.forEach = null; }];",
+            "runs[0]();",
+        ),
+        (
+            "assigned object rest generator remains unadvanced",
+            "let box;",
+            "({ ...box } = { run: function* () { values.forEach = null; } });",
+            "void box.run;",
+        ),
+        (
+            "array hole precedes rest generator",
+            "",
+            "const [, ...runs] = [0, function* () { values.forEach = null; }];",
+            "runs[0]();",
+        ),
+        (
+            "object rest excludes selected properties",
+            "",
+            "const { first, ...box } = { first: 0, run: function* () { values.forEach = null; } };",
+            "box.run();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -6145,6 +6181,36 @@ fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
             "let run;",
             "({ run = function* () { values.forEach = null; } } = { run: undefined });",
             "run().next();",
+        ),
+        (
+            "array rest generator is advanced",
+            "",
+            "const [...runs] = [function* () { values.forEach = null; }];",
+            "runs[0]().next();",
+        ),
+        (
+            "object rest generator is advanced",
+            "",
+            "const { ...box } = { run: function* () { values.forEach = null; } };",
+            "box.run().next();",
+        ),
+        (
+            "assigned array rest generator is advanced",
+            "let runs;",
+            "[...runs] = [function* () { values.forEach = null; }];",
+            "runs[0]().next();",
+        ),
+        (
+            "assigned object rest generator is advanced",
+            "let box;",
+            "({ ...box } = { run: function* () { values.forEach = null; } });",
+            "box.run().next();",
+        ),
+        (
+            "array hole rest generator is advanced",
+            "",
+            "const [, ...runs] = [0, function* () { values.forEach = null; }];",
+            "runs[0]().next();",
         ),
     ] {
         let source = format!(

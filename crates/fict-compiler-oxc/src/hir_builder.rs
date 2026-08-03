@@ -15465,6 +15465,34 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn binding_callable_container_target(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+    ) -> Option<StaticAliasPath> {
+        let BindingPattern::BindingIdentifier(binding) = pattern else {
+            return None;
+        };
+        let target = binding.symbol_id.get().map(StaticAliasPath::root)?;
+        self.forwarding_targets.insert(target.clone());
+        self.non_generator_callable_targets.insert(target.clone());
+        Some(target)
+    }
+
+    fn record_callable_container_property(
+        &mut self,
+        container: &StaticAliasPath,
+        property: String,
+        initializer: &Expression<'_>,
+        guard: Option<&GeneratorMethodGuard>,
+    ) {
+        let target = container.clone().with_property(property);
+        if let Some(guard) = guard {
+            self.record_guarded_callable_initializer(target, initializer, guard);
+        } else {
+            self.record_callable_initializer(target, initializer);
+        }
+    }
+
     fn record_destructured_callable_initializers(
         &mut self,
         pattern: &BindingPattern<'_>,
@@ -15487,15 +15515,23 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 else {
                     return;
                 };
-                if pattern.rest.is_some()
-                    || initializer
-                        .elements
-                        .iter()
-                        .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+                if initializer
+                    .elements
+                    .iter()
+                    .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
                 {
                     return;
                 }
                 let guard = Self::array_iterator_guard();
+                let rest_target = if let Some(rest) = &pattern.rest {
+                    let Some(target) = self.binding_callable_container_target(&rest.argument)
+                    else {
+                        return;
+                    };
+                    Some(target)
+                } else {
+                    None
+                };
                 for (index, value) in initializer.elements.iter().enumerate() {
                     if matches!(value, ArrayExpressionElement::Elision(_)) {
                         if let Some(binding) = pattern.elements.get(index).and_then(Option::as_ref)
@@ -15508,7 +15544,21 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                         continue;
                     }
                     let Some(binding) = pattern.elements.get(index).and_then(Option::as_ref) else {
-                        self.record_static_container_generator_values(value.to_expression(), true);
+                        if index >= pattern.elements.len()
+                            && let Some(rest_target) = &rest_target
+                        {
+                            self.record_callable_container_property(
+                                rest_target,
+                                (index - pattern.elements.len()).to_string(),
+                                value.to_expression(),
+                                Some(&guard),
+                            );
+                        } else {
+                            self.record_static_container_generator_values(
+                                value.to_expression(),
+                                true,
+                            );
+                        }
                         continue;
                     };
                     self.record_destructured_callable_initializers(
@@ -15531,9 +15581,15 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 else {
                     return;
                 };
-                if pattern.rest.is_some() {
-                    return;
-                }
+                let rest_target = if let Some(rest) = &pattern.rest {
+                    let Some(target) = self.binding_callable_container_target(&rest.argument)
+                    else {
+                        return;
+                    };
+                    Some(target)
+                } else {
+                    None
+                };
                 let mut values = BTreeMap::new();
                 for property in &initializer.properties {
                     let OxcObjectPropertyKind::ObjectProperty(property) = property else {
@@ -15573,7 +15629,16 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 }
                 for (name, value) in values {
                     if !selected.contains(&name) {
-                        self.record_static_container_generator_values(value, guard.is_some());
+                        if let Some(rest_target) = &rest_target {
+                            self.record_callable_container_property(
+                                rest_target,
+                                name,
+                                value,
+                                guard,
+                            );
+                        } else {
+                            self.record_static_container_generator_values(value, guard.is_some());
+                        }
                     }
                 }
             }
@@ -15645,6 +15710,29 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn assignment_callable_container_target(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+    ) -> Option<StaticAliasPath> {
+        let place = planned_assignment_target_place(self.scoping, target)?;
+        let target = static_alias_invalidation_path(&place)?;
+        if !place.projections.is_empty()
+            || matches!(place.base, PlannedPlaceBase::UnresolvedGlobal { .. })
+        {
+            self.member_invalidated
+                .extend(prototype_sensitive_invalidation_paths(&target));
+        }
+        if let Some(span) = place.root_reference_span {
+            self.discarded_invocation_reads
+                .entry(target.clone())
+                .or_default()
+                .insert((span.start(), span.end()));
+        }
+        self.forwarding_targets.insert(target.clone());
+        self.non_generator_callable_targets.insert(target.clone());
+        Some(target)
+    }
+
     fn record_assignment_maybe_default_callable_initializer(
         &mut self,
         target: &AssignmentTargetMaybeDefault<'_>,
@@ -15679,15 +15767,22 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let Expression::ArrayExpression(initializer) = initializer.get_inner_expression() else {
             return;
         };
-        if pattern.rest.is_some()
-            || initializer
-                .elements
-                .iter()
-                .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+        if initializer
+            .elements
+            .iter()
+            .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
         {
             return;
         }
         let guard = Self::array_iterator_guard();
+        let rest_target = if let Some(rest) = &pattern.rest {
+            let Some(target) = self.assignment_callable_container_target(&rest.target) else {
+                return;
+            };
+            Some(target)
+        } else {
+            None
+        };
         for (index, value) in initializer.elements.iter().enumerate() {
             if matches!(value, ArrayExpressionElement::Elision(_)) {
                 if let Some(target) = pattern.elements.get(index).and_then(Option::as_ref) {
@@ -15700,7 +15795,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 continue;
             }
             let Some(target) = pattern.elements.get(index).and_then(Option::as_ref) else {
-                self.record_static_container_generator_values(value.to_expression(), true);
+                if index >= pattern.elements.len()
+                    && let Some(rest_target) = &rest_target
+                {
+                    self.record_callable_container_property(
+                        rest_target,
+                        (index - pattern.elements.len()).to_string(),
+                        value.to_expression(),
+                        Some(&guard),
+                    );
+                } else {
+                    self.record_static_container_generator_values(value.to_expression(), true);
+                }
                 continue;
             };
             self.record_assignment_maybe_default_callable_initializer(
@@ -15728,9 +15834,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let Expression::ObjectExpression(initializer) = initializer.get_inner_expression() else {
             return;
         };
-        if pattern.rest.is_some() {
-            return;
-        }
+        let rest_target = if let Some(rest) = &pattern.rest {
+            let Some(target) = self.assignment_callable_container_target(&rest.target) else {
+                return;
+            };
+            Some(target)
+        } else {
+            None
+        };
         let mut values = BTreeMap::new();
         for property in &initializer.properties {
             let OxcObjectPropertyKind::ObjectProperty(property) = property else {
@@ -15801,7 +15912,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
         for (name, value) in values {
             if !selected.contains(&name) {
-                self.record_static_container_generator_values(value, guard.is_some());
+                if let Some(rest_target) = &rest_target {
+                    self.record_callable_container_property(rest_target, name, value, guard);
+                } else {
+                    self.record_static_container_generator_values(value, guard.is_some());
+                }
             }
         }
     }
