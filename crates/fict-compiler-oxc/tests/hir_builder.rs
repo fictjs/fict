@@ -6729,6 +6729,241 @@ fn conditionally_deleting_an_own_getter_preserves_its_effects() {
 }
 
 #[test]
+fn accessor_assignments_propagate_setter_and_retained_getter_effects() {
+    for (name, declaration, assignment, observation) in [
+        (
+            "object setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "object getter retained beside setter",
+            "const source = { get run() { values.forEach = null; return 1; }, set run(value) {} };",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+        (
+            "object setter declared before its getter",
+            "const source = { set run(value) { values.forEach = null; }, get run() { return 1; } };",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "object getter retained after an earlier setter",
+            "const source = { set run(value) {}, get run() { values.forEach = null; return 1; } };",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+        (
+            "getter-only descriptor retained after assignment",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+        (
+            "object setter through an alias",
+            "const source = { set run(value) { values.forEach = null; } }; const alias = source;",
+            "alias.run = 1;",
+            "void 0;",
+        ),
+        (
+            "class setter",
+            "class Source { set run(value) { values.forEach = null; } } const source = new Source();",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "class getter retained beside setter",
+            "class Source { get run() { values.forEach = null; return 1; } set run(value) {} } const source = new Source();",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+        (
+            "computed object setter",
+            "const key = 'run'; const source = { set [key](value) { values.forEach = null; } };",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "computed class setter",
+            "const key = 'run'; class Source { set [key](value) { values.forEach = null; } } const source = new Source();",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "inherited class setter",
+            "class Base { set run(value) { values.forEach = null; } } class Source extends Base {} const source = new Source();",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "static class setter",
+            "class Source { static set run(value) { values.forEach = null; } }",
+            "Source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "setter receiver mutation",
+            "const source = { values, set run(value) { this.values.forEach = null; } };",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "setter on a returned class",
+            "const make = () => class { set run(value) { values.forEach = null; } }; const Source = make(); const source = new Source();",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "setter parameter mutation",
+            "const source = { set run(value) { value.forEach = null; } };",
+            "source.run = values;",
+            "void 0;",
+        ),
+        (
+            "compound assignment setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "source.run += 1;",
+            "void 0;",
+        ),
+        (
+            "logical assignment setter parameter mutation",
+            "const source = { set run(value) { value.forEach = null; } };",
+            "source.run ||= values;",
+            "void 0;",
+        ),
+        (
+            "update expression setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "source.run++;",
+            "void 0;",
+        ),
+        (
+            "object destructuring assignment setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "({ value: source.run } = { value: 1 });",
+            "void 0;",
+        ),
+        (
+            "array destructuring assignment setter",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "([source.run] = [1]);",
+            "void 0;",
+        ),
+        (
+            "destructuring setter parameter mutation",
+            "const source = { set run(value) { value.forEach = null; } };",
+            "({ value: source.run } = { value: values });",
+            "void 0;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {assignment}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected accessor assignment effects to propagate"
+        );
+    }
+}
+
+#[test]
+fn replaced_or_unread_setters_remain_unexecuted() {
+    for (name, declaration, assignment, observation) in [
+        (
+            "setter-only property read",
+            "const source = { set run(value) { values.forEach = null; } };",
+            "void 0;",
+            "void source.run;",
+        ),
+        (
+            "getter-only assignment does not invoke the getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "getter-only destructuring target does not invoke the getter",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "({ value: source.run } = { value: 1 });",
+            "void 0;",
+        ),
+        (
+            "data property replaces a setter",
+            "const source = { set run(value) { values.forEach = null; }, run: 0 };",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+        (
+            "method replaces a setter",
+            "const source = { set run(value) { values.forEach = null; }, run() {} };",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+        (
+            "later setter replaces an earlier setter",
+            "const source = { set run(value) { values.forEach = null; }, set run(value) {} };",
+            "source.run = 1;",
+            "void 0;",
+        ),
+        (
+            "class method replaces a setter",
+            "class Source { set run(value) { values.forEach = null; } run() {} } const source = new Source();",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+        (
+            "deleting a setter turns a later assignment into a data write",
+            "const source = { set run(value) { values.forEach = null; } }; delete source.run;",
+            "source.run = 1;",
+            "void source.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {assignment}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected stale setter effects to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
     for (name, helper, binding, observation) in [
         (
