@@ -11648,6 +11648,60 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "make(values).bind(null)();",
         ),
         (
+            "constructed bound factory result mutates capture",
+            "",
+            "function make(target) { return class { constructor() { target.forEach = null; } }; }",
+            "new (make(values).bind(null))();",
+        ),
+        (
+            "constructed optionally bound factory result mutates capture",
+            "",
+            "function make(target) { return class { constructor() { target.forEach = null; } }; }",
+            "new (make(values).bind?.(null))();",
+        ),
+        (
+            "tagged bound factory result mutates capture",
+            "",
+            "function make(target) { return function () { target.forEach = null; }; }",
+            "make(values).bind(null)``;",
+        ),
+        (
+            "Reflect apply bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "Reflect.apply(make(values).bind(null), null, []);",
+        ),
+        (
+            "Reflect apply optionally bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "Reflect.apply(make(values).bind?.(null), null, []);",
+        ),
+        (
+            "Reflect construct bound factory result mutates capture",
+            "",
+            "function make(target) { return class { constructor() { target.forEach = null; } }; }",
+            "Reflect.construct(make(values).bind(null), []);",
+        ),
+        (
+            "Function call on bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "make(values).bind(null).call(null);",
+        ),
+        (
+            "Function call on optionally bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "make(values).bind?.(null).call(null);",
+        ),
+        (
+            "Function apply on bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "make(values).bind(null).apply(null, []);",
+        ),
+        (
             "local factory conditionally returns mutating callable",
             "",
             "function make() { return choose ? function (target) { return target.length; } : function (target) { target.forEach = null; }; } const run = make();",
@@ -11935,6 +11989,12 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "const other = [];",
             "function make(target) { return () => { target.forEach = null; }; }",
             "make(other).bind?.(null)();",
+        ),
+        (
+            "non-call consumers of bound sibling factory results preserve capture",
+            "const other = [];",
+            "function make(target) { return function () { target.forEach = null; }; } function makeClass(target) { return class { constructor() { target.forEach = null; } }; }",
+            "new (makeClass(other).bind(null))(); make(other).bind(null)``; Reflect.apply(make(other).bind(null), null, []); Reflect.construct(makeClass(other).bind(null), []); make(other).bind(null).call(null); make(other).bind(null).apply(null, []);",
         ),
         (
             "invoked sibling closure does not activate capture mutation",

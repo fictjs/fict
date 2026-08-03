@@ -22069,18 +22069,34 @@ impl StaticHookAliasCollector<'_> {
         invocations
     }
 
+    fn record_bound_callable_initializer_invocations(
+        &mut self,
+        callable: &Expression<'_>,
+        span: Span,
+        arguments: Vec<LocalInvocationArgumentSegment>,
+        construct: bool,
+    ) -> Option<Vec<LocalInvocationFact>> {
+        let alternatives = self.local_bound_callable_initializer(callable)?;
+        Some(self.record_bound_callable_alternative_invocations(
+            alternatives,
+            span,
+            arguments,
+            construct,
+        ))
+    }
+
     fn immediate_callable_result_invocation_facts(
         &mut self,
         call: &CallExpression<'_>,
     ) -> Option<Vec<LocalInvocationFact>> {
-        if let Some(alternatives) = self.local_bound_callable_initializer(&call.callee) {
-            let arguments = self.collect_local_invocation_arguments(&call.arguments);
-            return Some(self.record_bound_callable_alternative_invocations(
-                alternatives,
-                call.callee.span(),
-                arguments,
-                false,
-            ));
+        let arguments = self.collect_local_invocation_arguments(&call.arguments);
+        if let Some(invocations) = self.record_bound_callable_initializer_invocations(
+            &call.callee,
+            call.callee.span(),
+            arguments,
+            false,
+        ) {
+            return Some(invocations);
         }
         if let Some(invocations) = self.record_factory_result_member_invocations(call) {
             return Some(invocations);
@@ -22096,11 +22112,19 @@ impl StaticHookAliasCollector<'_> {
         }
         if self.is_intact_reflect_method_callee(&call.callee, "construct") {
             let factory = call.arguments.first()?.as_expression()?;
+            let arguments =
+                self.collect_apply_invocation_arguments(call.arguments.get(1)?.as_expression()?);
+            if let Some(invocations) = self.record_bound_callable_initializer_invocations(
+                factory,
+                factory.span(),
+                arguments.clone(),
+                true,
+            ) {
+                return Some(invocations);
+            }
             let Expression::CallExpression(factory_call) = factory.get_inner_expression() else {
                 return None;
             };
-            let arguments =
-                self.collect_apply_invocation_arguments(call.arguments.get(1)?.as_expression()?);
             return self.record_immediate_callable_result_invocations(
                 factory_call,
                 factory_call.span,
@@ -22111,9 +22135,6 @@ impl StaticHookAliasCollector<'_> {
         }
         if self.is_intact_reflect_method_callee(&call.callee, "apply") {
             let factory = call.arguments.first()?.as_expression()?;
-            let Expression::CallExpression(factory_call) = factory.get_inner_expression() else {
-                return None;
-            };
             let receiver = call
                 .arguments
                 .get(1)
@@ -22122,6 +22143,17 @@ impl StaticHookAliasCollector<'_> {
                 .unwrap_or_default();
             let arguments =
                 self.collect_apply_invocation_arguments(call.arguments.get(2)?.as_expression()?);
+            if let Some(invocations) = self.record_bound_callable_initializer_invocations(
+                factory,
+                factory.span(),
+                arguments.clone(),
+                false,
+            ) {
+                return Some(invocations);
+            }
+            let Expression::CallExpression(factory_call) = factory.get_inner_expression() else {
+                return None;
+            };
             return self.record_immediate_callable_result_invocations(
                 factory_call,
                 factory_call.span,
@@ -22139,11 +22171,7 @@ impl StaticHookAliasCollector<'_> {
             }
             _ => return None,
         };
-        let Expression::CallExpression(factory_call) = factory.get_inner_expression() else {
-            return None;
-        };
         if !matches!(method.as_str(), "call" | "apply")
-            || !self.factory_call_results_support_function_method(factory_call, &method)
             || !self.path_is_currently_intact(
                 &StaticAliasPath::unresolved_global("Function".to_string())
                     .with_property("prototype".to_string())
@@ -22169,6 +22197,20 @@ impl StaticHookAliasCollector<'_> {
         } else {
             Vec::new()
         };
+        if let Some(invocations) = self.record_bound_callable_initializer_invocations(
+            factory,
+            factory.span(),
+            arguments.clone(),
+            false,
+        ) {
+            return Some(invocations);
+        }
+        let Expression::CallExpression(factory_call) = factory.get_inner_expression() else {
+            return None;
+        };
+        if !self.factory_call_results_support_function_method(factory_call, &method) {
+            return None;
+        }
         self.record_immediate_callable_result_invocations(
             factory_call,
             factory_call.span,
@@ -25856,18 +25898,25 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
         let arguments = self.collect_local_invocation_arguments(&expression.arguments);
-        let mut local_invocations = match expression.callee.get_inner_expression() {
-            Expression::CallExpression(factory_call) => self
-                .record_immediate_callable_result_invocations(
-                    factory_call,
-                    expression.callee.span(),
-                    arguments,
-                    Vec::new(),
-                    true,
-                ),
-            _ => self.local_invocation_facts_from_arguments(&expression.callee, arguments),
-        }
-        .unwrap_or_default();
+        let mut local_invocations = self
+            .record_bound_callable_initializer_invocations(
+                &expression.callee,
+                expression.callee.span(),
+                arguments.clone(),
+                true,
+            )
+            .or_else(|| match expression.callee.get_inner_expression() {
+                Expression::CallExpression(factory_call) => self
+                    .record_immediate_callable_result_invocations(
+                        factory_call,
+                        expression.callee.span(),
+                        arguments,
+                        Vec::new(),
+                        true,
+                    ),
+                _ => self.local_invocation_facts_from_arguments(&expression.callee, arguments),
+            })
+            .unwrap_or_default();
         for invocation in &mut local_invocations {
             invocation.construct = true;
         }
@@ -25892,18 +25941,25 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 self.collect_local_invocation_value_arguments(argument),
             )
         }));
-        let mut local_invocations = match expression.tag.get_inner_expression() {
-            Expression::CallExpression(factory_call) => self
-                .record_immediate_callable_result_invocations(
-                    factory_call,
-                    expression.tag.span(),
-                    local_arguments,
-                    self.invocation_reference_receiver(&expression.tag),
-                    false,
-                ),
-            _ => self.local_invocation_facts_from_arguments(&expression.tag, local_arguments),
-        }
-        .unwrap_or_default();
+        let mut local_invocations = self
+            .record_bound_callable_initializer_invocations(
+                &expression.tag,
+                expression.tag.span(),
+                local_arguments.clone(),
+                false,
+            )
+            .or_else(|| match expression.tag.get_inner_expression() {
+                Expression::CallExpression(factory_call) => self
+                    .record_immediate_callable_result_invocations(
+                        factory_call,
+                        expression.tag.span(),
+                        local_arguments,
+                        self.invocation_reference_receiver(&expression.tag),
+                        false,
+                    ),
+                _ => self.local_invocation_facts_from_arguments(&expression.tag, local_arguments),
+            })
+            .unwrap_or_default();
         for invocation in &mut local_invocations {
             invocation.result_discarded = self
                 .discarded_invocation_spans
