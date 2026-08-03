@@ -2069,7 +2069,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             local_callable_effect_span_history: BTreeMap::new(),
             local_callable_effect_creators: BTreeMap::new(),
             local_callable_effect_creator_history: BTreeMap::new(),
-            returned_callable_spans: BTreeSet::new(),
+            returned_callable_spans: generator_execution.returned_callable_spans.clone(),
             returned_callable_effects: BTreeMap::new(),
             returned_callable_aliases: BTreeMap::new(),
             returned_callable_ambiguous_targets: BTreeMap::new(),
@@ -9919,6 +9919,7 @@ struct GeneratorExecutionProof {
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_body_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
+    returned_callable_spans: BTreeSet<(u32, u32)>,
 }
 
 #[derive(Default)]
@@ -10777,7 +10778,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     fn propagate_callable_target_spans(
         &mut self,
         trusted_method_forwardings: &[bool],
-    ) -> BTreeSet<StaticAliasPath> {
+    ) -> (BTreeSet<StaticAliasPath>, BTreeSet<(u32, u32)>) {
         let mut spans_by_target = BTreeMap::<StaticAliasPath, BTreeSet<(u32, u32)>>::new();
         for (span, targets) in &self.callable_targets_by_span {
             for target in targets {
@@ -10861,7 +10862,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .insert(target.clone());
             }
         }
-        spans_by_target.into_keys().collect()
+        let returned_callable_spans = returned_spans_by_callable.into_values().flatten().collect();
+        (
+            spans_by_target.into_keys().collect(),
+            returned_callable_spans,
+        )
     }
 
     fn generator_bind_target_forwardings(
@@ -16140,7 +16145,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 (!self.method_guard_is_intact(guard)).then_some(target.clone())
             })
             .collect::<BTreeSet<_>>();
-        let propagated_callable_targets =
+        let (propagated_callable_targets, returned_callable_spans) =
             self.propagate_callable_target_spans(&trusted_method_forwardings);
         let mut candidates = self.forwarding_targets.clone();
         candidates.extend(self.non_generator_callable_targets.iter().cloned());
@@ -16441,6 +16446,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             discarded_invocation_spans: self.discarded_invocation_spans,
             unexecuted_body_spans,
             merely_observed_callable_paths: merely_observed,
+            returned_callable_spans,
         }
     }
 }
@@ -20886,9 +20892,15 @@ impl StaticHookAliasCollector<'_> {
 
     fn bind_local_callable_result(
         &self,
-        mut result: LocalCallableResult,
+        result: LocalCallableResult,
         invocation: &LocalInvocationFact,
     ) -> LocalCallableResult {
+        let mut result = match result {
+            LocalCallableResult::Reference(source) => self
+                .materialize_local_callable_reference(&source, invocation.function_depth)
+                .unwrap_or(LocalCallableResult::Reference(source)),
+            result => result,
+        };
         if let LocalCallableResult::Direct {
             capture_invocations,
             dynamic_receiver,
@@ -20917,6 +20929,75 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         result
+    }
+
+    fn materialize_local_callable_reference(
+        &self,
+        raw_source: &StaticAliasPath,
+        function_depth: usize,
+    ) -> Option<LocalCallableResult> {
+        if self.path_requires_historical_aliases(raw_source, function_depth) {
+            return None;
+        }
+        let source = resolve_static_alias_path(&self.aliases, raw_source);
+        let callables = if let Some(bound) = self.local_bound_callables.get(&source) {
+            vec![bound.clone()]
+        } else {
+            let parameters = self.local_callable_parameters.get(&source)?.clone();
+            vec![LocalBoundCallable {
+                parameters,
+                arguments: Vec::new(),
+                receiver: Vec::new(),
+                dynamic_receiver: self.local_callable_receivers.get(&source).cloned(),
+                generator: self.local_generator_callables.contains(&source),
+                unknown: false,
+            }]
+        };
+        let local_class = self.local_class_instances.contains(&source);
+        let mut effect_instances = Vec::new();
+        for span in self
+            .local_callable_effect_spans
+            .get(&source)
+            .into_iter()
+            .flatten()
+        {
+            let class = local_class && self.returned_class_blueprint_targets.contains_key(span);
+            let creators = self
+                .local_callable_effect_creators
+                .get(&(source.clone(), *span));
+            if let Some(creators) = creators
+                && !creators.is_empty()
+            {
+                effect_instances.extend(creators.iter().cloned().map(|capture_invocations| {
+                    LocalCallableEffectResult {
+                        span: *span,
+                        capture_invocations,
+                        class,
+                    }
+                }));
+            } else {
+                effect_instances.push(LocalCallableEffectResult {
+                    span: *span,
+                    capture_invocations: Vec::new(),
+                    class,
+                });
+            }
+        }
+        Some(LocalCallableResult::Bound {
+            callables,
+            exposures: self
+                .callable_exposures
+                .get(&source)
+                .cloned()
+                .unwrap_or_default(),
+            historical: false,
+            results: self
+                .local_callable_results
+                .get(&source)
+                .cloned()
+                .unwrap_or_default(),
+            effect_instances,
+        })
     }
 
     fn record_callable_result_initializer(
