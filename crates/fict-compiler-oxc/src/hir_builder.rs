@@ -22252,13 +22252,7 @@ impl StaticHookAliasCollector<'_> {
         properties.extend(getter_names.iter().cloned());
         for property in properties {
             let property_source = source.clone().with_property(property.clone());
-            if self
-                .descriptor_defined_properties
-                .contains(&property_source)
-                && !self
-                    .enumerable_descriptor_properties
-                    .contains(&property_source)
-            {
+            if !self.local_own_property_may_be_enumerable(source, &property) {
                 continue;
             }
             let value = if getter_names.contains(&property) {
@@ -23759,6 +23753,19 @@ impl StaticHookAliasCollector<'_> {
         None
     }
 
+    fn local_own_property_may_be_enumerable(
+        &self,
+        owner: &StaticAliasPath,
+        property: &str,
+    ) -> bool {
+        let resolved_owner = resolve_static_alias_path(&self.aliases, owner);
+        [owner.clone(), resolved_owner].into_iter().all(|owner| {
+            let property = owner.with_property(property.to_string());
+            !self.descriptor_defined_properties.contains(&property)
+                || self.enumerable_descriptor_properties.contains(&property)
+        })
+    }
+
     fn local_getter_expression_definedness(
         &self,
         expression: &Expression<'_>,
@@ -24781,7 +24788,9 @@ impl StaticHookAliasCollector<'_> {
         if let Some(properties) = self.known_structured_own_properties(source) {
             for property in properties {
                 let property_source = source.clone().with_property(property.clone());
-                if !excluded.contains(&property) {
+                if !excluded.contains(&property)
+                    && self.local_own_property_may_be_enumerable(source, &property)
+                {
                     self.insert_alias(
                         target.clone().with_property(property.clone()),
                         property_source,
@@ -24803,6 +24812,9 @@ impl StaticHookAliasCollector<'_> {
             return;
         };
         for property in properties {
+            if !self.local_own_property_may_be_enumerable(source, &property) {
+                continue;
+            }
             let property_target = target.with_property(property.clone());
             self.ambiguous_alias_targets
                 .retain(|candidate| !candidate.overlaps(&property_target));
@@ -28847,9 +28859,26 @@ impl StaticHookAliasCollector<'_> {
             .as_ref()
             .map(|source| self.stored_spread_alias_sources(source))
         {
-            let own_properties = self
-                .known_structured_own_properties(spread_source.as_ref().expect("spread source"));
-            if let Some(own_properties) = own_properties {
+            let spread_source = spread_source.as_ref().expect("spread source");
+            let own_properties =
+                self.known_structured_own_properties(spread_source)
+                    .map(|properties| {
+                        properties
+                            .into_iter()
+                            .filter(|property| {
+                                self.local_own_property_may_be_enumerable(spread_source, property)
+                            })
+                            .collect::<BTreeSet<_>>()
+                    });
+            let copies_entry = |properties: &[String], element_wildcard: bool| {
+                own_properties.as_ref().is_none_or(|own_properties| {
+                    element_wildcard
+                        || properties
+                            .first()
+                            .is_some_and(|property| own_properties.contains(property))
+                })
+            };
+            if let Some(own_properties) = &own_properties {
                 for property in own_properties {
                     let property_target = target.with_property(property.clone());
                     self.ambiguous_alias_targets
@@ -28859,7 +28888,7 @@ impl StaticHookAliasCollector<'_> {
                         .entry(target.clone())
                         .or_default()
                         .insert(property.clone());
-                    self.exclude_dynamic_local_accessor_property(target, property);
+                    self.exclude_dynamic_local_accessor_property(target, property.clone());
                 }
             } else {
                 let known_properties = self
@@ -28878,7 +28907,10 @@ impl StaticHookAliasCollector<'_> {
                     .insert(target.clone(), known_properties);
                 self.open_structured_containers.insert(target.clone());
             }
-            for source in sources {
+            for source in sources
+                .into_iter()
+                .filter(|source| copies_entry(&source.properties, source.element_wildcard))
+            {
                 let mut property_target = target.clone();
                 property_target.properties.extend(source.properties);
                 property_target.element_wildcard |= source.element_wildcard;
@@ -28888,18 +28920,25 @@ impl StaticHookAliasCollector<'_> {
                 }
                 self.insert_alias(property_target, source.source);
             }
-            if let Some(signatures) = callable_signatures {
+            if let Some(mut signatures) = callable_signatures {
+                signatures.entries.retain(|signature| {
+                    copies_entry(&signature.properties, signature.element_wildcard)
+                });
                 self.record_stored_spread_callable_signatures(target, signatures, None);
             }
-            if let Some(callables) = bound_callables {
+            if let Some(mut callables) = bound_callables {
+                callables.entries.retain(|callable| {
+                    copies_entry(&callable.properties, callable.element_wildcard)
+                });
                 self.record_stored_spread_bound_callables(target, callables, None);
             }
-            if let Some(exposures) = callable_exposures {
+            if let Some(mut exposures) = callable_exposures {
+                exposures.entries.retain(|exposure| {
+                    copies_entry(&exposure.properties, exposure.element_wildcard)
+                });
                 self.record_stored_spread_callable_exposures(target, exposures, None);
             }
-            if let Some(source) = spread_source {
-                self.record_enumerable_local_getter_copies(target, &source, &BTreeSet::new());
-            }
+            self.record_enumerable_local_getter_copies(target, spread_source, &BTreeSet::new());
             return;
         }
         match expression.get_inner_expression() {

@@ -7051,6 +7051,24 @@ fn define_property_accessors_propagate_read_and_write_effects() {
             "source.run();",
         ),
         (
+            "enumerable callable data value is copied by object spread",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { enumerable: true, value: () => { values.forEach = null; } });",
+            "const copy = { ...source }; copy.run();",
+        ),
+        (
+            "enumerable callable data value is copied by object rest",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { enumerable: true, value: () => { values.forEach = null; } });",
+            "const { ...copy } = source; copy.run();",
+        ),
+        (
+            "replacement object restores ordinary property enumerability",
+            "let source = {}; Object.defineProperty(source, 'run', { value: null });",
+            "source = { run() { values.forEach = null; } };",
+            "const copy = { ...source }; copy.run();",
+        ),
+        (
             "getter added conditionally",
             "const source = {};",
             "if (Math.random() < 0.5) Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
@@ -7127,6 +7145,24 @@ fn unread_define_property_accessors_remain_unexecuted() {
             "const source = {};",
             "Object.defineProperty(source, 'run', { value: () => { values.forEach = null; } });",
             "void source.run;",
+        ),
+        (
+            "non-enumerable data function skipped by object spread",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { value: () => { values.forEach = null; } });",
+            "const copy = { ...source }; copy.run?.();",
+        ),
+        (
+            "aliased non-enumerable data function skipped by object spread",
+            "const original = {}; const source = original;",
+            "Object.defineProperty(original, 'run', { value: () => { values.forEach = null; } });",
+            "const copy = { ...source }; copy.run?.();",
+        ),
+        (
+            "non-enumerable data function skipped by object rest",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { value: () => { values.forEach = null; } });",
+            "const { ...copy } = source; copy.run?.();",
         ),
     ] {
         let source = format!(
@@ -10324,8 +10360,9 @@ fn object_assign_invokes_local_accessors() {
             const values = [];
             const source = {};
             Object.defineProperty(source, 'run', { value: values });
+            const alias = source;
             const target = { set run(value) { value.forEach = null; } };
-            Object.assign(target, source);
+            Object.assign(target, alias);
             values.forEach(() => count);
             return count;
         }
