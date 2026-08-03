@@ -2990,6 +2990,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &self.function_facts,
             &property_facts,
             &mutable_callback_symbols,
+            callback_aliases,
         );
 
         let imports: BTreeMap<_, _> = self
@@ -8227,6 +8228,7 @@ struct StaticHookAliases {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
+    snapshotted_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
 }
 
 fn resolve_static_alias_path(
@@ -18557,6 +18559,8 @@ struct StaticHookAliasCollector<'semantic> {
     local_set_prototype_of_results: BTreeMap<(u32, u32), StaticAliasPath>,
     captured_local_descriptor_value_paths: BTreeSet<StaticAliasPath>,
     local_descriptor_value_captures: BTreeSet<(StaticAliasPath, StaticAliasPath, StaticAliasPath)>,
+    snapshotted_local_callable_source_paths: BTreeSet<StaticAliasPath>,
+    snapshotted_local_callable_targets: BTreeSet<StaticAliasPath>,
     binding_owner_depths: BTreeMap<SymbolId, usize>,
     dynamic_path_owner_depths: BTreeMap<(u32, u32), usize>,
     cross_scope_alias_targets: BTreeSet<StaticAliasPath>,
@@ -19405,6 +19409,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_set_prototype_of_results: BTreeMap::new(),
             captured_local_descriptor_value_paths: BTreeSet::new(),
             local_descriptor_value_captures: BTreeSet::new(),
+            snapshotted_local_callable_source_paths: BTreeSet::new(),
+            snapshotted_local_callable_targets: BTreeSet::new(),
             binding_owner_depths: BTreeMap::new(),
             dynamic_path_owner_depths: BTreeMap::new(),
             cross_scope_alias_targets: BTreeSet::new(),
@@ -24909,6 +24915,32 @@ impl StaticHookAliasCollector<'_> {
         true
     }
 
+    fn snapshot_local_callable_alias(
+        &mut self,
+        target: StaticAliasPath,
+        source: &StaticAliasPath,
+    ) -> bool {
+        if target.properties.is_empty() && !target.element_wildcard {
+            return false;
+        }
+        let resolved = resolve_static_alias_path(&self.aliases, source);
+        if [source, &resolved].into_iter().any(|candidate| {
+            self.path_requires_historical_aliases(candidate, self.function_depth)
+                || !self.path_is_currently_intact(candidate)
+        }) {
+            return false;
+        }
+        if !self.copy_local_callable_value(target.clone(), &resolved) {
+            return false;
+        }
+        self.snapshotted_local_callable_targets.insert(target);
+        self.snapshotted_local_callable_source_paths
+            .insert(source.clone());
+        self.snapshotted_local_callable_source_paths
+            .insert(resolved);
+        true
+    }
+
     fn copy_local_value_definedness(
         &mut self,
         target: StaticAliasPath,
@@ -25904,7 +25936,9 @@ impl StaticHookAliasCollector<'_> {
             }
             Expression::CallExpression(call) => {
                 if let Some(source) = self.alias_source_path(value) {
-                    self.insert_alias(target, source);
+                    if !self.snapshot_local_callable_alias(target.clone(), &source) {
+                        self.insert_alias(target, source);
+                    }
                 } else {
                     self.record_callable_result_initializer(target, call);
                 }
@@ -25935,7 +25969,9 @@ impl StaticHookAliasCollector<'_> {
                 self.collect_initializer(target, &expression.right);
             }
             _ => {
-                if let Some(source) = self.alias_source_path(value) {
+                if let Some(source) = self.alias_source_path(value)
+                    && !self.snapshot_local_callable_alias(target.clone(), &source)
+                {
                     self.insert_alias(target, source);
                 }
             }
@@ -26117,6 +26153,7 @@ impl StaticHookAliasCollector<'_> {
         if self
             .captured_local_descriptor_value_paths
             .iter()
+            .chain(self.snapshotted_local_callable_source_paths.iter())
             .any(|captured| target.starts_with(captured) || resolved_target.starts_with(captured))
         {
             let span = match inner {
@@ -28398,7 +28435,17 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         alternatives: LocalBoundCallableAlternatives,
     ) {
+        let resolved_target = resolve_static_alias_path(&self.aliases, &target);
+        let defer_replacement = self
+            .captured_local_descriptor_value_paths
+            .iter()
+            .chain(self.snapshotted_local_callable_source_paths.iter())
+            .any(|captured| target.starts_with(captured) || resolved_target.starts_with(captured));
         for effect in &alternatives.effect_instances {
+            if defer_replacement {
+                self.unreferenced_callable_spans.insert(effect.span);
+                self.deferred_accessor_spans.insert(effect.span);
+            }
             if effect.class {
                 self.materialize_returned_class_callables(
                     &target,
@@ -31730,7 +31777,30 @@ impl StaticHookAliasCollector<'_> {
                 self.deferred_exposed_paths.insert(path.clone());
             }
         }
-        self.expand_exposed_paths(exposed)
+        let exposed = self.expand_exposed_paths(exposed);
+        for path in &exposed {
+            let resolved = resolve_static_alias_path(&self.aliases, path);
+            if !self
+                .snapshotted_local_callable_source_paths
+                .iter()
+                .chain(self.snapshotted_local_callable_targets.iter())
+                .any(|source| {
+                    path.starts_with(source)
+                        || source.starts_with(path)
+                        || resolved.starts_with(source)
+                        || source.starts_with(&resolved)
+                })
+            {
+                continue;
+            }
+            for span in self.local_callable_path_effect_spans(path) {
+                if self.deferred_accessor_spans.remove(&span) {
+                    self.executed_descriptor_callable_spans.insert(span);
+                    self.unreferenced_callable_spans.remove(&span);
+                }
+            }
+        }
+        exposed
     }
 
     fn expand_exposed_paths(
@@ -33166,10 +33236,28 @@ impl StaticHookAliasCollector<'_> {
                 self.insert_slot_invalidation_path(path, true);
             }
         }
+        let snapshotted_callable_effect_spans = self
+            .snapshotted_local_callable_targets
+            .iter()
+            .filter_map(|target| {
+                let mut spans = self
+                    .local_callable_effect_spans
+                    .get(target)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(history) = self.local_callable_effect_span_history.get(target) {
+                    for version in history {
+                        spans.extend(version);
+                    }
+                }
+                (!spans.is_empty()).then(|| (target.clone(), spans))
+            })
+            .collect();
         let resolver = StaticHookAliases {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
             unexecuted_expression_spans: BTreeSet::new(),
+            snapshotted_callable_effect_spans: BTreeMap::new(),
         };
         let reflective_mutations = self
             .reflective_mutations
@@ -33253,6 +33341,7 @@ impl StaticHookAliasCollector<'_> {
             aliases: self.aliases,
             member_invalidated,
             unexecuted_expression_spans: self.unexecuted_expression_spans,
+            snapshotted_callable_effect_spans,
         }
     }
 }
@@ -35304,6 +35393,7 @@ fn collect_callback_timings(
     functions: &[FunctionFact],
     properties: &CallbackPropertyCollector<'_>,
     mutable_symbols: &BTreeSet<SymbolId>,
+    aliases: &StaticHookAliases,
 ) -> BTreeMap<StaticAliasPath, Option<CallbackTiming>> {
     let mut timings = BTreeMap::new();
     for function in functions {
@@ -35363,6 +35453,19 @@ fn collect_callback_timings(
             StaticAliasPath::root(property.target).with_property(property.property.clone()),
             exact_callback_timing(functions, property.source_span),
         );
+    }
+    for (target, spans) in &aliases.snapshotted_callable_effect_spans {
+        let mut merged = None;
+        let mut exact = true;
+        for (start, end) in spans {
+            let span = SourceSpan::new(*start, *end).expect("ordered callable effect span");
+            let Some(timing) = exact_callback_timing(functions, span) else {
+                exact = false;
+                break;
+            };
+            merged = Some(merged.map_or(timing, |current: CallbackTiming| current.merge(timing)));
+        }
+        timings.insert(target.clone(), exact.then_some(merged).flatten());
     }
     timings
 }

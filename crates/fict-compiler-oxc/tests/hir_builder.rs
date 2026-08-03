@@ -8221,6 +8221,20 @@ fn stored_define_property_descriptors_preserve_accessor_timing() {
             false,
         ),
         (
+            "stored data field keeps the callable captured during descriptor creation",
+            "const source = {}; let run = () => { values.forEach = null; }; const descriptor = { value: run }; run = () => {};",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "source.run();",
+            false,
+        ),
+        (
+            "stored data field ignores a later dangerous source binding",
+            "const source = {}; let run = () => {}; const descriptor = { value: run }; run = () => { values.forEach = null; };",
+            "Object.defineProperty(source, 'run', descriptor);",
+            "source.run();",
+            true,
+        ),
+        (
             "installed data function keeps its original descriptor field value",
             "const source = {}; const descriptor = { value: () => { values.forEach = null; } };",
             "Object.defineProperty(source, 'run', descriptor); descriptor.value = () => {};",
@@ -8475,6 +8489,122 @@ fn stored_define_property_descriptors_preserve_accessor_timing() {
             output.hir.is_some(),
             expected_hir,
             "{name}: unexpected stored descriptor outcome: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn stored_callable_initializers_snapshot_reassigned_source_bindings() {
+    for (name, declaration, replacement, observation, expected_hir) in [
+        (
+            "object property keeps the earlier dangerous callable",
+            "let run = () => { values.forEach = null; }; const stored = { run };",
+            "run = () => {};",
+            "stored.run();",
+            false,
+        ),
+        (
+            "object property ignores a later dangerous callable",
+            "let run = () => {}; const stored = { run };",
+            "run = () => { values.forEach = null; };",
+            "stored.run();",
+            true,
+        ),
+        (
+            "array element keeps the earlier dangerous callable",
+            "let run = () => { values.forEach = null; }; const stored = [run];",
+            "run = () => {};",
+            "stored[0]();",
+            false,
+        ),
+        (
+            "array element ignores a later dangerous callable",
+            "let run = () => {}; const stored = [run];",
+            "run = () => { values.forEach = null; };",
+            "stored[0]();",
+            true,
+        ),
+        (
+            "property assignment keeps the earlier dangerous callable",
+            "let run = () => { values.forEach = null; }; const stored = {}; stored.run = run;",
+            "run = () => {};",
+            "stored.run();",
+            false,
+        ),
+        (
+            "property assignment ignores a later dangerous callable",
+            "let run = () => {}; const stored = {}; stored.run = run;",
+            "run = () => { values.forEach = null; };",
+            "stored.run();",
+            true,
+        ),
+        (
+            "member initializer ignores a later dangerous callable",
+            "const callbacks = { run: () => {} }; const stored = { run: callbacks.run };",
+            "callbacks.run = () => { values.forEach = null; };",
+            "stored.run();",
+            true,
+        ),
+        (
+            "bound property keeps the earlier dangerous callable",
+            "const dangerous = () => { values.forEach = null; }; const safe = () => {}; let run = dangerous.bind(null); const stored = { run };",
+            "run = safe.bind(null);",
+            "stored.run();",
+            false,
+        ),
+        (
+            "bound property ignores a later dangerous callable",
+            "const dangerous = () => { values.forEach = null; }; const safe = () => {}; let run = safe.bind(null); const stored = { run };",
+            "run = dangerous.bind(null);",
+            "stored.run();",
+            true,
+        ),
+        (
+            "later direct source invocation still executes its replacement",
+            "let run = () => {}; const stored = { run };",
+            "run = () => { values.forEach = null; };",
+            "run();",
+            false,
+        ),
+        (
+            "later source exposure still observes its replacement",
+            "let run = () => {}; const stored = { run };",
+            "run = () => { values.forEach = null; };",
+            "external(run);",
+            false,
+        ),
+        (
+            "later stored exposure still observes the replacement",
+            "let run = () => {}; const first = { run };",
+            "run = () => { values.forEach = null; };",
+            "const second = { run }; external(second.run);",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {declaration}
+                    {replacement}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: unexpected stored callable outcome: {:?}",
             output.diagnostics
         );
     }
@@ -19899,6 +20029,8 @@ fn synchronous_builtin_callback_hosts_do_not_escape_reactive_captures() {
             const set = $state(new Set([1, 2]));
             const callbacks = { read: () => count };
             const readAlias = callbacks.read;
+            const read = () => count;
+            const storedCallbacks = { read };
             class CallbackBox {
                 read = () => count;
                 method() { return count; }
@@ -19914,6 +20046,7 @@ fn synchronous_builtin_callback_hosts_do_not_escape_reactive_captures() {
                 map.forEach(() => count),
                 set.forEach(() => count),
                 rows.map(readAlias),
+                rows.map(storedCallbacks.read),
                 rows.map(callbackBox.read),
                 rows.map(callbackBox.method),
                 rows.forEach(function* () { yield count; }),
