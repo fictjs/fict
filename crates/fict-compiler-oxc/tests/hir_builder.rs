@@ -9914,6 +9914,204 @@ fn typescript_wrapped_immediate_structured_setters_preserve_effects() {
 }
 
 #[test]
+fn reflect_property_access_invokes_local_accessors() {
+    for (name, helper, access) in [
+        (
+            "Reflect.get getter",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Reflect.get(source, 'run');",
+        ),
+        (
+            "Reflect.set setter",
+            "const source = { set run(value) { values.forEach = value; } };",
+            "Reflect.set(source, 'run', null);",
+        ),
+        (
+            "Reflect.get receiver",
+            "const source = { get run() { this.target.forEach = null; return 0; } }; const receiver = { target: values };",
+            "Reflect.get(source, 'run', receiver);",
+        ),
+        (
+            "Reflect.set receiver",
+            "const source = { set run(value) { this.target.forEach = value; } }; const receiver = { target: values };",
+            "Reflect.set(source, 'run', null, receiver);",
+        ),
+        (
+            "aliased Reflect.get",
+            "const source = { get run() { values.forEach = null; return 0; } }; const get = Reflect.get;",
+            "get(source, 'run');",
+        ),
+        (
+            "aliased Reflect.set",
+            "const source = { set run(value) { values.forEach = value; } }; const set = Reflect.set;",
+            "set(source, 'run', null);",
+        ),
+        (
+            "dynamic Reflect.get key",
+            "const source = { get run() { values.forEach = null; return 0; }, other: 0 }; const key = values.length ? 'other' : 'run';",
+            "Reflect.get(source, key);",
+        ),
+        (
+            "dynamic Reflect.set key",
+            "const source = { set run(value) { values.forEach = value; }, other: 0 }; const key = values.length ? 'other' : 'run';",
+            "Reflect.set(source, key, null);",
+        ),
+        (
+            "Reflect.get coerces property key",
+            "const source = { run: 0 }; const key = { toString() { values.forEach = null; return 'run'; } };",
+            "Reflect.get(source, key);",
+        ),
+        (
+            "Reflect.set coerces property key",
+            "const source = { run: 0 }; const key = { toString() { values.forEach = null; return 'run'; } };",
+            "Reflect.set(source, key, 0);",
+        ),
+        (
+            "dynamic Reflect.get callable result",
+            "const source = { get run() { return () => { values.forEach = null; }; }, other: 0 }; const key = values.length ? 'other' : 'run';",
+            "Reflect.get(source, key)();",
+        ),
+        (
+            "stored dynamic Reflect.get callable result",
+            "const source = { get run() { return () => { values.forEach = null; }; }, other: 0 }; const key = values.length ? 'other' : 'run';",
+            "const run = Reflect.get(source, key); run();",
+        ),
+        (
+            "stored Reflect.get callable result",
+            "const source = { get run() { return () => { values.forEach = null; }; } };",
+            "const run = Reflect.get(source, 'run'); run();",
+        ),
+        (
+            "immediate Reflect.get callable result",
+            "const source = { get run() { return () => { values.forEach = null; }; } };",
+            "Reflect.get(source, 'run')();",
+        ),
+        (
+            "Reflect.get constructor result",
+            "const source = { get Run() { return class { constructor() { values.forEach = null; } }; } };",
+            "new (Reflect.get(source, 'Run'))();",
+        ),
+        (
+            "Reflect.get tag result",
+            "const source = { get tag() { return () => { values.forEach = null; }; } };",
+            "Reflect.get(source, 'tag')`value`;",
+        ),
+        (
+            "Reflect.get result call receiver",
+            "const source = { get run() { return function () { this.forEach = null; }; } };",
+            "Reflect.get(source, 'run').call(values);",
+        ),
+        (
+            "Reflect.get result apply receiver",
+            "const source = { get run() { return function () { this.forEach = null; }; } };",
+            "Reflect.get(source, 'run').apply(values, []);",
+        ),
+        (
+            "Reflect.apply Reflect.get result",
+            "const source = { get run() { return function () { this.forEach = null; }; } };",
+            "Reflect.apply(Reflect.get(source, 'run'), values, []);",
+        ),
+        (
+            "bound Reflect.get result",
+            "const source = { get run() { return function () { this.forEach = null; }; } };",
+            "Reflect.get(source, 'run').bind(values)();",
+        ),
+        (
+            "advanced Reflect.get generator result",
+            "const source = { get run() { return function* () { values.forEach = null; }; } };",
+            "Reflect.get(source, 'run')().next();",
+        ),
+        (
+            "Reflect.get structured result member",
+            "const source = { get box() { return { run() { values.forEach = null; } }; } };",
+            "Reflect.get(source, 'box').run();",
+        ),
+        (
+            "Reflect.get factory getter",
+            "function create(target) { return { get run() { target.forEach = null; return 0; } }; }",
+            "Reflect.get(create(values), 'run');",
+        ),
+        (
+            "Reflect.get factory getter receiver",
+            "function create() { return { get run() { this.target.forEach = null; return 0; } }; } const receiver = { target: values };",
+            "Reflect.get(create(), 'run', receiver);",
+        ),
+        (
+            "Reflect.set factory setter",
+            "function create(target) { return { set run(value) { target.forEach = value; } }; }",
+            "Reflect.set(create(values), 'run', null);",
+        ),
+        (
+            "Reflect.set factory setter receiver",
+            "function create() { return { set run(value) { this.target.forEach = value; } }; } const receiver = { target: values };",
+            "Reflect.set(create(), 'run', null, receiver);",
+        ),
+        (
+            "Reflect.set forwards value",
+            "const source = { set run(target) { target.forEach = null; } };",
+            "Reflect.set(source, 'run', values);",
+        ),
+        (
+            "Reflect.get receiver binds returned arrow",
+            "const source = { get run() { return () => { this.target.forEach = null; }; } }; const receiver = { target: values };",
+            "Reflect.get(source, 'run', receiver)();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {access}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the accessor effect, got {:?}",
+            output.diagnostics
+        );
+    }
+
+    let detached_source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const source = {
+                get run() {
+                    return function () { this.target.forEach = null; };
+                }
+            };
+            const receiver = { target: values };
+            const run = Reflect.get(source, 'run', receiver);
+            run();
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let detached_output = build_hir(
+        detached_source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        detached_output.hir.is_some(),
+        "Reflect.get must not bind the returned callable to its receiver: {:?}",
+        detached_output.diagnostics
+    );
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (

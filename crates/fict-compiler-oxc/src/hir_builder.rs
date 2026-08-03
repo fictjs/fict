@@ -20777,15 +20777,16 @@ impl StaticHookAliasCollector<'_> {
                                 setter_arguments: Some(setter_arguments.clone()),
                                 span: pending.span,
                                 arguments: Vec::new(),
-                                receiver_override: None,
+                                receiver_override: pending.receiver_override.clone(),
                                 construct: false,
                                 result_discarded: true,
                             },
                         );
                     } else {
-                        self.record_local_setter_invocations_with_arguments(
+                        self.record_local_setter_invocations_with_arguments_and_receiver(
                             &candidate,
                             setter_arguments.clone(),
+                            pending.receiver_override.clone(),
                         );
                     }
                 }
@@ -20793,6 +20794,16 @@ impl StaticHookAliasCollector<'_> {
             }
             if pending.read_only {
                 for (index, candidate) in candidates.into_iter().enumerate() {
+                    if pending.receiver_override.is_some()
+                        && !self.local_getter_resolution(&candidate, false).1.is_empty()
+                    {
+                        self.record_local_getter_read_with_receiver(
+                            candidate,
+                            None,
+                            pending.receiver_override.clone(),
+                        );
+                        continue;
+                    }
                     let Some((remaining, _)) = self.materialize_local_getter_result_static_path(
                         candidate,
                         pending.span,
@@ -20813,7 +20824,7 @@ impl StaticHookAliasCollector<'_> {
                                 setter_arguments: None,
                                 span: pending.span,
                                 arguments: Vec::new(),
-                                receiver_override: None,
+                                receiver_override: pending.receiver_override.clone(),
                                 construct: false,
                                 result_discarded: true,
                             },
@@ -21926,6 +21937,237 @@ impl StaticHookAliasCollector<'_> {
         resolve_static_alias_path(&self.aliases, &raw) == reflect_method
             && self.path_is_currently_intact(&raw)
             && self.path_is_currently_intact(&reflect_method)
+    }
+
+    fn local_reflect_get_access(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<(StaticAliasPath, Option<Vec<LocalInvocationArgument>>)> {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        self.local_reflect_get_call_access(call)
+    }
+
+    fn local_reflect_get_call_access(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(StaticAliasPath, Option<Vec<LocalInvocationArgument>>)> {
+        if !self.is_intact_reflect_method_callee(&call.callee, "get") {
+            return None;
+        }
+        let target = call.arguments.first()?.as_expression()?;
+        let property = call
+            .arguments
+            .get(1)?
+            .as_expression()
+            .and_then(static_member_name)?;
+        let owner = self.alias_source_path(target)?;
+        let receiver = call
+            .arguments
+            .get(2)
+            .and_then(|argument| argument.as_expression())
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver));
+        Some((owner.with_property(property), receiver))
+    }
+
+    fn record_local_reflect_get(&mut self, call: &CallExpression<'_>) -> bool {
+        if !self.is_intact_reflect_method_callee(&call.callee, "get") {
+            return false;
+        }
+        let Some(target) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return false;
+        };
+        let property = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_member_name);
+        let receiver = call
+            .arguments
+            .get(2)
+            .and_then(|argument| argument.as_expression())
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver));
+        self.record_possible_local_getter_read_with_receiver(target, property, call.span, receiver)
+    }
+
+    fn record_local_reflect_set(&mut self, call: &CallExpression<'_>) -> bool {
+        if !self.is_intact_reflect_method_callee(&call.callee, "set") {
+            return false;
+        }
+        let Some(target) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return false;
+        };
+        let property = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_member_name);
+        let arguments = call
+            .arguments
+            .get(2)
+            .and_then(|argument| argument.as_expression())
+            .map(|value| self.collect_local_invocation_value_arguments(value))
+            .unwrap_or_default();
+        let receiver = call
+            .arguments
+            .get(3)
+            .and_then(|argument| argument.as_expression())
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver));
+        self.record_structured_member_setter_invocations(
+            target, property, call.span, arguments, receiver,
+        )
+    }
+
+    fn local_reflect_get_candidates(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<(Vec<StaticAliasPath>, Option<Vec<LocalInvocationArgument>>)> {
+        if !self.is_intact_reflect_method_callee(&call.callee, "get") {
+            return None;
+        }
+        let target = call.arguments.first()?.as_expression()?;
+        let owner = self.local_or_structured_member_owner_path(target)?;
+        let property = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_member_name);
+        let candidates = property.map_or_else(
+            || self.dynamic_structured_member_paths_for_owner(&owner),
+            |property| vec![owner.with_property(property)],
+        );
+        let receiver = call
+            .arguments
+            .get(2)
+            .and_then(|argument| argument.as_expression())
+            .map(|receiver| self.collect_local_invocation_value_arguments(receiver));
+        Some((candidates, receiver))
+    }
+
+    fn record_local_reflect_get_result_initializer(
+        &mut self,
+        target: StaticAliasPath,
+        call: &CallExpression<'_>,
+    ) -> bool {
+        let Some((candidates, receiver)) = self.local_reflect_get_candidates(call) else {
+            return false;
+        };
+        let mut sources = Vec::new();
+        let mut getter_invocations = Vec::new();
+        for (index, candidate) in candidates.into_iter().enumerate() {
+            if let Some((_, _, invocations)) =
+                self.local_getter_read_invocations(&candidate, receiver.clone(), false)
+            {
+                let source = StaticAliasPath::dynamic_this(call.span)
+                    .with_property(format!("reflect-get-result-{index}"));
+                self.dynamic_path_owner_depths
+                    .insert((call.span.start, call.span.end), self.function_depth);
+                self.record_callable_result_initializer_from_invocations(
+                    source.clone(),
+                    invocations.clone(),
+                    None,
+                );
+                getter_invocations.extend(invocations);
+                sources.push(source);
+            } else {
+                sources.push(candidate);
+            }
+        }
+        if sources.is_empty() {
+            return false;
+        }
+        self.local_invocations.extend(getter_invocations);
+        self.clear_overlapping_aliases(&target);
+        for source in &sources {
+            self.insert_alias(target.clone(), source.clone());
+        }
+        if sources.len() > 1 {
+            self.mark_alias_target_ambiguous(target);
+        }
+        self.handled_local_getter_read_spans
+            .insert((call.span.start, call.span.end));
+        true
+    }
+
+    fn record_local_reflect_get_result_invocations(
+        &mut self,
+        call: &CallExpression<'_>,
+        span: Span,
+        arguments: Vec<LocalInvocationArgumentSegment>,
+        construct: bool,
+        result_discarded: bool,
+    ) -> Option<Vec<LocalInvocationFact>> {
+        let (candidates, receiver) = self.local_reflect_get_candidates(call)?;
+        let mut getter_invocations = Vec::new();
+        let mut direct_candidates = Vec::new();
+        for candidate in candidates {
+            if let Some((_, _, invocations)) =
+                self.local_getter_read_invocations(&candidate, receiver.clone(), false)
+            {
+                getter_invocations.extend(invocations);
+            } else {
+                direct_candidates.push(candidate);
+            }
+        }
+        let mut invocations = Vec::new();
+        if !getter_invocations.is_empty() {
+            self.local_invocations
+                .extend(getter_invocations.iter().cloned());
+            if let Some(returned) = self.record_callable_result_invocations_from_invocations(
+                getter_invocations,
+                span,
+                arguments.clone(),
+                Vec::new(),
+                construct,
+            ) {
+                invocations.extend(returned);
+            }
+        }
+        for raw_callee in direct_candidates {
+            let mut callees = self
+                .returned_structured_instances_for_path(&raw_callee)
+                .into_iter()
+                .map(|(source, _)| source)
+                .collect::<BTreeSet<_>>();
+            if callees.is_empty() {
+                callees.insert(resolve_static_alias_path(&self.aliases, &raw_callee));
+            }
+            for callee in callees {
+                let invocation = LocalInvocationFact {
+                    parameters: self.current_invocation_parameters(&raw_callee, &callee),
+                    parameters_resolved: false,
+                    owner_returned_callable_span: self.current_returned_callable_span(),
+                    creator_owner: None,
+                    arguments: arguments.clone(),
+                    argument_offset: 0,
+                    raw_callee: Some(raw_callee.clone()),
+                    callee: Some(callee.clone()),
+                    function_depth: self.function_depth,
+                    bound_receiver: Vec::new(),
+                    dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
+                    generator: LocalInvocationGenerator::ResolveFromCallee,
+                    result_discarded,
+                    force_argument_exposure: false,
+                    construct,
+                };
+                invocations.push(self.with_current_bound_callable(invocation, &callee));
+            }
+        }
+        if invocations.is_empty() {
+            return None;
+        }
+        self.handled_local_getter_read_spans
+            .insert((call.span.start, call.span.end));
+        Some(invocations)
     }
 
     fn local_reflect_apply_invocation_facts(
@@ -23851,19 +24093,57 @@ impl StaticHookAliasCollector<'_> {
         property: StaticAliasPath,
         target: Option<StaticAliasPath>,
     ) -> bool {
-        let (historical, getters) = self.local_getter_resolution(&property, false);
-        if getters.is_empty() {
+        self.record_local_getter_read_with_receiver(property, target, None)
+    }
+
+    fn record_local_getter_read_with_receiver(
+        &mut self,
+        property: StaticAliasPath,
+        target: Option<StaticAliasPath>,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
+    ) -> bool {
+        let Some((historical, getter_count, invocations)) =
+            self.local_getter_read_invocations(&property, receiver_override, target.is_none())
+        else {
             return false;
+        };
+        self.local_invocations.extend(invocations.iter().cloned());
+        if let Some(target) = target {
+            self.clear_overlapping_aliases(&target);
+            self.record_callable_result_initializer_from_invocations(
+                target.clone(),
+                invocations,
+                None,
+            );
+            if historical || getter_count > 1 {
+                self.mark_alias_target_ambiguous(target);
+            }
+        }
+        true
+    }
+
+    fn local_getter_read_invocations(
+        &mut self,
+        property: &StaticAliasPath,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
+        result_discarded: bool,
+    ) -> Option<(bool, usize, Vec<LocalInvocationFact>)> {
+        let (historical, getters) = self.local_getter_resolution(property, false);
+        if getters.is_empty() {
+            return None;
         }
         for getter in &getters {
             self.activate_local_getter(getter);
         }
         let mut owner = property.clone();
         owner.properties.pop();
-        let mut receiver = self.returned_structured_reference_receivers(&owner);
-        if receiver.is_empty() {
-            receiver.push(self.collect_local_invocation_path(owner));
-        }
+        let receiver = receiver_override.unwrap_or_else(|| {
+            let mut receiver = self.returned_structured_reference_receivers(&owner);
+            if receiver.is_empty() {
+                receiver.push(self.collect_local_invocation_path(owner));
+            }
+            receiver
+        });
         let invocations = getters
             .iter()
             .map(|getter| {
@@ -23881,26 +24161,14 @@ impl StaticHookAliasCollector<'_> {
                     bound_receiver: receiver.clone(),
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                     generator: LocalInvocationGenerator::ResolveFromCallee,
-                    result_discarded: target.is_none(),
+                    result_discarded,
                     force_argument_exposure: false,
                     construct: false,
                 };
                 self.with_current_bound_callable(invocation, &callee)
             })
             .collect::<Vec<_>>();
-        self.local_invocations.extend(invocations.iter().cloned());
-        if let Some(target) = target {
-            self.clear_overlapping_aliases(&target);
-            self.record_callable_result_initializer_from_invocations(
-                target.clone(),
-                invocations,
-                None,
-            );
-            if historical || getters.len() > 1 {
-                self.mark_alias_target_ambiguous(target);
-            }
-        }
-        true
+        Some((historical, getters.len(), invocations))
     }
 
     fn local_callable_path_effect_spans(&self, callable: &StaticAliasPath) -> BTreeSet<(u32, u32)> {
@@ -23987,6 +24255,23 @@ impl StaticHookAliasCollector<'_> {
         expression: &Expression<'_>,
         span: Span,
     ) -> Option<(StaticAliasPath, Option<StaticAliasPath>)> {
+        if let Some((property, receiver)) = self.local_reflect_get_access(expression) {
+            let target =
+                StaticAliasPath::dynamic_this(span).with_property("getter-result".to_string());
+            self.dynamic_path_owner_depths
+                .insert((span.start, span.end), self.function_depth);
+            if !self.record_local_getter_read_with_receiver(
+                property,
+                Some(target.clone()),
+                receiver,
+            ) {
+                return None;
+            }
+            let expression = expression.get_inner_expression();
+            self.handled_local_getter_read_spans
+                .insert((expression.span().start, expression.span().end));
+            return Some((target, None));
+        }
         let path = self.local_getter_source_path(expression)?;
         let result =
             self.materialize_local_getter_result_static_path(path, span, "getter-result")?;
@@ -24037,19 +24322,28 @@ impl StaticHookAliasCollector<'_> {
         mut receiver: Vec<LocalInvocationArgument>,
         construct: bool,
     ) -> Option<Vec<LocalInvocationFact>> {
-        let property = self.local_getter_source_path(callee_expression)?;
+        let reflect_access = self.local_reflect_get_access(callee_expression);
+        let reflect_get = reflect_access.is_some();
+        let (property, getter_receiver) = match reflect_access {
+            Some((property, receiver)) => (property, receiver),
+            None => (self.local_getter_source_path(callee_expression)?, None),
+        };
         if !self.local_getter_resolution(&property, false).1.is_empty() {
             let mut getter_owner = property.clone();
             getter_owner.properties.pop();
             let projected_receiver = self.returned_structured_reference_receivers(&getter_owner);
-            if !projected_receiver.is_empty() {
+            if !reflect_get && !projected_receiver.is_empty() {
                 receiver = projected_receiver;
             }
             let target =
                 StaticAliasPath::dynamic_this(span).with_property("getter-result".to_string());
             self.dynamic_path_owner_depths
                 .insert((span.start, span.end), self.function_depth);
-            if !self.record_local_getter_read(property, Some(target.clone())) {
+            if !self.record_local_getter_read_with_receiver(
+                property,
+                Some(target.clone()),
+                getter_receiver,
+            ) {
                 return None;
             }
             let callee_expression = unwrap_transparent_call_expression(callee_expression);
@@ -24144,6 +24438,15 @@ impl StaticHookAliasCollector<'_> {
         property: &StaticAliasPath,
         arguments: Vec<LocalInvocationArgument>,
     ) -> bool {
+        self.record_local_setter_invocations_with_arguments_and_receiver(property, arguments, None)
+    }
+
+    fn record_local_setter_invocations_with_arguments_and_receiver(
+        &mut self,
+        property: &StaticAliasPath,
+        arguments: Vec<LocalInvocationArgument>,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
+    ) -> bool {
         let structured_sources = self.returned_structured_instances_for_path(property);
         let (_, setters) = self.local_setter_resolution(property);
         if setters.is_empty() {
@@ -24151,10 +24454,13 @@ impl StaticHookAliasCollector<'_> {
         }
         let mut receiver = property.clone();
         receiver.properties.pop();
-        let mut bound_receiver = self.returned_structured_reference_receivers(&receiver);
-        if bound_receiver.is_empty() {
-            bound_receiver.push(self.collect_local_invocation_path(receiver.clone()));
-        }
+        let bound_receiver = receiver_override.unwrap_or_else(|| {
+            let mut bound_receiver = self.returned_structured_reference_receivers(&receiver);
+            if bound_receiver.is_empty() {
+                bound_receiver.push(self.collect_local_invocation_path(receiver.clone()));
+            }
+            bound_receiver
+        });
         let arguments = vec![LocalInvocationArgumentSegment::Fixed(arguments)];
         for setter in setters {
             self.activate_local_setter(&setter);
@@ -24737,16 +25043,31 @@ impl StaticHookAliasCollector<'_> {
 
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
         let target = self.canonical_returned_structured_member_path(&target);
+        if let Expression::CallExpression(call) = value.get_inner_expression()
+            && self.record_local_reflect_get_result_initializer(target.clone(), call)
+        {
+            self.record_local_value_definedness(target, value);
+            return;
+        }
+        let getter_receiver = self
+            .local_reflect_get_access(value)
+            .and_then(|(_, receiver)| receiver);
         let property_source = self.local_getter_source_path(value);
         self.clear_overlapping_aliases(&target);
         self.record_local_value_definedness(target.clone(), value);
         if let Some(source) = property_source
-            && self.record_local_getter_read(source, Some(target.clone()))
+            && self.record_local_getter_read_with_receiver(
+                source,
+                Some(target.clone()),
+                getter_receiver,
+            )
         {
             let value = value.get_inner_expression();
             if matches!(
                 value,
-                Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+                Expression::StaticMemberExpression(_)
+                    | Expression::ComputedMemberExpression(_)
+                    | Expression::CallExpression(_)
             ) {
                 self.handled_local_getter_read_spans
                     .insert((value.span().start, value.span().end));
@@ -24858,18 +25179,22 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn local_getter_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
-        self.alias_source_path(expression).or_else(|| {
-            let Expression::ComputedMemberExpression(member) = expression.get_inner_expression()
-            else {
-                return None;
-            };
-            self.alias_source_path(&member.object).map(|source| {
-                source.with_property(
-                    static_member_name(&member.expression)
-                        .unwrap_or_else(|| "<computed>".to_string()),
-                )
+        self.local_reflect_get_access(expression)
+            .map(|(source, _)| source)
+            .or_else(|| self.alias_source_path(expression))
+            .or_else(|| {
+                let Expression::ComputedMemberExpression(member) =
+                    expression.get_inner_expression()
+                else {
+                    return None;
+                };
+                self.alias_source_path(&member.object).map(|source| {
+                    source.with_property(
+                        static_member_name(&member.expression)
+                            .unwrap_or_else(|| "<computed>".to_string()),
+                    )
+                })
             })
-        })
     }
 
     fn local_getter_path_prefix(
@@ -25615,6 +25940,28 @@ impl StaticHookAliasCollector<'_> {
                 .values()
                 .flatten()
                 .any(|(pending, _)| pending == &target);
+        if !already_materialized
+            && let Some((property, receiver)) = self.local_reflect_get_call_access(factory_call)
+        {
+            if !self.record_local_getter_read_with_receiver(
+                property,
+                Some(target.clone()),
+                receiver,
+            ) {
+                return None;
+            }
+            self.handled_local_getter_read_spans
+                .insert((factory_call.span.start, factory_call.span.end));
+            return (self
+                .returned_structured_value_instances
+                .contains_key(&target)
+                || self
+                    .pending_returned_structured_materializations
+                    .values()
+                    .flatten()
+                    .any(|(pending, _)| pending == &target))
+            .then_some(target);
+        }
         if !already_materialized {
             let factory_invocations = self
                 .immediate_callable_result_invocation_facts(factory_call)
@@ -26007,6 +26354,16 @@ impl StaticHookAliasCollector<'_> {
         property: Option<String>,
         span: Span,
     ) -> bool {
+        self.record_possible_local_getter_read_with_receiver(object, property, span, None)
+    }
+
+    fn record_possible_local_getter_read_with_receiver(
+        &mut self,
+        object: &Expression<'_>,
+        property: Option<String>,
+        span: Span,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
+    ) -> bool {
         let Some(owner) = self.local_or_structured_member_owner_path(object) else {
             return false;
         };
@@ -26025,7 +26382,7 @@ impl StaticHookAliasCollector<'_> {
                     setter_arguments: None,
                     span,
                     arguments: Vec::new(),
-                    receiver_override: None,
+                    receiver_override,
                     construct: false,
                     result_discarded: true,
                 },
@@ -26038,6 +26395,16 @@ impl StaticHookAliasCollector<'_> {
         );
         let mut recorded = false;
         for (index, candidate) in candidates.into_iter().enumerate() {
+            if receiver_override.is_some()
+                && !self.local_getter_resolution(&candidate, false).1.is_empty()
+            {
+                recorded |= self.record_local_getter_read_with_receiver(
+                    candidate,
+                    None,
+                    receiver_override.clone(),
+                );
+                continue;
+            }
             let Some((remaining, _)) = self.materialize_local_getter_result_static_path(
                 candidate,
                 span,
@@ -26059,7 +26426,7 @@ impl StaticHookAliasCollector<'_> {
                         setter_arguments: None,
                         span,
                         arguments: Vec::new(),
-                        receiver_override: None,
+                        receiver_override: receiver_override.clone(),
                         construct: false,
                         result_discarded: true,
                     },
@@ -26137,7 +26504,7 @@ impl StaticHookAliasCollector<'_> {
             ),
             _ => return false,
         };
-        self.record_structured_member_setter_invocations(object, property, span, arguments)
+        self.record_structured_member_setter_invocations(object, property, span, arguments, None)
     }
 
     fn record_structured_simple_assignment_target_setter_invocations(
@@ -26184,7 +26551,7 @@ impl StaticHookAliasCollector<'_> {
             ),
             _ => return false,
         };
-        self.record_structured_member_setter_invocations(object, property, span, Vec::new())
+        self.record_structured_member_setter_invocations(object, property, span, Vec::new(), None)
     }
 
     fn record_structured_expression_setter_invocations(
@@ -26205,7 +26572,7 @@ impl StaticHookAliasCollector<'_> {
             ),
             _ => return false,
         };
-        self.record_structured_member_setter_invocations(object, property, span, arguments)
+        self.record_structured_member_setter_invocations(object, property, span, arguments, None)
     }
 
     fn record_structured_member_setter_invocations(
@@ -26214,6 +26581,7 @@ impl StaticHookAliasCollector<'_> {
         property: Option<String>,
         span: Span,
         arguments: Vec<LocalInvocationArgument>,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
     ) -> bool {
         let Some(owner) = self.local_or_structured_member_owner_path(object) else {
             return false;
@@ -26235,7 +26603,7 @@ impl StaticHookAliasCollector<'_> {
                     setter_arguments: Some(arguments),
                     span,
                     arguments: Vec::new(),
-                    receiver_override: None,
+                    receiver_override,
                     construct: false,
                     result_discarded: true,
                 },
@@ -26264,15 +26632,18 @@ impl StaticHookAliasCollector<'_> {
                         setter_arguments: Some(arguments.clone()),
                         span,
                         arguments: Vec::new(),
-                        receiver_override: None,
+                        receiver_override: receiver_override.clone(),
                         construct: false,
                         result_discarded: true,
                     },
                 );
                 invoked = true;
             } else {
-                invoked |= self
-                    .record_local_setter_invocations_with_arguments(&candidate, arguments.clone());
+                invoked |= self.record_local_setter_invocations_with_arguments_and_receiver(
+                    &candidate,
+                    arguments.clone(),
+                    receiver_override.clone(),
+                );
             }
         }
         invoked
@@ -26421,6 +26792,15 @@ impl StaticHookAliasCollector<'_> {
         receiver: Vec<LocalInvocationArgument>,
         construct: bool,
     ) -> Option<Vec<LocalInvocationFact>> {
+        if let Some(invocations) = self.record_local_reflect_get_result_invocations(
+            factory_call,
+            span,
+            arguments.clone(),
+            construct,
+            false,
+        ) {
+            return Some(invocations);
+        }
         let invocations = self
             .immediate_callable_result_invocation_facts(factory_call)
             .or_else(|| {
@@ -26639,6 +27019,17 @@ impl StaticHookAliasCollector<'_> {
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
         let arguments = self.collect_local_invocation_arguments(&call.arguments);
+        if let Expression::CallExpression(getter_call) = call.callee.get_inner_expression()
+            && let Some(invocations) = self.record_local_reflect_get_result_invocations(
+                getter_call,
+                call.span,
+                arguments.clone(),
+                false,
+                result_discarded,
+            )
+        {
+            return Some(invocations);
+        }
         if let Some(invocations) = self.record_dynamic_structured_member_invocations(
             &call.callee,
             call.callee.span(),
@@ -32852,6 +33243,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let call_span = (call.span.start, call.span.end);
+        let local_reflect_get = if self.handled_local_getter_read_spans.contains(&call_span) {
+            self.is_intact_reflect_method_callee(&call.callee, "get")
+        } else if self.record_local_reflect_get(call) {
+            self.handled_local_getter_read_spans.insert(call_span);
+            true
+        } else {
+            false
+        };
+        self.record_local_reflect_set(call);
         let unconditional = self
             .function_control_baselines
             .last()
@@ -32900,6 +33301,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.prepare_exposed_paths(exposed)
         } else if !local_invocations_cover_arguments
             && !returned_captured_callee
+            && !local_reflect_get
             && self.callee_may_mutate_arguments(&call.callee)
         {
             let exposed = self.collect_invocation_argument_paths(&call.arguments);
@@ -32907,6 +33309,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         } else {
             BTreeSet::new()
         };
+        if (self.is_intact_reflect_method_callee(&call.callee, "get")
+            || self.is_intact_reflect_method_callee(&call.callee, "set"))
+            && let Some(property) = call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .filter(|property| static_member_name(property).is_none())
+        {
+            let mut exposed = BTreeSet::new();
+            self.collect_exposed_argument_paths(property, &mut exposed);
+            exposed_arguments.extend(self.prepare_exposed_paths(exposed));
+        }
         if local_define_property.is_none()
             && self.is_local_define_property_callee(call)
             && let Some(descriptor) = call
