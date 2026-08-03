@@ -21873,6 +21873,21 @@ impl StaticHookAliasCollector<'_> {
             invocations,
             &receiver,
         )?;
+        Some(self.record_bound_callable_alternative_invocations(
+            alternatives,
+            span,
+            arguments,
+            construct,
+        ))
+    }
+
+    fn record_bound_callable_alternative_invocations(
+        &mut self,
+        alternatives: LocalBoundCallableAlternatives,
+        span: Span,
+        arguments: Vec<LocalInvocationArgumentSegment>,
+        construct: bool,
+    ) -> Vec<LocalInvocationFact> {
         self.dynamic_path_owner_depths
             .insert((span.start, span.end), self.function_depth);
         let mut invocations = Vec::with_capacity(alternatives.callables.len());
@@ -21917,13 +21932,22 @@ impl StaticHookAliasCollector<'_> {
             };
             invocations.push(Self::with_bound_callable(invocation, &callable));
         }
-        Some(invocations)
+        invocations
     }
 
     fn immediate_callable_result_invocation_facts(
         &mut self,
         call: &CallExpression<'_>,
     ) -> Option<Vec<LocalInvocationFact>> {
+        if let Some(alternatives) = self.local_bound_callable_initializer(&call.callee) {
+            let arguments = self.collect_local_invocation_arguments(&call.arguments);
+            return Some(self.record_bound_callable_alternative_invocations(
+                alternatives,
+                call.callee.span(),
+                arguments,
+                false,
+            ));
+        }
         if let Expression::CallExpression(factory_call) = call.callee.get_inner_expression() {
             return self.record_immediate_callable_result_invocations(
                 factory_call,

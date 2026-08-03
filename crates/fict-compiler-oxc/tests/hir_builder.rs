@@ -11624,6 +11624,30 @@ fn bound_local_invocations_propagate_parameter_invalidations() {
             "run();",
         ),
         (
+            "immediately invoked bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "make(values).bind(null)();",
+        ),
+        (
+            "immediately invoked optionally bound factory result mutates capture",
+            "",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "make(values).bind?.(null)();",
+        ),
+        (
+            "immediately invoked bound factory result mutates prebound argument",
+            "",
+            "function make() { return target => { target.forEach = null; }; }",
+            "make().bind(null, values)();",
+        ),
+        (
+            "immediately invoked bound factory result references local mutator",
+            "",
+            "function make(target) { const run = () => { target.forEach = null; }; return run; }",
+            "make(values).bind(null)();",
+        ),
+        (
             "local factory conditionally returns mutating callable",
             "",
             "function make() { return choose ? function (target) { return target.length; } : function (target) { target.forEach = null; }; } const run = make();",
@@ -11797,6 +11821,18 @@ fn pure_bound_local_invocations_preserve_receivers() {
             "const other = [];",
             "function make(target) { return () => { target.forEach = null; }; } const run = make(other).bind?.(null);",
             "run();",
+        ),
+        (
+            "immediately invoked bound sibling factory result preserves capture",
+            "const other = [];",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "make(other).bind(null)();",
+        ),
+        (
+            "immediately invoked optionally bound sibling factory result preserves capture",
+            "const other = [];",
+            "function make(target) { return () => { target.forEach = null; }; }",
+            "make(other).bind?.(null)();",
         ),
         (
             "invoked sibling closure does not activate capture mutation",
