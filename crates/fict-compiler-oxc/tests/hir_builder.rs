@@ -6605,6 +6605,130 @@ fn selected_or_referenced_destructuring_default_calls_propagate_effects() {
 }
 
 #[test]
+fn deleted_own_getters_remain_unexecuted() {
+    for (name, deletion, observation) in [
+        (
+            "static getter deletion",
+            "delete source.run;",
+            "void source.run;",
+        ),
+        (
+            "computed getter deletion",
+            "delete source['run'];",
+            "void source.run;",
+        ),
+        (
+            "getter deletion through an object alias",
+            "const alias = source; delete alias.run;",
+            "void source.run;",
+        ),
+        (
+            "calling a deleted getter",
+            "delete source.run;",
+            "source.run?.();",
+        ),
+        (
+            "spreading an object after deleting its getter",
+            "delete source.run;",
+            "const { ...copy } = source; void copy.run;",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const source = {{
+                        get run() {{
+                            values.forEach = null;
+                            return 1;
+                        }},
+                    }};
+                    {deletion}
+                    {observation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected the deleted own getter to remain unexecuted, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn deleting_an_inherited_getter_preserves_its_effects() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            class Source {
+                get run() {
+                    values.forEach = null;
+                    return 1;
+                }
+            }
+            const source = new Source();
+            delete source.run;
+            void source.run;
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.hir.is_none(),
+        "expected inherited getter effects to survive an own-property deletion"
+    );
+}
+
+#[test]
+fn conditionally_deleting_an_own_getter_preserves_its_effects() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const source = {
+                get run() {
+                    values.forEach = null;
+                    return 1;
+                },
+            };
+            if (Math.random() < 0.5) {
+                delete source.run;
+            }
+            void source.run;
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.hir.is_none(),
+        "expected conditionally retained getter effects to propagate"
+    );
+}
+
+#[test]
 fn advanced_or_overridden_destructured_generators_propagate_local_effects() {
     for (name, helper, binding, observation) in [
         (

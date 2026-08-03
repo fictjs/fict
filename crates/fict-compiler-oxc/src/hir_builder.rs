@@ -22539,6 +22539,35 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
     }
 
+    fn remove_local_own_property(&mut self, path: &StaticAliasPath) {
+        if path.element_wildcard || path.properties.is_empty() {
+            return;
+        }
+        let mut owner = path.clone().canonicalized();
+        let Some(property) = owner.properties.pop() else {
+            return;
+        };
+        if self.path_requires_historical_aliases(&owner, self.function_depth)
+            || !self.path_is_currently_intact(&owner)
+        {
+            return;
+        }
+        let owner = resolve_static_alias_path(&self.aliases, &owner);
+        let property_path = owner.clone().with_property(property.clone());
+        let known_own_property = self
+            .structured_own_properties
+            .get(&owner)
+            .is_some_and(|properties| properties.contains(&property))
+            || self.local_getter_properties.contains(&property_path);
+        if !known_own_property {
+            return;
+        }
+        self.clear_overlapping_aliases(&property_path);
+        if let Some(properties) = self.structured_own_properties.get_mut(&owner) {
+            properties.remove(&property);
+        }
+    }
+
     fn mark_alias_target_ambiguous(&mut self, path: StaticAliasPath) {
         let returned_callable_span = self.returned_callable_capture_span(&path);
         self.transient_callable_alias_targets
@@ -28979,6 +29008,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             })
             .filter(|span| self.handled_local_getter_read_spans.insert(*span));
         if expression.operator == OxcUnaryOperator::Delete {
+            let conditional = self
+                .function_control_baselines
+                .last()
+                .map_or(self.control_depth > 0, |baseline| {
+                    self.control_depth > *baseline
+                });
+            if !conditional && let Some(path) = self.alias_source_path(&expression.argument) {
+                self.remove_local_own_property(&path);
+            }
             self.invalidate_place(planned_expression_place(
                 self.scoping,
                 expression.argument.get_inner_expression(),
