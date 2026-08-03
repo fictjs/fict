@@ -6413,6 +6413,61 @@ fn unselected_destructuring_default_calls_remain_unexecuted() {
             "const source = { get run() { return 1; } }; const fallback = () => { source.run = undefined; values.forEach = null; return 0; };",
             "const { run = fallback() } = source;",
         ),
+        (
+            "an inline defined data property skips a called default",
+            "const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = { run: 1 };",
+        ),
+        (
+            "a stored defined data property skips a called default",
+            "const source = { run: 1 }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+        ),
+        (
+            "a stored callable data property skips a called default",
+            "const source = { run: () => 1 }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+        ),
+        (
+            "a data property aliases a definitely defined constant",
+            "const value = 1; const source = { run: value }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+        ),
+        (
+            "a stored defined data property skips a called assignment default",
+            "const source = { run: 1 }; const fallback = () => { values.forEach = null; return 0; }; let run;",
+            "({ run = fallback() } = source);",
+        ),
+        (
+            "a later data property keeps its current defined value",
+            "const source = { run: undefined, run: 1 }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+        ),
+        (
+            "a static property after a computed property is definitely defined",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { [key]: undefined, run: 1 }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+        ),
+        (
+            "an inline defined array element skips a called default",
+            "const fallback = () => { values.forEach = null; return 0; };",
+            "const [run = fallback()] = [1];",
+        ),
+        (
+            "a stored defined array element skips a called default",
+            "const source = [1]; const fallback = () => { values.forEach = null; return 0; };",
+            "const [run = fallback()] = source;",
+        ),
+        (
+            "a stored defined array element skips a called assignment default",
+            "const source = [1]; const fallback = () => { values.forEach = null; return 0; }; let run;",
+            "([run = fallback()] = source);",
+        ),
+        (
+            "an inline defined array element skips a called assignment default",
+            "const fallback = () => { values.forEach = null; return 0; }; let run;",
+            "([run = fallback()] = [1]);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -6460,6 +6515,60 @@ fn selected_or_referenced_destructuring_default_calls_propagate_effects() {
             "undefined getter result calls an assignment default",
             "const source = { get run() { return undefined; } }; const fallback = () => { values.forEach = null; return 0; }; let run;",
             "({ run = fallback() } = source);",
+            "void run;",
+        ),
+        (
+            "undefined data property calls a default",
+            "const source = { run: undefined }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "void run;",
+        ),
+        (
+            "undefined data property calls an assignment default",
+            "const source = { run: undefined }; const fallback = () => { values.forEach = null; return 0; }; let run;",
+            "({ run = fallback() } = source);",
+            "void run;",
+        ),
+        (
+            "possibly undefined data property preserves a default call",
+            "const flag = values.length > 0; const source = { run: flag ? 1 : undefined }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "void run;",
+        ),
+        (
+            "a computed property can replace an earlier defined property",
+            "const key = Math.random() < 0.5 ? 'run' : 'other'; const source = { run: 1, [key]: undefined }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "void run;",
+        ),
+        (
+            "an object spread can replace an earlier defined property",
+            "const extension = Math.random() < 0.5 ? { run: undefined } : {}; const source = { run: 1, ...extension }; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "void run;",
+        ),
+        (
+            "deleting a defined property selects its default",
+            "const source = { run: 1 }; delete source.run; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
+            "void run;",
+        ),
+        (
+            "undefined array element calls a default",
+            "const source = [undefined]; const fallback = () => { values.forEach = null; return 0; };",
+            "const [run = fallback()] = source;",
+            "void run;",
+        ),
+        (
+            "an array hole calls a default",
+            "const source = [,]; const fallback = () => { values.forEach = null; return 0; };",
+            "const [run = fallback()] = source;",
+            "void run;",
+        ),
+        (
+            "a later variable assignment does not change a captured property value",
+            "let value; const source = { run: value }; value = 1; const fallback = () => { values.forEach = null; return 0; };",
+            "const { run = fallback() } = source;",
             "void run;",
         ),
         (
