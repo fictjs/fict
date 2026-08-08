@@ -9923,6 +9923,7 @@ struct GeneratorExecutionProof {
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_body_spans: BTreeSet<(u32, u32)>,
     unexecuted_callable_spans: BTreeSet<(u32, u32)>,
+    unexecuted_callable_paths: BTreeSet<StaticAliasPath>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     returned_callable_spans: BTreeSet<(u32, u32)>,
 }
@@ -14136,6 +14137,27 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         })
     }
 
+    fn property_descriptor_method(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(&'static str, &'static str)> {
+        for (owner, method) in [
+            ("Object", "getOwnPropertyDescriptor"),
+            ("Object", "getOwnPropertyDescriptors"),
+            ("Reflect", "getOwnPropertyDescriptor"),
+        ] {
+            let owner_path = StaticAliasPath::unresolved_global(owner.to_string());
+            if self.callable_resolves_to_path(
+                Self::immediate_callable_value(&call.callee),
+                &owner_path.clone().with_property(method.to_string()),
+            ) && self.method_path_is_intact(&owner_path, method)
+            {
+                return Some((owner, method));
+            }
+        }
+        None
+    }
+
     fn record_discarded_inline_enumerated_value(
         &mut self,
         target: StaticAliasPath,
@@ -14268,6 +14290,63 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                     .as_expression()
                     .expect("enumeration spread arguments were rejected"),
             );
+        }
+        true
+    }
+
+    fn record_property_descriptor_arguments(
+        &mut self,
+        call: &CallExpression<'_>,
+        result_discarded: bool,
+    ) -> bool {
+        let Some((_, method)) = self.property_descriptor_method(call) else {
+            return false;
+        };
+        if call
+            .arguments
+            .iter()
+            .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        let Some(source) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return true;
+        };
+        if method == "getOwnPropertyDescriptor"
+            && call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .is_some_and(|property| static_member_name(property).is_none())
+        {
+            return false;
+        }
+        // Reading a descriptor preserves data/accessor function identities without invoking
+        // them. The alias collector activates a selected function only when the returned
+        // descriptor field is subsequently called.
+        self.record_discarded_enumerated_value(source);
+        for (index, argument) in call.arguments.iter().enumerate().skip(1) {
+            let argument = argument
+                .as_expression()
+                .expect("descriptor spread arguments were rejected");
+            if method == "getOwnPropertyDescriptor" && index == 1 {
+                // ToPropertyKey may execute user-defined coercion hooks.
+                self.record_pending_callable_argument(
+                    argument,
+                    None,
+                    None,
+                    index,
+                    result_discarded,
+                    None,
+                );
+            } else {
+                // Surplus arguments are evaluated but ignored by the builtin.
+                self.record_discarded_expression(argument);
+            }
         }
         true
     }
@@ -14416,6 +14495,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
         if self.record_json_stringify_arguments(call, result_discarded) {
+            return;
+        }
+        if self.record_property_descriptor_arguments(call, result_discarded) {
             return;
         }
         if result_discarded && self.record_discarded_object_value_enumeration(call) {
@@ -15728,13 +15810,81 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         {
             self.record_retained_invocations(target.clone(), initializer);
         }
-        self.record_forwarded_callable(target.clone(), initializer);
+        if self.record_property_descriptor_result_initializer(&target, initializer) {
+            self.non_generator_callable_targets.insert(target.clone());
+        } else {
+            self.record_forwarded_callable(target.clone(), initializer);
+        }
         if let Expression::NewExpression(expression) = initializer.get_inner_expression() {
             self.record_constructed_class_generator_bodies(target, expression);
         } else {
             self.record_forwarded_class_generator_bodies(target.clone(), initializer);
             self.record_forwarded_instance_generator_bodies(target, initializer);
         }
+    }
+
+    fn record_property_descriptor_result_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) -> bool {
+        let Expression::CallExpression(call) = initializer.get_inner_expression() else {
+            return false;
+        };
+        let Some((owner, method)) = self.property_descriptor_method(call) else {
+            return false;
+        };
+        if call
+            .arguments
+            .iter()
+            .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        let Some((source, source_span)) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(|source| self.callable_reference(source))
+        else {
+            return false;
+        };
+        let properties = if method == "getOwnPropertyDescriptor" {
+            let property = call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .map(static_member_name)
+                .unwrap_or_else(|| Some("undefined".to_string()));
+            let Some(property) = property else {
+                return false;
+            };
+            BTreeSet::from([property])
+        } else {
+            self.known_callable_child_properties(&source)
+        };
+        let guard = GeneratorMethodGuard {
+            source: None,
+            owner: StaticAliasPath::unresolved_global(owner.to_string()),
+            method,
+        };
+        for property in properties {
+            let source = source.clone().with_property(property.clone());
+            let descriptor = if method == "getOwnPropertyDescriptor" {
+                target.clone()
+            } else {
+                target.clone().with_property(property)
+            };
+            for field in ["value", "get", "set"] {
+                self.record_callable_path_initializer(
+                    descriptor.clone().with_property(field.to_string()),
+                    source.clone(),
+                    source_span,
+                    Some(&guard),
+                );
+            }
+        }
+        true
     }
 
     fn record_guarded_callable_initializer(
@@ -18349,6 +18499,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             discarded_invocation_spans: self.discarded_invocation_spans,
             unexecuted_body_spans,
             unexecuted_callable_spans: self.directly_unexecuted_callable_spans,
+            unexecuted_callable_paths: unexecuted,
             merely_observed_callable_paths: merely_observed,
             returned_callable_spans,
         }
@@ -18825,6 +18976,7 @@ struct StaticHookAliasCollector<'semantic> {
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
     local_object_assign_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_value_enumeration_results: BTreeMap<(u32, u32), StaticAliasPath>,
+    local_property_descriptor_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_create_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
     historical_local_object_prototype_snapshots: BTreeSet<StaticAliasPath>,
@@ -18922,6 +19074,7 @@ struct StaticHookAliasCollector<'semantic> {
     dynamic_this_roots: Vec<Option<StaticAliasPath>>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_generator_body_spans: BTreeSet<(u32, u32)>,
+    unexecuted_generator_callable_paths: BTreeSet<StaticAliasPath>,
 }
 
 #[derive(Clone)]
@@ -19677,6 +19830,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             handled_object_spread_getter_spans: BTreeSet::new(),
             local_object_assign_results: BTreeMap::new(),
             local_object_value_enumeration_results: BTreeMap::new(),
+            local_property_descriptor_results: BTreeMap::new(),
             local_object_create_results: BTreeMap::new(),
             local_object_prototypes: BTreeMap::new(),
             historical_local_object_prototype_snapshots: BTreeSet::new(),
@@ -19767,6 +19921,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             dynamic_this_roots: Vec::new(),
             discarded_invocation_spans: generator.discarded_invocation_spans.clone(),
             unexecuted_generator_body_spans: generator.unexecuted_body_spans.clone(),
+            unexecuted_generator_callable_paths: generator.unexecuted_callable_paths.clone(),
         }
     }
 }
@@ -20207,6 +20362,12 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
+        let span = (span.start, span.end);
+        if self.executed_descriptor_callable_spans.contains(&span)
+            || self.executed_setter_spans.contains(&span)
+        {
+            return;
+        }
         if self.merely_observed_callable_paths.contains(target)
             || target.binding_root().is_some_and(|symbol| {
                 let read_count = self
@@ -20222,8 +20383,7 @@ impl StaticHookAliasCollector<'_> {
                         .unwrap_or(0)
             })
         {
-            self.unreferenced_callable_spans
-                .insert((span.start, span.end));
+            self.unreferenced_callable_spans.insert(span);
         }
     }
 
@@ -22527,6 +22687,18 @@ impl StaticHookAliasCollector<'_> {
             && self.path_is_currently_intact(&object_method)
     }
 
+    fn property_descriptor_method(&self, callee: &Expression<'_>) -> Option<&'static str> {
+        if self.is_intact_object_method_callee(callee, "getOwnPropertyDescriptor")
+            || self.is_intact_reflect_method_callee(callee, "getOwnPropertyDescriptor")
+        {
+            Some("getOwnPropertyDescriptor")
+        } else if self.is_intact_object_method_callee(callee, "getOwnPropertyDescriptors") {
+            Some("getOwnPropertyDescriptors")
+        } else {
+            None
+        }
+    }
+
     fn is_intact_json_method_callee(&self, callee: &Expression<'_>, method: &str) -> bool {
         let Some(raw) = static_alias_source_path(self.scoping, callee) else {
             return false;
@@ -22828,6 +23000,253 @@ impl StaticHookAliasCollector<'_> {
         self.local_object_value_enumeration_results
             .insert(span, target.clone());
         Some(target)
+    }
+
+    fn record_descriptor_result_definedness(
+        &mut self,
+        target: StaticAliasPath,
+        definedness: LocalGetterResultDefinedness,
+    ) {
+        self.local_value_definedness_history
+            .entry(target.clone())
+            .or_default()
+            .insert(definedness);
+        self.local_value_definedness.insert(target, definedness);
+    }
+
+    fn local_own_property_descriptor_paths(
+        &self,
+        source: &StaticAliasPath,
+        name: &str,
+    ) -> Option<(
+        StaticAliasPath,
+        Option<StaticAliasPath>,
+        Option<StaticAliasPath>,
+    )> {
+        if !self.known_structured_own_properties(source)?.contains(name) {
+            return None;
+        }
+        let raw_property = source.clone().with_property(name.to_string());
+        let resolved_owner = resolve_static_alias_path(&self.aliases, source);
+        let property = resolved_owner.with_property(name.to_string());
+        let resolved_property = resolve_static_alias_path(&self.aliases, &raw_property);
+        let candidates = BTreeSet::from([raw_property, property.clone(), resolved_property]);
+        let getters = candidates
+            .iter()
+            .filter(|candidate| self.local_getter_properties.contains(*candidate))
+            .cloned()
+            .collect::<Vec<_>>();
+        let setters = candidates
+            .iter()
+            .filter_map(|candidate| self.local_setter_properties.get(candidate).cloned())
+            .collect::<BTreeSet<_>>();
+        if getters.len() > 1 || setters.len() > 1 {
+            return None;
+        }
+        Some((
+            property,
+            getters.into_iter().next(),
+            setters.into_iter().next(),
+        ))
+    }
+
+    fn record_local_own_property_descriptor(
+        &mut self,
+        target: &StaticAliasPath,
+        source: &StaticAliasPath,
+        name: &str,
+    ) -> bool {
+        let Some((property, getter, setter)) =
+            self.local_own_property_descriptor_paths(source, name)
+        else {
+            return false;
+        };
+        let accessor = getter.is_some() || setter.is_some();
+        let mut fields = BTreeSet::from(["configurable".to_string(), "enumerable".to_string()]);
+        if accessor {
+            let get = target.clone().with_property("get".to_string());
+            let set = target.clone().with_property("set".to_string());
+            if let Some(getter) = getter {
+                if !self.copy_local_callable_value(get.clone(), &getter, true, true) {
+                    return false;
+                }
+                self.record_local_callable_snapshot(&getter, &get);
+                self.record_descriptor_result_definedness(
+                    get,
+                    LocalGetterResultDefinedness::Defined,
+                );
+            } else {
+                self.record_descriptor_result_definedness(
+                    get,
+                    LocalGetterResultDefinedness::Undefined,
+                );
+            }
+            if let Some(setter) = setter {
+                if !self.copy_local_callable_value(set.clone(), &setter, true, true) {
+                    return false;
+                }
+                self.record_local_callable_snapshot(&setter, &set);
+                self.record_descriptor_result_definedness(
+                    set,
+                    LocalGetterResultDefinedness::Defined,
+                );
+            } else {
+                self.record_descriptor_result_definedness(
+                    set,
+                    LocalGetterResultDefinedness::Undefined,
+                );
+            }
+            fields.extend(["get".to_string(), "set".to_string()]);
+        } else {
+            let value = target.clone().with_property("value".to_string());
+            self.clear_overlapping_aliases(&value);
+            let copied = self.copy_local_callable_value(value.clone(), &property, true, false);
+            if copied {
+                self.record_local_callable_snapshot(&property, &value);
+            } else {
+                self.insert_alias(value.clone(), property.clone());
+                self.record_local_descriptor_value_capture(&property, &value);
+                let resolved = resolve_static_alias_path(&self.aliases, &property);
+                if self.known_structured_own_properties(&resolved).is_some() {
+                    self.defer_structured_value_callables(&resolved);
+                }
+            }
+            if let Some(definedness) = self.resolved_local_value_definedness(&property) {
+                self.record_descriptor_result_definedness(value, definedness);
+            }
+            fields.extend(["value".to_string(), "writable".to_string()]);
+        }
+        for field in ["configurable", "enumerable"] {
+            self.record_descriptor_result_definedness(
+                target.clone().with_property(field.to_string()),
+                LocalGetterResultDefinedness::Defined,
+            );
+        }
+        if !accessor {
+            self.record_descriptor_result_definedness(
+                target.clone().with_property("writable".to_string()),
+                LocalGetterResultDefinedness::Defined,
+            );
+        }
+        self.structured_own_properties
+            .insert(target.clone(), fields);
+        self.defer_structured_value_callables(target);
+        true
+    }
+
+    fn record_local_property_descriptor_result(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<StaticAliasPath> {
+        let span = (call.span.start, call.span.end);
+        if let Some(target) = self.local_property_descriptor_results.get(&span) {
+            return Some(target.clone());
+        }
+        if call
+            .arguments
+            .iter()
+            .any(|argument| argument.as_expression().is_none())
+        {
+            return None;
+        }
+        let method = self.property_descriptor_method(&call.callee)?;
+        let single = method == "getOwnPropertyDescriptor";
+        let source_expression = call.arguments.first()?.as_expression()?;
+        let sources = self.local_object_assign_value_paths(source_expression);
+        let [source] = sources.as_slice() else {
+            self.conservatively_expose_descriptor_paths(sources);
+            return None;
+        };
+        let target = StaticAliasPath::dynamic_this(call.span).with_property(
+            if single {
+                "property-descriptor-result"
+            } else {
+                "property-descriptors-result"
+            }
+            .to_string(),
+        );
+        self.dynamic_path_owner_depths
+            .insert(span, self.function_depth);
+        if single {
+            let name = call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .map(static_member_name)
+                .unwrap_or_else(|| Some("undefined".to_string()))?;
+            let Some(properties) = self.known_structured_own_properties(source) else {
+                self.conservatively_expose_descriptor_source(source_expression);
+                return None;
+            };
+            if !properties.contains(&name) {
+                self.record_descriptor_result_definedness(
+                    target.clone(),
+                    LocalGetterResultDefinedness::Undefined,
+                );
+                self.local_property_descriptor_results
+                    .insert(span, target.clone());
+                return Some(target);
+            }
+            if !self.record_local_own_property_descriptor(&target, source, &name) {
+                self.conservatively_expose_descriptor_source(source_expression);
+                return None;
+            }
+        } else {
+            let Some(properties) = self.known_structured_own_properties(source) else {
+                self.conservatively_expose_descriptor_source(source_expression);
+                return None;
+            };
+            for name in &properties {
+                let descriptor = target.clone().with_property(name.clone());
+                if !self.record_local_own_property_descriptor(&descriptor, source, name) {
+                    self.conservatively_expose_descriptor_source(source_expression);
+                    return None;
+                }
+            }
+            self.structured_own_properties
+                .insert(target.clone(), properties);
+        }
+        self.local_property_descriptor_results
+            .insert(span, target.clone());
+        Some(target)
+    }
+
+    fn conservatively_expose_descriptor_source(&mut self, source: &Expression<'_>) {
+        let mut exposed = BTreeSet::new();
+        self.collect_exposed_argument_paths(source, &mut exposed);
+        self.conservatively_expose_descriptor_paths(exposed);
+    }
+
+    fn conservatively_expose_descriptor_paths(
+        &mut self,
+        exposed: impl IntoIterator<Item = StaticAliasPath>,
+    ) {
+        let mut expanded = BTreeSet::new();
+        for path in exposed {
+            expanded.insert(path.clone());
+            expanded.extend(resolve_historical_alias_paths(&self.alias_history, &path));
+        }
+        let mut roots = expanded.clone();
+        roots.extend(
+            expanded
+                .iter()
+                .map(|path| resolve_static_alias_path(&self.aliases, path)),
+        );
+        let spans = self
+            .local_callable_effect_spans
+            .keys()
+            .chain(self.local_callable_effect_span_history.keys())
+            .filter(|callable| roots.iter().any(|root| callable.starts_with(root)))
+            .flat_map(|callable| self.local_callable_path_effect_spans(callable))
+            .collect::<BTreeSet<_>>();
+        for span in spans {
+            self.executed_descriptor_callable_spans.insert(span);
+            self.deferred_accessor_spans.remove(&span);
+            self.unreferenced_callable_spans.remove(&span);
+        }
+        for path in self.prepare_exposed_paths(expanded) {
+            self.invalidate_exposed_path(path);
+        }
     }
 
     fn record_local_json_to_json(
@@ -25235,7 +25654,9 @@ impl StaticHookAliasCollector<'_> {
 
     fn defer_local_setter(&mut self, span: Span) {
         let span = (span.start, span.end);
-        if !self.executed_setter_spans.contains(&span) {
+        if !self.executed_setter_spans.contains(&span)
+            && !self.executed_descriptor_callable_spans.contains(&span)
+        {
             self.unreferenced_callable_spans.insert(span);
         }
     }
@@ -25740,12 +26161,22 @@ impl StaticHookAliasCollector<'_> {
         }
         self.insert_alias(target.clone(), source.clone());
         self.record_local_descriptor_value_capture(source, &target);
-        self.snapshotted_local_callable_targets.insert(target);
+        self.record_local_callable_snapshot(source, &target);
+        true
+    }
+
+    fn record_local_callable_snapshot(
+        &mut self,
+        source: &StaticAliasPath,
+        target: &StaticAliasPath,
+    ) {
+        let resolved = resolve_static_alias_path(&self.aliases, source);
+        self.snapshotted_local_callable_targets
+            .insert(target.clone());
         self.snapshotted_local_callable_source_paths
             .insert(source.clone());
         self.snapshotted_local_callable_source_paths
             .insert(resolved);
-        true
     }
 
     fn copy_local_value_definedness(
@@ -25784,7 +26215,21 @@ impl StaticHookAliasCollector<'_> {
             .iter()
             .filter(|invocation| {
                 !self.invocation_is_definitely_generator(invocation)
-                    || (!invocation.result_discarded && !invocation.construct)
+                    || (!invocation.result_discarded
+                        && !invocation.construct
+                        && invocation
+                            .raw_callee
+                            .iter()
+                            .chain(invocation.callee.iter())
+                            .all(|callee| {
+                                !self
+                                    .unexecuted_generator_callable_paths
+                                    .iter()
+                                    .any(|unexecuted| {
+                                        callee.starts_with(unexecuted)
+                                            || unexecuted.starts_with(callee)
+                                    })
+                            }))
             })
             .flat_map(|invocation| {
                 let mut callables = self.invocation_callees(invocation);
@@ -26652,6 +27097,13 @@ impl StaticHookAliasCollector<'_> {
                     &candidate, &source, &target,
                 ));
             }
+            return;
+        }
+        if let Expression::CallExpression(call) = value.get_inner_expression()
+            && let Some(source) = self.record_local_property_descriptor_result(call)
+        {
+            self.record_local_value_definedness(target.clone(), value);
+            self.insert_alias(target, source);
             return;
         }
         if let Expression::CallExpression(call) = value.get_inner_expression()
@@ -27595,6 +28047,9 @@ impl StaticHookAliasCollector<'_> {
             return Some(target);
         }
         if let Some(target) = self.record_local_object_value_enumeration(factory_call) {
+            return Some(target);
+        }
+        if let Some(target) = self.record_local_property_descriptor_result(factory_call) {
             return Some(target);
         }
         if let Some(target) = self.record_local_object_create_result(factory_call) {
@@ -35136,9 +35591,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_function_body(&mut self, body: &FunctionBody<'a>) {
-        if self
-            .unexecuted_generator_body_spans
-            .contains(&(body.span.start, body.span.end))
+        let body_span = (body.span.start, body.span.end);
+        let activated_descriptor_generator =
+            self.generator_callable_body_spans
+                .iter()
+                .any(|(callable, candidate)| {
+                    *candidate == body_span
+                        && self.executed_descriptor_callable_spans.contains(callable)
+                });
+        if self.unexecuted_generator_body_spans.contains(&body_span)
+            && !activated_descriptor_generator
         {
             return;
         }
@@ -35734,6 +36196,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_object_assign(call);
         let _ = self.record_local_object_value_enumeration(call);
+        let _ = self.record_local_property_descriptor_result(call);
         self.record_local_json_stringify(call);
         let local_object_create = self.record_local_object_create_result(call);
         self.record_local_define_property_result(call);
@@ -37606,8 +38069,10 @@ fn is_safe_global_path(path: &StaticAliasPath) -> bool {
                 | "isExtensible"
                 | "getOwnPropertyNames"
                 | "getOwnPropertyDescriptor"
+                | "getOwnPropertyDescriptors"
                 | "getPrototypeOf"
         ),
+        ("Reflect", [method]) => matches!(method.as_str(), "getOwnPropertyDescriptor"),
         ("Array", [method]) => matches!(method.as_str(), "isArray" | "from" | "of"),
         ("Math", [method]) => matches!(
             method.as_str(),

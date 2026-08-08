@@ -12415,6 +12415,414 @@ fn json_stringify_does_not_invoke_data_callables() {
 }
 
 #[test]
+fn own_property_descriptor_results_preserve_local_callable_identities() {
+    for (name, setup, invocation) in [
+        (
+            "data value",
+            "const source = { run() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "Reflect data value",
+            "const source = { run() { values.forEach = null; } }; const descriptor = Reflect.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "data Function.call",
+            "const source = { run() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value.call(null);",
+        ),
+        (
+            "accessor getter",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get.call(source);",
+        ),
+        (
+            "Reflect accessor getter",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = Reflect.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get.call(source);",
+        ),
+        (
+            "direct accessor getter",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get();",
+        ),
+        (
+            "accessor setter",
+            "const source = { set run(value) { value.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.set.call(source, values);",
+        ),
+        (
+            "descriptor map data value",
+            "const source = { run() { values.forEach = null; } }; const descriptors = Object.getOwnPropertyDescriptors(source);",
+            "descriptors.run.value();",
+        ),
+        (
+            "descriptor map accessor getter",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptors = Object.getOwnPropertyDescriptors(source);",
+            "descriptors.run.get.call(source);",
+        ),
+        (
+            "descriptor map accessor setter",
+            "const source = { set run(value) { value.forEach = null; } }; const descriptors = Object.getOwnPropertyDescriptors(source);",
+            "descriptors.run.set.call(source, values);",
+        ),
+        (
+            "aliased descriptor builtin",
+            "const source = { run() { values.forEach = null; } }; const inspect = Object.getOwnPropertyDescriptor; const descriptor = inspect(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "aliased Reflect descriptor builtin",
+            "const source = { run() { values.forEach = null; } }; const inspect = Reflect.getOwnPropertyDescriptor; const descriptor = inspect(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "immediate descriptor result",
+            "const source = { run() { values.forEach = null; } };",
+            "Object.getOwnPropertyDescriptor(source, 'run').value();",
+        ),
+        (
+            "omitted undefined property key",
+            "const source = { undefined() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source);",
+            "descriptor.value();",
+        ),
+        (
+            "destructured descriptor value",
+            "const source = { run() { values.forEach = null; } }; const { value: run } = Object.getOwnPropertyDescriptor(source, 'run');",
+            "run();",
+        ),
+        (
+            "non-enumerable data value",
+            "const source = {}; Object.defineProperty(source, 'run', { value() { values.forEach = null; } }); const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "non-enumerable accessor map",
+            "const source = {}; Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } }); const descriptors = Object.getOwnPropertyDescriptors(source);",
+            "descriptors.run.get.call(source);",
+        ),
+        (
+            "snapshotted data callable",
+            "const source = { run() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run'); source.run = function() {};",
+            "descriptor.value();",
+        ),
+        (
+            "snapshotted accessor getter",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run'); Object.defineProperty(source, 'run', { get() { return 1; } });",
+            "descriptor.get.call(source);",
+        ),
+        (
+            "nested structured data value",
+            "const box = { run() { values.forEach = null; } }; const source = { box }; const descriptor = Object.getOwnPropertyDescriptor(source, 'box');",
+            "descriptor.value.run();",
+        ),
+        (
+            "constructable data value",
+            "class Run { constructor() { values.forEach = null; } } const source = { Run }; const descriptor = Object.getOwnPropertyDescriptor(source, 'Run');",
+            "new descriptor.value();",
+        ),
+        (
+            "data callable receiver",
+            "const source = { values, run() { this.values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value.call(source);",
+        ),
+        (
+            "accessor receiver",
+            "const source = { values, get run() { this.values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get.call(source);",
+        ),
+        (
+            "getter returned callable",
+            "const source = { get run() { return () => { values.forEach = null; }; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get.call(source)();",
+        ),
+        (
+            "advanced data generator",
+            "function* run() { values.forEach = null; } const source = { run }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value().next();",
+        ),
+        (
+            "snapshotted data generator",
+            "const source = { *run() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run'); source.run = function*() {};",
+            "descriptor.value().next();",
+        ),
+        (
+            "advanced accessor generator",
+            "const source = {}; Object.defineProperty(source, 'run', { get: function*() { values.forEach = null; } }); const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get.call(source).next();",
+        ),
+        (
+            "open computed data property",
+            "const key = 'run'; const source = {}; source[key] = function() { values.forEach = null; }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "conditional descriptor source",
+            "const dangerous = { run() { values.forEach = null; } }; const safe = { run() {} }; const source = values.length ? safe : dangerous; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "open descriptor map source",
+            "const key = 'run'; const source = {}; source[key] = function() { values.forEach = null; }; const descriptors = Object.getOwnPropertyDescriptors(source);",
+            "descriptors.run.value();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the descriptor callable effect, got {:?}",
+            output.diagnostics
+        );
+    }
+
+    for (name, setup, inspection) in [
+        (
+            "property-key coercion",
+            "const source = {}; const key = { toString() { values.forEach = null; return 'run'; } };",
+            "Object.getOwnPropertyDescriptor(source, key);",
+        ),
+        (
+            "Reflect property-key coercion",
+            "const source = {}; const key = { toString() { values.forEach = null; return 'run'; } };",
+            "Reflect.getOwnPropertyDescriptor(source, key);",
+        ),
+        (
+            "overridden single descriptor builtin",
+            "const source = { run() { values.forEach = null; } }; Object.getOwnPropertyDescriptor = value => { value.run(); return {}; };",
+            "Object.getOwnPropertyDescriptor(source, 'run');",
+        ),
+        (
+            "overridden descriptor map builtin",
+            "const source = { run() { values.forEach = null; } }; Object.getOwnPropertyDescriptors = value => { value.run(); return {}; };",
+            "Object.getOwnPropertyDescriptors(source);",
+        ),
+        (
+            "overridden Reflect descriptor builtin",
+            "const source = { run() { values.forEach = null; } }; Reflect.getOwnPropertyDescriptor = value => { value.run(); return {}; };",
+            "Reflect.getOwnPropertyDescriptor(source, 'run');",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {inspection}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the executed hook effect, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn own_property_descriptor_inspection_does_not_invoke_local_callables() {
+    for (name, setup, inspection) in [
+        (
+            "single accessor",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Object.getOwnPropertyDescriptor(source, 'run');",
+        ),
+        (
+            "Reflect accessor",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Reflect.getOwnPropertyDescriptor(source, 'run');",
+        ),
+        (
+            "accessor descriptor field read",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "void descriptor.get;",
+        ),
+        (
+            "single data callable",
+            "const source = { run() { values.forEach = null; } };",
+            "Object.getOwnPropertyDescriptor(source, 'run');",
+        ),
+        (
+            "Reflect data callable",
+            "const source = { run() { values.forEach = null; } };",
+            "Reflect.getOwnPropertyDescriptor(source, 'run');",
+        ),
+        (
+            "data descriptor field read",
+            "const source = { run() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "void descriptor.value;",
+        ),
+        (
+            "descriptor map accessors",
+            "const source = { get run() { values.forEach = null; return 1; } };",
+            "Object.getOwnPropertyDescriptors(source);",
+        ),
+        (
+            "descriptor map data callables",
+            "const source = { run() { values.forEach = null; } };",
+            "Object.getOwnPropertyDescriptors(source);",
+        ),
+        (
+            "missing property",
+            "const source = { run() { values.forEach = null; } };",
+            "Object.getOwnPropertyDescriptor(source, 'missing');",
+        ),
+        (
+            "unselected data callable",
+            "const source = { safe() {}, unsafe() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'safe');",
+            "descriptor.value();",
+        ),
+        (
+            "later data replacement does not change snapshot",
+            "const source = { run() {} }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run'); source.run = function() { values.forEach = null; };",
+            "descriptor.value();",
+        ),
+        (
+            "descriptor map snapshots data callable",
+            "const source = { run() {} }; const descriptors = Object.getOwnPropertyDescriptors(source); source.run = function() { values.forEach = null; };",
+            "descriptors.run.value();",
+        ),
+        (
+            "later accessor replacement does not change snapshot",
+            "const source = { get run() { return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run'); Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
+            "descriptor.get.call(source);",
+        ),
+        (
+            "overwritten descriptor getter",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run'); descriptor.get = function() { return 1; };",
+            "descriptor.get();",
+        ),
+        (
+            "aliased descriptor map inspection",
+            "const source = { run() { values.forEach = null; } }; const inspect = Object.getOwnPropertyDescriptors;",
+            "inspect(source);",
+        ),
+        (
+            "aliased Reflect descriptor inspection",
+            "const source = { run() { values.forEach = null; } }; const inspect = Reflect.getOwnPropertyDescriptor;",
+            "inspect(source, 'run');",
+        ),
+        (
+            "Object descriptor inspection does not retain captured callable",
+            "const source = { run() { return count; } };",
+            "Object.getOwnPropertyDescriptor(source, 'run');",
+        ),
+        (
+            "Reflect descriptor inspection does not retain captured callable",
+            "const source = { run() { return count; } };",
+            "Reflect.getOwnPropertyDescriptor(source, 'run');",
+        ),
+        (
+            "data descriptor has no getter",
+            "const source = { run() { values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get?.();",
+        ),
+        (
+            "accessor descriptor has no data value",
+            "const source = { get run() { values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value?.();",
+        ),
+        (
+            "getter-only descriptor has no setter",
+            "const source = { get run() { return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.set?.(values);",
+        ),
+        (
+            "data callable with unrelated receiver",
+            "const other = []; const source = { values, run() { this.values.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value.call({ values: other });",
+        ),
+        (
+            "accessor getter with unrelated receiver",
+            "const other = []; const source = { values, get run() { this.values.forEach = null; return 1; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get.call({ values: other });",
+        ),
+        (
+            "accessor setter with unrelated argument",
+            "const other = []; const source = { set run(value) { value.forEach = null; } }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.set.call(source, other);",
+        ),
+        (
+            "unadvanced data generator",
+            "function* run() { values.forEach = null; } const source = { run }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.value();",
+        ),
+        (
+            "stored unadvanced data generator",
+            "function* run() { values.forEach = null; } const source = { run }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "const iterator = descriptor.value(); void iterator;",
+        ),
+        (
+            "non-consuming data generator",
+            "function* run() { values.forEach = null; } function ignore(value) { void value; } const source = { run }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "ignore(descriptor.value());",
+        ),
+        (
+            "unadvanced accessor generator",
+            "const source = {}; Object.defineProperty(source, 'run', { get: function*() { values.forEach = null; } }); const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "descriptor.get.call(source);",
+        ),
+        (
+            "stored unadvanced accessor generator",
+            "const source = {}; Object.defineProperty(source, 'run', { get: function*() { values.forEach = null; } }); const descriptor = Object.getOwnPropertyDescriptor(source, 'run');",
+            "const iterator = descriptor.get.call(source); void iterator;",
+        ),
+        (
+            "later data generator replacement does not change snapshot",
+            "const source = { *run() {} }; const descriptor = Object.getOwnPropertyDescriptor(source, 'run'); source.run = function*() { values.forEach = null; };",
+            "descriptor.value().next();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {inspection}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (
