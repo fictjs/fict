@@ -2689,6 +2689,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "shadowed platform constructor-returned callback slot",
+            "const Worker = holder.Factory; const worker = new Worker('./worker.js'); const run = () => count;",
+            "worker.onmessage = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "overridden platform constructor-returned callback slot",
+            "globalThis.Worker = holder.Factory; const worker = new Worker('./worker.js'); const run = () => count;",
+            "worker.onmessage = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "external-prototype object create callback slot",
             "const callbacks = Object.create(holder); const run = () => count;",
             "callbacks.run = run;",
@@ -3602,6 +3616,51 @@ fn fresh_array_results_preserve_precise_local_element_provenance() {
             )
         }),
         "fresh array results must retain only the selected external element identities: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn platform_resource_instances_are_local_callback_storage() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const run = () => count;
+            const WorkerAlias = Worker;
+            const worker = new WorkerAlias('./worker.js');
+            const sharedWorker = new SharedWorker('./shared-worker.js');
+            const channel = new BroadcastChannel('events');
+            const eventSource = new EventSource('/events');
+            const messageChannel = new MessageChannel();
+            const socket = new WebSocket('ws://localhost');
+            const request = new XMLHttpRequest();
+            const controller = new AbortController();
+            worker.onmessage = run;
+            sharedWorker.port.onmessage = run;
+            channel.onmessage = run;
+            eventSource.onmessage = run;
+            messageChannel.port1.onmessage = run;
+            socket.onmessage = run;
+            request.onreadystatechange = run;
+            controller.signal.onabort = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "fresh platform resources retain callbacks only on their local instances: {:?}",
         output.diagnostics
     );
 }

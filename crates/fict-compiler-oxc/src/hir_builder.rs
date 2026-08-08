@@ -6796,6 +6796,55 @@ fn array_method_returns_fresh_container(method: &str) -> bool {
     )
 }
 
+fn global_constructor_creates_fresh_storage(constructor: &str) -> bool {
+    matches!(
+        constructor,
+        "ArrayBuffer"
+            | "SharedArrayBuffer"
+            | "DataView"
+            | "Date"
+            | "RegExp"
+            | "Map"
+            | "Set"
+            | "WeakMap"
+            | "WeakSet"
+            | "WeakRef"
+            | "FinalizationRegistry"
+            | "Int8Array"
+            | "Uint8Array"
+            | "Uint8ClampedArray"
+            | "Int16Array"
+            | "Uint16Array"
+            | "Int32Array"
+            | "Uint32Array"
+            | "BigInt64Array"
+            | "BigUint64Array"
+            | "Float16Array"
+            | "Float32Array"
+            | "Float64Array"
+            | "Boolean"
+            | "Number"
+            | "String"
+            | "Error"
+            | "AggregateError"
+            | "EvalError"
+            | "RangeError"
+            | "ReferenceError"
+            | "SyntaxError"
+            | "TypeError"
+            | "URIError"
+            | "Promise"
+            | "AbortController"
+            | "BroadcastChannel"
+            | "EventSource"
+            | "MessageChannel"
+            | "SharedWorker"
+            | "WebSocket"
+            | "Worker"
+            | "XMLHttpRequest"
+    )
+}
+
 struct ExternalStorageRootCollector<'semantic> {
     scoping: &'semantic Scoping,
     roots: BTreeSet<SymbolId>,
@@ -22470,44 +22519,7 @@ impl StaticHookAliasCollector<'_> {
                 })
             });
         }
-        matches!(
-            constructor.as_str(),
-            "ArrayBuffer"
-                | "SharedArrayBuffer"
-                | "DataView"
-                | "Date"
-                | "RegExp"
-                | "Map"
-                | "Set"
-                | "WeakMap"
-                | "WeakSet"
-                | "WeakRef"
-                | "FinalizationRegistry"
-                | "Int8Array"
-                | "Uint8Array"
-                | "Uint8ClampedArray"
-                | "Int16Array"
-                | "Uint16Array"
-                | "Int32Array"
-                | "Uint32Array"
-                | "BigInt64Array"
-                | "BigUint64Array"
-                | "Float16Array"
-                | "Float32Array"
-                | "Float64Array"
-                | "Boolean"
-                | "Number"
-                | "String"
-                | "Error"
-                | "AggregateError"
-                | "EvalError"
-                | "RangeError"
-                | "ReferenceError"
-                | "SyntaxError"
-                | "TypeError"
-                | "URIError"
-                | "Promise"
-        )
+        global_constructor_creates_fresh_storage(constructor)
     }
 
     fn local_callable_results(
@@ -41644,45 +41656,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 })
             });
         }
-        matches!(
-            constructor.as_str(),
-            "Array"
-                | "ArrayBuffer"
-                | "SharedArrayBuffer"
-                | "DataView"
-                | "Date"
-                | "RegExp"
-                | "Map"
-                | "Set"
-                | "WeakMap"
-                | "WeakSet"
-                | "WeakRef"
-                | "FinalizationRegistry"
-                | "Int8Array"
-                | "Uint8Array"
-                | "Uint8ClampedArray"
-                | "Int16Array"
-                | "Uint16Array"
-                | "Int32Array"
-                | "Uint32Array"
-                | "BigInt64Array"
-                | "BigUint64Array"
-                | "Float16Array"
-                | "Float32Array"
-                | "Float64Array"
-                | "Boolean"
-                | "Number"
-                | "String"
-                | "Error"
-                | "AggregateError"
-                | "EvalError"
-                | "RangeError"
-                | "ReferenceError"
-                | "SyntaxError"
-                | "TypeError"
-                | "URIError"
-                | "Promise"
-        )
+        constructor == "Array" || global_constructor_creates_fresh_storage(constructor)
     }
 
     fn assignment_target_has_external_storage(&self, target: &AssignmentTarget<'_>) -> bool {
