@@ -12823,6 +12823,252 @@ fn own_property_descriptor_inspection_does_not_invoke_local_callables() {
 }
 
 #[test]
+fn object_from_entries_preserves_local_value_identities() {
+    for (name, setup, invocation) in [
+        (
+            "stored callable value",
+            "const run = () => { values.forEach = null; }; const result = Object.fromEntries([['run', run]]);",
+            "result.run();",
+        ),
+        (
+            "immediate callable value",
+            "const run = () => { values.forEach = null; };",
+            "Object.fromEntries([['run', run]]).run();",
+        ),
+        (
+            "destructured callable value",
+            "const run = () => { values.forEach = null; }; const { run: invoke } = Object.fromEntries([['run', run]]);",
+            "invoke();",
+        ),
+        (
+            "aliased builtin",
+            "const run = () => { values.forEach = null; }; const fromEntries = Object.fromEntries; const result = fromEntries([['run', run]]);",
+            "result.run();",
+        ),
+        (
+            "numeric property key",
+            "const run = () => { values.forEach = null; }; const result = Object.fromEntries([[0, run]]);",
+            "result[0]();",
+        ),
+        (
+            "exponential numeric property key",
+            "const run = () => { values.forEach = null; }; const result = Object.fromEntries([[1e21, run]]);",
+            "result['1e+21']();",
+        ),
+        (
+            "__proto__ data property",
+            "const run = () => { values.forEach = null; }; const result = Object.fromEntries([['__proto__', run]]);",
+            "result.__proto__();",
+        ),
+        (
+            "constructable value",
+            "class Run { constructor() { values.forEach = null; } } const result = Object.fromEntries([['Run', Run]]);",
+            "new result.Run();",
+        ),
+        (
+            "advanced generator value",
+            "function* run() { values.forEach = null; } const result = Object.fromEntries([['run', run]]);",
+            "result.run().next();",
+        ),
+        (
+            "nested structured value",
+            "const box = { run() { values.forEach = null; } }; const result = Object.fromEntries([['box', box]]);",
+            "result.box.run();",
+        ),
+        (
+            "deeply nested structured value",
+            "const box = { inner: { run() { values.forEach = null; } } }; const result = Object.fromEntries([['box', box]]);",
+            "result.box.inner.run();",
+        ),
+        (
+            "result method receiver",
+            "const run = function() { this.values.forEach = null; }; const result = Object.fromEntries([['values', values], ['run', run]]);",
+            "result.run();",
+        ),
+        (
+            "last duplicate wins",
+            "const safe = () => {}; const run = () => { values.forEach = null; }; const result = Object.fromEntries([['run', safe], ['run', run]]);",
+            "result.run();",
+        ),
+        (
+            "snapshotted callable binding",
+            "let run = () => { values.forEach = null; }; const result = Object.fromEntries([['run', run]]); run = () => {};",
+            "result.run();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the retained value effect, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn object_from_entries_does_not_invoke_unselected_data_values() {
+    for (name, setup, conversion) in [
+        (
+            "discarded callable value",
+            "const run = () => { values.forEach = null; };",
+            "void Object.fromEntries([['run', run]]);",
+        ),
+        (
+            "unused stored result",
+            "const run = () => { values.forEach = null; };",
+            "const result = Object.fromEntries([['run', run]]); void result;",
+        ),
+        (
+            "unselected callable value",
+            "const safe = () => {}; const unsafe = () => { values.forEach = null; };",
+            "Object.fromEntries([['safe', safe], ['unsafe', unsafe]]).safe();",
+        ),
+        (
+            "nested callable value",
+            "const box = { run() { values.forEach = null; } };",
+            "void Object.fromEntries([['box', box]]);",
+        ),
+        (
+            "unadvanced generator value",
+            "function* run() { values.forEach = null; }",
+            "Object.fromEntries([['run', run]]).run();",
+        ),
+        (
+            "earlier duplicate is overwritten",
+            "const unsafe = () => { values.forEach = null; }; const safe = () => {};",
+            "Object.fromEntries([['run', unsafe], ['run', safe]]).run();",
+        ),
+        (
+            "snapshot ignores later binding replacement",
+            "let run = () => {}; const result = Object.fromEntries([['run', run]]); run = () => { values.forEach = null; };",
+            "result.run();",
+        ),
+        (
+            "surplus callable argument is ignored",
+            "const run = () => { values.forEach = null; };",
+            "Object.fromEntries([['safe', 1]], run);",
+        ),
+        (
+            "surplus entry item is ignored",
+            "const run = () => { values.forEach = null; };",
+            "Object.fromEntries([['safe', 1, run]]);",
+        ),
+        (
+            "discarded reactive closure remains local",
+            "const run = () => count;",
+            "void Object.fromEntries([['run', run]]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {conversion}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+    }
+}
+
+#[test]
+fn object_from_entries_executes_iteration_and_key_hooks() {
+    for (name, setup, conversion) in [
+        (
+            "property-key coercion",
+            "const key = { toString() { values.forEach = null; return 'run'; } };",
+            "Object.fromEntries([[key, 1]]);",
+        ),
+        (
+            "entry key getter",
+            "const entry = { get 0() { values.forEach = null; return 'run'; }, 1: 1 };",
+            "Object.fromEntries([entry]);",
+        ),
+        (
+            "entry value getter",
+            "const entry = { 0: 'run', get 1() { values.forEach = null; return 1; } };",
+            "Object.fromEntries([entry]);",
+        ),
+        (
+            "custom iterator",
+            "const entries = [['run', 1]]; entries[Symbol.iterator] = function() { values.forEach = null; return [][Symbol.iterator](); };",
+            "Object.fromEntries(entries);",
+        ),
+        (
+            "generator iterable",
+            "function* entries() { values.forEach = null; yield ['run', 1]; }",
+            "Object.fromEntries(entries());",
+        ),
+        (
+            "spread entry tail",
+            "function* tail() { values.forEach = null; yield 0; }",
+            "Object.fromEntries([['run', 1, ...tail()]]);",
+        ),
+        (
+            "overridden array iterator",
+            "Array.prototype[Symbol.iterator] = function() { values.forEach = null; return [][Symbol.iterator](); };",
+            "Object.fromEntries([]);",
+        ),
+        (
+            "overridden builtin",
+            "Object.fromEntries = () => { values.forEach = null; return {}; };",
+            "Object.fromEntries([]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {conversion}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the iteration effect, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (

@@ -9919,6 +9919,61 @@ fn static_member_name(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
+fn static_from_entries_key_name(expression: &Expression<'_>) -> Option<String> {
+    match expression.get_inner_expression() {
+        Expression::StringLiteral(property) if !property.lone_surrogates => {
+            Some(property.value.to_string())
+        }
+        Expression::NumericLiteral(property) if property.value == 0.0 => Some("0".to_string()),
+        Expression::NumericLiteral(property) => Some(property.value.to_js_string()),
+        _ => None,
+    }
+}
+
+fn static_from_entries_pairs<'a, 'ast>(
+    expression: &'a Expression<'ast>,
+) -> Option<Vec<(String, &'a Expression<'ast>)>> {
+    let Expression::ArrayExpression(entries) = expression.get_inner_expression() else {
+        return None;
+    };
+    let mut pairs = Vec::with_capacity(entries.elements.len());
+    for entry in &entries.elements {
+        if matches!(
+            entry,
+            ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_)
+        ) {
+            return None;
+        }
+        let Expression::ArrayExpression(entry) = entry.to_expression().get_inner_expression()
+        else {
+            return None;
+        };
+        if entry
+            .elements
+            .iter()
+            .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+        {
+            return None;
+        }
+        let key = entry.elements.first()?;
+        let value = entry.elements.get(1)?;
+        if matches!(
+            key,
+            ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_)
+        ) || matches!(
+            value,
+            ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_)
+        ) {
+            return None;
+        }
+        pairs.push((
+            static_from_entries_key_name(key.to_expression())?,
+            value.to_expression(),
+        ));
+    }
+    Some(pairs)
+}
+
 struct GeneratorExecutionProof {
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_body_spans: BTreeSet<(u32, u32)>,
@@ -14137,6 +14192,17 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         })
     }
 
+    fn is_intact_object_from_entries_call(&self, call: &CallExpression<'_>) -> bool {
+        let object = StaticAliasPath::unresolved_global("Object".to_string());
+        let array_prototype = StaticAliasPath::unresolved_global("Array".to_string())
+            .with_property("prototype".to_string());
+        self.callable_resolves_to_path(
+            Self::immediate_callable_value(&call.callee),
+            &object.clone().with_property("fromEntries".to_string()),
+        ) && self.method_path_is_intact(&object, "fromEntries")
+            && self.method_path_is_intact(&array_prototype, "[Symbol.iterator]")
+    }
+
     fn property_descriptor_method(
         &self,
         call: &CallExpression<'_>,
@@ -14351,6 +14417,52 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         true
     }
 
+    fn record_object_from_entries_arguments(&mut self, call: &CallExpression<'_>) -> bool {
+        if !self.is_intact_object_from_entries_call(call)
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        let Some(source) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return false;
+        };
+        let Some(entries) = static_from_entries_pairs(source) else {
+            return false;
+        };
+        for (_, value) in entries {
+            self.record_discarded_enumerated_value(value);
+        }
+        let Expression::ArrayExpression(entries) = source.get_inner_expression() else {
+            unreachable!("static fromEntries pairs require an array expression");
+        };
+        for entry in &entries.elements {
+            let Expression::ArrayExpression(entry) = entry.to_expression().get_inner_expression()
+            else {
+                unreachable!("static fromEntries pairs require array entries");
+            };
+            for item in entry.elements.iter().skip(2) {
+                if !matches!(item, ArrayExpressionElement::Elision(_)) {
+                    self.record_discarded_expression(item.to_expression());
+                }
+            }
+        }
+        for argument in call.arguments.iter().skip(1) {
+            self.record_discarded_expression(
+                argument
+                    .as_expression()
+                    .expect("fromEntries spread arguments were rejected"),
+            );
+        }
+        true
+    }
+
     fn record_json_serialized_value(&mut self, expression: &Expression<'_>) {
         if let Some((source, source_span)) = self.callable_reference(expression) {
             self.json_serialized_value_paths.insert(source.clone());
@@ -14495,6 +14607,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
         if self.record_json_stringify_arguments(call, result_discarded) {
+            return;
+        }
+        if self.record_object_from_entries_arguments(call) {
             return;
         }
         if self.record_property_descriptor_arguments(call, result_discarded) {
@@ -15810,7 +15925,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         {
             self.record_retained_invocations(target.clone(), initializer);
         }
-        if self.record_property_descriptor_result_initializer(&target, initializer) {
+        if self.record_object_from_entries_result_initializer(&target, initializer)
+            || self.record_property_descriptor_result_initializer(&target, initializer)
+        {
             self.non_generator_callable_targets.insert(target.clone());
         } else {
             self.record_forwarded_callable(target.clone(), initializer);
@@ -15821,6 +15938,40 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             self.record_forwarded_class_generator_bodies(target.clone(), initializer);
             self.record_forwarded_instance_generator_bodies(target, initializer);
         }
+    }
+
+    fn record_object_from_entries_result_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) -> bool {
+        let Expression::CallExpression(call) = initializer.get_inner_expression() else {
+            return false;
+        };
+        if !self.is_intact_object_from_entries_call(call)
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        let Some(entries) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_from_entries_pairs)
+        else {
+            return false;
+        };
+        let mut values = BTreeMap::new();
+        for (property, value) in entries {
+            values.insert(property, value);
+        }
+        for (property, value) in values {
+            self.record_callable_initializer(target.clone().with_property(property), value);
+        }
+        true
     }
 
     fn record_property_descriptor_result_initializer(
@@ -18976,6 +19127,8 @@ struct StaticHookAliasCollector<'semantic> {
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
     local_object_assign_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_value_enumeration_results: BTreeMap<(u32, u32), StaticAliasPath>,
+    local_object_from_entries_results: BTreeMap<(u32, u32), StaticAliasPath>,
+    handled_object_from_entries_hook_spans: BTreeSet<(u32, u32)>,
     local_property_descriptor_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_create_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
@@ -19830,6 +19983,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             handled_object_spread_getter_spans: BTreeSet::new(),
             local_object_assign_results: BTreeMap::new(),
             local_object_value_enumeration_results: BTreeMap::new(),
+            local_object_from_entries_results: BTreeMap::new(),
+            handled_object_from_entries_hook_spans: BTreeSet::new(),
             local_property_descriptor_results: BTreeMap::new(),
             local_object_create_results: BTreeMap::new(),
             local_object_prototypes: BTreeMap::new(),
@@ -20388,23 +20543,26 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn defer_structured_value_callables(&mut self, target: &StaticAliasPath) {
-        let mut callables = self
+        let mut roots = BTreeSet::from([target.clone()]);
+        loop {
+            let mut expanded = self.expand_exposed_paths(roots.clone());
+            for (path, sources) in &self.alias_history {
+                if roots.iter().any(|root| path.starts_with(root)) {
+                    expanded.extend(sources.iter().cloned());
+                }
+            }
+            if expanded == roots {
+                break;
+            }
+            roots = expanded;
+        }
+        let callables = self
             .local_callable_effect_spans
             .keys()
             .chain(self.local_callable_effect_span_history.keys())
-            .filter(|candidate| candidate.starts_with(target))
+            .filter(|candidate| roots.iter().any(|root| candidate.starts_with(root)))
             .cloned()
             .collect::<BTreeSet<_>>();
-        for (path, source) in &self.aliases {
-            if path.starts_with(target) {
-                callables.insert(source.clone());
-            }
-        }
-        for (path, sources) in &self.alias_history {
-            if path.starts_with(target) {
-                callables.extend(sources.iter().cloned());
-            }
-        }
         let spans = callables
             .iter()
             .flat_map(|callable| self.local_callable_path_effect_spans(callable))
@@ -22699,6 +22857,14 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn is_intact_array_iterator(&self) -> bool {
+        self.path_is_currently_intact(
+            &StaticAliasPath::unresolved_global("Array".to_string())
+                .with_property("prototype".to_string())
+                .with_property("[Symbol.iterator]".to_string()),
+        )
+    }
+
     fn is_intact_json_method_callee(&self, callee: &Expression<'_>, method: &str) -> bool {
         let Some(raw) = static_alias_source_path(self.scoping, callee) else {
             return false;
@@ -22998,6 +23164,109 @@ impl StaticHookAliasCollector<'_> {
                 .extend((0..length).map(|index| index.to_string()));
         }
         self.local_object_value_enumeration_results
+            .insert(span, target.clone());
+        Some(target)
+    }
+
+    fn record_inline_object_from_entries_hooks(
+        &mut self,
+        source: &Expression<'_>,
+        call_span: Span,
+    ) {
+        let span = (call_span.start, call_span.end);
+        if !self.handled_object_from_entries_hook_spans.insert(span) {
+            return;
+        }
+        let Expression::ArrayExpression(entries) = source.get_inner_expression() else {
+            return;
+        };
+        for (entry_index, entry) in entries.elements.iter().enumerate() {
+            if matches!(
+                entry,
+                ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_)
+            ) {
+                continue;
+            }
+            for (source_index, entry) in self
+                .local_object_assign_value_paths(entry.to_expression())
+                .into_iter()
+                .enumerate()
+            {
+                let key_target = StaticAliasPath::dynamic_this(call_span).with_property(format!(
+                    "object-from-entries-key-{entry_index}-{source_index}"
+                ));
+                let key = entry.clone().with_property("0".to_string());
+                let key = if self.record_local_getter_read(key.clone(), Some(key_target.clone())) {
+                    key_target
+                } else {
+                    key
+                };
+                let value_target = StaticAliasPath::dynamic_this(call_span).with_property(format!(
+                    "object-from-entries-value-{entry_index}-{source_index}"
+                ));
+                self.record_local_getter_read(
+                    entry.with_property("1".to_string()),
+                    Some(value_target),
+                );
+                self.conservatively_expose_descriptor_paths([key]);
+            }
+        }
+    }
+
+    fn record_local_object_from_entries_result(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<StaticAliasPath> {
+        let span = (call.span.start, call.span.end);
+        if let Some(target) = self.local_object_from_entries_results.get(&span) {
+            return Some(target.clone());
+        }
+        if !self.is_intact_object_method_callee(&call.callee, "fromEntries")
+            || !self.is_intact_array_iterator()
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return None;
+        }
+        let source = call.arguments.first()?.as_expression()?;
+        let Some(entries) = static_from_entries_pairs(source) else {
+            self.record_inline_object_from_entries_hooks(source, call.span);
+            self.conservatively_expose_descriptor_source(source);
+            return None;
+        };
+        let entries = entries.into_iter().collect::<BTreeMap<_, _>>();
+        let target = StaticAliasPath::dynamic_this(call.span)
+            .with_property("object-from-entries-result".to_string());
+        self.dynamic_path_owner_depths
+            .insert(span, self.function_depth);
+        self.structured_own_properties
+            .insert(target.clone(), BTreeSet::new());
+        for (property, value) in entries {
+            self.structured_own_properties
+                .entry(target.clone())
+                .or_default()
+                .insert(property.clone());
+            self.exclude_dynamic_local_accessor_property(&target, property.clone());
+            let property_target = target.with_property(property);
+            let source = self.alias_source_path(value);
+            if let Some(source) = source.as_ref()
+                && self.copy_local_callable_value(property_target.clone(), source, true, true)
+            {
+                self.record_local_callable_snapshot(source, &property_target);
+                if let Some(definedness) = self.resolved_local_value_definedness(source) {
+                    self.record_descriptor_result_definedness(property_target, definedness);
+                }
+            } else {
+                self.collect_initializer(property_target.clone(), value);
+                if let Some(source) = source {
+                    self.record_local_descriptor_value_capture(&source, &property_target);
+                }
+            }
+        }
+        self.defer_structured_value_callables(&target);
+        self.local_object_from_entries_results
             .insert(span, target.clone());
         Some(target)
     }
@@ -27100,6 +27369,13 @@ impl StaticHookAliasCollector<'_> {
             return;
         }
         if let Expression::CallExpression(call) = value.get_inner_expression()
+            && let Some(source) = self.record_local_object_from_entries_result(call)
+        {
+            self.record_local_value_definedness(target.clone(), value);
+            self.insert_alias(target, source);
+            return;
+        }
+        if let Expression::CallExpression(call) = value.get_inner_expression()
             && let Some(source) = self.record_local_property_descriptor_result(call)
         {
             self.record_local_value_definedness(target.clone(), value);
@@ -28047,6 +28323,9 @@ impl StaticHookAliasCollector<'_> {
             return Some(target);
         }
         if let Some(target) = self.record_local_object_value_enumeration(factory_call) {
+            return Some(target);
+        }
+        if let Some(target) = self.record_local_object_from_entries_result(factory_call) {
             return Some(target);
         }
         if let Some(target) = self.record_local_property_descriptor_result(factory_call) {
@@ -36196,6 +36475,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_object_assign(call);
         let _ = self.record_local_object_value_enumeration(call);
+        let local_object_from_entries = self.record_local_object_from_entries_result(call);
         let _ = self.record_local_property_descriptor_result(call);
         self.record_local_json_stringify(call);
         let local_object_create = self.record_local_object_create_result(call);
@@ -36270,6 +36550,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         } else if !local_invocations_cover_arguments
             && !returned_captured_callee
             && !local_reflect_get
+            && local_object_from_entries.is_none()
             && local_object_create.is_none()
             && self.callee_may_mutate_arguments(&call.callee)
         {
@@ -37182,6 +37463,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if store
             || macro_kind.is_some()
             || fact.runtime_creation_kind == Some(RuntimeReactiveCreationKind::NamespaceMemo)
+            || self.is_non_escaping_static_object_from_entries(call)
             || self.is_non_escaping_safe_global_call(&call.callee, arguments)
         {
             return;
@@ -37541,6 +37823,34 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         };
         !timing.may_suspend
             && (disposition == CallbackResultDisposition::Discarded || !timing.may_return_iterator)
+    }
+
+    fn is_non_escaping_static_object_from_entries(&self, call: &CallExpression<'_>) -> bool {
+        if call
+            .arguments
+            .iter()
+            .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        let Some(source) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return false;
+        };
+        if static_from_entries_pairs(source).is_none() {
+            return false;
+        }
+        let Some(raw) = static_alias_source_path(self.scoping, &call.callee) else {
+            return false;
+        };
+        let target = StaticAliasPath::unresolved_global("Object".to_string())
+            .with_property("fromEntries".to_string());
+        self.callback_aliases.resolve(&raw) == target
+            && self.callback_aliases.path_is_intact(&raw)
+            && self.callback_aliases.path_is_intact(&target)
     }
 
     fn callback_is_definitely_non_callable(&self, expression: &Expression<'_>) -> bool {
