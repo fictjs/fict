@@ -12546,6 +12546,16 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "hoisted local call appends a replacer property",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe'];",
+            "append(); JSON.stringify(source, replacer); function append() { replacer.push('unsafe'); }",
+        ),
+        (
+            "hoisted local call mutates a replacer alias",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; const alias = replacer;",
+            "append(); JSON.stringify(source, replacer); function append() { alias.push('unsafe'); }",
+        ),
+        (
             "indirectly appended replacer array item",
             "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; Array.prototype.push.call(replacer, 'unsafe');",
             "JSON.stringify(source, replacer);",

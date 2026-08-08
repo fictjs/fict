@@ -2012,8 +2012,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut json_replacer_array_uses =
             JsonReplacerArrayUseCollector::new(self.semantic.scoping());
         json_replacer_array_uses.visit_program(program);
-        let exclusive_json_replacer_arrays =
-            json_replacer_array_uses.exclusive_replacer_arrays(&known_arrays.symbols);
+        let (exclusive_json_replacer_arrays, unstable_json_replacer_arrays) =
+            json_replacer_array_uses.replacer_array_proofs(&known_arrays.symbols);
         let mut generator_execution = GeneratorExecutionCollector::new(
             self.semantic.scoping(),
             &known_arrays.symbols,
@@ -2028,8 +2028,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut executed_descriptor_callable_spans = BTreeSet::new();
         let mut executed_setter_spans = BTreeSet::new();
         let static_hook_aliases = loop {
-            let mut collector =
-                StaticHookAliasCollector::new(self.semantic.scoping(), &generator_execution);
+            let mut collector = StaticHookAliasCollector::new(
+                self.semantic.scoping(),
+                &generator_execution,
+                &unstable_json_replacer_arrays,
+            );
             collector
                 .unexecuted_expression_spans
                 .clone_from(&unexecuted_expression_spans);
@@ -10024,10 +10027,12 @@ fn static_json_replacer_item(expression: &Expression<'_>) -> Option<StaticJsonRe
 
 struct JsonReplacerArrayUseCollector<'semantic> {
     scoping: &'semantic Scoping,
-    references: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    references: BTreeMap<SymbolId, BTreeMap<(u32, u32), usize>>,
+    binding_function_depths: BTreeMap<SymbolId, usize>,
     push_receivers: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     replacer_arguments: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     prototype_hazard: bool,
+    function_depth: usize,
 }
 
 impl<'semantic> JsonReplacerArrayUseCollector<'semantic> {
@@ -10035,9 +10040,11 @@ impl<'semantic> JsonReplacerArrayUseCollector<'semantic> {
         Self {
             scoping,
             references: BTreeMap::new(),
+            binding_function_depths: BTreeMap::new(),
             push_receivers: BTreeMap::new(),
             replacer_arguments: BTreeMap::new(),
             prototype_hazard: false,
+            function_depth: 0,
         }
     }
 
@@ -10053,31 +10060,87 @@ impl<'semantic> JsonReplacerArrayUseCollector<'semantic> {
         Some((symbol, (identifier.span.start, identifier.span.end)))
     }
 
-    fn exclusive_replacer_arrays(self, known_arrays: &BTreeSet<SymbolId>) -> BTreeSet<SymbolId> {
+    fn replacer_array_proofs(
+        self,
+        known_arrays: &BTreeSet<SymbolId>,
+    ) -> (BTreeSet<SymbolId>, BTreeSet<SymbolId>) {
         let Self {
             references,
+            binding_function_depths,
             push_receivers,
             replacer_arguments,
             prototype_hazard,
             ..
         } = self;
-        if prototype_hazard {
-            return BTreeSet::new();
-        }
-        replacer_arguments
-            .into_iter()
-            .filter_map(|(symbol, replacer_arguments)| {
-                let push_receivers = push_receivers.get(&symbol)?;
-                let references = references.get(&symbol)?;
-                let mut allowed = replacer_arguments;
-                allowed.extend(push_receivers);
-                (known_arrays.contains(&symbol) && &allowed == references).then_some(symbol)
+        let unstable = references
+            .iter()
+            .filter_map(|(symbol, references)| {
+                if !known_arrays.contains(symbol) {
+                    return None;
+                }
+                let mut allowed = replacer_arguments.get(symbol).cloned().unwrap_or_default();
+                let push_receivers = push_receivers.get(symbol).cloned().unwrap_or_default();
+                allowed.extend(&push_receivers);
+                let binding_depth = binding_function_depths.get(symbol);
+                let deferred_push = push_receivers.iter().any(|span| {
+                    binding_depth
+                        .is_none_or(|binding_depth| references.get(span) != Some(binding_depth))
+                });
+                let untracked_reference = references.len() != allowed.len()
+                    || references.keys().any(|span| !allowed.contains(span));
+                (untracked_reference || deferred_push).then_some(*symbol)
             })
-            .collect()
+            .collect();
+        let exclusive = if prototype_hazard {
+            BTreeSet::new()
+        } else {
+            replacer_arguments
+                .into_iter()
+                .filter_map(|(symbol, replacer_arguments)| {
+                    let push_receivers = push_receivers.get(&symbol)?;
+                    let references = references.get(&symbol)?;
+                    let mut allowed = replacer_arguments;
+                    allowed.extend(push_receivers);
+                    (known_arrays.contains(&symbol)
+                        && references.len() == allowed.len()
+                        && references.keys().all(|span| allowed.contains(span)))
+                    .then_some(symbol)
+                })
+                .collect()
+        };
+        (exclusive, unstable)
     }
 }
 
 impl<'a> Visit<'a> for JsonReplacerArrayUseCollector<'_> {
+    fn enter_node(&mut self, kind: AstKind<'a>) {
+        if matches!(
+            kind,
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_)
+        ) {
+            self.function_depth = self.function_depth.saturating_add(1);
+        }
+    }
+
+    fn leave_node(&mut self, kind: AstKind<'a>) {
+        if matches!(
+            kind,
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_)
+        ) {
+            self.function_depth = self.function_depth.saturating_sub(1);
+        }
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let BindingPattern::BindingIdentifier(binding) = &declarator.id
+            && let Some(symbol) = binding.symbol_id.get()
+        {
+            self.binding_function_depths
+                .insert(symbol, self.function_depth);
+        }
+        walk_variable_declarator(self, declarator);
+    }
+
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
         let Some(reference) = identifier.reference_id.get() else {
             return;
@@ -10090,10 +10153,10 @@ impl<'a> Visit<'a> for JsonReplacerArrayUseCollector<'_> {
             );
             return;
         };
-        self.references
-            .entry(symbol)
-            .or_default()
-            .insert((identifier.span.start, identifier.span.end));
+        self.references.entry(symbol).or_default().insert(
+            (identifier.span.start, identifier.span.end),
+            self.function_depth,
+        );
     }
 
     fn visit_static_member_expression(
@@ -19770,6 +19833,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_object_from_entries_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     local_json_replacer_property_lists: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    unstable_json_replacer_arrays: BTreeSet<SymbolId>,
     handled_object_from_entries_hook_spans: BTreeSet<(u32, u32)>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
     local_property_descriptor_results: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -20593,7 +20657,11 @@ impl LocalInvocationFact {
 }
 
 impl<'semantic> StaticHookAliasCollector<'semantic> {
-    fn new(scoping: &'semantic Scoping, generator: &GeneratorExecutionProof) -> Self {
+    fn new(
+        scoping: &'semantic Scoping,
+        generator: &GeneratorExecutionProof,
+        unstable_json_replacer_arrays: &BTreeSet<SymbolId>,
+    ) -> Self {
         Self {
             scoping,
             aliases: BTreeMap::new(),
@@ -20630,6 +20698,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_object_from_entries_results: BTreeMap::new(),
             local_static_from_entries_sources: BTreeMap::new(),
             local_json_replacer_property_lists: BTreeMap::new(),
+            unstable_json_replacer_arrays: unstable_json_replacer_arrays.clone(),
             handled_object_from_entries_hook_spans: BTreeSet::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
             local_property_descriptor_results: BTreeMap::new(),
@@ -24290,6 +24359,12 @@ impl StaticHookAliasCollector<'_> {
         target: &StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
+        if target
+            .binding_root()
+            .is_some_and(|root| self.unstable_json_replacer_arrays.contains(&root))
+        {
+            return;
+        }
         let Some(properties) = self.local_inline_json_replacer_property_list(initializer) else {
             return;
         };
