@@ -18551,6 +18551,7 @@ struct StaticHookAliasCollector<'semantic> {
     handled_local_getter_read_spans: BTreeSet<(u32, u32)>,
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
     local_object_assign_results: BTreeMap<(u32, u32), StaticAliasPath>,
+    local_object_value_enumeration_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_create_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
     historical_local_object_prototype_snapshots: BTreeSet<StaticAliasPath>,
@@ -19402,6 +19403,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             handled_local_getter_read_spans: BTreeSet::new(),
             handled_object_spread_getter_spans: BTreeSet::new(),
             local_object_assign_results: BTreeMap::new(),
+            local_object_value_enumeration_results: BTreeMap::new(),
             local_object_create_results: BTreeMap::new(),
             local_object_prototypes: BTreeMap::new(),
             historical_local_object_prototype_snapshots: BTreeSet::new(),
@@ -22416,34 +22418,123 @@ impl StaticHookAliasCollector<'_> {
         Some(target)
     }
 
-    fn record_local_object_value_enumeration(&mut self, call: &CallExpression<'_>) -> bool {
-        if !["values", "entries"]
-            .into_iter()
-            .any(|method| self.is_intact_object_method_callee(&call.callee, method))
-        {
-            return false;
+    fn record_local_object_value_enumeration(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<StaticAliasPath> {
+        let span = (call.span.start, call.span.end);
+        if let Some(target) = self.local_object_value_enumeration_results.get(&span) {
+            return Some(target.clone());
         }
-        let Some(source) = call
-            .arguments
-            .first()
-            .and_then(|argument| argument.as_expression())
-        else {
-            return false;
+        let entries = if self.is_intact_object_method_callee(&call.callee, "values") {
+            false
+        } else if self.is_intact_object_method_callee(&call.callee, "entries") {
+            true
+        } else {
+            return None;
         };
-        let mut invoked = false;
-        for source in self.local_object_assign_value_paths(source) {
-            for property in self.enumerable_local_getter_names(&source) {
-                invoked |=
-                    self.record_local_getter_read(source.clone().with_property(property), None);
+        let source = call.arguments.first()?.as_expression()?;
+        let sources = self.local_object_assign_value_paths(source);
+        if sources.is_empty() {
+            return None;
+        }
+        let target = StaticAliasPath::dynamic_this(call.span).with_property(
+            if entries {
+                "object-entries-result"
+            } else {
+                "object-values-result"
             }
-            if !self.enumerable_dynamic_local_getters(&source).is_empty() {
-                invoked |= self.record_local_getter_read(
+            .to_string(),
+        );
+        self.dynamic_path_owner_depths
+            .insert(span, self.function_depth);
+        self.structured_own_properties
+            .insert(target.clone(), BTreeSet::new());
+        let wildcard = target.with_element_wildcard();
+        let mut alternatives = 0usize;
+        let mut possible_lengths = BTreeSet::new();
+        let mut open = false;
+        for (source_index, source) in sources.iter().enumerate() {
+            let getters = self.enumerable_local_getter_names(source);
+            let known_properties = self.known_structured_own_properties(source);
+            let mut properties = known_properties.clone().unwrap_or_default();
+            properties.extend(getters.iter().cloned());
+            let mut length = 0usize;
+            for property in properties {
+                if !self.local_own_property_may_be_enumerable(source, &property) {
+                    continue;
+                }
+                let value_source = source.clone().with_property(property.clone());
+                let value_target = if entries {
+                    let entry = target
+                        .with_property(format!("<object-entry-{source_index}-{alternatives}>"));
+                    self.structured_own_properties.insert(
+                        entry.clone(),
+                        BTreeSet::from(["0".to_string(), "1".to_string()]),
+                    );
+                    self.array_lengths.insert(entry.clone(), 2);
+                    self.insert_alias(wildcard.clone(), entry.clone());
+                    entry.with_property("1".to_string())
+                } else {
+                    let value = target
+                        .with_property(format!("<object-value-{source_index}-{alternatives}>"));
+                    self.insert_alias(wildcard.clone(), value.clone());
+                    value
+                };
+                if !getters.contains(&property)
+                    || !self
+                        .record_local_getter_read(value_source.clone(), Some(value_target.clone()))
+                {
+                    self.insert_alias(value_target, value_source);
+                }
+                alternatives = alternatives.saturating_add(1);
+                length = length.saturating_add(1);
+            }
+            if !self.enumerable_dynamic_local_getters(source).is_empty() {
+                let value_target = if entries {
+                    let entry =
+                        target.with_property(format!("<object-entry-{source_index}-computed>"));
+                    self.structured_own_properties.insert(
+                        entry.clone(),
+                        BTreeSet::from(["0".to_string(), "1".to_string()]),
+                    );
+                    self.array_lengths.insert(entry.clone(), 2);
+                    self.insert_alias(wildcard.clone(), entry.clone());
+                    entry.with_property("1".to_string())
+                } else {
+                    let value =
+                        target.with_property(format!("<object-value-{source_index}-computed>"));
+                    self.insert_alias(wildcard.clone(), value.clone());
+                    value
+                };
+                self.record_local_getter_read(
                     source.clone().with_property("<computed>".to_string()),
-                    None,
+                    Some(value_target),
                 );
+                alternatives = alternatives.saturating_add(1);
+                open = true;
+            }
+            if known_properties.is_some() && !open {
+                possible_lengths.insert(length);
+            } else {
+                open = true;
             }
         }
-        invoked
+        if alternatives > 1 || sources.len() > 1 || open {
+            self.mark_alias_target_ambiguous(wildcard);
+        }
+        if open || possible_lengths.len() != 1 {
+            self.open_structured_containers.insert(target.clone());
+        } else if let Some(length) = possible_lengths.first().copied() {
+            self.array_lengths.insert(target.clone(), length);
+            self.structured_own_properties
+                .entry(target.clone())
+                .or_default()
+                .extend((0..length).map(|index| index.to_string()));
+        }
+        self.local_object_value_enumeration_results
+            .insert(span, target.clone());
+        Some(target)
     }
 
     fn local_object_prototype_value(
@@ -23737,6 +23828,27 @@ impl StaticHookAliasCollector<'_> {
 
     fn canonical_returned_structured_member_path(&self, path: &StaticAliasPath) -> StaticAliasPath {
         self.canonical_returned_structured_path(path, true)
+    }
+
+    fn canonical_object_value_enumeration_member_path(
+        &self,
+        path: &StaticAliasPath,
+    ) -> StaticAliasPath {
+        let resolved = resolve_static_alias_slot_path(&self.aliases, path);
+        if self
+            .local_object_value_enumeration_results
+            .values()
+            .any(|result| {
+                let result = resolve_static_alias_path(&self.aliases, result);
+                resolved.starts_with(&result)
+                    && (resolved.properties.len() > result.properties.len()
+                        || resolved.element_wildcard)
+            })
+        {
+            resolved
+        } else {
+            path.clone()
+        }
     }
 
     fn canonical_returned_structured_value_path(&self, path: &StaticAliasPath) -> StaticAliasPath {
@@ -26024,11 +26136,30 @@ impl StaticHookAliasCollector<'_> {
 
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
         let target = self.canonical_returned_structured_member_path(&target);
+        let target = self.canonical_object_value_enumeration_member_path(&target);
         if let Expression::CallExpression(call) = value.get_inner_expression()
             && let Some(source) = self.record_local_object_assign(call)
         {
             self.record_local_value_definedness(target.clone(), value);
             self.insert_alias(target, source);
+            return;
+        }
+        if let Expression::CallExpression(call) = value.get_inner_expression()
+            && let Some(source) = self.record_local_object_value_enumeration(call)
+        {
+            self.record_local_value_definedness(target.clone(), value);
+            let ambiguous = self
+                .ambiguous_alias_targets
+                .iter()
+                .filter(|candidate| candidate.starts_with(&source))
+                .cloned()
+                .collect::<Vec<_>>();
+            self.insert_alias(target.clone(), source.clone());
+            for candidate in ambiguous {
+                self.mark_alias_target_ambiguous(Self::rebase_returned_class_path(
+                    &candidate, &source, &target,
+                ));
+            }
             return;
         }
         if let Expression::CallExpression(call) = value.get_inner_expression()
@@ -26969,6 +27100,9 @@ impl StaticHookAliasCollector<'_> {
         factory_call: &CallExpression<'_>,
     ) -> Option<StaticAliasPath> {
         if let Some(target) = self.record_local_object_assign(factory_call) {
+            return Some(target);
+        }
+        if let Some(target) = self.record_local_object_value_enumeration(factory_call) {
             return Some(target);
         }
         if let Some(target) = self.record_local_object_create_result(factory_call) {
@@ -35107,7 +35241,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_object_assign(call);
-        self.record_local_object_value_enumeration(call);
+        let _ = self.record_local_object_value_enumeration(call);
         let local_object_create = self.record_local_object_create_result(call);
         self.record_local_define_property_result(call);
         self.record_local_define_properties_result(call);

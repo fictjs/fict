@@ -11839,6 +11839,236 @@ fn object_value_enumeration_invokes_local_getters() {
 }
 
 #[test]
+fn object_value_enumeration_preserves_callable_results() {
+    for (name, source_declaration, enumeration, invocation) in [
+        (
+            "stored Object.values data method",
+            "const source = { run() { values.forEach = null; } };",
+            "const result = Object.values(source);",
+            "result[0]();",
+        ),
+        (
+            "inline Object.values data method",
+            "const source = { run() { values.forEach = null; } };",
+            "",
+            "Object.values(source)[0]();",
+        ),
+        (
+            "stored Object.entries data method",
+            "const source = { run() { values.forEach = null; } };",
+            "const result = Object.entries(source);",
+            "result[0][1]();",
+        ),
+        (
+            "stored Object.values getter result",
+            "const source = { get run() { return () => { values.forEach = null; }; } };",
+            "const result = Object.values(source);",
+            "result[0]();",
+        ),
+        (
+            "stored Object.values getter function result",
+            "const source = { get run() { return function() { values.forEach = null; }; } };",
+            "const result = Object.values(source);",
+            "result[0]();",
+        ),
+        (
+            "inline Object.values getter result",
+            "const source = { get run() { return () => { values.forEach = null; }; } };",
+            "",
+            "Object.values(source)[0]();",
+        ),
+        (
+            "stored Object.entries getter result",
+            "const source = { get run() { return () => { values.forEach = null; }; } };",
+            "const result = Object.entries(source);",
+            "result[0][1]();",
+        ),
+        (
+            "inline Object.entries getter result",
+            "const source = { get run() { return () => { values.forEach = null; }; } };",
+            "",
+            "Object.entries(source)[0][1]();",
+        ),
+        (
+            "inline object literal getter result",
+            "",
+            "",
+            "Object.values({ get run() { return () => { values.forEach = null; }; } })[0]();",
+        ),
+        (
+            "aliased Object.values getter result",
+            "const source = { get run() { return () => { values.forEach = null; }; } }; const enumerate = Object.values;",
+            "const result = enumerate(source);",
+            "result[0]();",
+        ),
+        (
+            "descriptor getter result",
+            "const source = {}; Object.defineProperty(source, 'run', { enumerable: true, get() { return () => { values.forEach = null; }; } });",
+            "const result = Object.values(source);",
+            "result[0]();",
+        ),
+        (
+            "computed getter result",
+            "const key = 'run'; const source = { get [key]() { return () => { values.forEach = null; }; } };",
+            "const result = Object.values(source);",
+            "result[0]();",
+        ),
+        (
+            "getter generator result",
+            "const source = { get run() { return function* () { values.forEach = null; }; } };",
+            "const result = Object.values(source);",
+            "result[0]().next();",
+        ),
+        (
+            "getter constructor result",
+            "const source = { get Run() { return class { constructor() { values.forEach = null; } }; } };",
+            "const result = Object.entries(source);",
+            "new (result[0][1])();",
+        ),
+        (
+            "getter structured result",
+            "const source = { get box() { return { run() { values.forEach = null; } }; } };",
+            "const result = Object.values(source);",
+            "result[0].run();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {source_declaration}
+                    {enumeration}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the enumerated callable effect, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn object_value_enumeration_binds_callable_receiver_to_result() {
+    for (name, setup, invocation) in [
+        (
+            "Object.values result receiver",
+            "const source = { get run() { return function() { this.values.forEach = null; }; } }; const result = Object.values(source); result.values = values;",
+            "result[0]();",
+        ),
+        (
+            "Object.entries entry receiver",
+            "const source = { get run() { return function() { this.values.forEach = null; }; } }; const result = Object.entries(source); result[0].values = values;",
+            "result[0][1]();",
+        ),
+        (
+            "Object.values getter arrow receiver",
+            "const source = { values, get run() { return () => { this.values.forEach = null; }; } }; const result = Object.values(source);",
+            "result[1]();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {invocation}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the callable to use the enumeration result as its receiver, got {:?}",
+            output.diagnostics
+        );
+    }
+
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const other = [];
+            const source = {
+                values,
+                get run() {
+                    return function() {
+                        this.values.forEach = null;
+                    };
+                },
+            };
+            const result = Object.values(source);
+            result.values = other;
+            result[1]();
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.hir.is_some(),
+        "enumerated callables must not retain their source object as the receiver: {:?}",
+        output.diagnostics
+    );
+
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const values = [];
+            const safe = [];
+            const source = {
+                values: safe,
+                get run() {
+                    return () => {
+                        this.values.forEach = null;
+                    };
+                },
+            };
+            const result = Object.values(source);
+            result.values = values;
+            result[1]();
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.hir.is_some(),
+        "enumerated getter arrows must retain their getter receiver: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (
