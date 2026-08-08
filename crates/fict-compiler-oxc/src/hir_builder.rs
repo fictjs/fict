@@ -6903,13 +6903,8 @@ impl<'semantic> ExternalStorageRootCollector<'semantic> {
                         ExternalStorageAliasKind::Projected,
                     );
                 }
-                if let Some(rest) = &object.rest {
-                    self.record_pattern_alias(
-                        &rest.argument,
-                        source,
-                        ExternalStorageAliasKind::Rest,
-                    );
-                }
+                // Object rest creates a local container with key-specific exclusions. The
+                // execution-aware alias collector records that shallow-copy relation precisely.
             }
             BindingPattern::ArrayPattern(array) => {
                 for element in array.elements.iter().flatten() {
@@ -20365,7 +20360,15 @@ struct ConstructorReplacementResultCollector<'collector, 'semantic> {
 struct ExternalStorageFlowState {
     aliases: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     attached_alias_roots: BTreeMap<StaticAliasPath, BTreeSet<SymbolId>>,
+    shallow_copies: BTreeMap<StaticAliasPath, BTreeSet<ExternalStorageShallowCopy>>,
     attached_parameters: BTreeSet<SymbolId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ExternalStorageShallowCopy {
+    source: StaticAliasPath,
+    excluded: BTreeSet<String>,
+    attached_roots: BTreeSet<SymbolId>,
 }
 
 impl ExternalStorageFlowState {
@@ -20381,12 +20384,48 @@ impl ExternalStorageFlowState {
                 .or_default()
                 .extend(roots);
         }
+        for (target, copies) in right.shallow_copies {
+            merged
+                .shallow_copies
+                .entry(target)
+                .or_default()
+                .extend(copies);
+        }
         merged.attached_parameters.extend(right.attached_parameters);
         merged
     }
 
     fn alias_candidates(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
-        resolve_historical_alias_paths(&self.aliases, path)
+        let mut resolved = BTreeSet::new();
+        let mut pending = VecDeque::from([path.clone()]);
+        while let Some(current) = pending.pop_front() {
+            if !resolved.insert(current.clone()) {
+                continue;
+            }
+            for alias in resolve_historical_alias_paths(&self.aliases, &current) {
+                if !resolved.contains(&alias) {
+                    pending.push_back(alias);
+                }
+            }
+            for (target, copies) in &self.shallow_copies {
+                if !current.starts_with(target)
+                    || current.properties.len() < target.properties.len().saturating_add(2)
+                {
+                    continue;
+                }
+                let suffix = &current.properties[target.properties.len()..];
+                for copy in copies {
+                    if copy.excluded.contains(&suffix[0]) {
+                        continue;
+                    }
+                    let mut candidate = copy.source.clone();
+                    candidate.properties.extend_from_slice(suffix);
+                    candidate.element_wildcard |= current.element_wildcard;
+                    pending.push_back(candidate.canonicalized());
+                }
+            }
+        }
+        resolved
     }
 
     fn attached_roots(&self, path: &StaticAliasPath) -> BTreeSet<SymbolId> {
@@ -20402,6 +20441,18 @@ impl ExternalStorageFlowState {
                     roots.extend(attached);
                 }
             }
+            for (target, copies) in &self.shallow_copies {
+                if candidate.starts_with(target)
+                    && candidate.properties.len() >= target.properties.len().saturating_add(2)
+                {
+                    let property = &candidate.properties[target.properties.len()];
+                    for copy in copies {
+                        if !copy.excluded.contains(property) {
+                            roots.extend(&copy.attached_roots);
+                        }
+                    }
+                }
+            }
         }
         roots
     }
@@ -20410,6 +20461,24 @@ impl ExternalStorageFlowState {
         self.aliases.retain(|target, _| !target.overlaps(path));
         self.attached_alias_roots
             .retain(|target, _| !target.overlaps(path));
+        self.shallow_copies.retain(|target, copies| {
+            if target.starts_with(path) {
+                return false;
+            }
+            if path.starts_with(target)
+                && path.properties.len() == target.properties.len().saturating_add(1)
+            {
+                let property = path.properties[target.properties.len()].clone();
+                *copies = std::mem::take(copies)
+                    .into_iter()
+                    .map(|mut copy| {
+                        copy.excluded.insert(property.clone());
+                        copy
+                    })
+                    .collect();
+            }
+            true
+        });
     }
 
     fn insert_alias(
@@ -20423,6 +20492,25 @@ impl ExternalStorageFlowState {
         }
         if !attached.is_empty() {
             self.attached_alias_roots.insert(target, attached);
+        }
+    }
+
+    fn record_shallow_copy(
+        &mut self,
+        target: StaticAliasPath,
+        source: &StaticAliasPath,
+        excluded: BTreeSet<String>,
+    ) {
+        let attached_roots = self.attached_roots(source);
+        for source in self.alias_candidates(source) {
+            self.shallow_copies
+                .entry(target.clone())
+                .or_default()
+                .insert(ExternalStorageShallowCopy {
+                    source,
+                    excluded: excluded.clone(),
+                    attached_roots: attached_roots.clone(),
+                });
         }
     }
 }
@@ -21555,6 +21643,17 @@ impl StaticHookAliasCollector<'_> {
                 self.external_storage_flow.clone(),
             );
         }
+    }
+
+    fn record_external_storage_shallow_copy(
+        &mut self,
+        target: StaticAliasPath,
+        source: &StaticAliasPath,
+        excluded: BTreeSet<String>,
+    ) {
+        self.external_storage_flow
+            .record_shallow_copy(target, source, excluded);
+        self.record_external_storage_exception_flow();
     }
 
     fn record_assignment_target_alias_snapshot(&mut self, span: Span, path: StaticAliasPath) {
@@ -28942,6 +29041,7 @@ impl StaticHookAliasCollector<'_> {
         source: &StaticAliasPath,
         excluded: &BTreeSet<String>,
     ) {
+        self.record_external_storage_shallow_copy(target.clone(), source, excluded.clone());
         if let Some(properties) = self.known_structured_own_properties(source) {
             for property in properties {
                 let property_source = source.clone().with_property(property.clone());
@@ -33227,6 +33327,11 @@ impl StaticHookAliasCollector<'_> {
                 self.record_stored_spread_callable_exposures(target, exposures, None);
             }
             self.record_enumerable_local_getter_copies(target, spread_source, &BTreeSet::new());
+            self.record_external_storage_shallow_copy(
+                target.clone(),
+                spread_source,
+                BTreeSet::new(),
+            );
             return;
         }
         match expression.get_inner_expression() {
@@ -33344,6 +33449,11 @@ impl StaticHookAliasCollector<'_> {
             if let Some(exposures) = callable_exposures {
                 self.record_stored_spread_callable_exposures(target, exposures, Some(offset));
             }
+            self.record_external_storage_shallow_copy(
+                target.clone(),
+                spread_source.as_ref().expect("spread source"),
+                (0..offset).map(|index| index.to_string()).collect(),
+            );
             return;
         }
         match expression.get_inner_expression() {

@@ -2689,6 +2689,48 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "object spread nested component parameter callback slot",
+            "const copy = { ...holder }; const run = () => count;",
+            "copy.callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "array spread nested component parameter callback slot",
+            "const copy = [...holder.items]; const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "projected object spread component parameter callback slot",
+            "const copy = { ...holder }; const callbacks = copy.callbacks; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "projected array spread component parameter callback slot",
+            "const copy = [...holder.items]; const item = copy[0]; const run = () => count;",
+            "item.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "conditional object spread component parameter callback slot",
+            "const copy = { ...(holder.enabled ? holder : {}) }; const run = () => count;",
+            "copy.callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "conditional array spread component parameter callback slot",
+            "const copy = [...(holder.enabled ? holder.items : [])]; const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "aliased object rest nested component parameter callback slot",
             "const { ...rest } = holder; const alias = rest; const run = () => count;",
             "alias.callbacks.run = run;",
@@ -2872,6 +2914,11 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             const run = () => count;
             const { ...objectRest } = holder;
             const [first, ...arrayRest] = holder.items;
+            const { callbacks: omittedCallbacks, ...excludedObjectRest } = holder;
+            const overriddenObjectSpread = { ...holder, callbacks: {} };
+            const prefixedArraySpread = [{}, ...holder.items];
+            const directObjectSpread = { ...holder };
+            const directArraySpread = [...holder.items];
             const objectRestAlias = objectRest;
             const arrayRestAlias = arrayRest;
             let replacedExternal = holder.callbacks;
@@ -2904,6 +2951,12 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             arrayRest.run = run;
             objectRestAlias.run = run;
             arrayRestAlias.run = run;
+            excludedObjectRest.callbacks = {};
+            excludedObjectRest.callbacks.run = run;
+            overriddenObjectSpread.callbacks.run = run;
+            prefixedArraySpread[0].run = run;
+            directObjectSpread.callbacks = run;
+            directArraySpread[0] = run;
             replacedExternal.run = run;
             replacedInBranches.run = run;
             replacedConditionally.run = run;
