@@ -10086,7 +10086,7 @@ impl<'a> Visit<'a> for JsonReplacerArrayUseCollector<'_> {
         let Some(symbol) = reference.symbol_id() else {
             self.prototype_hazard |= matches!(
                 identifier.name.as_str(),
-                "Array" | "Object" | "Reflect" | "globalThis" | "self" | "window"
+                "Array" | "Object" | "Reflect" | "eval" | "globalThis" | "self" | "window"
             );
             return;
         };

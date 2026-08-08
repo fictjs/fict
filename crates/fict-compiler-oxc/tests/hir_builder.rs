@@ -12541,6 +12541,11 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "direct eval mutates appended replacer properties",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = []; replacer.push('safe'); eval(\"replacer.push('unsafe')\");",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
             "indirectly appended replacer array item",
             "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; Array.prototype.push.call(replacer, 'unsafe');",
             "JSON.stringify(source, replacer);",
