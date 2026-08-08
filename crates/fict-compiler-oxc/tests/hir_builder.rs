@@ -2808,6 +2808,97 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "large reversed external array element callback slot",
+            "const items = new Array(5000); items[4999] = holder.item; items.reverse(); const run = () => count;",
+            "items[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "reversed external array element callback slot",
+            "const items = [{}, holder.item]; items.reverse(); const run = () => count;",
+            "items[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "aliased reversed external array element callback slot",
+            "const items = [{}, holder.item]; const alias = items; alias.reverse(); const run = () => count;",
+            "items[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "snapshotted pre-reverse external array element callback slot",
+            "const items = [{}, holder.item]; const copy = items.slice(); items.reverse(); const run = () => count;",
+            "copy[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "chained in-place external array element callback slot",
+            "const items = [holder.item, {}, {}]; items.reverse(); items.shift(); const run = () => count;",
+            "items[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "sorted external array element callback slot",
+            "const items = [{}, holder.item]; items.sort(() => -1); const run = () => count;",
+            "items[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "shifted external array element callback slot",
+            "const items = [{}, holder.item]; items.shift(); const run = () => count;",
+            "items[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "unshifted external array element callback slot",
+            "const items = [holder.item]; items.unshift({}); const run = () => count;",
+            "items[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "pushed external array element callback slot",
+            "const items = [{}]; items.push(holder.item); const run = () => count;",
+            "items[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "spliced-in external array element callback slot",
+            "const items = [{}]; items.splice(1, 0, holder.item); const run = () => count;",
+            "items[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "spliced-shifted external array element callback slot",
+            "const items = [{}, holder.item]; items.splice(0, 1); const run = () => count;",
+            "items[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "copied-within external array element callback slot",
+            "const items = [holder.item, {}]; items.copyWithin(1, 0, 1); const run = () => count;",
+            "items[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "filled external array element callback slot",
+            "const items = [{}]; items.fill(holder.item); const run = () => count;",
+            "items[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "sorted-copy external array element callback slot",
             "const items = [{}, holder.item]; const copy = items.toSorted(() => 0); const run = () => count;",
             "copy[0].run = run;",
@@ -3637,8 +3728,10 @@ fn large_array_results_bound_provenance_expansion() {
             const huge = new Array(4294967295);
             const reversed = huge.toReversed();
             const filtered = huge.filter(() => true);
+            huge.reverse();
             reversed[0] = run;
             filtered[0] = run;
+            huge[0] = run;
             return count;
         }
     "#;
@@ -3656,6 +3749,74 @@ fn large_array_results_bound_provenance_expansion() {
             )
         }),
         "large fresh arrays must remain local without enumerating every slot: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn in_place_array_mutations_preserve_local_storage() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const run = () => count;
+            const local = {};
+            const reversed = [holder.item, local];
+            const reversedAlias = reversed;
+            const sorted = [local];
+            const sortedWithComparator = [local, {}];
+            const shifted = [{}, local];
+            const unshifted = [local];
+            const pushed = [{}];
+            const inserted = [{}];
+            const spliced = [{}, local];
+            const copiedWithin = [local, holder.item];
+            const filled = [holder.item];
+            const popped = [{}, holder.item];
+            const snapshottedSource = [local, holder.item];
+            const snapshotted = snapshottedSource.slice();
+            reversedAlias.reverse();
+            sorted.sort();
+            sortedWithComparator.sort(() => 0);
+            shifted.shift();
+            unshifted.unshift({});
+            pushed.push(local);
+            inserted.splice(1, 0, local);
+            spliced.splice(0, 1);
+            copiedWithin.copyWithin(1, 0, 1);
+            filled.fill(local);
+            popped.pop();
+            popped.push(local);
+            snapshottedSource.reverse();
+            reversed[0].run = run;
+            sorted[0].run = run;
+            sortedWithComparator[0].run = run;
+            shifted[0].run = run;
+            unshifted[1].run = run;
+            pushed[1].run = run;
+            inserted[1].run = run;
+            spliced[0].run = run;
+            copiedWithin[1].run = run;
+            filled[0].run = run;
+            popped[1].run = run;
+            snapshotted[0].run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "in-place mutations must retain local element identities: {:?}",
         output.diagnostics
     );
 }

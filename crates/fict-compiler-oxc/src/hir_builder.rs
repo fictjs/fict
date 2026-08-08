@@ -20472,6 +20472,14 @@ struct ExternalStorageShallowCopy {
     projection: ExternalStorageShallowCopyProjection,
 }
 
+struct LocalArrayMutationPlan {
+    source: StaticAliasPath,
+    snapshot: StaticAliasPath,
+    method: String,
+    source_length: Option<usize>,
+    stable_arguments: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum ExternalStorageShallowCopyProjection {
     Identity,
@@ -20543,6 +20551,99 @@ impl ExternalStorageShallowCopy {
 }
 
 impl ExternalStorageFlowState {
+    fn rebase_subtree_path(
+        path: &StaticAliasPath,
+        source: &StaticAliasPath,
+        target: &StaticAliasPath,
+    ) -> StaticAliasPath {
+        if !path.starts_with(source) {
+            return path.clone();
+        }
+        let mut rebased = target.clone();
+        rebased
+            .properties
+            .extend_from_slice(&path.properties[source.properties.len()..]);
+        rebased.element_wildcard |= path.element_wildcard;
+        rebased.canonicalized()
+    }
+
+    fn snapshot_subtree(&mut self, target: &StaticAliasPath, source: &StaticAliasPath) {
+        let aliases = self
+            .aliases
+            .iter()
+            .filter(|(path, _)| path.starts_with(source))
+            .map(|(path, candidates)| {
+                (
+                    Self::rebase_subtree_path(path, source, target),
+                    candidates
+                        .iter()
+                        .map(|candidate| Self::rebase_subtree_path(candidate, source, target))
+                        .collect::<BTreeSet<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let attached_alias_roots = self
+            .attached_alias_roots
+            .iter()
+            .filter(|(path, _)| path.starts_with(source))
+            .map(|(path, roots)| {
+                (
+                    Self::rebase_subtree_path(path, source, target),
+                    roots.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let shallow_copies = self
+            .shallow_copies
+            .iter()
+            .filter(|(path, _)| path.starts_with(source))
+            .map(|(path, copies)| {
+                (
+                    Self::rebase_subtree_path(path, source, target),
+                    copies
+                        .iter()
+                        .cloned()
+                        .map(|mut copy| {
+                            copy.source = Self::rebase_subtree_path(&copy.source, source, target);
+                            copy
+                        })
+                        .collect::<BTreeSet<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (path, candidates) in aliases {
+            self.aliases.entry(path).or_default().extend(candidates);
+        }
+        for (path, roots) in attached_alias_roots {
+            self.attached_alias_roots
+                .entry(path)
+                .or_default()
+                .extend(roots);
+        }
+        for (path, copies) in shallow_copies {
+            self.shallow_copies.entry(path).or_default().extend(copies);
+        }
+    }
+
+    fn detach_shallow_copy_sources(
+        &mut self,
+        source: &StaticAliasPath,
+        snapshot: &StaticAliasPath,
+    ) {
+        for (target, copies) in &mut self.shallow_copies {
+            if target.starts_with(source) {
+                continue;
+            }
+            *copies = std::mem::take(copies)
+                .into_iter()
+                .map(|mut copy| {
+                    copy.source = Self::rebase_subtree_path(&copy.source, source, snapshot);
+                    copy
+                })
+                .collect();
+        }
+    }
+
     fn merge(left: Self, right: Self) -> Self {
         let mut merged = left;
         for (target, sources) in right.aliases {
@@ -30458,6 +30559,311 @@ impl StaticHookAliasCollector<'_> {
         true
     }
 
+    fn array_mutation_method_is_intact(&self, source: &StaticAliasPath, method: &str) -> bool {
+        self.array_copy_global_method_is_intact(method)
+            && self.path_is_currently_intact(&source.clone().with_property(method.to_string()))
+    }
+
+    fn prepare_local_array_mutation(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<LocalArrayMutationPlan> {
+        if call.optional {
+            return None;
+        }
+        let (receiver, method) = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) if !member.optional => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) if !member.optional => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        if !is_mutating_array_method(&method) {
+            return None;
+        }
+        let raw_source = self.materialize_array_copy_source(receiver)?;
+        if !self.known_array_path(&raw_source)
+            || !self.array_mutation_method_is_intact(&raw_source, &method)
+        {
+            return None;
+        }
+        let source = resolve_static_alias_path(&self.aliases, &raw_source);
+        let snapshot = StaticAliasPath::dynamic_this(call.span)
+            .with_property("<array-mutation-snapshot>".to_string());
+        self.dynamic_path_owner_depths
+            .insert((call.span.start, call.span.end), self.function_depth);
+        self.external_storage_flow
+            .snapshot_subtree(&snapshot, &source);
+        Some(LocalArrayMutationPlan {
+            source_length: self.known_array_length(&source),
+            stable_arguments: call.arguments.iter().all(|argument| {
+                argument.as_expression().is_some_and(|argument| {
+                    !structured_control_flow::expression_has_effects(argument)
+                })
+            }),
+            source,
+            snapshot,
+            method,
+        })
+    }
+
+    fn record_array_mutation_snapshot_range(
+        &mut self,
+        plan: &LocalArrayMutationPlan,
+        target_start: usize,
+        source_start: usize,
+        length: usize,
+    ) {
+        if length == 0 {
+            return;
+        }
+        self.record_external_storage_array_range_copy(
+            plan.source.clone(),
+            &plan.snapshot,
+            target_start,
+            source_start,
+            length,
+        );
+    }
+
+    fn record_broad_array_mutation_snapshot(&mut self, plan: &LocalArrayMutationPlan) {
+        if let Some(length) = plan.source_length
+            && length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS
+        {
+            self.record_external_storage_array_element_copies(
+                plan.source.clone(),
+                (0..length).map(|index| plan.snapshot.clone().with_property(index.to_string())),
+            );
+        } else {
+            self.record_opaque_external_storage_array_elements(plan.source.clone());
+        }
+    }
+
+    fn apply_local_array_mutation(
+        &mut self,
+        call: &CallExpression<'_>,
+        plan: LocalArrayMutationPlan,
+    ) {
+        let retained_json_replacer_property_lists = self
+            .local_json_replacer_property_lists
+            .iter()
+            .filter(|(target, _)| resolve_static_alias_path(&self.aliases, target) == plan.source)
+            .map(|(target, properties)| (target.clone(), properties.clone()))
+            .collect::<Vec<_>>();
+        self.external_storage_flow
+            .detach_shallow_copy_sources(&plan.source, &plan.snapshot);
+        self.clear_overlapping_aliases(&plan.source.with_element_wildcard());
+        self.open_structured_containers.insert(plan.source.clone());
+        let Some(length) = plan.source_length else {
+            self.record_opaque_external_storage_array_elements(plan.source.clone());
+            self.array_lengths.remove(&plan.source);
+            self.local_json_replacer_property_lists
+                .extend(retained_json_replacer_property_lists);
+            return;
+        };
+        if length > MAX_PRECISE_ARRAY_PROVENANCE_SLOTS || !plan.stable_arguments {
+            self.record_opaque_external_storage_array_elements(plan.source.clone());
+            self.array_lengths.remove(&plan.source);
+            self.local_json_replacer_property_lists
+                .extend(retained_json_replacer_property_lists);
+            return;
+        }
+
+        let mut new_length = Some(length);
+        match plan.method.as_str() {
+            "reverse" => {
+                for target_index in 0..length {
+                    let source_index = length - target_index - 1;
+                    self.record_array_mutation_snapshot_range(&plan, target_index, source_index, 1);
+                }
+            }
+            "sort" => self.record_broad_array_mutation_snapshot(&plan),
+            "copyWithin" => {
+                let target = call
+                    .arguments
+                    .first()
+                    .map_or(Some(0), |argument| {
+                        argument
+                            .as_expression()
+                            .and_then(Self::static_array_integer)
+                    })
+                    .map(|target| Self::normalized_array_start(target, length));
+                let start = call.arguments.get(1).map_or(Some(0), |argument| {
+                    argument
+                        .as_expression()
+                        .and_then(Self::static_array_integer)
+                });
+                let end = call
+                    .arguments
+                    .get(2)
+                    .map_or(Some(length as i64), |argument| {
+                        argument
+                            .as_expression()
+                            .and_then(Self::static_array_integer)
+                    });
+                if let (Some(target), Some(start), Some(end)) = (target, start, end) {
+                    let start = Self::normalized_array_start(start, length);
+                    let end = Self::normalized_array_start(end, length);
+                    let copied = end.saturating_sub(start).min(length.saturating_sub(target));
+                    self.record_array_mutation_snapshot_range(&plan, 0, 0, target);
+                    self.record_array_mutation_snapshot_range(&plan, target, start, copied);
+                    self.record_array_mutation_snapshot_range(
+                        &plan,
+                        target.saturating_add(copied),
+                        target.saturating_add(copied),
+                        length.saturating_sub(target.saturating_add(copied)),
+                    );
+                } else {
+                    self.record_opaque_external_storage_array_elements(plan.source.clone());
+                    new_length = None;
+                }
+            }
+            "fill" => {
+                let start = call.arguments.get(1).map_or(Some(0), |argument| {
+                    argument
+                        .as_expression()
+                        .and_then(Self::static_array_integer)
+                });
+                let end = call
+                    .arguments
+                    .get(2)
+                    .map_or(Some(length as i64), |argument| {
+                        argument
+                            .as_expression()
+                            .and_then(Self::static_array_integer)
+                    });
+                if let (Some(start), Some(end)) = (start, end) {
+                    let start = Self::normalized_array_start(start, length);
+                    let end = Self::normalized_array_start(end, length).max(start);
+                    self.record_array_mutation_snapshot_range(&plan, 0, 0, start);
+                    self.record_array_mutation_snapshot_range(
+                        &plan,
+                        end,
+                        end,
+                        length.saturating_sub(end),
+                    );
+                    if let Some(value) = call
+                        .arguments
+                        .first()
+                        .and_then(|argument| argument.as_expression())
+                    {
+                        for index in start..end {
+                            self.collect_initializer(
+                                plan.source.clone().with_property(index.to_string()),
+                                value,
+                            );
+                        }
+                    }
+                } else {
+                    self.record_opaque_external_storage_array_elements(plan.source.clone());
+                    new_length = None;
+                }
+            }
+            "pop" => {
+                let retained = length.saturating_sub(1);
+                self.record_array_mutation_snapshot_range(&plan, 0, 0, retained);
+                new_length = Some(retained);
+            }
+            "push" => {
+                self.record_array_mutation_snapshot_range(&plan, 0, 0, length);
+                let result_length = length.checked_add(call.arguments.len());
+                if let Some(result_length) = result_length {
+                    for (offset, argument) in call.arguments.iter().enumerate() {
+                        self.collect_initializer(
+                            plan.source
+                                .clone()
+                                .with_property(length.saturating_add(offset).to_string()),
+                            argument.as_expression().expect("stable array argument"),
+                        );
+                    }
+                    new_length = Some(result_length);
+                } else {
+                    self.record_opaque_external_storage_array_elements(plan.source.clone());
+                    new_length = None;
+                }
+            }
+            "shift" => {
+                let retained = length.saturating_sub(1);
+                self.record_array_mutation_snapshot_range(&plan, 0, 1, retained);
+                new_length = Some(retained);
+            }
+            "unshift" => {
+                let inserted = call.arguments.len();
+                if let Some(result_length) = length.checked_add(inserted) {
+                    self.record_array_mutation_snapshot_range(&plan, inserted, 0, length);
+                    for (index, argument) in call.arguments.iter().enumerate() {
+                        self.collect_initializer(
+                            plan.source.clone().with_property(index.to_string()),
+                            argument.as_expression().expect("stable array argument"),
+                        );
+                    }
+                    new_length = Some(result_length);
+                } else {
+                    self.record_opaque_external_storage_array_elements(plan.source.clone());
+                    new_length = None;
+                }
+            }
+            "splice" => {
+                let precise = (|| {
+                    let start = call.arguments.first().map_or(Some(0), |argument| {
+                        argument
+                            .as_expression()
+                            .and_then(Self::static_array_integer)
+                    })?;
+                    let start = Self::normalized_array_start(start, length);
+                    let delete = if call.arguments.is_empty() {
+                        0
+                    } else if call.arguments.len() == 1 {
+                        length - start
+                    } else {
+                        let delete = call
+                            .arguments
+                            .get(1)?
+                            .as_expression()
+                            .and_then(Self::static_array_integer)?;
+                        usize::try_from(delete.max(0))
+                            .unwrap_or(usize::MAX)
+                            .min(length - start)
+                    };
+                    Some((start, delete))
+                })();
+                if let Some((start, delete)) = precise {
+                    let inserted = call.arguments.len().saturating_sub(2);
+                    self.record_array_mutation_snapshot_range(&plan, 0, 0, start);
+                    for (offset, argument) in call.arguments.iter().skip(2).enumerate() {
+                        self.collect_initializer(
+                            plan.source
+                                .clone()
+                                .with_property(start.saturating_add(offset).to_string()),
+                            argument.as_expression().expect("stable array argument"),
+                        );
+                    }
+                    let suffix = length.saturating_sub(start.saturating_add(delete));
+                    self.record_array_mutation_snapshot_range(
+                        &plan,
+                        start.saturating_add(inserted),
+                        start.saturating_add(delete),
+                        suffix,
+                    );
+                    new_length = length.saturating_sub(delete).checked_add(inserted);
+                } else {
+                    self.record_opaque_external_storage_array_elements(plan.source.clone());
+                    new_length = None;
+                }
+            }
+            _ => unreachable!("mutating array methods are exhaustively handled"),
+        }
+        if let Some(length) = new_length {
+            self.array_lengths.insert(plan.source, length);
+        } else {
+            self.array_lengths.remove(&plan.source);
+        }
+        self.local_json_replacer_property_lists
+            .extend(retained_json_replacer_property_lists);
+    }
+
     fn record_instance_array_copy_result(
         &mut self,
         target: &StaticAliasPath,
@@ -40307,6 +40713,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_json_replacer_array_mutation(call);
+        let local_array_mutation = self.prepare_local_array_mutation(call);
         self.record_local_object_assign(call);
         let _ = self.record_local_object_value_enumeration(call);
         let local_object_from_entries = self.record_local_object_from_entries_result(call);
@@ -40455,6 +40862,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
+        if let Some(mutation) = local_array_mutation {
+            self.apply_local_array_mutation(call, mutation);
+        }
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
         if let Some(mutation) = local_set_prototype_of {
