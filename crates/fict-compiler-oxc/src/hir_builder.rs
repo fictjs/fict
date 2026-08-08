@@ -2007,8 +2007,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter(|binding| binding.mutated)
             .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
             .collect();
-        let mut known_arrays = KnownArrayCollector::default();
+        let mut known_arrays = KnownArrayCollector::new(self.semantic.scoping());
         known_arrays.visit_program(program);
+        known_arrays.resolve_aliases();
         let mut json_replacer_array_uses =
             JsonReplacerArrayUseCollector::new(self.semantic.scoping());
         json_replacer_array_uses.visit_program(program);
@@ -6693,12 +6694,37 @@ struct JsxCollector<'facts> {
     tags: Vec<(RawJsxName, SourceSpan)>,
 }
 
-#[derive(Default)]
-struct KnownArrayCollector {
+struct KnownArrayCollector<'semantic> {
+    scoping: &'semantic Scoping,
     symbols: BTreeSet<SymbolId>,
+    aliases: Vec<(SymbolId, SymbolId)>,
 }
 
-impl<'a> Visit<'a> for KnownArrayCollector {
+impl<'semantic> KnownArrayCollector<'semantic> {
+    fn new(scoping: &'semantic Scoping) -> Self {
+        Self {
+            scoping,
+            symbols: BTreeSet::new(),
+            aliases: Vec::new(),
+        }
+    }
+
+    fn resolve_aliases(&mut self) {
+        loop {
+            let mut changed = false;
+            for (target, source) in &self.aliases {
+                if self.symbols.contains(source) {
+                    changed |= self.symbols.insert(*target);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+}
+
+impl<'a> Visit<'a> for KnownArrayCollector<'_> {
     fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
         if declaration.kind == VariableDeclarationKind::Const {
             for declarator in &declaration.declarations {
@@ -6707,12 +6733,23 @@ impl<'a> Visit<'a> for KnownArrayCollector {
                 else {
                     continue;
                 };
-                if matches!(
-                    initializer.get_inner_expression(),
-                    Expression::ArrayExpression(_)
-                ) && let Some(symbol) = binding.symbol_id.get()
-                {
-                    self.symbols.insert(symbol);
+                let Some(target) = binding.symbol_id.get() else {
+                    continue;
+                };
+                match initializer.get_inner_expression() {
+                    Expression::ArrayExpression(_) => {
+                        self.symbols.insert(target);
+                    }
+                    Expression::Identifier(identifier) => {
+                        if let Some(source) = identifier
+                            .reference_id
+                            .get()
+                            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+                        {
+                            self.aliases.push((target, source));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -38695,6 +38732,12 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 if (configured && index == 0)
                     || self.direct_state_symbol(*argument).is_some()
                     || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
+                    || self.is_non_retaining_null_prototype_array_target(
+                        &call.callee,
+                        index,
+                        *argument,
+                        arguments,
+                    )
                     || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                     || self.is_non_escaping_string_replacer(
                         &call.callee,
@@ -38719,6 +38762,12 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         for (index, argument) in arguments.iter().enumerate() {
             if (configured && index == 0)
                 || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
+                || self.is_non_retaining_null_prototype_array_target(
+                    &call.callee,
+                    index,
+                    *argument,
+                    arguments,
+                )
                 || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                 || self.is_non_escaping_string_replacer(&call.callee, index, *argument, arguments)
                 || self.is_non_escaping_json_replacer_array(&call.callee, index, *argument)
@@ -39163,6 +39212,38 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         ["apply", "construct"].into_iter().any(|method| {
             let target = reflect.clone().with_property(method.to_string());
+            resolved == target
+                && self.callback_aliases.path_is_intact(&path)
+                && self.callback_aliases.path_is_intact(&target)
+        })
+    }
+
+    fn is_non_retaining_null_prototype_array_target(
+        &self,
+        callee: &Expression<'_>,
+        index: usize,
+        argument: EscapeArgument<'_, '_>,
+        arguments: &[EscapeArgument<'_, '_>],
+    ) -> bool {
+        if index != 0
+            || argument.spread
+            || !self.is_known_array_value(argument.expression)
+            || arguments.len() < 2
+            || arguments.iter().any(|argument| argument.spread)
+            || !matches!(
+                arguments[1].expression.get_inner_expression(),
+                Expression::NullLiteral(_)
+            )
+        {
+            return false;
+        }
+        let Some(path) = static_alias_source_path(self.scoping, callee) else {
+            return false;
+        };
+        let resolved = self.callback_aliases.resolve(&path);
+        ["Object", "Reflect"].into_iter().any(|owner| {
+            let target = StaticAliasPath::unresolved_global(owner.to_string())
+                .with_property("setPrototypeOf".to_string());
             resolved == target
                 && self.callback_aliases.path_is_intact(&path)
                 && self.callback_aliases.path_is_intact(&target)

@@ -12418,6 +12418,21 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "null-prototype replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; Object.setPrototypeOf(replacer, null);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "Reflect null-prototype replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; Reflect.setPrototypeOf(replacer, null);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "aliased null-prototype array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; const alias = replacer; const setPrototype = Object.setPrototypeOf; setPrototype(alias, null);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
             "inline null-prototype array callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 };",
             "Object.setPrototypeOf([run], null); JSON.stringify(source);",
