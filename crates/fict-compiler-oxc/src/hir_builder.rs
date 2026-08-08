@@ -21337,6 +21337,148 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
 }
 
 impl StaticHookAliasCollector<'_> {
+    fn record_assignment_target_alias_snapshot(&mut self, span: Span, path: StaticAliasPath) {
+        let historical = self.path_owner_depth(&path) < self.function_depth
+            || self
+                .cross_scope_alias_targets
+                .iter()
+                .any(|target| target.overlaps(&path));
+        let path = if historical {
+            path
+        } else {
+            resolve_static_alias_path(&self.aliases, &path)
+        };
+        if let Some(root) = path.binding_root()
+            && self.attached_callable_parameters.contains(&root)
+        {
+            self.assignment_attached_parameter_roots
+                .entry((span.start, span.end))
+                .or_default()
+                .insert(root);
+        }
+        self.assignment_target_alias_snapshots
+            .push(((span.start, span.end), path, historical));
+    }
+
+    fn structured_assignment_target_alias_paths(
+        &mut self,
+        target: &AssignmentTarget<'_>,
+    ) -> Vec<StaticAliasPath> {
+        match target {
+            AssignmentTarget::StaticMemberExpression(member) if !member.optional => self
+                .structured_member_assignment_target_alias_paths(
+                    &member.object,
+                    Some(member.property.name.to_string()),
+                ),
+            AssignmentTarget::ComputedMemberExpression(member) if !member.optional => self
+                .structured_member_assignment_target_alias_paths(
+                    &member.object,
+                    static_member_name(&member.expression),
+                ),
+            AssignmentTarget::TSAsExpression(expression) => {
+                self.structured_expression_assignment_target_alias_paths(&expression.expression)
+            }
+            AssignmentTarget::TSSatisfiesExpression(expression) => {
+                self.structured_expression_assignment_target_alias_paths(&expression.expression)
+            }
+            AssignmentTarget::TSNonNullExpression(expression) => {
+                self.structured_expression_assignment_target_alias_paths(&expression.expression)
+            }
+            AssignmentTarget::TSTypeAssertion(expression) => {
+                self.structured_expression_assignment_target_alias_paths(&expression.expression)
+            }
+            AssignmentTarget::AssignmentTargetIdentifier(_)
+            | AssignmentTarget::PrivateFieldExpression(_)
+            | AssignmentTarget::ArrayAssignmentTarget(_)
+            | AssignmentTarget::ObjectAssignmentTarget(_)
+            | AssignmentTarget::StaticMemberExpression(_)
+            | AssignmentTarget::ComputedMemberExpression(_) => Vec::new(),
+        }
+    }
+
+    fn structured_member_assignment_target_alias_paths(
+        &mut self,
+        object: &Expression<'_>,
+        property: Option<String>,
+    ) -> Vec<StaticAliasPath> {
+        let mut owners = match object.get_inner_expression() {
+            Expression::CallExpression(call) => self.factory_assignment_result_paths(call),
+            _ => None,
+        }
+        .unwrap_or_default();
+        if owners.is_empty() {
+            let Some(owner) = self.local_or_structured_member_owner_path(object) else {
+                return Vec::new();
+            };
+            owners.extend(
+                self.returned_structured_instances_for_path(&owner)
+                    .into_iter()
+                    .map(|(source, _)| source),
+            );
+            if owners.is_empty() {
+                owners.push(owner);
+            }
+        }
+        owners
+            .into_iter()
+            .map(|owner| {
+                property.as_ref().map_or_else(
+                    || owner.with_element_wildcard(),
+                    |property| owner.with_property(property.clone()),
+                )
+            })
+            .collect()
+    }
+
+    fn factory_assignment_result_paths(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<Vec<StaticAliasPath>> {
+        let invocations = self
+            .immediate_callable_result_invocation_facts(call)
+            .or_else(|| self.local_invocation_facts(&call.callee, &call.arguments))?;
+        let mut paths = Vec::new();
+        for invocation in invocations {
+            let (results, _) = self.local_callable_results_for_invocation(&invocation);
+            for result in results {
+                match self.bind_local_callable_result(result, &invocation) {
+                    LocalCallableResult::Reference(source) => paths.push(source),
+                    LocalCallableResult::Direct { span, .. }
+                    | LocalCallableResult::Structured { span, .. } => {
+                        paths.push(StaticAliasPath::dynamic_this(Span::new(span.0, span.1)))
+                    }
+                    LocalCallableResult::Bound { .. } => {
+                        paths.push(StaticAliasPath::dynamic_this(call.span));
+                    }
+                    LocalCallableResult::Invocation(_) => unreachable!(
+                        "callable result invocations must resolve before assignment analysis"
+                    ),
+                    LocalCallableResult::Unknown => return None,
+                }
+            }
+        }
+        (!paths.is_empty()).then_some(paths)
+    }
+
+    fn structured_expression_assignment_target_alias_paths(
+        &mut self,
+        target: &Expression<'_>,
+    ) -> Vec<StaticAliasPath> {
+        match target.get_inner_expression() {
+            Expression::StaticMemberExpression(member) if !member.optional => self
+                .structured_member_assignment_target_alias_paths(
+                    &member.object,
+                    Some(member.property.name.to_string()),
+                ),
+            Expression::ComputedMemberExpression(member) if !member.optional => self
+                .structured_member_assignment_target_alias_paths(
+                    &member.object,
+                    static_member_name(&member.expression),
+                ),
+            _ => Vec::new(),
+        }
+    }
+
     fn record_external_callable_parameter(&mut self, pattern: &BindingPattern<'_>) {
         let mut bindings = PatternBindingCollector::default();
         bindings.visit_binding_pattern(pattern);
@@ -37924,29 +38066,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             let Some(path) = static_alias_invalidation_path(&target.place) else {
                 continue;
             };
-            let historical = self.path_owner_depth(&path) < self.function_depth
-                || self
-                    .cross_scope_alias_targets
-                    .iter()
-                    .any(|target| target.overlaps(&path));
-            let path = if historical {
-                path
-            } else {
-                resolve_static_alias_path(&self.aliases, &path)
-            };
-            if let Some(root) = path.binding_root()
-                && self.attached_callable_parameters.contains(&root)
-            {
-                self.assignment_attached_parameter_roots
-                    .entry((assignment.span.start, assignment.span.end))
-                    .or_default()
-                    .insert(root);
-            }
-            self.assignment_target_alias_snapshots.push((
-                (assignment.span.start, assignment.span.end),
-                path,
-                historical,
-            ));
+            self.record_assignment_target_alias_snapshot(assignment.span, path);
         }
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
         let prototype_path = self.prototype_assignment_target_path(&assignment.left);
@@ -37971,6 +38091,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 );
                 assignment.operator == OxcAssignmentOperator::Assign && invokes_setter
             };
+        if place
+            .as_ref()
+            .and_then(static_alias_invalidation_path)
+            .is_none()
+        {
+            for path in self.structured_assignment_target_alias_paths(&assignment.left) {
+                self.record_assignment_target_alias_snapshot(assignment.span, path);
+            }
+        }
         let suppressed_getter_reads = if assignment.operator == OxcAssignmentOperator::Assign {
             let mut targets = Vec::new();
             let mut projected_targets = Vec::new();
