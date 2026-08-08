@@ -6796,6 +6796,8 @@ fn array_method_returns_fresh_container(method: &str) -> bool {
     )
 }
 
+const MAX_PRECISE_ARRAY_PROVENANCE_SLOTS: usize = 4096;
+
 fn global_constructor_creates_fresh_storage(constructor: &str) -> bool {
     matches!(
         constructor,
@@ -30226,13 +30228,15 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn array_element_copy_sources(&self, source: &StaticAliasPath) -> Vec<StaticAliasPath> {
-        self.known_array_length(source)
-            .map(|length| {
-                (0..length)
-                    .map(|index| source.clone().with_property(index.to_string()))
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![source.with_element_wildcard()])
+        match self.known_array_length(source) {
+            Some(length) if length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS => (0..length)
+                .map(|index| source.clone().with_property(index.to_string()))
+                .collect(),
+            Some(_) => vec![StaticAliasPath::unresolved_global(
+                "<opaque-array-element>".to_string(),
+            )],
+            None => vec![source.with_element_wildcard()],
+        }
     }
 
     fn static_array_numeric_value(expression: &Expression<'_>) -> Option<f64> {
@@ -30604,7 +30608,9 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             "toReversed" => {
-                if let Some(length) = source_length {
+                if let Some(length) = source_length
+                    && length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS
+                {
                     for target_index in 0..length {
                         let source_index = length - target_index - 1;
                         self.record_external_storage_array_index_copy(
@@ -30613,6 +30619,9 @@ impl StaticHookAliasCollector<'_> {
                             &source.clone().with_property(source_index.to_string()),
                         );
                     }
+                    self.array_lengths.insert(target.clone(), length);
+                } else if let Some(length) = source_length {
+                    self.record_opaque_external_storage_array_elements(target.clone());
                     self.array_lengths.insert(target.clone(), length);
                 } else {
                     self.record_array_container_source(target, &source, true);

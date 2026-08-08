@@ -2801,6 +2801,13 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "large reversed-copy external array element callback slot",
+            "const items = new Array(5000); items[4999] = holder.item; const copy = items.toReversed(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "sorted-copy external array element callback slot",
             "const items = [{}, holder.item]; const copy = items.toSorted(() => 0); const run = () => count;",
             "copy[0].run = run;",
@@ -3616,6 +3623,39 @@ fn fresh_array_results_preserve_precise_local_element_provenance() {
             )
         }),
         "fresh array results must retain only the selected external element identities: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn large_array_results_bound_provenance_expansion() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const run = () => count;
+            const huge = new Array(4294967295);
+            const reversed = huge.toReversed();
+            const filtered = huge.filter(() => true);
+            reversed[0] = run;
+            filtered[0] = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "large fresh arrays must remain local without enumerating every slot: {:?}",
         output.diagnostics
     );
 }
