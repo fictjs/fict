@@ -9922,6 +9922,7 @@ fn static_member_name(expression: &Expression<'_>) -> Option<String> {
 struct GeneratorExecutionProof {
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_body_spans: BTreeSet<(u32, u32)>,
+    unexecuted_callable_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     returned_callable_spans: BTreeSet<(u32, u32)>,
 }
@@ -10607,6 +10608,8 @@ struct GeneratorExecutionCollector<'semantic> {
     retained_invocation_spans: Vec<RetainedInvocationSpans>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     explicitly_merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
+    json_serialized_value_paths: BTreeSet<StaticAliasPath>,
+    directly_unexecuted_callable_spans: BTreeSet<(u32, u32)>,
 }
 
 impl<'semantic> GeneratorExecutionCollector<'semantic> {
@@ -10659,6 +10662,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             retained_invocation_spans: Vec::new(),
             discarded_invocation_spans: BTreeSet::new(),
             explicitly_merely_observed_callable_paths: BTreeSet::new(),
+            json_serialized_value_paths: BTreeSet::new(),
+            directly_unexecuted_callable_spans: BTreeSet::new(),
         }
     }
 
@@ -14267,6 +14272,93 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         true
     }
 
+    fn record_json_serialized_value(&mut self, expression: &Expression<'_>) {
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            self.json_serialized_value_paths.insert(source.clone());
+            self.record_merely_observed_value_read(source, source_span);
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ObjectExpression(object) => {
+                let target = StaticAliasPath::dynamic_this(object.span);
+                self.json_serialized_value_paths.insert(target.clone());
+                self.record_discarded_inline_enumerated_value(target, expression);
+            }
+            Expression::ArrayExpression(array) => {
+                let target = StaticAliasPath::dynamic_this(array.span);
+                self.json_serialized_value_paths.insert(target.clone());
+                self.record_discarded_inline_enumerated_value(target, expression);
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.record_json_serialized_value(&expression.consequent);
+                self.record_json_serialized_value(&expression.alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.record_json_serialized_value(&expression.left);
+                self.record_json_serialized_value(&expression.right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.record_json_serialized_value(value);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.record_json_serialized_value(&expression.right);
+            }
+            Expression::FunctionExpression(function) => {
+                self.directly_unexecuted_callable_spans
+                    .insert((function.span.start, function.span.end));
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                self.directly_unexecuted_callable_spans
+                    .insert((function.span.start, function.span.end));
+            }
+            _ => self.record_discarded_value_read(expression),
+        }
+    }
+
+    fn record_json_stringify_arguments(
+        &mut self,
+        call: &CallExpression<'_>,
+        result_discarded: bool,
+    ) -> bool {
+        let json = StaticAliasPath::unresolved_global("JSON".to_string());
+        if !self.callable_resolves_to_path(
+            Self::immediate_callable_value(&call.callee),
+            &json.clone().with_property("stringify".to_string()),
+        ) || !self.method_path_is_intact(&json, "stringify")
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        let parameters = NonConsumingParameters {
+            fixed: BTreeMap::from([(0, false), (2, false)]),
+            safe_tail_start: Some(3),
+        };
+        for (index, argument) in call.arguments.iter().enumerate() {
+            let argument = argument
+                .as_expression()
+                .expect("JSON.stringify spread arguments were rejected");
+            if index == 0 {
+                self.record_json_serialized_value(argument);
+            }
+            self.record_pending_callable_argument(
+                argument,
+                None,
+                Some(&parameters),
+                index,
+                result_discarded,
+                None,
+            );
+        }
+        true
+    }
+
     fn discarded_builtin_callback_result_guard(
         &self,
         call: &CallExpression<'_>,
@@ -14323,6 +14415,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let result_discarded = self
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
+        if self.record_json_stringify_arguments(call, result_discarded) {
+            return;
+        }
         if result_discarded && self.record_discarded_object_value_enumeration(call) {
             return;
         }
@@ -17913,7 +18008,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             .iter()
             .filter_map(|(span, guard)| self.method_guard_is_intact(guard).then_some(*span))
             .collect::<BTreeSet<_>>();
-        let forced_executed_targets = self
+        let mut forced_executed_targets = self
             .guarded_generator_targets
             .iter()
             .filter_map(|(target, guard)| {
@@ -17978,6 +18073,20 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .iter()
                 .cloned(),
         );
+        forced_executed_targets.extend(
+            candidates
+                .iter()
+                .filter(|path| {
+                    path.properties
+                        .last()
+                        .is_some_and(|property| property == "toJSON")
+                        && self
+                            .json_serialized_value_paths
+                            .iter()
+                            .any(|source| path.starts_with(source))
+                })
+                .cloned(),
+        );
         let mut targets_by_body = BTreeMap::<_, BTreeSet<_>>::new();
         for (span, target) in &self.generator_body_targets {
             targets_by_body
@@ -18024,8 +18133,14 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
         let mut merely_observed = candidates
             .iter()
-            .filter(|path| path.binding_root().is_some())
-            .chain(self.explicitly_merely_observed_callable_paths.iter())
+            .filter(|path| {
+                path.binding_root().is_some() && !forced_executed_targets.contains(*path)
+            })
+            .chain(
+                self.explicitly_merely_observed_callable_paths
+                    .iter()
+                    .filter(|path| !forced_executed_targets.contains(*path)),
+            )
             .cloned()
             .collect::<BTreeSet<_>>();
         loop {
@@ -18233,6 +18348,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         GeneratorExecutionProof {
             discarded_invocation_spans: self.discarded_invocation_spans,
             unexecuted_body_spans,
+            unexecuted_callable_spans: self.directly_unexecuted_callable_spans,
             merely_observed_callable_paths: merely_observed,
             returned_callable_spans,
         }
@@ -19631,7 +19747,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_bound_callable_history: BTreeMap::new(),
             default_derived_constructors: BTreeMap::new(),
             default_derived_constructor_history: BTreeMap::new(),
-            unreferenced_callable_spans: BTreeSet::new(),
+            unreferenced_callable_spans: generator.unexecuted_callable_spans.clone(),
             deferred_accessor_spans: BTreeSet::new(),
             unexecuted_expression_spans: BTreeSet::new(),
             unexecuted_read_counts: BTreeMap::new(),
@@ -19738,6 +19854,15 @@ impl StaticHookAliasCollector<'_> {
         lexical_receiver: Option<&StaticAliasPath>,
         function_depth: usize,
     ) -> Vec<LocalCallableResult> {
+        if matches!(
+            expression.get_inner_expression(),
+            Expression::ThisExpression(_)
+        ) {
+            return lexical_receiver.map_or_else(
+                || vec![LocalCallableResult::Unknown],
+                |receiver| vec![LocalCallableResult::Reference(receiver.clone())],
+            );
+        }
         if let Some(alternatives) = self.local_bound_callable_initializer(expression) {
             return vec![LocalCallableResult::Bound {
                 callables: alternatives.callables,
@@ -22402,6 +22527,17 @@ impl StaticHookAliasCollector<'_> {
             && self.path_is_currently_intact(&object_method)
     }
 
+    fn is_intact_json_method_callee(&self, callee: &Expression<'_>, method: &str) -> bool {
+        let Some(raw) = static_alias_source_path(self.scoping, callee) else {
+            return false;
+        };
+        let json_method = StaticAliasPath::unresolved_global("JSON".to_string())
+            .with_property(method.to_string());
+        resolve_static_alias_path(&self.aliases, &raw) == json_method
+            && self.path_is_currently_intact(&raw)
+            && self.path_is_currently_intact(&json_method)
+    }
+
     fn local_object_assign_value_paths(
         &mut self,
         expression: &Expression<'_>,
@@ -22692,6 +22828,205 @@ impl StaticHookAliasCollector<'_> {
         self.local_object_value_enumeration_results
             .insert(span, target.clone());
         Some(target)
+    }
+
+    fn record_local_json_to_json(
+        &mut self,
+        source: &StaticAliasPath,
+        span: Span,
+        result_index: &mut usize,
+    ) -> Option<(StaticAliasPath, bool)> {
+        let raw_callee = source.clone().with_property("toJSON".to_string());
+        let target_name = format!("json-stringify-to-json-{}", *result_index);
+        *result_index = result_index.saturating_add(1);
+        let callee = self
+            .materialize_local_getter_result_static_path(raw_callee.clone(), span, &target_name)
+            .map(|(callee, _)| callee)
+            .unwrap_or_else(|| {
+                let prototypes = self.local_object_prototype_member_paths(&raw_callee);
+                if prototypes.len() == 1 {
+                    prototypes
+                        .first()
+                        .cloned()
+                        .expect("one local toJSON prototype")
+                } else {
+                    raw_callee
+                }
+            });
+        let resolved_callee = resolve_static_alias_path(&self.aliases, &callee);
+        let local_callable =
+            self.materialize_local_callable_reference(&callee, self.function_depth);
+        let safe_global_callable =
+            is_safe_global_path(&resolved_callee) && self.path_is_currently_intact(&callee);
+        let definitely_callable = safe_global_callable
+            || local_callable.as_ref().is_some_and(|callable| {
+                matches!(callable,
+                    LocalCallableResult::Bound { callables, .. }
+                        if !callables.is_empty() && callables.iter().all(|callable| !callable.unknown))
+            });
+        let possibly_callable = definitely_callable
+            || local_callable.is_some()
+            || !self.local_callable_path_effect_spans(&callee).is_empty();
+        if !possibly_callable {
+            return None;
+        }
+        let mut receiver = self.returned_structured_reference_receivers(source);
+        if receiver.is_empty() {
+            receiver.push(self.collect_local_invocation_path(source.clone()));
+        }
+        let invocation = self.with_current_bound_callable(
+            LocalInvocationFact {
+                parameters: self.current_invocation_parameters(&callee, &resolved_callee),
+                parameters_resolved: false,
+                owner_returned_callable_span: self.current_returned_callable_span(),
+                creator_owner: None,
+                arguments: vec![LocalInvocationArgumentSegment::Fixed(Vec::new())],
+                argument_offset: 0,
+                raw_callee: Some(callee.clone()),
+                callee: Some(resolved_callee.clone()),
+                historical_callee: self
+                    .path_requires_historical_aliases(&callee, self.function_depth),
+                function_depth: self.function_depth,
+                bound_receiver: receiver,
+                dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
+                generator: LocalInvocationGenerator::ResolveFromCallee,
+                result_discarded: false,
+                force_argument_exposure: false,
+                construct: false,
+            },
+            &resolved_callee,
+        );
+        let dynamic_receivers = self.invocation_dynamic_receivers(&invocation);
+        let bound_receivers = invocation.bound_receiver.clone();
+        self.activate_deferred_descriptor_invocations(std::slice::from_ref(&invocation));
+        self.local_invocations.push(invocation.clone());
+        let result = StaticAliasPath::dynamic_this(span)
+            .with_property(format!("json-stringify-result-{}", *result_index));
+        *result_index = result_index.saturating_add(1);
+        self.dynamic_path_owner_depths
+            .insert((span.start, span.end), self.function_depth);
+        self.record_callable_result_initializer_from_invocations(
+            result.clone(),
+            vec![invocation],
+            None,
+        );
+        let resolved_result = resolve_static_alias_path(&self.aliases, &result);
+        let receiver_results = dynamic_receivers
+            .iter()
+            .filter(|receiver| resolved_result.starts_with(receiver))
+            .flat_map(|receiver| {
+                bound_receivers.iter().map(|bound| {
+                    Self::rebase_returned_class_path(&resolved_result, receiver, &bound.raw)
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        if receiver_results.len() == 1
+            && let Some(receiver_result) = receiver_results.first()
+        {
+            self.insert_alias(result.clone(), receiver_result.clone());
+        }
+        Some((result, definitely_callable))
+    }
+
+    fn record_local_json_serialized_path(
+        &mut self,
+        source: StaticAliasPath,
+        span: Span,
+        result_index: &mut usize,
+        visiting: &mut BTreeSet<StaticAliasPath>,
+        invoke_to_json: bool,
+    ) {
+        let resolved = resolve_static_alias_path(&self.aliases, &source);
+        let canonical = self.canonical_returned_structured_value_path(&resolved);
+        if invoke_to_json
+            && let Some((result, definitely_callable)) =
+                self.record_local_json_to_json(&source, span, result_index)
+        {
+            self.record_local_json_serialized_path(result, span, result_index, visiting, false);
+            if definitely_callable {
+                return;
+            }
+        }
+        if !visiting.insert(canonical.clone()) {
+            return;
+        }
+        let array_length = self.known_array_length(&source);
+        let getter_names = self.enumerable_local_getter_names(&source);
+        let known_properties = self.known_structured_own_properties(&source);
+        let mut properties = if let Some(length) = array_length {
+            (0..length).map(|index| index.to_string()).collect()
+        } else {
+            known_properties.clone().unwrap_or_default()
+        };
+        if array_length.is_none() {
+            properties.extend(getter_names);
+            if known_properties.is_none() {
+                properties.extend(self.local_structured_callable_child_names(&source));
+            }
+        }
+        for property in properties {
+            if array_length.is_none()
+                && !self.local_own_property_may_be_enumerable(&source, &property)
+            {
+                continue;
+            }
+            let property_source = source.clone().with_property(property);
+            let target = StaticAliasPath::dynamic_this(span)
+                .with_property(format!("json-stringify-value-{}", *result_index));
+            *result_index = result_index.saturating_add(1);
+            self.dynamic_path_owner_depths
+                .insert((span.start, span.end), self.function_depth);
+            let value =
+                if self.record_local_getter_read(property_source.clone(), Some(target.clone())) {
+                    target
+                } else {
+                    property_source
+                };
+            self.record_local_json_serialized_path(value, span, result_index, visiting, true);
+        }
+        if array_length.is_none() && !self.enumerable_dynamic_local_getters(&source).is_empty() {
+            let target = StaticAliasPath::dynamic_this(span)
+                .with_property(format!("json-stringify-computed-value-{}", *result_index));
+            *result_index = result_index.saturating_add(1);
+            self.dynamic_path_owner_depths
+                .insert((span.start, span.end), self.function_depth);
+            if self.record_local_getter_read(
+                source.clone().with_property("<computed>".to_string()),
+                Some(target.clone()),
+            ) {
+                self.record_local_json_serialized_path(target, span, result_index, visiting, true);
+            }
+        }
+        visiting.remove(&canonical);
+    }
+
+    fn record_local_json_stringify(&mut self, call: &CallExpression<'_>) {
+        if !self.is_intact_json_method_callee(&call.callee, "stringify")
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return;
+        }
+        let Some(source) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return;
+        };
+        let mut result_index = 0usize;
+        let mut visiting = BTreeSet::new();
+        for source in self.local_object_assign_value_paths(source) {
+            self.record_local_json_serialized_path(
+                source,
+                call.span,
+                &mut result_index,
+                &mut visiting,
+                true,
+            );
+        }
     }
 
     fn local_object_prototype_value(
@@ -35399,6 +35734,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_object_assign(call);
         let _ = self.record_local_object_value_enumeration(call);
+        self.record_local_json_stringify(call);
         let local_object_create = self.record_local_object_create_result(call);
         self.record_local_define_property_result(call);
         self.record_local_define_properties_result(call);

@@ -12177,6 +12177,244 @@ fn object_value_enumeration_does_not_invoke_data_values() {
 }
 
 #[test]
+fn json_stringify_invokes_local_serialization_hooks() {
+    for (name, setup, serialization) in [
+        (
+            "own getter",
+            "const source = { get value() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "nested getter",
+            "const source = { nested: { get value() { values.forEach = null; return 1; } } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "own toJSON",
+            "const source = { toJSON() { values.forEach = null; return {}; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "toJSON receiver",
+            "const source = { values, toJSON() { this.values.forEach = null; return 1; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "nested toJSON",
+            "const source = { nested: { toJSON() { values.forEach = null; return {}; } } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "descriptor getter",
+            "const source = {}; Object.defineProperty(source, 'value', { enumerable: true, get() { values.forEach = null; return 1; } });",
+            "JSON.stringify(source);",
+        ),
+        (
+            "non-enumerable array index getter",
+            "const source = [0]; Object.defineProperty(source, '0', { enumerable: false, get() { values.forEach = null; return 1; } });",
+            "JSON.stringify(source);",
+        ),
+        (
+            "getter-returned toJSON",
+            "const source = { get toJSON() { return () => { values.forEach = null; return 1; }; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "non-enumerable descriptor toJSON",
+            "const source = {}; Object.defineProperty(source, 'toJSON', { value() { values.forEach = null; return 1; } });",
+            "JSON.stringify(source);",
+        ),
+        (
+            "class instance toJSON",
+            "class Source { toJSON() { values.forEach = null; return 1; } } const source = new Source();",
+            "JSON.stringify(source);",
+        ),
+        (
+            "toJSON structured result getter",
+            "const source = { toJSON() { return { get value() { values.forEach = null; return 1; } }; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "toJSON self result getter",
+            "const source = { toJSON() { return this; }, get value() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "bound toJSON receiver result getter",
+            "function toJSON() { return this; } const result = { get value() { values.forEach = null; return 1; } }; const source = { toJSON: toJSON.bind(result) };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "possibly callable toJSON",
+            "const source = { toJSON: globalThis.condition ? () => 1 : null, get value() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "aliased JSON.stringify",
+            "const source = { get value() { values.forEach = null; return 1; } }; const stringify = JSON.stringify;",
+            "stringify(source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {serialization}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the serialization hook effect, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn json_stringify_does_not_invoke_data_callables() {
+    for (name, setup, serialization) in [
+        (
+            "stored ordinary method",
+            "const source = { run() { values.forEach = null; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "nested ordinary method",
+            "const source = { nested: { run() { values.forEach = null; } } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "inline ordinary method",
+            "",
+            "JSON.stringify({ run() { values.forEach = null; } });",
+        ),
+        (
+            "array function value",
+            "const source = [() => { values.forEach = null; }];",
+            "JSON.stringify(source);",
+        ),
+        (
+            "inline function value",
+            "",
+            "JSON.stringify(function() { values.forEach = null; });",
+        ),
+        (
+            "inline arrow value",
+            "",
+            "JSON.stringify(() => { values.forEach = null; });",
+        ),
+        (
+            "stored function value",
+            "const source = function() { values.forEach = null; };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "non-enumerable object getter",
+            "const source = {}; Object.defineProperty(source, 'value', { get() { values.forEach = null; return 1; } });",
+            "JSON.stringify(source);",
+        ),
+        (
+            "getter-returned data callable",
+            "const source = { get run() { return () => { values.forEach = null; }; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "non-callable toJSON",
+            "const source = { toJSON: 1, run() { values.forEach = null; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "toJSON result hook is not reinvoked",
+            "const result = { toJSON() { values.forEach = null; return 1; } }; const source = { toJSON() { return result; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "callable getter result skips source properties",
+            "const source = { get toJSON() { return () => 1; }, get value() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "aliased JSON.stringify",
+            "const source = { run() { values.forEach = null; } }; const stringify = JSON.stringify;",
+            "stringify(source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {serialization}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+    }
+
+    for (name, setup, serialization) in [
+        (
+            "invoked source method",
+            "const source = { run() { values.forEach = null; } };",
+            "JSON.stringify(source); source.run();",
+        ),
+        (
+            "overridden JSON.stringify",
+            "const source = { run() { values.forEach = null; } }; JSON.stringify = value => { value.run(); return ''; };",
+            "JSON.stringify(source);",
+        ),
+        (
+            "mutating replacer",
+            "const source = { value: 1 };",
+            "JSON.stringify(source, () => { values.forEach = null; return 1; });",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {serialization}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the callable effect, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (
