@@ -2703,6 +2703,258 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "sliced external array element callback slot",
+            "const items = [holder.item]; const copy = items.slice(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "replaced nested sliced external array element callback slot",
+            "const items = [holder.item]; const copy = items.slice(); copy[0].child = {}; const run = () => count;",
+            "copy[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped sliced external array element callback slot",
+            "const items = [holder.item]; const makeCopy = () => items.slice(); const copy = makeCopy(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "chained sliced external array element callback slot",
+            "const items = [holder.item]; const first = items.slice(); const copy = first.slice(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "direct wrapped sliced external array element callback slot",
+            "const items = [holder.item]; const makeCopy = () => items.slice(); const run = () => count;",
+            "makeCopy()[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "concatenated external array element callback slot",
+            "const items = [holder.item]; const copy = items.concat(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "appended external array element callback slot",
+            "const items = [{}]; const copy = items.concat([holder.item]); const run = () => count;",
+            "copy[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "unknown-offset appended external array element callback slot",
+            "const items = [...new Set()]; const copy = items.concat(holder.item); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "spreadable object external array element callback slot",
+            "const item = { 0: holder.item, length: 1, [Symbol.isConcatSpreadable]: true }; const copy = [].concat(item); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "object-valued concatenated external callback slot",
+            "const copy = [].concat({ child: holder.item }); const run = () => count;",
+            "copy[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "filtered external array element callback slot",
+            "const items = [holder.item]; const copy = items.filter(() => true); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "reversed-copy external array element callback slot",
+            "const items = [{}, holder.item]; const copy = items.toReversed(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "sorted-copy external array element callback slot",
+            "const items = [{}, holder.item]; const copy = items.toSorted(() => 0); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "spliced-copy external array element callback slot",
+            "const items = [holder.item]; const copy = items.toSpliced(0, 0); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "unchanged spliced-copy external array element callback slot",
+            "const items = [{}, holder.item]; const copy = items.toSpliced(); const run = () => count;",
+            "copy[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "inserted spliced-copy external array element callback slot",
+            "const items = [{}]; const copy = items.toSpliced(1, 0, holder.item); const run = () => count;",
+            "copy[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "with-copy external array element callback slot",
+            "const items = [holder.item, {}]; const copy = items.with(1, {}); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "inserted with-copy external array element callback slot",
+            "const items = [{}]; const copy = items.with(0, holder.item); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "removed external array element callback slot",
+            "const items = [holder.item]; const copy = items.splice(0, 1); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "mapped external array element callback slot",
+            "const items = [holder.item]; const copy = items.map(item => item); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "flat-mapped external array element callback slot",
+            "const items = [holder.item]; const copy = items.flatMap(item => [item]); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "flattened external array element callback slot",
+            "const items = [[holder.item]]; const copy = items.flat(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "Array.from external array element callback slot",
+            "const items = [holder.item]; const copy = Array.from(items); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "Array.from custom iterator callback slot",
+            "const items = [{}]; items[Symbol.iterator] = holder.iterate; const copy = Array.from(items); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "Array.of external value callback slot",
+            "const copy = Array.of(holder.item); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "Array.of positioned external value callback slot",
+            "const copy = Array.of({}, holder.item); const run = () => count;",
+            "copy[1].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "Array.of opaque external value callback slot",
+            "const copy = Array.of(holder.getItem()); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "Array.of structured external value callback slot",
+            "const copy = Array.of({ child: holder.item }); const run = () => count;",
+            "copy[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "Array external value callback slot",
+            "const copy = Array(holder.item); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "constructed Array external value callback slot",
+            "const copy = new Array(holder.item); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped constructed Array external value callback slot",
+            "const makeCopy = () => new Array(holder.item); const copy = makeCopy(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "overridden array copy method callback slot",
+            "const items = [{}]; items.slice = holder.copy; const copy = items.slice(); const run = () => count;",
+            "copy.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "overridden array prototype copy method callback slot",
+            "const items = [{}]; Array.prototype.slice = holder.copy; const copy = items.slice(); const run = () => count;",
+            "copy.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped overridden array prototype copy method callback slot",
+            "Array.prototype.slice = holder.copy; const makeCopy = () => [].slice(); const copy = makeCopy(); const run = () => count;",
+            "copy.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "overridden array constructor callback slot",
+            "const items = [{}]; items.constructor = holder.Factory; const copy = items.slice(); const run = () => count;",
+            "copy.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "overridden array species callback slot",
+            "const items = [{}]; Array[Symbol.species] = holder.Factory; const copy = items.slice(); const run = () => count;",
+            "copy.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "branched factory-returned component parameter callback slot",
             "const getCallbacks = () => holder.enabled ? holder.callbacks : {}; const run = () => count;",
             "getCallbacks().run = run;",
@@ -3129,6 +3381,32 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             const makeLocal = () => new LocalFactory();
             const makeDate = () => new Date();
             const makeArray = () => Array.from([]);
+            const externalItems = [holder.item];
+            const makeSlicedItems = () => externalItems.slice();
+            const slicedItems = externalItems.slice();
+            const concatenatedItems = externalItems.concat();
+            const filteredItems = externalItems.filter(() => true);
+            const reversedItems = externalItems.toReversed();
+            const sortedItems = externalItems.toSorted(() => 0);
+            const splicedItems = externalItems.toSpliced(0, 0);
+            const replacedItems = externalItems.with(0, {});
+            const mappedItems = externalItems.map(item => item);
+            const flatMappedItems = externalItems.flatMap(item => [item]);
+            const flattenedItems = [externalItems].flat();
+            const fromItems = Array.from(externalItems);
+            const ofItems = Array.of(holder.item);
+            const removedItems = externalItems.splice(0, 1);
+            const localItem = {};
+            const localItems = [localItem];
+            const localSlicedItems = localItems.slice();
+            const localConcatenatedItems = localItems.concat();
+            const localFilteredItems = localItems.filter(() => true);
+            const localReversedItems = localItems.toReversed();
+            const localSortedItems = localItems.toSorted(() => 0);
+            const localSplicedItems = localItems.toSpliced(0, 0);
+            const localReplacedItems = localItems.with(0, localItem);
+            const localFromItems = Array.from(localItems);
+            const localOfItems = Array.of(localItem);
             local.run = run;
             alias.next ??= () => count;
             objectRest.run = run;
@@ -3141,6 +3419,34 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             prefixedArraySpread[0].run = run;
             directObjectSpread.callbacks = run;
             directArraySpread[0] = run;
+            slicedItems[0] = run;
+            concatenatedItems[0] = run;
+            filteredItems[0] = run;
+            reversedItems[0] = run;
+            sortedItems[0] = run;
+            splicedItems[0] = run;
+            replacedItems[0] = run;
+            removedItems[0] = run;
+            mappedItems[0] = run;
+            flatMappedItems[0] = run;
+            flattenedItems[0] = run;
+            fromItems[0] = run;
+            ofItems[0] = run;
+            externalItems.slice()[0] = run;
+            externalItems.slice().run = run;
+            makeSlicedItems()[0] = run;
+            makeSlicedItems().run = run;
+            const madeSlicedItems = makeSlicedItems();
+            madeSlicedItems[0] = run;
+            localSlicedItems[0].run = run;
+            localConcatenatedItems[0].run = run;
+            localFilteredItems[0].run = run;
+            localReversedItems[0].run = run;
+            localSortedItems[0].run = run;
+            localSplicedItems[0].run = run;
+            localReplacedItems[0].run = run;
+            localFromItems[0].run = run;
+            localOfItems[0].run = run;
             ({}).run = run;
             ([]).run = run;
             new Date().run = run;
@@ -3235,6 +3541,67 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             )
         }),
         "local slots and non-retaining assignments must remain valid: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn fresh_array_results_preserve_precise_local_element_provenance() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const run = () => count;
+            const local = {};
+            const mixed = [local, holder.item];
+            const sliced = mixed.slice(0, 1);
+            const slicedAgain = sliced.slice();
+            const concatenated = mixed.concat();
+            const reversed = mixed.toReversed();
+            const spliced = mixed.toSpliced(1, 1);
+            const unchanged = mixed.toSpliced();
+            const replaced = mixed.with(1, local);
+            const from = Array.from(mixed);
+            const of = Array.of(local, holder.item);
+            const objectValue = [].concat({ child: local });
+            const detachedNested = Array.of({ child: holder.item });
+            const calledArray = Array(local);
+            const constructedArray = new Array(local);
+            const holes = new Array(2);
+            const removed = mixed.splice();
+            sliced[0].run = run;
+            slicedAgain[0].run = run;
+            concatenated[0].run = run;
+            reversed[1].run = run;
+            spliced[0].run = run;
+            unchanged[0].run = run;
+            replaced[1].run = run;
+            from[0].run = run;
+            of[0].run = run;
+            objectValue[0].child.run = run;
+            detachedNested[0].child = {};
+            detachedNested[0].child.run = run;
+            calledArray[0].run = run;
+            constructedArray[0].run = run;
+            holes[0] = run;
+            removed[0].run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "fresh array results must retain only the selected external element identities: {:?}",
         output.diagnostics
     );
 }

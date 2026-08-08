@@ -2039,6 +2039,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             let mut collector = StaticHookAliasCollector::new(
                 self.semantic.scoping(),
                 &generator_execution,
+                &known_arrays.symbols,
                 &unstable_json_replacer_arrays,
                 &stable_json_replacer_push_arrays,
             );
@@ -6778,6 +6779,23 @@ struct KnownArrayCollector<'semantic> {
     aliases: Vec<(SymbolId, SymbolId)>,
 }
 
+fn array_method_returns_fresh_container(method: &str) -> bool {
+    matches!(
+        method,
+        "concat"
+            | "filter"
+            | "flat"
+            | "flatMap"
+            | "map"
+            | "slice"
+            | "splice"
+            | "toReversed"
+            | "toSorted"
+            | "toSpliced"
+            | "with"
+    )
+}
+
 struct ExternalStorageRootCollector<'semantic> {
     scoping: &'semantic Scoping,
     roots: BTreeSet<SymbolId>,
@@ -7021,15 +7039,46 @@ impl<'a> Visit<'a> for KnownArrayCollector<'_> {
                 let Some(target) = binding.symbol_id.get() else {
                     continue;
                 };
+                if classify_state_receiver_expression(self.scoping, initializer)
+                    == StateReceiverKind::Array
+                {
+                    self.symbols.insert(target);
+                    continue;
+                }
                 match initializer.get_inner_expression() {
-                    Expression::ArrayExpression(_) => {
-                        self.symbols.insert(target);
-                    }
                     Expression::Identifier(identifier) => {
                         if let Some(source) = identifier
                             .reference_id
                             .get()
                             .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+                        {
+                            self.aliases.push((target, source));
+                        }
+                    }
+                    Expression::CallExpression(call) => {
+                        let receiver = match call.callee.get_inner_expression() {
+                            Expression::StaticMemberExpression(member)
+                                if array_method_returns_fresh_container(
+                                    member.property.name.as_str(),
+                                ) =>
+                            {
+                                Some(&member.object)
+                            }
+                            Expression::ComputedMemberExpression(member)
+                                if static_member_name(&member.expression).is_some_and(
+                                    |method| array_method_returns_fresh_container(&method),
+                                ) =>
+                            {
+                                Some(&member.object)
+                            }
+                            _ => None,
+                        };
+                        if let Some(Expression::Identifier(identifier)) =
+                            receiver.map(Expression::get_inner_expression)
+                            && let Some(source) =
+                                identifier.reference_id.get().and_then(|reference| {
+                                    self.scoping.get_reference(reference).symbol_id()
+                                })
                         {
                             self.aliases.push((target, source));
                         }
@@ -20367,8 +20416,79 @@ struct ExternalStorageFlowState {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ExternalStorageShallowCopy {
     source: StaticAliasPath,
-    excluded: BTreeSet<String>,
+    excluded: BTreeSet<Vec<String>>,
     attached_roots: BTreeSet<SymbolId>,
+    projection: ExternalStorageShallowCopyProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ExternalStorageShallowCopyProjection {
+    Identity,
+    AnyArrayElement,
+    ArrayRange {
+        target_start: usize,
+        source_start: usize,
+        length: usize,
+    },
+    ArrayIndex {
+        target_index: usize,
+    },
+}
+
+impl ExternalStorageShallowCopy {
+    fn map_suffix(&self, suffix: &[String]) -> Option<StaticAliasPath> {
+        let property = suffix.first()?;
+        if self
+            .excluded
+            .iter()
+            .any(|excluded| suffix.starts_with(excluded))
+        {
+            return None;
+        }
+        let mut mapped_property = None;
+        let remaining = match &self.projection {
+            ExternalStorageShallowCopyProjection::Identity => suffix,
+            ExternalStorageShallowCopyProjection::AnyArrayElement => {
+                let index = property.parse::<usize>().ok()?;
+                if index.to_string() != *property {
+                    return None;
+                }
+                &suffix[1..]
+            }
+            ExternalStorageShallowCopyProjection::ArrayRange {
+                target_start,
+                source_start,
+                length,
+            } => {
+                let index = property.parse::<usize>().ok()?;
+                if index.to_string() != *property
+                    || index < *target_start
+                    || index >= target_start.saturating_add(*length)
+                {
+                    return None;
+                }
+                mapped_property = Some(
+                    source_start
+                        .saturating_add(index.saturating_sub(*target_start))
+                        .to_string(),
+                );
+                &suffix[1..]
+            }
+            ExternalStorageShallowCopyProjection::ArrayIndex { target_index } => {
+                let index = property.parse::<usize>().ok()?;
+                if index.to_string() != *property || index != *target_index {
+                    return None;
+                }
+                &suffix[1..]
+            }
+        };
+        let mut candidate = self.source.clone();
+        if let Some(property) = mapped_property {
+            candidate.properties.push(property);
+        }
+        candidate.properties.extend_from_slice(remaining);
+        Some(candidate.canonicalized())
+    }
 }
 
 impl ExternalStorageFlowState {
@@ -20415,13 +20535,10 @@ impl ExternalStorageFlowState {
                 }
                 let suffix = &current.properties[target.properties.len()..];
                 for copy in copies {
-                    if copy.excluded.contains(&suffix[0]) {
-                        continue;
+                    if let Some(mut candidate) = copy.map_suffix(suffix) {
+                        candidate.element_wildcard |= current.element_wildcard;
+                        pending.push_back(candidate);
                     }
-                    let mut candidate = copy.source.clone();
-                    candidate.properties.extend_from_slice(suffix);
-                    candidate.element_wildcard |= current.element_wildcard;
-                    pending.push_back(candidate.canonicalized());
                 }
             }
         }
@@ -20445,9 +20562,9 @@ impl ExternalStorageFlowState {
                 if candidate.starts_with(target)
                     && candidate.properties.len() >= target.properties.len().saturating_add(2)
                 {
-                    let property = &candidate.properties[target.properties.len()];
+                    let suffix = &candidate.properties[target.properties.len()..];
                     for copy in copies {
-                        if !copy.excluded.contains(property) {
+                        if copy.map_suffix(suffix).is_some() {
                             roots.extend(&copy.attached_roots);
                         }
                     }
@@ -20457,7 +20574,34 @@ impl ExternalStorageFlowState {
         roots
     }
 
+    fn storage_container_attached_roots(&self, path: &StaticAliasPath) -> BTreeSet<SymbolId> {
+        let mut roots = self.attached_roots(path);
+        for (target, copies) in &self.shallow_copies {
+            if !path.starts_with(target)
+                || path.properties.len() < target.properties.len().saturating_add(1)
+            {
+                continue;
+            }
+            let suffix = &path.properties[target.properties.len()..];
+            for copy in copies {
+                let Some(candidate) = copy.map_suffix(suffix) else {
+                    continue;
+                };
+                roots.extend(&copy.attached_roots);
+                roots.extend(self.attached_roots(&candidate));
+            }
+        }
+        roots
+    }
+
     fn clear_aliases(&mut self, path: &StaticAliasPath) {
+        let attached_parent_roots = if path.properties.is_empty() {
+            BTreeSet::new()
+        } else {
+            let mut parent = path.clone();
+            parent.properties.pop();
+            self.storage_container_attached_roots(&parent)
+        };
         self.aliases.retain(|target, _| !target.overlaps(path));
         self.attached_alias_roots
             .retain(|target, _| !target.overlaps(path));
@@ -20465,20 +20609,22 @@ impl ExternalStorageFlowState {
             if target.starts_with(path) {
                 return false;
             }
-            if path.starts_with(target)
-                && path.properties.len() == target.properties.len().saturating_add(1)
-            {
-                let property = path.properties[target.properties.len()].clone();
+            if path.starts_with(target) && path.properties.len() > target.properties.len() {
+                let excluded = path.properties[target.properties.len()..].to_vec();
                 *copies = std::mem::take(copies)
                     .into_iter()
                     .map(|mut copy| {
-                        copy.excluded.insert(property.clone());
+                        copy.excluded.insert(excluded.clone());
                         copy
                     })
                     .collect();
             }
             true
         });
+        if !attached_parent_roots.is_empty() {
+            self.attached_alias_roots
+                .insert(path.clone(), attached_parent_roots);
+        }
     }
 
     fn insert_alias(
@@ -20508,10 +20654,91 @@ impl ExternalStorageFlowState {
                 .or_default()
                 .insert(ExternalStorageShallowCopy {
                     source,
-                    excluded: excluded.clone(),
+                    excluded: excluded
+                        .iter()
+                        .cloned()
+                        .map(|property| vec![property])
+                        .collect(),
                     attached_roots: attached_roots.clone(),
+                    projection: ExternalStorageShallowCopyProjection::Identity,
                 });
         }
+    }
+
+    fn record_array_range_copy(
+        &mut self,
+        target: StaticAliasPath,
+        source: &StaticAliasPath,
+        target_start: usize,
+        source_start: usize,
+        length: usize,
+    ) {
+        let attached_roots = self.attached_roots(source);
+        for source in self.alias_candidates(source) {
+            self.shallow_copies
+                .entry(target.clone())
+                .or_default()
+                .insert(ExternalStorageShallowCopy {
+                    source,
+                    excluded: BTreeSet::new(),
+                    attached_roots: attached_roots.clone(),
+                    projection: ExternalStorageShallowCopyProjection::ArrayRange {
+                        target_start,
+                        source_start,
+                        length,
+                    },
+                });
+        }
+    }
+
+    fn record_array_index_copy(
+        &mut self,
+        target: StaticAliasPath,
+        target_index: usize,
+        source: &StaticAliasPath,
+    ) {
+        let attached_roots = self.attached_roots(source);
+        for source in self.alias_candidates(source) {
+            self.shallow_copies
+                .entry(target.clone())
+                .or_default()
+                .insert(ExternalStorageShallowCopy {
+                    source,
+                    excluded: BTreeSet::new(),
+                    attached_roots: attached_roots.clone(),
+                    projection: ExternalStorageShallowCopyProjection::ArrayIndex { target_index },
+                });
+        }
+    }
+
+    fn record_array_element_copies(
+        &mut self,
+        target: StaticAliasPath,
+        sources: impl IntoIterator<Item = StaticAliasPath>,
+    ) {
+        for source in sources {
+            let attached_roots = self.attached_roots(&source);
+            for source in self.alias_candidates(&source) {
+                self.shallow_copies
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(ExternalStorageShallowCopy {
+                        source,
+                        excluded: BTreeSet::new(),
+                        attached_roots: attached_roots.clone(),
+                        projection: ExternalStorageShallowCopyProjection::AnyArrayElement,
+                    });
+            }
+        }
+    }
+
+    fn record_opaque_array_elements(&mut self, target: StaticAliasPath) {
+        self.record_array_element_copies(
+            target,
+            [StaticAliasPath::unresolved_global(
+                "<opaque-array-element>".to_string(),
+            )],
+        );
     }
 
     fn record_opaque_result(&mut self, target: StaticAliasPath) {
@@ -20587,6 +20814,7 @@ impl<'a> Visit<'a> for EscapedFunctionValueCollector<'_, '_> {
 
 struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
+    known_arrays: &'semantic BTreeSet<SymbolId>,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     assignment_target_alias_snapshots: Vec<((u32, u32), StaticAliasPath, bool)>,
@@ -20928,6 +21156,7 @@ enum LocalCallableResult {
     },
     Invocation(Vec<LocalInvocationFact>),
     KnownLocal,
+    KnownLocalArray,
     Unknown,
 }
 
@@ -21461,11 +21690,13 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
     fn new(
         scoping: &'semantic Scoping,
         generator: &GeneratorExecutionProof,
+        known_arrays: &'semantic BTreeSet<SymbolId>,
         unstable_json_replacer_arrays: &BTreeSet<SymbolId>,
         stable_json_replacer_push_arrays: &BTreeSet<SymbolId>,
     ) -> Self {
         Self {
             scoping,
+            known_arrays,
             aliases: BTreeMap::new(),
             alias_history: BTreeMap::new(),
             assignment_target_alias_snapshots: Vec::new(),
@@ -21687,6 +21918,51 @@ impl StaticHookAliasCollector<'_> {
         self.record_external_storage_exception_flow();
     }
 
+    fn record_external_storage_array_element_copies(
+        &mut self,
+        target: StaticAliasPath,
+        sources: impl IntoIterator<Item = StaticAliasPath>,
+    ) {
+        self.external_storage_flow
+            .record_array_element_copies(target, sources);
+        self.record_external_storage_exception_flow();
+    }
+
+    fn record_external_storage_array_range_copy(
+        &mut self,
+        target: StaticAliasPath,
+        source: &StaticAliasPath,
+        target_start: usize,
+        source_start: usize,
+        length: usize,
+    ) {
+        self.external_storage_flow.record_array_range_copy(
+            target,
+            source,
+            target_start,
+            source_start,
+            length,
+        );
+        self.record_external_storage_exception_flow();
+    }
+
+    fn record_external_storage_array_index_copy(
+        &mut self,
+        target: StaticAliasPath,
+        target_index: usize,
+        source: &StaticAliasPath,
+    ) {
+        self.external_storage_flow
+            .record_array_index_copy(target, target_index, source);
+        self.record_external_storage_exception_flow();
+    }
+
+    fn record_opaque_external_storage_array_elements(&mut self, target: StaticAliasPath) {
+        self.external_storage_flow
+            .record_opaque_array_elements(target);
+        self.record_external_storage_exception_flow();
+    }
+
     fn record_assignment_target_alias_snapshot(&mut self, span: Span, path: StaticAliasPath) {
         let flow_candidates = self.external_storage_flow.alias_candidates(&path);
         let attached_roots = self.external_storage_flow.attached_roots(&path);
@@ -21833,6 +22109,11 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::KnownLocal => {
                         paths.push(StaticAliasPath::dynamic_this(call.span));
                     }
+                    LocalCallableResult::KnownLocalArray => {
+                        let path = StaticAliasPath::dynamic_this(call.span);
+                        self.record_opaque_external_storage_array_elements(path.clone());
+                        paths.push(path);
+                    }
                     LocalCallableResult::Invocation(_) => unreachable!(
                         "callable result invocations must resolve before assignment analysis"
                     ),
@@ -21882,6 +22163,7 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Direct { .. }
                     | LocalCallableResult::Bound { .. }
                     | LocalCallableResult::KnownLocal => {}
+                    LocalCallableResult::KnownLocalArray => return None,
                     LocalCallableResult::Unknown => return None,
                     LocalCallableResult::Invocation(_) => unreachable!(
                         "constructor result invocations must resolve before assignment analysis"
@@ -22067,6 +22349,69 @@ impl StaticHookAliasCollector<'_> {
                 | Expression::ClassExpression(_)
                 | Expression::RegExpLiteral(_)
         ) || self.expression_returns_known_local_result(expression)
+            || self.expression_returns_known_local_array_result(expression)
+    }
+
+    fn expression_returns_known_local_array_result(&self, expression: &Expression<'_>) -> bool {
+        match expression.get_inner_expression() {
+            Expression::CallExpression(call) => {
+                let raw = static_alias_source_path(self.scoping, &call.callee);
+                if let Some(raw) = raw {
+                    let resolved = resolve_static_alias_path(&self.aliases, &raw);
+                    if self.path_is_currently_intact(&raw)
+                        && self.path_is_currently_intact(&resolved)
+                        && (matches!(
+                            (&resolved.root, resolved.properties.as_slice()),
+                            (StaticAliasRoot::UnresolvedGlobal(root), []) if root == "Array"
+                        ) || matches!(
+                            (&resolved.root, resolved.properties.as_slice()),
+                            (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                                if root == "Array"
+                                    && matches!(method.as_str(), "from" | "of")
+                        ))
+                    {
+                        return self.path_is_currently_intact(&StaticAliasPath::unresolved_global(
+                            "Array".to_string(),
+                        ));
+                    }
+                }
+                let (receiver, method) = match call.callee.get_inner_expression() {
+                    Expression::StaticMemberExpression(member) => {
+                        (&member.object, member.property.name.to_string())
+                    }
+                    Expression::ComputedMemberExpression(member) => {
+                        let Some(method) = static_member_name(&member.expression) else {
+                            return false;
+                        };
+                        (&member.object, method)
+                    }
+                    _ => return false,
+                };
+                if !array_method_returns_fresh_container(&method) {
+                    return false;
+                }
+                let Some(source) = self.alias_source_path(receiver) else {
+                    return matches!(
+                        receiver.get_inner_expression(),
+                        Expression::ArrayExpression(_)
+                    ) && self.array_copy_global_method_is_intact(&method);
+                };
+                self.known_array_path(&source) && self.array_copy_method_is_intact(&source, &method)
+            }
+            Expression::NewExpression(expression) => {
+                let Some(raw) = static_alias_source_path(self.scoping, &expression.callee) else {
+                    return false;
+                };
+                let resolved = resolve_static_alias_path(&self.aliases, &raw);
+                self.path_is_currently_intact(&raw)
+                    && self.path_is_currently_intact(&resolved)
+                    && matches!(
+                        (&resolved.root, resolved.properties.as_slice()),
+                        (StaticAliasRoot::UnresolvedGlobal(root), []) if root == "Array"
+                    )
+            }
+            _ => false,
+        }
     }
 
     fn call_expression_returns_known_local_result(&self, expression: &CallExpression<'_>) -> bool {
@@ -22081,8 +22426,6 @@ impl StaticHookAliasCollector<'_> {
             return false;
         };
         match (root.as_str(), resolved.properties.as_slice()) {
-            ("Array", []) => true,
-            ("Array", [method]) if matches!(method.as_str(), "from" | "of") => true,
             ("Object", [method]) if method == "fromEntries" => true,
             ("Object", []) => expression.arguments.first().is_none_or(|argument| {
                 argument.as_expression().is_some_and(|argument| {
@@ -22129,8 +22472,7 @@ impl StaticHookAliasCollector<'_> {
         }
         matches!(
             constructor.as_str(),
-            "Array"
-                | "ArrayBuffer"
+            "ArrayBuffer"
                 | "SharedArrayBuffer"
                 | "DataView"
                 | "Date"
@@ -22182,6 +22524,9 @@ impl StaticHookAliasCollector<'_> {
                 || vec![LocalCallableResult::Unknown],
                 |receiver| vec![LocalCallableResult::Reference(receiver.clone())],
             );
+        }
+        if self.expression_returns_known_local_array_result(expression) {
+            return vec![LocalCallableResult::KnownLocalArray];
         }
         if self.expression_returns_known_local_result(expression) {
             return vec![LocalCallableResult::KnownLocal];
@@ -22413,6 +22758,7 @@ impl StaticHookAliasCollector<'_> {
                 LocalCallableResult::Reference(_)
                 | LocalCallableResult::Invocation(_)
                 | LocalCallableResult::KnownLocal
+                | LocalCallableResult::KnownLocalArray
                 | LocalCallableResult::Unknown => {}
             }
         }
@@ -29620,6 +29966,7 @@ impl StaticHookAliasCollector<'_> {
         let mut ambiguous = false;
         let mut materialized_known_result = false;
         let mut opaque_result = false;
+        let mut opaque_array_elements = false;
         for invocation in invocations {
             let (results, historical) = if invocation.callee.is_none() {
                 let lexical_receiver = self
@@ -29751,6 +30098,11 @@ impl StaticHookAliasCollector<'_> {
                         alternatives = alternatives.saturating_add(1);
                         materialized_known_result = true;
                     }
+                    LocalCallableResult::KnownLocalArray => {
+                        alternatives = alternatives.saturating_add(1);
+                        materialized_known_result = true;
+                        opaque_array_elements = true;
+                    }
                     LocalCallableResult::Unknown => {
                         alternatives = alternatives.saturating_add(1);
                         opaque_result = true;
@@ -29780,9 +30132,635 @@ impl StaticHookAliasCollector<'_> {
         if opaque_result {
             self.record_opaque_external_storage_result(target.clone());
         }
+        if opaque_array_elements {
+            self.record_opaque_external_storage_array_elements(target.clone());
+        }
         if alternatives > 1 || (ambiguous && !materialized_known_result) {
             self.mark_alias_target_ambiguous(target);
         }
+    }
+
+    fn known_array_path(&self, path: &StaticAliasPath) -> bool {
+        let resolved = resolve_static_alias_path(&self.aliases, path);
+        [path, &resolved].into_iter().any(|candidate| {
+            candidate
+                .binding_root()
+                .is_some_and(|root| self.known_arrays.contains(&root))
+                || self.known_array_length(candidate).is_some()
+        })
+    }
+
+    fn array_copy_global_method_is_intact(&self, method: &str) -> bool {
+        let array = StaticAliasPath::unresolved_global("Array".to_string());
+        self.path_is_currently_intact(&array)
+            && self.path_is_currently_intact(
+                &array
+                    .with_property("prototype".to_string())
+                    .with_property(method.to_string()),
+            )
+            && self.path_is_currently_intact(
+                &StaticAliasPath::unresolved_global("Object".to_string())
+                    .with_property("prototype".to_string())
+                    .with_property(method.to_string()),
+            )
+    }
+
+    fn array_copy_method_is_intact(&self, source: &StaticAliasPath, method: &str) -> bool {
+        self.array_copy_global_method_is_intact(method)
+            && self.path_is_currently_intact(&source.clone().with_property(method.to_string()))
+            && self
+                .path_is_currently_intact(&source.clone().with_property("constructor".to_string()))
+    }
+
+    fn materialize_array_copy_source(
+        &mut self,
+        expression: &Expression<'_>,
+    ) -> Option<StaticAliasPath> {
+        if let Some(source) = self.alias_source_path(expression) {
+            return Some(source);
+        }
+        let Expression::ArrayExpression(array) = expression.get_inner_expression() else {
+            return None;
+        };
+        let source = StaticAliasPath::dynamic_this(array.span);
+        self.dynamic_path_owner_depths
+            .insert((array.span.start, array.span.end), self.function_depth);
+        self.structured_own_properties
+            .insert(source.clone(), BTreeSet::new());
+        self.collect_array(&source, array);
+        Some(source)
+    }
+
+    fn materialize_array_value_source(
+        &mut self,
+        expression: &Expression<'_>,
+    ) -> Option<StaticAliasPath> {
+        if let Some(source) = self.alias_source_path(expression) {
+            return Some(source);
+        }
+        let source = StaticAliasPath::dynamic_this(expression.span());
+        self.dynamic_path_owner_depths.insert(
+            (expression.span().start, expression.span().end),
+            self.function_depth,
+        );
+        self.structured_own_properties
+            .insert(source.clone(), BTreeSet::new());
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(array) => self.collect_array(&source, array),
+            Expression::ObjectExpression(object) => self.collect_object(&source, object),
+            _ => return None,
+        }
+        Some(source)
+    }
+
+    fn array_element_copy_sources(&self, source: &StaticAliasPath) -> Vec<StaticAliasPath> {
+        self.known_array_length(source)
+            .map(|length| {
+                (0..length)
+                    .map(|index| source.clone().with_property(index.to_string()))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![source.with_element_wildcard()])
+    }
+
+    fn static_array_numeric_value(expression: &Expression<'_>) -> Option<f64> {
+        let value = match expression.get_inner_expression() {
+            Expression::NumericLiteral(number) => number.value,
+            Expression::UnaryExpression(unary)
+                if matches!(
+                    unary.operator,
+                    OxcUnaryOperator::UnaryPlus | OxcUnaryOperator::UnaryNegation
+                ) =>
+            {
+                let Expression::NumericLiteral(number) = unary.argument.get_inner_expression()
+                else {
+                    return None;
+                };
+                if unary.operator == OxcUnaryOperator::UnaryNegation {
+                    -number.value
+                } else {
+                    number.value
+                }
+            }
+            _ => return None,
+        };
+        Some(value)
+    }
+
+    fn static_array_integer(expression: &Expression<'_>) -> Option<i64> {
+        let value = Self::static_array_numeric_value(expression)?;
+        if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
+            return None;
+        }
+        Some(value.trunc() as i64)
+    }
+
+    fn normalized_array_start(value: i64, length: usize) -> usize {
+        if value < 0 {
+            length.saturating_sub(usize::try_from(value.unsigned_abs()).unwrap_or(usize::MAX))
+        } else {
+            usize::try_from(value).unwrap_or(usize::MAX).min(length)
+        }
+    }
+
+    fn static_array_argument(call: &CallExpression<'_>, index: usize) -> Option<i64> {
+        call.arguments
+            .get(index)
+            .and_then(|argument| argument.as_expression())
+            .and_then(Self::static_array_integer)
+    }
+
+    fn initialize_fresh_array_target(&mut self, target: &StaticAliasPath) {
+        self.clear_overlapping_aliases(target);
+        self.structured_own_properties
+            .insert(target.clone(), BTreeSet::new());
+        self.open_structured_containers.insert(target.clone());
+    }
+
+    fn concat_value_is_definitely_nonspreadable(
+        &self,
+        expression: &Expression<'_>,
+        source: Option<&StaticAliasPath>,
+    ) -> bool {
+        source.map_or_else(
+            || self.expression_is_definitely_local_storage_value(expression),
+            |source| {
+                !self.known_array_path(source)
+                    && self.known_structured_own_properties(source).is_some()
+            },
+        )
+    }
+
+    fn record_array_container_source(
+        &mut self,
+        target: &StaticAliasPath,
+        source: &StaticAliasPath,
+        any_element: bool,
+    ) {
+        self.record_external_storage_shallow_copy(target.clone(), source, BTreeSet::new());
+        if any_element {
+            let elements = self.array_element_copy_sources(source);
+            self.record_external_storage_array_element_copies(target.clone(), elements);
+        }
+    }
+
+    fn record_array_value_source(&mut self, target: &StaticAliasPath, expression: &Expression<'_>) {
+        if let Some(source) = self.materialize_array_value_source(expression) {
+            self.record_external_storage_array_element_copies(target.clone(), [source]);
+        } else if !self.expression_is_definitely_local_storage_value(expression) {
+            self.record_opaque_external_storage_array_elements(target.clone());
+        }
+    }
+
+    fn record_array_value_source_at(
+        &mut self,
+        target: &StaticAliasPath,
+        target_index: usize,
+        expression: &Expression<'_>,
+    ) {
+        if let Some(source) = self.materialize_array_value_source(expression) {
+            self.record_external_storage_array_index_copy(target.clone(), target_index, &source);
+        } else if !self.expression_is_definitely_local_storage_value(expression) {
+            self.record_external_storage_array_index_copy(
+                target.clone(),
+                target_index,
+                &StaticAliasPath::unresolved_global("<opaque-array-element>".to_string()),
+            );
+        }
+    }
+
+    fn record_array_constructor_arguments(
+        &mut self,
+        target: &StaticAliasPath,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) {
+        self.initialize_fresh_array_target(target);
+        if let [argument] = arguments
+            && let Some(argument) = argument.as_expression()
+            && let Some(length) = Self::static_array_numeric_value(argument)
+        {
+            if length.is_finite()
+                && length >= 0.0
+                && length.fract() == 0.0
+                && length <= f64::from(u32::MAX)
+            {
+                self.array_lengths.insert(target.clone(), length as usize);
+            }
+            return;
+        }
+        if arguments
+            .iter()
+            .any(|argument| argument.as_expression().is_none())
+        {
+            for argument in arguments {
+                if let Some(argument) = argument.as_expression() {
+                    self.record_array_value_source(target, argument);
+                } else {
+                    self.record_opaque_external_storage_array_elements(target.clone());
+                }
+            }
+            return;
+        }
+        for (index, argument) in arguments.iter().enumerate() {
+            self.record_array_value_source_at(
+                target,
+                index,
+                argument.as_expression().expect("array argument expression"),
+            );
+        }
+        self.array_lengths.insert(target.clone(), arguments.len());
+    }
+
+    fn record_static_array_result(
+        &mut self,
+        target: &StaticAliasPath,
+        call: &CallExpression<'_>,
+    ) -> bool {
+        let Some(raw) = static_alias_source_path(self.scoping, &call.callee) else {
+            return false;
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        let StaticAliasRoot::UnresolvedGlobal(root) = &resolved.root else {
+            return false;
+        };
+        if root != "Array"
+            || !self.path_is_currently_intact(&raw)
+            || !self.path_is_currently_intact(&resolved)
+            || !self
+                .path_is_currently_intact(&StaticAliasPath::unresolved_global("Array".to_string()))
+        {
+            return false;
+        }
+        if resolved.properties.is_empty() {
+            self.record_array_constructor_arguments(target, &call.arguments);
+            return true;
+        }
+        let [method] = resolved.properties.as_slice() else {
+            return false;
+        };
+        if !matches!(method.as_str(), "from" | "of") {
+            return false;
+        }
+        self.initialize_fresh_array_target(target);
+        if method == "of" {
+            let mut exact = true;
+            for (index, argument) in call.arguments.iter().enumerate() {
+                if let Some(argument) = argument.as_expression() {
+                    self.record_array_value_source_at(target, index, argument);
+                } else {
+                    exact = false;
+                    self.record_opaque_external_storage_array_elements(target.clone());
+                }
+            }
+            if exact {
+                self.array_lengths
+                    .insert(target.clone(), call.arguments.len());
+            }
+            return true;
+        }
+        if let Some(source) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(|source| self.materialize_array_copy_source(source))
+        {
+            let iteration_is_intact = self.known_array_path(&source)
+                && self.path_is_currently_intact(
+                    &source.clone().with_property("constructor".to_string()),
+                );
+            if call.arguments.len() == 1 && iteration_is_intact {
+                self.record_array_container_source(target, &source, false);
+                if let Some(length) = self.known_array_length(&source) {
+                    self.array_lengths.insert(target.clone(), length);
+                }
+            } else {
+                self.record_opaque_external_storage_array_elements(target.clone());
+            }
+        } else {
+            self.record_opaque_external_storage_array_elements(target.clone());
+        }
+        true
+    }
+
+    fn record_instance_array_copy_result(
+        &mut self,
+        target: &StaticAliasPath,
+        call: &CallExpression<'_>,
+    ) -> bool {
+        let (receiver, method) = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Some(method) = static_member_name(&member.expression) else {
+                    return false;
+                };
+                (&member.object, method)
+            }
+            _ => return false,
+        };
+        if !array_method_returns_fresh_container(&method) {
+            return false;
+        }
+        let Some(source) = self.materialize_array_copy_source(receiver) else {
+            return false;
+        };
+        if !self.known_array_path(&source) || !self.array_copy_method_is_intact(&source, &method) {
+            return false;
+        }
+        self.initialize_fresh_array_target(target);
+        let source_length = self.known_array_length(&source);
+        match method.as_str() {
+            "slice" => {
+                if let Some(length) = source_length
+                    && (call.arguments.is_empty()
+                        || call
+                            .arguments
+                            .iter()
+                            .all(|argument| argument.as_expression().is_some()))
+                {
+                    let start = call
+                        .arguments
+                        .first()
+                        .map_or(Some(0), |argument| {
+                            argument
+                                .as_expression()
+                                .and_then(Self::static_array_integer)
+                        })
+                        .map(|start| Self::normalized_array_start(start, length));
+                    let end = call.arguments.get(1).map_or(Some(length), |argument| {
+                        argument
+                            .as_expression()
+                            .and_then(Self::static_array_integer)
+                            .map(|end| Self::normalized_array_start(end, length))
+                    });
+                    if let (Some(start), Some(end)) = (start, end) {
+                        let copied = end.saturating_sub(start);
+                        self.record_external_storage_array_range_copy(
+                            target.clone(),
+                            &source,
+                            0,
+                            start,
+                            copied,
+                        );
+                        self.array_lengths.insert(target.clone(), copied);
+                    } else {
+                        self.record_array_container_source(target, &source, true);
+                    }
+                } else {
+                    self.record_array_container_source(target, &source, true);
+                }
+            }
+            "concat" => {
+                let mut offset = source_length;
+                if let Some(length) = source_length {
+                    self.record_external_storage_array_range_copy(
+                        target.clone(),
+                        &source,
+                        0,
+                        0,
+                        length,
+                    );
+                } else {
+                    self.record_array_container_source(target, &source, true);
+                }
+                for argument in &call.arguments {
+                    let Some(argument) = argument.as_expression() else {
+                        self.record_opaque_external_storage_array_elements(target.clone());
+                        offset = None;
+                        continue;
+                    };
+                    let argument_source = self.materialize_array_value_source(argument);
+                    if let Some(argument_source) = argument_source.as_ref()
+                        && self.known_array_path(argument_source)
+                        && self.path_is_currently_intact(
+                            &argument_source
+                                .clone()
+                                .with_property("constructor".to_string()),
+                        )
+                    {
+                        if let (Some(target_start), Some(argument_length)) =
+                            (offset, self.known_array_length(argument_source))
+                        {
+                            self.record_external_storage_array_range_copy(
+                                target.clone(),
+                                argument_source,
+                                target_start,
+                                0,
+                                argument_length,
+                            );
+                            offset = target_start.checked_add(argument_length);
+                        } else {
+                            self.record_external_storage_array_element_copies(
+                                target.clone(),
+                                self.array_element_copy_sources(argument_source),
+                            );
+                            offset = None;
+                        }
+                        continue;
+                    }
+                    if self.concat_value_is_definitely_nonspreadable(
+                        argument,
+                        argument_source.as_ref(),
+                    ) {
+                        if let Some(target_index) = offset {
+                            if let Some(argument_source) = argument_source.as_ref() {
+                                self.record_external_storage_array_index_copy(
+                                    target.clone(),
+                                    target_index,
+                                    argument_source,
+                                );
+                            } else {
+                                self.record_array_value_source_at(target, target_index, argument);
+                            }
+                            offset = target_index.checked_add(1);
+                        } else if let Some(argument_source) = argument_source {
+                            self.record_external_storage_array_element_copies(
+                                target.clone(),
+                                [argument_source],
+                            );
+                        } else {
+                            self.record_array_value_source(target, argument);
+                        }
+                    } else {
+                        self.record_opaque_external_storage_array_elements(target.clone());
+                        offset = None;
+                    }
+                }
+                if let Some(length) = offset {
+                    self.array_lengths.insert(target.clone(), length);
+                }
+            }
+            "toReversed" => {
+                if let Some(length) = source_length {
+                    for target_index in 0..length {
+                        let source_index = length - target_index - 1;
+                        self.record_external_storage_array_index_copy(
+                            target.clone(),
+                            target_index,
+                            &source.clone().with_property(source_index.to_string()),
+                        );
+                    }
+                    self.array_lengths.insert(target.clone(), length);
+                } else {
+                    self.record_array_container_source(target, &source, true);
+                }
+            }
+            "toSorted" | "filter" => {
+                self.record_array_container_source(target, &source, true);
+                if method == "toSorted"
+                    && let Some(length) = source_length
+                {
+                    self.array_lengths.insert(target.clone(), length);
+                }
+            }
+            "with" => {
+                let index = source_length.and_then(|length| {
+                    let index = Self::static_array_argument(call, 0)?;
+                    if index < 0 {
+                        let offset = usize::try_from(index.unsigned_abs()).unwrap_or(usize::MAX);
+                        (offset <= length).then(|| length.saturating_sub(offset))
+                    } else {
+                        usize::try_from(index).ok().filter(|index| *index < length)
+                    }
+                });
+                if let (Some(length), Some(index), Some(value)) = (
+                    source_length,
+                    index,
+                    call.arguments
+                        .get(1)
+                        .and_then(|argument| argument.as_expression()),
+                ) {
+                    self.record_external_storage_shallow_copy(
+                        target.clone(),
+                        &source,
+                        BTreeSet::from([index.to_string()]),
+                    );
+                    self.record_array_value_source_at(target, index, value);
+                    self.array_lengths.insert(target.clone(), length);
+                } else {
+                    self.record_array_container_source(target, &source, true);
+                    if let Some(value) = call
+                        .arguments
+                        .get(1)
+                        .and_then(|argument| argument.as_expression())
+                    {
+                        self.record_array_value_source(target, value);
+                    } else {
+                        self.record_opaque_external_storage_array_elements(target.clone());
+                    }
+                }
+            }
+            "toSpliced" | "splice" => {
+                let precise = source_length.and_then(|length| {
+                    if method == "toSpliced"
+                        && call
+                            .arguments
+                            .iter()
+                            .skip(2)
+                            .any(|argument| argument.as_expression().is_none())
+                    {
+                        return None;
+                    }
+                    let start = call.arguments.first().map_or(Some(0), |argument| {
+                        argument
+                            .as_expression()
+                            .and_then(Self::static_array_integer)
+                            .map(|start| Self::normalized_array_start(start, length))
+                    })?;
+                    let delete = if call.arguments.is_empty() {
+                        0
+                    } else if call.arguments.len() == 1 {
+                        length - start
+                    } else {
+                        let delete = call
+                            .arguments
+                            .get(1)?
+                            .as_expression()
+                            .and_then(Self::static_array_integer)?;
+                        usize::try_from(delete.max(0))
+                            .unwrap_or(usize::MAX)
+                            .min(length - start)
+                    };
+                    Some((length, start, delete))
+                });
+                if let Some((length, start, delete)) = precise {
+                    if method == "splice" {
+                        self.record_external_storage_array_range_copy(
+                            target.clone(),
+                            &source,
+                            0,
+                            start,
+                            delete,
+                        );
+                        self.array_lengths.insert(target.clone(), delete);
+                    } else {
+                        self.record_external_storage_array_range_copy(
+                            target.clone(),
+                            &source,
+                            0,
+                            0,
+                            start,
+                        );
+                        let mut inserted = 0usize;
+                        for (offset, argument) in call.arguments.iter().skip(2).enumerate() {
+                            if let Some(argument) = argument.as_expression() {
+                                self.record_array_value_source_at(
+                                    target,
+                                    start.saturating_add(offset),
+                                    argument,
+                                );
+                            } else {
+                                self.record_opaque_external_storage_array_elements(target.clone());
+                            }
+                            inserted = inserted.saturating_add(1);
+                        }
+                        let suffix = length.saturating_sub(start.saturating_add(delete));
+                        self.record_external_storage_array_range_copy(
+                            target.clone(),
+                            &source,
+                            start.saturating_add(inserted),
+                            start.saturating_add(delete),
+                            suffix,
+                        );
+                        self.array_lengths.insert(
+                            target.clone(),
+                            length.saturating_sub(delete).saturating_add(inserted),
+                        );
+                    }
+                } else {
+                    self.record_array_container_source(target, &source, true);
+                    if method == "toSpliced" {
+                        for argument in call.arguments.iter().skip(2) {
+                            if let Some(argument) = argument.as_expression() {
+                                self.record_array_value_source(target, argument);
+                            } else {
+                                self.record_opaque_external_storage_array_elements(target.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            "map" | "flatMap" | "flat" => {
+                self.record_opaque_external_storage_array_elements(target.clone());
+                if method == "map"
+                    && let Some(length) = source_length
+                {
+                    self.array_lengths.insert(target.clone(), length);
+                }
+            }
+            _ => unreachable!("fresh array result methods are exhaustively handled"),
+        }
+        true
+    }
+
+    fn record_local_array_result(
+        &mut self,
+        target: &StaticAliasPath,
+        call: &CallExpression<'_>,
+    ) -> bool {
+        self.record_static_array_result(target, call)
+            || self.record_instance_array_copy_result(target, call)
     }
 
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
@@ -29793,6 +30771,19 @@ impl StaticHookAliasCollector<'_> {
         {
             self.external_storage_flow.attached_parameters.remove(&root);
             self.record_external_storage_exception_flow();
+        }
+        if let Expression::CallExpression(call) = value.get_inner_expression()
+            && self.record_local_array_result(&target, call)
+        {
+            self.record_local_value_definedness(target, value);
+            return;
+        }
+        if let Expression::NewExpression(expression) = value.get_inner_expression()
+            && self.expression_returns_known_local_array_result(value)
+        {
+            self.record_array_constructor_arguments(&target, &expression.arguments);
+            self.record_local_value_definedness(target, value);
+            return;
         }
         if let Expression::CallExpression(call) = value.get_inner_expression()
             && let Some(source) = self.record_local_object_assign(call)
@@ -30590,7 +31581,9 @@ impl StaticHookAliasCollector<'_> {
                             });
                         }
                     }
-                    LocalCallableResult::Structured { .. } | LocalCallableResult::KnownLocal => {
+                    LocalCallableResult::Structured { .. }
+                    | LocalCallableResult::KnownLocal
+                    | LocalCallableResult::KnownLocalArray => {
                         return None;
                     }
                     LocalCallableResult::Invocation(_) => {
@@ -30655,6 +31648,7 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Structured { .. }
                     | LocalCallableResult::Invocation(_)
                     | LocalCallableResult::KnownLocal
+                    | LocalCallableResult::KnownLocalArray
                     | LocalCallableResult::Unknown => {
                         return false;
                     }
@@ -35102,7 +36096,9 @@ impl StaticHookAliasCollector<'_> {
                         results.iter().any(|result| {
                             !matches!(
                                 result,
-                                LocalCallableResult::KnownLocal | LocalCallableResult::Unknown
+                                LocalCallableResult::KnownLocal
+                                    | LocalCallableResult::KnownLocalArray
+                                    | LocalCallableResult::Unknown
                             )
                         })
                     })
@@ -40549,6 +41545,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         &self,
         expression: &CallExpression<'_>,
     ) -> bool {
+        if self.array_copy_call_returns_definitely_local_storage(expression) {
+            return true;
+        }
         let Some(raw) = static_alias_source_path(self.scoping, &expression.callee) else {
             return false;
         };
@@ -40584,6 +41583,41 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             ) => true,
             _ => false,
         }
+    }
+
+    fn array_copy_call_returns_definitely_local_storage(
+        &self,
+        expression: &CallExpression<'_>,
+    ) -> bool {
+        let (receiver, method) = match expression.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Some(method) = static_member_name(&member.expression) else {
+                    return false;
+                };
+                (&member.object, method)
+            }
+            _ => return false,
+        };
+        if !array_method_returns_fresh_container(&method) {
+            return false;
+        }
+        let receiver_kind =
+            classify_state_receiver_assignment(self.scoping, receiver, self.proven_receivers);
+        if receiver_kind != StateReceiverKind::Array
+            || !self.builtin_method_is_intact(receiver, receiver_kind, &method)
+            || !self
+                .callback_aliases
+                .path_is_intact(&StaticAliasPath::unresolved_global("Array".to_string()))
+        {
+            return false;
+        }
+        static_alias_source_path(self.scoping, receiver).is_none_or(|source| {
+            self.callback_aliases
+                .path_is_intact(&source.with_property("constructor".to_string()))
+        })
     }
 
     fn new_expression_returns_definitely_local_storage(
