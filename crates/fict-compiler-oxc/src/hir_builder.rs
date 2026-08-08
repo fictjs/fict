@@ -39800,10 +39800,24 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                         return false;
                     }
                 }
-                target
-                    .rest
-                    .as_ref()
-                    .is_none_or(|rest| !self.assignment_target_has_external_storage(&rest.target))
+                if let Some(rest) = &target.rest
+                    && self.assignment_target_has_external_storage(&rest.target)
+                {
+                    for value in source_values
+                        .iter()
+                        .skip(target.elements.len())
+                        .filter_map(|value| *value)
+                    {
+                        if !self.collect_external_assignment_values(
+                            &rest.target,
+                            Some(value),
+                            values,
+                        ) {
+                            return false;
+                        }
+                    }
+                }
+                true
             }
             AssignmentTarget::ObjectAssignmentTarget(target) => {
                 let mut source_values = BTreeMap::new();
@@ -39815,27 +39829,47 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                         return false;
                     }
                 }
+                let mut selected = BTreeSet::new();
                 for property in &target.properties {
-                    let AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) =
-                        property
-                    else {
-                        continue;
+                    let (name, binding) = match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                            selected.insert(property.binding.name.to_string());
+                            continue;
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                            let Some(name) = property.name.static_name() else {
+                                return false;
+                            };
+                            (name, &property.binding)
+                        }
                     };
-                    let Some(name) = property.name.static_name() else {
-                        return false;
-                    };
+                    selected.insert(name.to_string());
                     if !self.collect_external_maybe_default_values(
-                        &property.binding,
+                        binding,
                         source_values.get(name.as_ref()).copied(),
                         values,
                     ) {
                         return false;
                     }
                 }
-                target
-                    .rest
-                    .as_ref()
-                    .is_none_or(|rest| !self.assignment_target_has_external_storage(&rest.target))
+                if let Some(rest) = &target.rest
+                    && self.assignment_target_has_external_storage(&rest.target)
+                {
+                    for value in source_values
+                        .iter()
+                        .filter(|(name, _)| !selected.contains(*name))
+                        .map(|(_, value)| *value)
+                    {
+                        if !self.collect_external_assignment_values(
+                            &rest.target,
+                            Some(value),
+                            values,
+                        ) {
+                            return false;
+                        }
+                    }
+                }
+                true
             }
             AssignmentTarget::AssignmentTargetIdentifier(_)
             | AssignmentTarget::StaticMemberExpression(_)

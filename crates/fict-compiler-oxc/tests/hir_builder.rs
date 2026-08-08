@@ -2583,6 +2583,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "run",
             "FICT-R005",
         ),
+        (
+            "mixed array rest component parameter callback slot",
+            "const local = {}; const run = () => count;",
+            "[local.safe, ...holder.callbacks] = [0, run];",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "mixed object rest component parameter callback slot",
+            "const local = {}; const run = () => count;",
+            "({ safe: local.safe, ...holder.callbacks } = { safe: 0, run });",
+            "run",
+            "FICT-R005",
+        ),
     ] {
         let source = format!(
             r#"
@@ -2661,6 +2675,8 @@ fn mixed_external_assignment_patterns_ignore_values_stored_only_locally() {
             const run = () => count;
             [holder.safe, local.run] = [0, run];
             ({ safe: holder.other, callback: local.otherRun } = { safe: 0, callback: run });
+            [holder.otherSafe, ...local.arrayRest] = [0, run];
+            ({ safe: holder.finalSafe, ...local.objectRest } = { safe: 0, run });
             return count;
         }
     "#;
