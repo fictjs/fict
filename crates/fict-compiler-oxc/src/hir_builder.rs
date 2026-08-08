@@ -2186,8 +2186,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         member_accesses.visit_program(program);
         self.classify_component_roles(&calls.calls, &jsx.roots);
         self.validate_class_components(&class_bindings, &jsx.tags);
-        let reactive_symbols =
-            self.analyze_reactive_symbols(program, &calls.calls, &mutable_alias_symbols);
+        let reactive_symbols = self.analyze_reactive_symbols(
+            program,
+            &calls.calls,
+            &mutable_alias_symbols,
+            &static_hook_aliases,
+        );
         self.validate_state_method_calls(
             &calls.calls,
             &reactive_symbols.state,
@@ -2498,6 +2502,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         program: &Program<'_>,
         calls: &[CallFact],
         mutable_symbols: &BTreeSet<SymbolId>,
+        aliases: &StaticHookAliases,
     ) -> ReactiveSymbolAnalysis {
         let binding_to_symbol: BTreeMap<_, _> = self
             .symbol_to_binding
@@ -2630,10 +2635,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
         let mut dependencies = ReactiveBindingDependencyCollector {
             scoping: self.semantic.scoping(),
+            aliases,
             facts: Vec::new(),
         };
         dependencies.visit_program(program);
-        propagate_reactive_symbols(&mut reactive_symbols, &dependencies.facts);
+        propagate_reactive_symbols(&mut reactive_symbols, &dependencies.facts, |_| true);
         let hook_return_shapes = collect_local_hook_return_shapes(
             program,
             self.semantic.scoping(),
@@ -2649,7 +2655,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         // reject ordinary resource keys and event callbacks. Runtime reactive factory results
         // still participate in DOM dependency tracking, but do not become escape roots merely
         // because they came from store/resource/selector.
-        propagate_reactive_symbols(&mut escape_reactive_symbols, &dependencies.facts);
+        propagate_reactive_symbols(
+            &mut escape_reactive_symbols,
+            &dependencies.facts,
+            |dependency| dependency.escape_identity_container,
+        );
         escape_reactive_symbols.extend(component_parameter_symbols);
 
         ReactiveSymbolAnalysis {
@@ -9634,10 +9644,14 @@ fn collect_local_hook_return_shapes(
 fn propagate_reactive_symbols(
     symbols: &mut BTreeSet<SymbolId>,
     dependencies: &[ReactiveBindingDependencyFact],
+    should_propagate: impl Fn(&ReactiveBindingDependencyFact) -> bool,
 ) {
     loop {
         let mut changed = false;
         for fact in dependencies {
+            if !should_propagate(fact) {
+                continue;
+            }
             if fact.sources.iter().any(|source| symbols.contains(source)) {
                 for target in &fact.targets {
                     changed |= symbols.insert(*target);
@@ -9656,10 +9670,13 @@ struct ReactiveBindingDependencyFact {
     sources: BTreeSet<SymbolId>,
     source_span: SourceSpan,
     callback_container: bool,
+    // Reactive reads can affect evaluation without making the result carry their identity.
+    escape_identity_container: bool,
 }
 
-struct ReactiveBindingDependencyCollector<'semantic> {
+struct ReactiveBindingDependencyCollector<'facts, 'semantic> {
     scoping: &'semantic Scoping,
+    aliases: &'facts StaticHookAliases,
     facts: Vec<ReactiveBindingDependencyFact>,
 }
 
@@ -9675,7 +9692,42 @@ fn expression_can_carry_callback(expression: &Expression<'_>) -> bool {
     )
 }
 
-impl ReactiveBindingDependencyCollector<'_> {
+fn expression_returns_definitely_primitive(
+    scoping: &Scoping,
+    aliases: &StaticHookAliases,
+    expression: &Expression<'_>,
+) -> bool {
+    let call = match expression.get_inner_expression() {
+        Expression::CallExpression(call) => call,
+        Expression::ChainExpression(chain) => {
+            let ChainElement::CallExpression(call) = &chain.expression else {
+                return false;
+            };
+            call
+        }
+        _ => return false,
+    };
+    resolves_to_intact_global_method(scoping, aliases, &call.callee, "Reflect", "setPrototypeOf")
+}
+
+fn resolves_to_intact_global_method(
+    scoping: &Scoping,
+    aliases: &StaticHookAliases,
+    callee: &Expression<'_>,
+    owner: &str,
+    method: &str,
+) -> bool {
+    let Some(path) = static_alias_source_path(scoping, callee) else {
+        return false;
+    };
+    let target =
+        StaticAliasPath::unresolved_global(owner.to_string()).with_property(method.to_string());
+    aliases.resolve(&path) == target
+        && aliases.path_is_intact(&path)
+        && aliases.path_is_intact(&target)
+}
+
+impl ReactiveBindingDependencyCollector<'_, '_> {
     fn push_fact(&mut self, targets: Vec<SymbolId>, source: &Expression<'_>) {
         if targets.is_empty() {
             return;
@@ -9691,6 +9743,11 @@ impl ReactiveBindingDependencyCollector<'_> {
                 sources: collector.symbols,
                 source_span: source_span(source.span()),
                 callback_container: expression_can_carry_callback(source),
+                escape_identity_container: !expression_returns_definitely_primitive(
+                    self.scoping,
+                    self.aliases,
+                    source,
+                ),
             });
         }
     }
@@ -9795,7 +9852,7 @@ impl ReactiveBindingDependencyCollector<'_> {
     }
 }
 
-impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_> {
+impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_, '_> {
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
         if let Some(initializer) = &declarator.init {
             let mut targets = PatternBindingCollector::default();
@@ -9842,6 +9899,7 @@ impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_> {
                     // Computed keys, default calls, and member bases affect reactive execution
                     // without becoming the callback value assigned to a target.
                     callback_container: false,
+                    escape_identity_container: true,
                 });
             }
             self.push_fact(target_symbols, &assignment.right);
@@ -38507,6 +38565,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     }
 
     fn reactive_references(&self, argument: EscapeArgument<'_, '_>) -> BTreeSet<SymbolId> {
+        if self.expression_returns_definitely_primitive(argument.expression) {
+            return BTreeSet::new();
+        }
         let root = argument.expression.get_inner_expression();
         let root_function = match root {
             Expression::FunctionExpression(function) => {
@@ -38540,6 +38601,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     }
 
     fn callback_captures(&self, argument: EscapeArgument<'_, '_>) -> BTreeSet<SymbolId> {
+        if self.expression_returns_definitely_primitive(argument.expression) {
+            return BTreeSet::new();
+        }
         let mut captured = BTreeSet::new();
         for (span, symbols) in self.capturing_functions {
             if span_contains(argument.span, *span) {
@@ -39142,6 +39206,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 | Expression::TemplateLiteral(_)
         ) || matches!(expression,
             Expression::UnaryExpression(unary) if unary.operator == OxcUnaryOperator::Void)
+            || self.expression_returns_definitely_primitive(expression)
         {
             return true;
         }
@@ -39152,6 +39217,10 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 && resolved.properties.is_empty()
                 && self.callback_aliases.path_is_intact(&path)
         })
+    }
+
+    fn expression_returns_definitely_primitive(&self, expression: &Expression<'_>) -> bool {
+        expression_returns_definitely_primitive(self.scoping, self.callback_aliases, expression)
     }
 
     fn is_non_retaining_identity_argument(
@@ -39237,17 +39306,18 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         {
             return false;
         }
-        let Some(path) = static_alias_source_path(self.scoping, callee) else {
-            return false;
-        };
-        let resolved = self.callback_aliases.resolve(&path);
-        ["Object", "Reflect"].into_iter().any(|owner| {
-            let target = StaticAliasPath::unresolved_global(owner.to_string())
-                .with_property("setPrototypeOf".to_string());
-            resolved == target
-                && self.callback_aliases.path_is_intact(&path)
-                && self.callback_aliases.path_is_intact(&target)
-        })
+        ["Object", "Reflect"]
+            .into_iter()
+            .any(|owner| self.resolves_to_intact_global_method(callee, owner, "setPrototypeOf"))
+    }
+
+    fn resolves_to_intact_global_method(
+        &self,
+        callee: &Expression<'_>,
+        owner: &str,
+        method: &str,
+    ) -> bool {
+        resolves_to_intact_global_method(self.scoping, self.callback_aliases, callee, owner, method)
     }
 
     fn is_non_escaping_string_replacer(
@@ -39319,11 +39389,17 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     }
 
     fn is_known_array_value(&self, expression: &Expression<'_>) -> bool {
-        if matches!(
-            expression.get_inner_expression(),
-            Expression::ArrayExpression(_)
-        ) {
-            return true;
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(_) => return true,
+            Expression::CallExpression(call) => {
+                return self.object_set_prototype_of_returns_known_array(call);
+            }
+            Expression::ChainExpression(chain) => {
+                if let ChainElement::CallExpression(call) = &chain.expression {
+                    return self.object_set_prototype_of_returns_known_array(call);
+                }
+            }
+            _ => {}
         }
         let Some(raw) = static_alias_source_path(self.scoping, expression) else {
             return false;
@@ -39336,6 +39412,27 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                     .binding_root()
                     .is_some_and(|root| self.known_arrays.contains(&root))
         })
+    }
+
+    fn object_set_prototype_of_returns_known_array(&self, call: &CallExpression<'_>) -> bool {
+        call.arguments.len() >= 2
+            && call
+                .arguments
+                .iter()
+                .all(|argument| argument.as_expression().is_some())
+            && call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .is_some_and(|prototype| {
+                    matches!(prototype.get_inner_expression(), Expression::NullLiteral(_))
+                })
+            && self.resolves_to_intact_global_method(&call.callee, "Object", "setPrototypeOf")
+            && call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .is_some_and(|target| self.is_known_array_value(target))
     }
 
     fn is_non_escaping_json_replacer_push_argument(

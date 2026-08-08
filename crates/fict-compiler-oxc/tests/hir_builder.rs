@@ -12433,6 +12433,41 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "immediate null-prototype replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run];",
+            "JSON.stringify(source, Object.setPrototypeOf(replacer, null));",
+        ),
+        (
+            "immediate Reflect null-prototype result with reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run];",
+            "JSON.stringify(source, Reflect.setPrototypeOf(replacer, null));",
+        ),
+        (
+            "externally consumed Reflect null-prototype boolean",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run];",
+            "consume(Reflect.setPrototypeOf(replacer, null)); JSON.stringify(source, replacer);",
+        ),
+        (
+            "stored Reflect null-prototype boolean",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; const changed = Reflect.setPrototypeOf(replacer, null);",
+            "consume(changed); JSON.stringify(source, replacer);",
+        ),
+        (
+            "aliased Reflect null-prototype boolean",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; const setPrototype = Reflect.setPrototypeOf;",
+            "consume(setPrototype(replacer, null)); JSON.stringify(source, replacer);",
+        ),
+        (
+            "stored aliased Reflect null-prototype boolean",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; const setPrototype = Reflect.setPrototypeOf; const changed = setPrototype(replacer, null); const alias = changed;",
+            "consume(alias); JSON.stringify(source, replacer);",
+        ),
+        (
+            "stored null-prototype replacer result with reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; const alias = Object.setPrototypeOf(replacer, null);",
+            "JSON.stringify(source, alias);",
+        ),
+        (
             "inline null-prototype array callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 };",
             "Object.setPrototypeOf([run], null); JSON.stringify(source);",
@@ -12664,6 +12699,16 @@ fn json_stringify_does_not_invoke_data_callables() {
             "overridden Object setPrototypeOf consumes replacer callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; Object.setPrototypeOf = target => { target[0](); return target; };",
             "Object.setPrototypeOf(replacer, null); JSON.stringify(source, replacer);",
+        ),
+        (
+            "overridden Reflect setPrototypeOf consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; Reflect.setPrototypeOf = target => { target[0](); return true; };",
+            "const changed = Reflect.setPrototypeOf(replacer, null); consume(changed); JSON.stringify(source, replacer);",
+        ),
+        (
+            "shadowed Reflect setPrototypeOf consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; const Reflect = { setPrototypeOf(target) { target[0](); return true; } };",
+            "const changed = Reflect.setPrototypeOf(replacer, null); consume(changed); JSON.stringify(source, replacer);",
         ),
         (
             "returned null-prototype replacer callable is consumed",
