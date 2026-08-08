@@ -2486,6 +2486,13 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "constructor-returned component parameter callback slot",
+            "class Factory { constructor() { return holder.callbacks; } } const run = () => count;",
+            "new Factory().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "nested component parameter callback slot",
             "const run = () => count;",
             "holder.callbacks.run = run;",
@@ -2750,6 +2757,8 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             if (holder.first) replacedInBranches = {};
             else replacedInBranches = {};
             const getLocal = () => ({});
+            class LocalFactory {}
+            class PrimitiveFactory { constructor() { return 1; } }
             local.run = run;
             alias.next ??= () => count;
             objectRest.run = run;
@@ -2757,6 +2766,8 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             replacedExternal.run = run;
             replacedInBranches.run = run;
             getLocal().run = run;
+            new LocalFactory().run = run;
+            new PrimitiveFactory().run = run;
             holder.label += run;
             [holder.label, local.next] = ["safe", run];
             ({ label: holder.label, next: local.next } = { label: "safe", next: run });

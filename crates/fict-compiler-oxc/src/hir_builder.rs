@@ -20285,6 +20285,13 @@ struct LocalCallableResultCollector<'collector, 'semantic> {
     results: Vec<LocalCallableResult>,
 }
 
+struct ConstructorReplacementResultCollector<'collector, 'semantic> {
+    owner: &'collector StaticHookAliasCollector<'semantic>,
+    lexical_receiver: StaticAliasPath,
+    function_depth: usize,
+    results: Vec<LocalCallableResult>,
+}
+
 impl<'a> Visit<'a> for LocalCallableResultCollector<'_, '_> {
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
 
@@ -20295,6 +20302,26 @@ impl<'a> Visit<'a> for LocalCallableResultCollector<'_, '_> {
             self.results.extend(self.owner.local_callable_results(
                 expression,
                 self.lexical_receiver.as_ref(),
+                self.function_depth,
+            ));
+        }
+    }
+}
+
+impl<'a> Visit<'a> for ConstructorReplacementResultCollector<'_, '_> {
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_class(&mut self, _class: &Class<'a>) {}
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if let Some(expression) = &statement.argument
+            && constructor_return_may_replace_instance(expression)
+        {
+            self.results.extend(self.owner.local_callable_results(
+                expression,
+                Some(&self.lexical_receiver),
                 self.function_depth,
             ));
         }
@@ -20406,6 +20433,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_generator_callable_history: BTreeMap<StaticAliasPath, Vec<bool>>,
     local_callable_results: BTreeMap<StaticAliasPath, Vec<LocalCallableResult>>,
     local_callable_result_history: BTreeMap<StaticAliasPath, Vec<Vec<LocalCallableResult>>>,
+    external_storage_constructor_results: BTreeMap<StaticAliasPath, Vec<LocalCallableResult>>,
     local_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     local_callable_effect_span_history: BTreeMap<StaticAliasPath, Vec<BTreeSet<(u32, u32)>>>,
     local_callable_effect_creators: LocalCallableEffectCreatorMap,
@@ -21275,6 +21303,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_generator_callable_history: BTreeMap::new(),
             local_callable_results: BTreeMap::new(),
             local_callable_result_history: BTreeMap::new(),
+            external_storage_constructor_results: BTreeMap::new(),
             local_callable_effect_spans: BTreeMap::new(),
             local_callable_effect_span_history: BTreeMap::new(),
             local_callable_effect_creators: BTreeMap::new(),
@@ -21403,6 +21432,9 @@ impl StaticHookAliasCollector<'_> {
     ) -> Vec<StaticAliasPath> {
         let mut owners = match object.get_inner_expression() {
             Expression::CallExpression(call) => self.factory_assignment_result_paths(call),
+            Expression::NewExpression(expression) => {
+                self.constructor_assignment_result_paths(expression)
+            }
             _ => None,
         }
         .unwrap_or_default();
@@ -21458,6 +21490,47 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         (!paths.is_empty()).then_some(paths)
+    }
+
+    fn constructor_assignment_result_paths(
+        &mut self,
+        expression: &NewExpression<'_>,
+    ) -> Option<Vec<StaticAliasPath>> {
+        let mut invocations =
+            self.local_invocation_facts(&expression.callee, &expression.arguments)?;
+        for invocation in &mut invocations {
+            invocation.construct = true;
+        }
+        let mut paths = Vec::new();
+        for invocation in invocations {
+            let results = self
+                .invocation_callees(&invocation)
+                .into_iter()
+                .flat_map(|callee| {
+                    self.external_storage_constructor_results
+                        .get(&callee)
+                        .into_iter()
+                        .flatten()
+                        .cloned()
+                })
+                .collect::<Vec<_>>();
+            for result in results {
+                match self.bind_local_callable_result(result, &invocation) {
+                    LocalCallableResult::Reference(source) => paths.push(source),
+                    LocalCallableResult::Structured { span, .. } => {
+                        paths.push(StaticAliasPath::dynamic_this(Span::new(span.0, span.1)))
+                    }
+                    LocalCallableResult::Direct { .. }
+                    | LocalCallableResult::Bound { .. }
+                    | LocalCallableResult::Unknown => {}
+                    LocalCallableResult::Invocation(_) => unreachable!(
+                        "constructor result invocations must resolve before assignment analysis"
+                    ),
+                }
+            }
+        }
+        paths.push(StaticAliasPath::dynamic_this(expression.span));
+        Some(paths)
     }
 
     fn structured_expression_assignment_target_alias_paths(
@@ -22496,6 +22569,31 @@ impl StaticHookAliasCollector<'_> {
         }
         if let Some(object) = replacement_object {
             self.record_replacement_object_callables(target, object);
+        }
+    }
+
+    fn record_class_constructor_results(&mut self, target: &StaticAliasPath, class: &Class<'_>) {
+        let Some(constructor) = class.body.body.iter().find_map(|element| {
+            let ClassElement::MethodDefinition(method) = element else {
+                return None;
+            };
+            (method.kind == MethodDefinitionKind::Constructor).then_some(&method.value)
+        }) else {
+            return;
+        };
+        let Some(body) = &constructor.body else {
+            return;
+        };
+        let mut collector = ConstructorReplacementResultCollector {
+            owner: self,
+            lexical_receiver: StaticAliasPath::dynamic_this(constructor.span),
+            function_depth: self.function_depth.saturating_add(1),
+            results: Vec::new(),
+        };
+        collector.visit_function_body(body);
+        if !collector.results.is_empty() {
+            self.external_storage_constructor_results
+                .insert(target.clone(), collector.results);
         }
     }
 
@@ -37049,6 +37147,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.record_local_callable_effect_span(target.clone(), class_span);
             self.record_default_derived_constructor(target.clone(), class);
             self.record_class_callables(&target, class);
+            self.record_class_constructor_results(&target, class);
             self.returned_class_blueprint_targets
                 .insert(class_span, target);
         }
@@ -37063,6 +37162,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.record_local_callable_effect_span(target.clone(), class_span);
             self.record_default_derived_constructor(target.clone(), class);
             self.record_class_callables(&target, class);
+            self.record_class_constructor_results(&target, class);
             self.returned_class_blueprint_targets
                 .insert(class_span, target);
         }
