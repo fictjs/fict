@@ -12546,6 +12546,11 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "Function constructor overrides replacer push",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; Function(\"Array.prototype.push = function(value) { value(); return 0; }\")(); replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
             "hoisted local call appends a replacer property",
             "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe'];",
             "append(); JSON.stringify(source, replacer); function append() { replacer.push('unsafe'); }",
