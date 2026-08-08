@@ -2556,6 +2556,153 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "immediate factory-returned component parameter callback slot",
+            "const run = () => count;",
+            "(() => holder.callbacks)().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "stored factory-returned component parameter callback slot",
+            "const getCallbacks = () => holder.callbacks; const callbacks = getCallbacks(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "unknown factory-returned callback slot",
+            "const run = () => count;",
+            "holder.getCallbacks().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped unknown factory-returned callback slot",
+            "const getCallbacks = () => holder.getCallbacks(); const run = () => count;",
+            "getCallbacks().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "stored unknown factory-returned callback slot",
+            "const callbacks = holder.getCallbacks(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "destructured unknown factory-returned callback slot",
+            "const { callbacks } = holder.getConfig(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "array-destructured unknown factory-returned callback slot",
+            "const [callbacks] = holder.getCallbacks(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "defaulted destructured unknown factory-returned callback slot",
+            "const { callbacks = {} } = holder.getConfig(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "nested object-rest unknown factory-returned callback slot",
+            "const { ...config } = holder.getConfig(); const run = () => count;",
+            "config.callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "nested array-rest unknown factory-returned callback slot",
+            "const [, ...callbacks] = holder.getCallbacks(); const run = () => count;",
+            "callbacks[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "nested-pattern array-rest unknown factory-returned callback slot",
+            "const [...[callbacks]] = holder.getCallbacks(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "assignment-destructured unknown factory-returned callback slot",
+            "let callbacks; ({ callbacks } = holder.getConfig()); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "array-assignment-destructured unknown factory-returned callback slot",
+            "let callbacks; [callbacks] = holder.getCallbacks(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "nested-pattern array-rest assignment unknown factory-returned callback slot",
+            "let callbacks; [...[callbacks]] = holder.getCallbacks(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "unknown constructor-returned callback slot",
+            "const run = () => count;",
+            "new holder.Factory().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped unknown constructor-returned callback slot",
+            "const makeCallbacks = () => new holder.Factory(); const run = () => count;",
+            "makeCallbacks().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "stored unknown constructor-returned callback slot",
+            "const callbacks = new holder.Factory(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "shadowed builtin factory-returned callback slot",
+            "const Array = holder.Array; const run = () => count;",
+            "Array.from([]).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "shadowed builtin constructor-returned callback slot",
+            "const Date = holder.Factory; const run = () => count;",
+            "new Date().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "external-prototype object create callback slot",
+            "const callbacks = Object.create(holder); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "external-prototype setPrototypeOf callback slot",
+            "const callbacks = Object.setPrototypeOf({}, holder); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "branched factory-returned component parameter callback slot",
             "const getCallbacks = () => holder.enabled ? holder.callbacks : {}; const run = () => count;",
             "getCallbacks().run = run;",
@@ -2563,9 +2710,37 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "stored branched factory-returned component parameter callback slot",
+            "const getCallbacks = () => holder.enabled ? holder.callbacks : {}; const callbacks = getCallbacks(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "constructor-returned component parameter callback slot",
             "class Factory { constructor() { return holder.callbacks; } } const run = () => count;",
             "new Factory().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "constructor factory-returned unknown callback slot",
+            "class Factory { constructor() { return holder.getCallbacks(); } } const run = () => count;",
+            "new Factory().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "stored constructor-returned component parameter callback slot",
+            "class Factory { constructor() { return holder.callbacks; } } const callbacks = new Factory(); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "stored constructor factory-returned unknown callback slot",
+            "class Factory { constructor() { return holder.getCallbacks(); } } const callbacks = new Factory(); const run = () => count;",
+            "callbacks.run = run;",
             "run",
             "FICT-R005",
         ),
@@ -2943,8 +3118,17 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             let replacedBeforeLabeledBreak = holder.callbacks;
             done: { replacedBeforeLabeledBreak = {}; break done; }
             const getLocal = () => ({});
+            const getLocalConfig = () => ({ callbacks: {} });
+            const getEitherLocal = () => holder.enabled ? {} : [];
+            const getPrimitive = () => 1;
+            const getUndefined = () => {};
+            const getAsync = async () => holder.callbacks;
+            function* getIterator() { yield holder.callbacks; }
             class LocalFactory {}
             class PrimitiveFactory { constructor() { return 1; } }
+            const makeLocal = () => new LocalFactory();
+            const makeDate = () => new Date();
+            const makeArray = () => Array.from([]);
             local.run = run;
             alias.next ??= () => count;
             objectRest.run = run;
@@ -2957,6 +3141,40 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             prefixedArraySpread[0].run = run;
             directObjectSpread.callbacks = run;
             directArraySpread[0] = run;
+            ({}).run = run;
+            ([]).run = run;
+            new Date().run = run;
+            new Map().run = run;
+            Array.from([]).run = run;
+            Array.of(1).run = run;
+            Array().run = run;
+            Object({}).run = run;
+            Number().run = run;
+            Date().run = run;
+            Function().run = run;
+            new Object({}).run = run;
+            new Object(new Date()).run = run;
+            (() => ({}))().run = run;
+            (() => 1)().run = run;
+            (() => {})().run = run;
+            const storedDate = new Date();
+            storedDate.run = run;
+            const storedArray = Array.from([]);
+            storedArray.run = run;
+            const storedObjectWrapper = Object({});
+            storedObjectWrapper.run = run;
+            const nullPrototype = Object.create(null);
+            nullPrototype.run = run;
+            Object.create(null).run = run;
+            const { callbacks: localCallbacks } = getLocalConfig();
+            localCallbacks.run = run;
+            const { ...opaqueObjectRest } = holder.getConfig();
+            opaqueObjectRest.run = run;
+            const [, ...opaqueArrayRest] = holder.getCallbacks();
+            opaqueArrayRest[0] = run;
+            let assignedLocalCallbacks;
+            ({ callbacks: assignedLocalCallbacks } = getLocalConfig());
+            assignedLocalCallbacks.run = run;
             replacedExternal.run = run;
             replacedInBranches.run = run;
             replacedConditionally.run = run;
@@ -2966,6 +3184,30 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             replacedInFinally.run = run;
             replacedBeforeLabeledBreak.run = run;
             getLocal().run = run;
+            getEitherLocal().run = run;
+            const eitherLocal = getEitherLocal();
+            eitherLocal.run = run;
+            getPrimitive().run = run;
+            const primitive = getPrimitive();
+            primitive.run = run;
+            getUndefined().run = run;
+            getAsync().run = run;
+            getIterator().run = run;
+            const undefinedValue = getUndefined();
+            undefinedValue.run = run;
+            const asyncValue = getAsync();
+            asyncValue.run = run;
+            const iterator = getIterator();
+            iterator.run = run;
+            makeLocal().run = run;
+            makeDate().run = run;
+            makeArray().run = run;
+            const madeLocal = makeLocal();
+            madeLocal.run = run;
+            const madeDate = makeDate();
+            madeDate.run = run;
+            const madeArray = makeArray();
+            madeArray.run = run;
             new LocalFactory().run = run;
             new PrimitiveFactory().run = run;
             holder.label += run;

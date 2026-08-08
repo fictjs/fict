@@ -20513,6 +20513,15 @@ impl ExternalStorageFlowState {
                 });
         }
     }
+
+    fn record_opaque_result(&mut self, target: StaticAliasPath) {
+        self.aliases
+            .entry(target)
+            .or_default()
+            .insert(StaticAliasPath::unresolved_global(
+                "<opaque-call-result>".to_string(),
+            ));
+    }
 }
 
 impl<'a> Visit<'a> for LocalCallableResultCollector<'_, '_> {
@@ -20918,6 +20927,7 @@ enum LocalCallableResult {
         capture_invocations: Vec<LocalInvocationFact>,
     },
     Invocation(Vec<LocalInvocationFact>),
+    KnownLocal,
     Unknown,
 }
 
@@ -21656,6 +21666,27 @@ impl StaticHookAliasCollector<'_> {
         self.record_external_storage_exception_flow();
     }
 
+    fn record_opaque_external_storage_result(&mut self, target: StaticAliasPath) {
+        self.external_storage_flow.record_opaque_result(target);
+        self.record_external_storage_exception_flow();
+    }
+
+    fn record_external_storage_result_paths(
+        &mut self,
+        target: StaticAliasPath,
+        sources: Vec<StaticAliasPath>,
+    ) {
+        let mut candidates = BTreeSet::new();
+        let mut attached = BTreeSet::new();
+        for source in sources {
+            candidates.extend(self.external_storage_flow.alias_candidates(&source));
+            attached.extend(self.external_storage_flow.attached_roots(&source));
+        }
+        self.external_storage_flow
+            .insert_alias(target, candidates, attached);
+        self.record_external_storage_exception_flow();
+    }
+
     fn record_assignment_target_alias_snapshot(&mut self, span: Span, path: StaticAliasPath) {
         let flow_candidates = self.external_storage_flow.alias_candidates(&path);
         let attached_roots = self.external_storage_flow.attached_roots(&path);
@@ -21766,7 +21797,29 @@ impl StaticHookAliasCollector<'_> {
             .or_else(|| self.local_invocation_facts(&call.callee, &call.arguments))?;
         let mut paths = Vec::new();
         for invocation in invocations {
-            let (results, _) = self.local_callable_results_for_invocation(&invocation);
+            let (results, _) = if invocation.callee.is_none() {
+                let lexical_receiver = self
+                    .dynamic_this_roots
+                    .last()
+                    .and_then(Option::as_ref)
+                    .cloned();
+                let results = self
+                    .callable_definition_results(
+                        &call.callee,
+                        lexical_receiver.as_ref(),
+                        invocation.function_depth.saturating_add(1),
+                    )
+                    .unwrap_or_else(|| vec![LocalCallableResult::Unknown]);
+                self.resolve_local_callable_result_invocations(results, &mut BTreeSet::new())
+            } else {
+                self.local_callable_results_for_invocation(&invocation)
+            };
+            if results.is_empty()
+                && (invocation.callee.is_none() || invocation.parameters.is_some())
+            {
+                paths.push(StaticAliasPath::dynamic_this(call.span));
+                continue;
+            }
             for result in results {
                 match self.bind_local_callable_result(result, &invocation) {
                     LocalCallableResult::Reference(source) => paths.push(source),
@@ -21775,6 +21828,9 @@ impl StaticHookAliasCollector<'_> {
                         paths.push(StaticAliasPath::dynamic_this(Span::new(span.0, span.1)))
                     }
                     LocalCallableResult::Bound { .. } => {
+                        paths.push(StaticAliasPath::dynamic_this(call.span));
+                    }
+                    LocalCallableResult::KnownLocal => {
                         paths.push(StaticAliasPath::dynamic_this(call.span));
                     }
                     LocalCallableResult::Invocation(_) => unreachable!(
@@ -21788,11 +21844,17 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn constructor_assignment_result_paths(
-        &mut self,
+        &self,
         expression: &NewExpression<'_>,
     ) -> Option<Vec<StaticAliasPath>> {
         let mut invocations =
             self.local_invocation_facts(&expression.callee, &expression.arguments)?;
+        if invocations
+            .iter()
+            .any(|invocation| invocation.parameters.is_none())
+        {
+            return None;
+        }
         for invocation in &mut invocations {
             invocation.construct = true;
         }
@@ -21809,6 +21871,8 @@ impl StaticHookAliasCollector<'_> {
                         .cloned()
                 })
                 .collect::<Vec<_>>();
+            let (results, _) =
+                self.resolve_local_callable_result_invocations(results, &mut BTreeSet::new());
             for result in results {
                 match self.bind_local_callable_result(result, &invocation) {
                     LocalCallableResult::Reference(source) => paths.push(source),
@@ -21817,7 +21881,8 @@ impl StaticHookAliasCollector<'_> {
                     }
                     LocalCallableResult::Direct { .. }
                     | LocalCallableResult::Bound { .. }
-                    | LocalCallableResult::Unknown => {}
+                    | LocalCallableResult::KnownLocal => {}
+                    LocalCallableResult::Unknown => return None,
                     LocalCallableResult::Invocation(_) => unreachable!(
                         "constructor result invocations must resolve before assignment analysis"
                     ),
@@ -21927,6 +21992,182 @@ impl StaticHookAliasCollector<'_> {
         self.local_bound_callables.insert(target, callable);
     }
 
+    fn expression_returns_known_local_result(&self, expression: &Expression<'_>) -> bool {
+        let expression = expression.get_inner_expression();
+        if matches!(
+            expression,
+            Expression::NullLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NumericLiteral(_)
+                | Expression::BigIntLiteral(_)
+                | Expression::StringLiteral(_)
+                | Expression::TemplateLiteral(_)
+                | Expression::RegExpLiteral(_)
+                | Expression::BinaryExpression(_)
+                | Expression::UnaryExpression(_)
+                | Expression::UpdateExpression(_)
+        ) {
+            return true;
+        }
+        if let Some(path) = static_alias_source_path(self.scoping, expression) {
+            let primitive_global = matches!(
+                (&path.root, path.properties.as_slice()),
+                (StaticAliasRoot::UnresolvedGlobal(root), [])
+                    if matches!(root.as_str(), "undefined" | "NaN" | "Infinity")
+            );
+            if primitive_global && self.path_is_currently_intact(&path) {
+                return true;
+            }
+        }
+        match expression {
+            Expression::CallExpression(call) => {
+                self.call_expression_returns_known_local_result(call)
+            }
+            Expression::NewExpression(expression) => {
+                self.new_expression_returns_known_local_result(expression)
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.expression_returns_known_local_result(&expression.consequent)
+                    && self.expression_returns_known_local_result(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                self.expression_returns_known_local_result(&expression.left)
+                    && self.expression_returns_known_local_result(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_some_and(|value| self.expression_returns_known_local_result(value)),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.expression_returns_known_local_result(&expression.right)
+            }
+            Expression::AssignmentExpression(expression)
+                if !matches!(
+                    expression.operator,
+                    OxcAssignmentOperator::LogicalOr
+                        | OxcAssignmentOperator::LogicalAnd
+                        | OxcAssignmentOperator::LogicalNullish
+                ) =>
+            {
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_is_definitely_local_storage_value(&self, expression: &Expression<'_>) -> bool {
+        matches!(
+            expression.get_inner_expression(),
+            Expression::ObjectExpression(_)
+                | Expression::ArrayExpression(_)
+                | Expression::FunctionExpression(_)
+                | Expression::ArrowFunctionExpression(_)
+                | Expression::ClassExpression(_)
+                | Expression::RegExpLiteral(_)
+        ) || self.expression_returns_known_local_result(expression)
+    }
+
+    fn call_expression_returns_known_local_result(&self, expression: &CallExpression<'_>) -> bool {
+        let Some(raw) = static_alias_source_path(self.scoping, &expression.callee) else {
+            return false;
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        if !self.path_is_currently_intact(&raw) || !self.path_is_currently_intact(&resolved) {
+            return false;
+        }
+        let StaticAliasRoot::UnresolvedGlobal(root) = &resolved.root else {
+            return false;
+        };
+        match (root.as_str(), resolved.properties.as_slice()) {
+            ("Array", []) => true,
+            ("Array", [method]) if matches!(method.as_str(), "from" | "of") => true,
+            ("Object", [method]) if method == "fromEntries" => true,
+            ("Object", []) => expression.arguments.first().is_none_or(|argument| {
+                argument.as_expression().is_some_and(|argument| {
+                    self.expression_is_definitely_local_storage_value(argument)
+                })
+            }),
+            ("structuredClone", []) => true,
+            (
+                "Boolean" | "Number" | "String" | "BigInt" | "Symbol" | "Date" | "Function"
+                | "Error" | "AggregateError" | "EvalError" | "RangeError" | "ReferenceError"
+                | "SyntaxError" | "TypeError" | "URIError",
+                [],
+            ) => true,
+            _ => false,
+        }
+    }
+
+    fn new_expression_returns_known_local_result(&self, expression: &NewExpression<'_>) -> bool {
+        if matches!(
+            expression.callee.get_inner_expression(),
+            Expression::FunctionExpression(_) | Expression::ClassExpression(_)
+        ) {
+            return true;
+        }
+        let Some(raw) = static_alias_source_path(self.scoping, &expression.callee) else {
+            return false;
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        if !self.path_is_currently_intact(&raw)
+            || !self.path_is_currently_intact(&resolved)
+            || !resolved.properties.is_empty()
+        {
+            return false;
+        }
+        let StaticAliasRoot::UnresolvedGlobal(constructor) = &resolved.root else {
+            return false;
+        };
+        if constructor == "Object" {
+            return expression.arguments.first().is_none_or(|argument| {
+                argument.as_expression().is_some_and(|argument| {
+                    self.expression_is_definitely_local_storage_value(argument)
+                })
+            });
+        }
+        matches!(
+            constructor.as_str(),
+            "Array"
+                | "ArrayBuffer"
+                | "SharedArrayBuffer"
+                | "DataView"
+                | "Date"
+                | "RegExp"
+                | "Map"
+                | "Set"
+                | "WeakMap"
+                | "WeakSet"
+                | "WeakRef"
+                | "FinalizationRegistry"
+                | "Int8Array"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Int16Array"
+                | "Uint16Array"
+                | "Int32Array"
+                | "Uint32Array"
+                | "BigInt64Array"
+                | "BigUint64Array"
+                | "Float16Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "Boolean"
+                | "Number"
+                | "String"
+                | "Error"
+                | "AggregateError"
+                | "EvalError"
+                | "RangeError"
+                | "ReferenceError"
+                | "SyntaxError"
+                | "TypeError"
+                | "URIError"
+                | "Promise"
+        )
+    }
+
     fn local_callable_results(
         &self,
         expression: &Expression<'_>,
@@ -21941,6 +22182,9 @@ impl StaticHookAliasCollector<'_> {
                 || vec![LocalCallableResult::Unknown],
                 |receiver| vec![LocalCallableResult::Reference(receiver.clone())],
             );
+        }
+        if self.expression_returns_known_local_result(expression) {
+            return vec![LocalCallableResult::KnownLocal];
         }
         if let Some(alternatives) = self.local_bound_callable_initializer(expression) {
             return vec![LocalCallableResult::Bound {
@@ -22052,6 +22296,17 @@ impl StaticHookAliasCollector<'_> {
             Expression::CallExpression(call) => {
                 self.local_callable_invocation_result(call, function_depth)
             }
+            Expression::NewExpression(expression) => self
+                .constructor_assignment_result_paths(expression)
+                .map_or_else(
+                    || vec![LocalCallableResult::Unknown],
+                    |paths| {
+                        paths
+                            .into_iter()
+                            .map(LocalCallableResult::Reference)
+                            .collect()
+                    },
+                ),
             Expression::ChainExpression(chain) => match &chain.expression {
                 ChainElement::CallExpression(call) => {
                     self.local_callable_invocation_result(call, function_depth)
@@ -22157,6 +22412,7 @@ impl StaticHookAliasCollector<'_> {
                 }
                 LocalCallableResult::Reference(_)
                 | LocalCallableResult::Invocation(_)
+                | LocalCallableResult::KnownLocal
                 | LocalCallableResult::Unknown => {}
             }
         }
@@ -29323,10 +29579,14 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         call: &CallExpression<'_>,
     ) {
+        if self.call_expression_returns_known_local_result(call) {
+            return;
+        }
         let Some(invocations) = self
             .immediate_callable_result_invocation_facts(call)
             .or_else(|| self.local_invocation_facts(&call.callee, &call.arguments))
         else {
+            self.record_opaque_external_storage_result(target.clone());
             self.record_local_bound_callable(
                 target,
                 LocalBoundCallable {
@@ -29353,9 +29613,13 @@ impl StaticHookAliasCollector<'_> {
         invocations: Vec<LocalInvocationFact>,
         inline_callable: Option<&Expression<'_>>,
     ) {
+        let external_baseline = self.external_storage_flow.clone();
+        let mut external_candidates = BTreeSet::new();
+        let mut external_attached = BTreeSet::new();
         let mut alternatives = 0usize;
         let mut ambiguous = false;
         let mut materialized_known_result = false;
+        let mut opaque_result = false;
         for invocation in invocations {
             let (results, historical) = if invocation.callee.is_none() {
                 let lexical_receiver = self
@@ -29371,7 +29635,6 @@ impl StaticHookAliasCollector<'_> {
                             invocation.function_depth.saturating_add(1),
                         )
                     })
-                    .filter(|results| !results.is_empty())
                     .unwrap_or_else(|| vec![LocalCallableResult::Unknown]);
                 self.register_returned_callable_spans(&results);
                 self.resolve_local_callable_result_invocations(results, &mut BTreeSet::new())
@@ -29383,6 +29646,8 @@ impl StaticHookAliasCollector<'_> {
                 match self.bind_local_callable_result(result, &invocation) {
                     LocalCallableResult::Reference(source) => {
                         alternatives = alternatives.saturating_add(1);
+                        external_candidates.extend(external_baseline.alias_candidates(&source));
+                        external_attached.extend(external_baseline.attached_roots(&source));
                         self.insert_alias(target.clone(), source);
                     }
                     LocalCallableResult::Direct {
@@ -29482,8 +29747,13 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Invocation(_) => unreachable!(
                         "callable result invocations must resolve before materialization"
                     ),
+                    LocalCallableResult::KnownLocal => {
+                        alternatives = alternatives.saturating_add(1);
+                        materialized_known_result = true;
+                    }
                     LocalCallableResult::Unknown => {
                         alternatives = alternatives.saturating_add(1);
+                        opaque_result = true;
                         self.record_local_bound_callable(
                             target.clone(),
                             LocalBoundCallable {
@@ -29498,6 +29768,17 @@ impl StaticHookAliasCollector<'_> {
                     }
                 }
             }
+        }
+        if !external_candidates.is_empty() || !external_attached.is_empty() {
+            self.external_storage_flow.insert_alias(
+                target.clone(),
+                external_candidates,
+                external_attached,
+            );
+            self.record_external_storage_exception_flow();
+        }
+        if opaque_result {
+            self.record_opaque_external_storage_result(target.clone());
         }
         if alternatives > 1 || (ambiguous && !materialized_known_result) {
             self.mark_alias_target_ambiguous(target);
@@ -29623,6 +29904,11 @@ impl StaticHookAliasCollector<'_> {
         }
         match value.get_inner_expression() {
             Expression::NewExpression(expression) => {
+                if let Some(sources) = self.constructor_assignment_result_paths(expression) {
+                    self.record_external_storage_result_paths(target.clone(), sources);
+                } else if !self.new_expression_returns_known_local_result(expression) {
+                    self.record_opaque_external_storage_result(target.clone());
+                }
                 match expression.callee.get_inner_expression() {
                     Expression::ClassExpression(class) => {
                         self.pending_class_instance_materializations
@@ -30304,7 +30590,9 @@ impl StaticHookAliasCollector<'_> {
                             });
                         }
                     }
-                    LocalCallableResult::Structured { .. } => return None,
+                    LocalCallableResult::Structured { .. } | LocalCallableResult::KnownLocal => {
+                        return None;
+                    }
                     LocalCallableResult::Invocation(_) => {
                         unreachable!("callable result invocations must resolve before binding")
                     }
@@ -30366,6 +30654,7 @@ impl StaticHookAliasCollector<'_> {
                     }
                     LocalCallableResult::Structured { .. }
                     | LocalCallableResult::Invocation(_)
+                    | LocalCallableResult::KnownLocal
                     | LocalCallableResult::Unknown => {
                         return false;
                     }
@@ -32579,6 +32868,17 @@ impl StaticHookAliasCollector<'_> {
                         self.collect_pattern_initializer(element, &element_source);
                     }
                 }
+                if let Some(rest) = &array.rest {
+                    let rest_source = StaticAliasPath::dynamic_this(rest.span);
+                    self.dynamic_path_owner_depths
+                        .insert((rest.span.start, rest.span.end), self.function_depth);
+                    self.record_external_storage_shallow_copy(
+                        rest_source.clone(),
+                        source,
+                        BTreeSet::new(),
+                    );
+                    self.collect_pattern_initializer(&rest.argument, &rest_source);
+                }
             }
             BindingPattern::AssignmentPattern(default) => {
                 self.collect_pattern_initializer(&default.left, source);
@@ -32614,6 +32914,17 @@ impl StaticHookAliasCollector<'_> {
                         }
                         self.collect_assignment_maybe_default_initializer(element, &element_source);
                     }
+                }
+                if let Some(rest) = &array.rest {
+                    let rest_source = StaticAliasPath::dynamic_this(rest.span);
+                    self.dynamic_path_owner_depths
+                        .insert((rest.span.start, rest.span.end), self.function_depth);
+                    self.record_external_storage_shallow_copy(
+                        rest_source.clone(),
+                        source,
+                        BTreeSet::new(),
+                    );
+                    self.collect_assignment_target_initializer(&rest.target, &rest_source);
                 }
             }
             AssignmentTarget::ObjectAssignmentTarget(object) => {
@@ -34788,9 +35099,12 @@ impl StaticHookAliasCollector<'_> {
                     .local_callable_results
                     .get(path)
                     .is_some_and(|results| {
-                        results
-                            .iter()
-                            .any(|result| !matches!(result, LocalCallableResult::Unknown))
+                        results.iter().any(|result| {
+                            !matches!(
+                                result,
+                                LocalCallableResult::KnownLocal | LocalCallableResult::Unknown
+                            )
+                        })
                     })
                 || self
                     .callable_exposures
@@ -37577,6 +37891,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 self.collect_pattern_initializer(&declarator.id, &target);
             } else if let Some(source) = self.stored_spread_source_path(initializer) {
                 self.collect_pattern_initializer(&declarator.id, &source);
+            } else {
+                let target = StaticAliasPath::dynamic_this(initializer.span());
+                self.dynamic_path_owner_depths.insert(
+                    (initializer.span().start, initializer.span().end),
+                    self.function_depth,
+                );
+                self.collect_initializer(target.clone(), initializer);
+                self.collect_pattern_initializer(&declarator.id, &target);
             }
         }
         walk_variable_declarator(self, declarator);
@@ -38853,9 +39175,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     Some(target)
                 }
                 (AssignmentTarget::ObjectAssignmentTarget(_), _)
-                | (AssignmentTarget::ArrayAssignmentTarget(_), _) => {
-                    self.stored_spread_source_path(&assignment.right)
-                }
+                | (AssignmentTarget::ArrayAssignmentTarget(_), _) => self
+                    .stored_spread_source_path(&assignment.right)
+                    .or_else(|| {
+                        let target = StaticAliasPath::dynamic_this(assignment.right.span());
+                        self.dynamic_path_owner_depths.insert(
+                            (assignment.right.span().start, assignment.right.span().end),
+                            self.function_depth,
+                        );
+                        self.collect_initializer(target.clone(), &assignment.right);
+                        Some(target)
+                    }),
                 _ => None,
             }
         } else {
@@ -40093,27 +40423,37 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         assignment_span: Option<Span>,
     ) -> bool {
         if let Some(place) = planned_assignment_target_place(self.scoping, target) {
-            return self.place_is_external_storage(&place)
-                || assignment_span.is_some_and(|span| {
-                    let span = (span.start, span.end);
-                    self.callback_aliases
-                        .assignment_target_aliases
-                        .get(&span)
-                        .is_some_and(|aliases| {
-                            aliases
-                                .iter()
-                                .any(|alias| self.alias_path_is_external_storage(alias))
-                        })
-                        || self
-                            .callback_aliases
-                            .assignment_attached_parameter_roots
-                            .get(&span)
-                            .is_some_and(|parameters| {
-                                parameters
-                                    .iter()
-                                    .any(|symbol| self.component_parameter_symbols.contains(symbol))
-                            })
+            if self.place_is_external_storage(&place) {
+                return true;
+            }
+            let span = assignment_span.map(|span| (span.start, span.end));
+            let aliases =
+                span.and_then(|span| self.callback_aliases.assignment_target_aliases.get(&span));
+            if aliases.is_some_and(|aliases| {
+                aliases
+                    .iter()
+                    .any(|alias| self.alias_path_is_external_storage(alias))
+            }) || span.is_some_and(|span| {
+                self.callback_aliases
+                    .assignment_attached_parameter_roots
+                    .get(&span)
+                    .is_some_and(|parameters| {
+                        parameters
+                            .iter()
+                            .any(|symbol| self.component_parameter_symbols.contains(symbol))
+                    })
+            }) {
+                return true;
+            }
+            if matches!(place.base, PlannedPlaceBase::Expression { .. }) {
+                if aliases.is_some_and(|aliases| !aliases.is_empty()) {
+                    return false;
+                }
+                return Self::assignment_target_receiver(target).is_none_or(|receiver| {
+                    !self.expression_returns_definitely_local_storage(receiver)
                 });
+            }
+            return false;
         }
         let mut bindings = Vec::new();
         let mut projected = Vec::new();
@@ -40123,6 +40463,192 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             && projected
                 .iter()
                 .all(|target| self.place_is_external_storage(&target.place))
+    }
+
+    fn assignment_target_receiver<'node, 'ast>(
+        target: &'node AssignmentTarget<'ast>,
+    ) -> Option<&'node Expression<'ast>> {
+        match target {
+            AssignmentTarget::StaticMemberExpression(member) => Some(&member.object),
+            AssignmentTarget::ComputedMemberExpression(member) => Some(&member.object),
+            AssignmentTarget::PrivateFieldExpression(member) => Some(&member.object),
+            AssignmentTarget::TSAsExpression(expression) => {
+                Self::expression_assignment_target_receiver(&expression.expression)
+            }
+            AssignmentTarget::TSSatisfiesExpression(expression) => {
+                Self::expression_assignment_target_receiver(&expression.expression)
+            }
+            AssignmentTarget::TSNonNullExpression(expression) => {
+                Self::expression_assignment_target_receiver(&expression.expression)
+            }
+            AssignmentTarget::TSTypeAssertion(expression) => {
+                Self::expression_assignment_target_receiver(&expression.expression)
+            }
+            AssignmentTarget::AssignmentTargetIdentifier(_)
+            | AssignmentTarget::ArrayAssignmentTarget(_)
+            | AssignmentTarget::ObjectAssignmentTarget(_) => None,
+        }
+    }
+
+    fn expression_assignment_target_receiver<'node, 'ast>(
+        expression: &'node Expression<'ast>,
+    ) -> Option<&'node Expression<'ast>> {
+        match expression.get_inner_expression() {
+            Expression::StaticMemberExpression(member) => Some(&member.object),
+            Expression::ComputedMemberExpression(member) => Some(&member.object),
+            Expression::PrivateFieldExpression(member) => Some(&member.object),
+            _ => None,
+        }
+    }
+
+    fn expression_returns_definitely_local_storage(&self, expression: &Expression<'_>) -> bool {
+        let expression = expression.get_inner_expression();
+        if expression_result_is_definitely_primitive(
+            self.scoping,
+            self.callback_aliases,
+            self.definitely_primitive_symbols,
+            expression,
+        ) {
+            return true;
+        }
+        match expression {
+            Expression::ObjectExpression(_)
+            | Expression::ArrayExpression(_)
+            | Expression::FunctionExpression(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::ClassExpression(_)
+            | Expression::RegExpLiteral(_) => true,
+            Expression::CallExpression(expression) => {
+                self.call_expression_returns_definitely_local_storage(expression)
+            }
+            Expression::NewExpression(expression) => {
+                self.new_expression_returns_definitely_local_storage(expression)
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.expression_returns_definitely_local_storage(&expression.consequent)
+                    && self.expression_returns_definitely_local_storage(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                self.expression_returns_definitely_local_storage(&expression.left)
+                    && self.expression_returns_definitely_local_storage(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_some_and(|value| self.expression_returns_definitely_local_storage(value)),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.expression_returns_definitely_local_storage(&expression.right)
+            }
+            _ => false,
+        }
+    }
+
+    fn call_expression_returns_definitely_local_storage(
+        &self,
+        expression: &CallExpression<'_>,
+    ) -> bool {
+        let Some(raw) = static_alias_source_path(self.scoping, &expression.callee) else {
+            return false;
+        };
+        let resolved = self.callback_aliases.resolve(&raw);
+        if !self.callback_aliases.path_is_intact(&raw)
+            || !self.callback_aliases.path_is_intact(&resolved)
+        {
+            return false;
+        }
+        let StaticAliasRoot::UnresolvedGlobal(root) = &resolved.root else {
+            return false;
+        };
+        match (root.as_str(), resolved.properties.as_slice()) {
+            ("Array", []) => true,
+            ("Array", [method]) if matches!(method.as_str(), "from" | "of") => true,
+            ("Object", [method]) if method == "fromEntries" => true,
+            ("Object", []) => expression.arguments.first().is_none_or(|argument| {
+                argument.as_expression().is_some_and(|argument| {
+                    self.expression_returns_definitely_local_storage(argument)
+                })
+            }),
+            ("Object", [method]) if method == "assign" => expression
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .is_some_and(|target| self.expression_returns_definitely_local_storage(target)),
+            ("structuredClone", []) => true,
+            (
+                "Boolean" | "Number" | "String" | "BigInt" | "Symbol" | "Date" | "Function"
+                | "Error" | "AggregateError" | "EvalError" | "RangeError" | "ReferenceError"
+                | "SyntaxError" | "TypeError" | "URIError",
+                [],
+            ) => true,
+            _ => false,
+        }
+    }
+
+    fn new_expression_returns_definitely_local_storage(
+        &self,
+        expression: &NewExpression<'_>,
+    ) -> bool {
+        let Some(raw) = static_alias_source_path(self.scoping, &expression.callee) else {
+            return false;
+        };
+        let resolved = self.callback_aliases.resolve(&raw);
+        if !self.callback_aliases.path_is_intact(&raw)
+            || !self.callback_aliases.path_is_intact(&resolved)
+            || !resolved.properties.is_empty()
+        {
+            return false;
+        }
+        let StaticAliasRoot::UnresolvedGlobal(constructor) = &resolved.root else {
+            return false;
+        };
+        if constructor == "Object" {
+            return expression.arguments.first().is_none_or(|argument| {
+                argument.as_expression().is_some_and(|argument| {
+                    self.expression_returns_definitely_local_storage(argument)
+                })
+            });
+        }
+        matches!(
+            constructor.as_str(),
+            "Array"
+                | "ArrayBuffer"
+                | "SharedArrayBuffer"
+                | "DataView"
+                | "Date"
+                | "RegExp"
+                | "Map"
+                | "Set"
+                | "WeakMap"
+                | "WeakSet"
+                | "WeakRef"
+                | "FinalizationRegistry"
+                | "Int8Array"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Int16Array"
+                | "Uint16Array"
+                | "Int32Array"
+                | "Uint32Array"
+                | "BigInt64Array"
+                | "BigUint64Array"
+                | "Float16Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "Boolean"
+                | "Number"
+                | "String"
+                | "Error"
+                | "AggregateError"
+                | "EvalError"
+                | "RangeError"
+                | "ReferenceError"
+                | "SyntaxError"
+                | "TypeError"
+                | "URIError"
+                | "Promise"
+        )
     }
 
     fn assignment_target_has_external_storage(&self, target: &AssignmentTarget<'_>) -> bool {
