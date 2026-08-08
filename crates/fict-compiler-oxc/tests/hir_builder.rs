@@ -2437,6 +2437,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "destructured component parameter callback slot",
+            "const { callbacks } = holder; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "array-destructured component parameter callback slot",
+            "const [callbacks] = holder; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "nested component parameter callback slot",
             "const run = () => count;",
             "holder.callbacks.run = run;",
@@ -2693,8 +2707,12 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             const local = {};
             const alias = local;
             const run = () => count;
+            const { ...objectRest } = holder;
+            const [first, ...arrayRest] = holder.items;
             local.run = run;
             alias.next ??= () => count;
+            objectRest.run = run;
+            arrayRest.run = run;
             holder.label += run;
             [holder.label, local.next] = ["safe", run];
             ({ label: holder.label, next: local.next } = { label: "safe", next: run });

@@ -6852,19 +6852,41 @@ impl<'semantic> ExternalStorageRootCollector<'semantic> {
         }
     }
 
-    fn record_alias(&mut self, target: SymbolId, source: &Expression<'_>) {
+    fn record_pattern_alias(&mut self, pattern: &BindingPattern<'_>, source: Option<SymbolId>) {
+        match pattern {
+            BindingPattern::BindingIdentifier(binding) => {
+                if let Some(target) = binding.symbol_id.get()
+                    && self.immutable_symbols.contains(&target)
+                {
+                    self.aliases.push((target, source));
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    self.record_pattern_alias(&property.value, source);
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                for element in array.elements.iter().flatten() {
+                    self.record_pattern_alias(element, source);
+                }
+            }
+            BindingPattern::AssignmentPattern(default) => {
+                self.record_pattern_alias(&default.left, source);
+            }
+        }
+    }
+
+    fn record_alias(&mut self, target: &BindingPattern<'_>, source: &Expression<'_>) {
         let Some(source) = planned_expression_place(self.scoping, source) else {
             return;
         };
-        match source.base {
-            PlannedPlaceBase::Binding(source) => {
-                self.aliases.push((target, Some(source)));
-            }
-            PlannedPlaceBase::UnresolvedGlobal { .. } => {
-                self.aliases.push((target, None));
-            }
-            PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => {}
-        }
+        let source = match source.base {
+            PlannedPlaceBase::Binding(source) => Some(source),
+            PlannedPlaceBase::UnresolvedGlobal { .. } => None,
+            PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => return,
+        };
+        self.record_pattern_alias(target, source);
     }
 
     fn finish(mut self) -> BTreeSet<SymbolId> {
@@ -6885,18 +6907,10 @@ impl<'semantic> ExternalStorageRootCollector<'semantic> {
 impl<'a> Visit<'a> for ExternalStorageRootCollector<'_> {
     fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
         for declarator in &declaration.declarations {
-            let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
-                (&declarator.id, &declarator.init)
-            else {
+            let Some(initializer) = &declarator.init else {
                 continue;
             };
-            let Some(target) = binding.symbol_id.get() else {
-                continue;
-            };
-            if !self.immutable_symbols.contains(&target) {
-                continue;
-            }
-            self.record_alias(target, initializer);
+            self.record_alias(&declarator.id, initializer);
         }
         walk_variable_declaration(self, declaration);
     }
