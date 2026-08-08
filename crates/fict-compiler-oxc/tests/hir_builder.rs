@@ -12069,6 +12069,114 @@ fn object_value_enumeration_binds_callable_receiver_to_result() {
 }
 
 #[test]
+fn object_value_enumeration_does_not_invoke_data_values() {
+    for (name, setup, enumeration) in [
+        (
+            "stored Object.values source",
+            "const source = { safe() {}, unsafe() { values.forEach = null; } };",
+            "void Object.values(source);",
+        ),
+        (
+            "stored Object.entries source",
+            "const source = { safe() {}, unsafe() { values.forEach = null; } };",
+            "Object.entries(source);",
+        ),
+        (
+            "unused Object.values result",
+            "const source = { safe() {}, unsafe() { values.forEach = null; } };",
+            "const result = Object.values(source);",
+        ),
+        (
+            "inline Object.values source",
+            "",
+            "Object.values({ safe() {}, unsafe() { values.forEach = null; } });",
+        ),
+        (
+            "inline Object.entries array source",
+            "",
+            "Object.entries([() => { values.forEach = null; }]);",
+        ),
+        (
+            "inline statically computed data method",
+            "",
+            "Object.values({ ['unsafe']() { values.forEach = null; } });",
+        ),
+        (
+            "inline nested data method",
+            "",
+            "Object.values({ box: { unsafe() { values.forEach = null; } } });",
+        ),
+        (
+            "inline spread data method",
+            "const source = { unsafe() { values.forEach = null; } };",
+            "Object.values({ ...source });",
+        ),
+        (
+            "aliased Object.values",
+            "const source = { safe() {}, unsafe() { values.forEach = null; } }; const enumerate = Object.values;",
+            "void enumerate(source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {enumeration}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+    }
+
+    for (name, setup, enumeration) in [
+        (
+            "invoked source method",
+            "const source = { unsafe() { values.forEach = null; } };",
+            "Object.values(source); source.unsafe();",
+        ),
+        (
+            "overridden Object.values",
+            "const source = { unsafe() { values.forEach = null; } }; Object.values = value => { value.unsafe(); return []; };",
+            "Object.values(source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {setup}
+                    {enumeration}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the callable effect, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (

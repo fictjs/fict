@@ -10606,6 +10606,7 @@ struct GeneratorExecutionCollector<'semantic> {
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     retained_invocation_spans: Vec<RetainedInvocationSpans>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
+    explicitly_merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
 }
 
 impl<'semantic> GeneratorExecutionCollector<'semantic> {
@@ -10657,6 +10658,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             directly_unexecuted_body_spans: BTreeSet::new(),
             retained_invocation_spans: Vec::new(),
             discarded_invocation_spans: BTreeSet::new(),
+            explicitly_merely_observed_callable_paths: BTreeSet::new(),
         }
     }
 
@@ -14119,6 +14121,152 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         true
     }
 
+    fn object_value_enumeration_method(&self, call: &CallExpression<'_>) -> Option<&'static str> {
+        let object = StaticAliasPath::unresolved_global("Object".to_string());
+        ["values", "entries"].into_iter().find(|method| {
+            self.callable_resolves_to_path(
+                Self::immediate_callable_value(&call.callee),
+                &object.clone().with_property((*method).to_string()),
+            ) && self.method_path_is_intact(&object, method)
+        })
+    }
+
+    fn record_discarded_inline_enumerated_value(
+        &mut self,
+        target: StaticAliasPath,
+        expression: &Expression<'_>,
+    ) {
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            self.record_merely_observed_value_read(source, source_span);
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_) => {
+                self.explicitly_merely_observed_callable_paths
+                    .insert(target);
+            }
+            Expression::ObjectExpression(object) => {
+                for property in &object.properties {
+                    match property {
+                        OxcObjectPropertyKind::ObjectProperty(property)
+                            if property.kind == PropertyKind::Init =>
+                        {
+                            let Some(name) = property.key.static_name() else {
+                                continue;
+                            };
+                            self.record_discarded_inline_enumerated_value(
+                                target.clone().with_property(name.into_owned()),
+                                &property.value,
+                            );
+                        }
+                        OxcObjectPropertyKind::SpreadProperty(spread) => {
+                            self.record_discarded_enumerated_value(&spread.argument);
+                        }
+                        OxcObjectPropertyKind::ObjectProperty(_) => {}
+                    }
+                }
+            }
+            Expression::ArrayExpression(array) => {
+                for (index, element) in array.elements.iter().enumerate() {
+                    match element {
+                        ArrayExpressionElement::Elision(_) => {}
+                        ArrayExpressionElement::SpreadElement(spread) => {
+                            self.record_discarded_enumerated_value(&spread.argument);
+                        }
+                        element => self.record_discarded_inline_enumerated_value(
+                            target.clone().with_property(index.to_string()),
+                            element.to_expression(),
+                        ),
+                    }
+                }
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.record_discarded_inline_enumerated_value(
+                    target.clone(),
+                    &expression.consequent,
+                );
+                self.record_discarded_inline_enumerated_value(target, &expression.alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.record_discarded_inline_enumerated_value(target.clone(), &expression.left);
+                self.record_discarded_inline_enumerated_value(target, &expression.right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.record_discarded_inline_enumerated_value(target, value);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.record_discarded_inline_enumerated_value(target, &expression.right);
+            }
+            _ => {}
+        }
+    }
+
+    fn record_discarded_enumerated_value(&mut self, expression: &Expression<'_>) {
+        if let Some((source, source_span)) = self.callable_reference(expression) {
+            self.record_merely_observed_value_read(source, source_span);
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::ObjectExpression(object) => {
+                let target = StaticAliasPath::dynamic_this(object.span);
+                self.record_discarded_inline_enumerated_value(target, expression);
+            }
+            Expression::ArrayExpression(array) => {
+                let target = StaticAliasPath::dynamic_this(array.span);
+                self.record_discarded_inline_enumerated_value(target, expression);
+            }
+            Expression::ConditionalExpression(expression) => {
+                self.record_discarded_enumerated_value(&expression.consequent);
+                self.record_discarded_enumerated_value(&expression.alternate);
+            }
+            Expression::LogicalExpression(expression) => {
+                self.record_discarded_enumerated_value(&expression.left);
+                self.record_discarded_enumerated_value(&expression.right);
+            }
+            Expression::SequenceExpression(expression) => {
+                if let Some(value) = expression.expressions.last() {
+                    self.record_discarded_enumerated_value(value);
+                }
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.record_discarded_enumerated_value(&expression.right);
+            }
+            _ => self.record_discarded_value_read(expression),
+        }
+    }
+
+    fn record_discarded_object_value_enumeration(&mut self, call: &CallExpression<'_>) -> bool {
+        if self.object_value_enumeration_method(call).is_none()
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        if let Some(source) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        {
+            self.record_discarded_enumerated_value(source);
+        }
+        for argument in call.arguments.iter().skip(1) {
+            self.record_discarded_expression(
+                argument
+                    .as_expression()
+                    .expect("enumeration spread arguments were rejected"),
+            );
+        }
+        true
+    }
+
     fn discarded_builtin_callback_result_guard(
         &self,
         call: &CallExpression<'_>,
@@ -14175,6 +14323,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let result_discarded = self
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
+        if result_discarded && self.record_discarded_object_value_enumeration(call) {
+            return;
+        }
         let discarded_callback_guard = self.discarded_builtin_callback_result_guard(call);
         if self.record_pending_reflect_construct_arguments(call, result_discarded) {
             return;
@@ -17822,6 +17973,11 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         candidates.extend(self.composite_guarded_reads.iter().flat_map(|read| {
             std::iter::once(read.source.clone()).chain(read.target.iter().cloned())
         }));
+        candidates.extend(
+            self.explicitly_merely_observed_callable_paths
+                .iter()
+                .cloned(),
+        );
         let mut targets_by_body = BTreeMap::<_, BTreeSet<_>>::new();
         for (span, target) in &self.generator_body_targets {
             targets_by_body
@@ -17869,6 +18025,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let mut merely_observed = candidates
             .iter()
             .filter(|path| path.binding_root().is_some())
+            .chain(self.explicitly_merely_observed_callable_paths.iter())
             .cloned()
             .collect::<BTreeSet<_>>();
         loop {
