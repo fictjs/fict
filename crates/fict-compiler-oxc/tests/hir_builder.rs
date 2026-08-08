@@ -2899,6 +2899,34 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "returned reversed external array element callback slot",
+            "const items = [{}, holder.item]; const returned = items.reverse(); const run = () => count;",
+            "returned[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "popped external array element callback slot",
+            "const item = [holder.item].pop(); const run = () => count;",
+            "item.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "direct popped external array element callback slot",
+            "const run = () => count;",
+            "[holder.item].pop().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "shifted-result external array element callback slot",
+            "const item = [holder.item].shift(); const run = () => count;",
+            "item.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "sorted-copy external array element callback slot",
             "const items = [{}, holder.item]; const copy = items.toSorted(() => 0); const run = () => count;",
             "copy[0].run = run;",
@@ -3817,6 +3845,54 @@ fn in_place_array_mutations_preserve_local_storage() {
             )
         }),
         "in-place mutations must retain local element identities: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn array_mutator_results_preserve_local_storage_shapes() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const run = () => count;
+            const local = {};
+            const reversed = [local].reverse();
+            const sorted = [local].sort();
+            const copiedWithin = [local].copyWithin(0, 0);
+            const filled = [{}].fill(local);
+            const popped = [local].pop();
+            const shifted = [local].shift();
+            const pushed = [].push(local);
+            const unshifted = [].unshift(local);
+            reversed[0].run = run;
+            sorted[0].run = run;
+            copiedWithin[0].run = run;
+            filled[0].run = run;
+            popped.run = run;
+            shifted.run = run;
+            pushed.run = run;
+            unshifted.run = run;
+            [local].reverse()[0].run = run;
+            [local].pop().run = run;
+            [].push(local).run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "array mutator results must retain their receiver, element, or primitive shape: {:?}",
         output.diagnostics
     );
 }

@@ -8132,6 +8132,18 @@ fn is_mutating_array_method(name: &str) -> bool {
     )
 }
 
+fn array_mutation_returns_receiver(name: &str) -> bool {
+    matches!(name, "copyWithin" | "fill" | "reverse" | "sort")
+}
+
+fn array_mutation_returns_element(name: &str) -> bool {
+    matches!(name, "pop" | "shift")
+}
+
+fn array_mutation_returns_length(name: &str) -> bool {
+    matches!(name, "push" | "unshift")
+}
+
 fn direct_mutating_array_call_receiver<'a>(
     call: &'a CallExpression<'a>,
 ) -> Option<&'a Expression<'a>> {
@@ -22426,6 +22438,38 @@ impl StaticHookAliasCollector<'_> {
         self.local_bound_callables.insert(target, callable);
     }
 
+    fn intact_array_mutation_call(
+        &self,
+        call: &CallExpression<'_>,
+        matches_shape: impl FnOnce(&str) -> bool,
+    ) -> bool {
+        if call.optional {
+            return false;
+        }
+        let (receiver, method) = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) if !member.optional => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) if !member.optional => {
+                let Some(method) = static_member_name(&member.expression) else {
+                    return false;
+                };
+                (&member.object, method)
+            }
+            _ => return false,
+        };
+        if !matches_shape(&method) {
+            return false;
+        }
+        let Some(source) = self.alias_source_path(receiver) else {
+            return matches!(
+                receiver.get_inner_expression(),
+                Expression::ArrayExpression(_)
+            ) && self.array_copy_global_method_is_intact(&method);
+        };
+        self.known_array_path(&source) && self.array_mutation_method_is_intact(&source, &method)
+    }
+
     fn expression_returns_known_local_result(&self, expression: &Expression<'_>) -> bool {
         let expression = expression.get_inner_expression();
         if matches!(
@@ -22527,6 +22571,9 @@ impl StaticHookAliasCollector<'_> {
                         ));
                     }
                 }
+                if self.intact_array_mutation_call(call, array_mutation_returns_receiver) {
+                    return true;
+                }
                 let (receiver, method) = match call.callee.get_inner_expression() {
                     Expression::StaticMemberExpression(member) => {
                         (&member.object, member.property.name.to_string())
@@ -22567,6 +22614,9 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn call_expression_returns_known_local_result(&self, expression: &CallExpression<'_>) -> bool {
+        if self.intact_array_mutation_call(expression, array_mutation_returns_length) {
+            return true;
+        }
         let Some(raw) = static_alias_source_path(self.scoping, &expression.callee) else {
             return false;
         };
@@ -31181,12 +31231,85 @@ impl StaticHookAliasCollector<'_> {
         true
     }
 
+    fn record_instance_array_mutation_result(
+        &mut self,
+        target: &StaticAliasPath,
+        call: &CallExpression<'_>,
+    ) -> bool {
+        if call.optional {
+            return false;
+        }
+        let (receiver, method) = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) if !member.optional => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) if !member.optional => {
+                let Some(method) = static_member_name(&member.expression) else {
+                    return false;
+                };
+                (&member.object, method)
+            }
+            _ => return false,
+        };
+        if !array_mutation_returns_receiver(&method)
+            && !array_mutation_returns_element(&method)
+            && !array_mutation_returns_length(&method)
+        {
+            return false;
+        }
+        let Some(source) = self.materialize_array_copy_source(receiver) else {
+            return false;
+        };
+        if !self.known_array_path(&source)
+            || !self.array_mutation_method_is_intact(&source, &method)
+        {
+            return false;
+        }
+        let source = resolve_static_alias_path(&self.aliases, &source);
+        if array_mutation_returns_receiver(&method) {
+            self.insert_alias(target.clone(), source);
+            return true;
+        }
+        if array_mutation_returns_length(&method) {
+            self.clear_overlapping_aliases(target);
+            return true;
+        }
+
+        let Some(length) = self.known_array_length(&source) else {
+            self.clear_overlapping_aliases(target);
+            self.record_opaque_external_storage_result(target.clone());
+            return true;
+        };
+        if length == 0 {
+            self.clear_overlapping_aliases(target);
+            return true;
+        }
+        let index = if method == "pop" { length - 1 } else { 0 };
+        let element = source.clone().with_property(index.to_string());
+        let resolved_element = resolve_static_alias_path(&self.aliases, &element);
+        if resolved_element != element && !resolved_element.starts_with(&source) {
+            self.insert_alias(target.clone(), resolved_element);
+            return true;
+        }
+        let mut candidates = self.external_storage_flow.alias_candidates(&element);
+        candidates.retain(|candidate| !candidate.starts_with(&source));
+        let attached = self
+            .external_storage_flow
+            .storage_container_attached_roots(&element);
+        self.clear_overlapping_aliases(target);
+        self.external_storage_flow
+            .insert_alias(target.clone(), candidates, attached);
+        self.record_external_storage_exception_flow();
+        true
+    }
+
     fn record_local_array_result(
         &mut self,
         target: &StaticAliasPath,
         call: &CallExpression<'_>,
     ) -> bool {
-        self.record_static_array_result(target, call)
+        self.record_instance_array_mutation_result(target, call)
+            || self.record_static_array_result(target, call)
             || self.record_instance_array_copy_result(target, call)
     }
 
@@ -32204,6 +32327,15 @@ impl StaticHookAliasCollector<'_> {
         &mut self,
         factory_call: &CallExpression<'_>,
     ) -> Option<StaticAliasPath> {
+        let array_target = StaticAliasPath::dynamic_this(factory_call.span)
+            .with_property("array-result".to_string());
+        if self.record_local_array_result(&array_target, factory_call) {
+            self.dynamic_path_owner_depths.insert(
+                (factory_call.span.start, factory_call.span.end),
+                self.function_depth,
+            );
+            return Some(array_target);
+        }
         if let Some(target) = self.record_local_object_assign(factory_call) {
             return Some(target);
         }
