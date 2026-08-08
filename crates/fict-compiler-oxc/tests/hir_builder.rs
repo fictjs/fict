@@ -12561,6 +12561,11 @@ fn json_stringify_does_not_invoke_data_callables() {
             "append(); JSON.stringify(source, replacer); function append() { alias.push('unsafe'); }",
         ),
         (
+            "instance field appends a later replacer property",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; class Append { value = replacer.push('unsafe'); } const replacer = ['safe'];",
+            "new Append(); JSON.stringify(source, replacer);",
+        ),
+        (
             "indirectly appended replacer array item",
             "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; Array.prototype.push.call(replacer, 'unsafe');",
             "JSON.stringify(source, replacer);",

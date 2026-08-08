@@ -10025,14 +10025,24 @@ fn static_json_replacer_item(expression: &Expression<'_>) -> Option<StaticJsonRe
     })
 }
 
+#[derive(Clone, Copy)]
+struct JsonReplacerReferenceContext {
+    function_depth: usize,
+    deferred: bool,
+}
+
+type JsonReplacerReferences =
+    BTreeMap<SymbolId, BTreeMap<(u32, u32), JsonReplacerReferenceContext>>;
+
 struct JsonReplacerArrayUseCollector<'semantic> {
     scoping: &'semantic Scoping,
-    references: BTreeMap<SymbolId, BTreeMap<(u32, u32), usize>>,
+    references: JsonReplacerReferences,
     binding_function_depths: BTreeMap<SymbolId, usize>,
     push_receivers: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     replacer_arguments: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     prototype_hazard: bool,
     function_depth: usize,
+    deferred_class_initializer_depth: usize,
 }
 
 impl<'semantic> JsonReplacerArrayUseCollector<'semantic> {
@@ -10045,6 +10055,7 @@ impl<'semantic> JsonReplacerArrayUseCollector<'semantic> {
             replacer_arguments: BTreeMap::new(),
             prototype_hazard: false,
             function_depth: 0,
+            deferred_class_initializer_depth: 0,
         }
     }
 
@@ -10083,8 +10094,12 @@ impl<'semantic> JsonReplacerArrayUseCollector<'semantic> {
                 allowed.extend(&push_receivers);
                 let binding_depth = binding_function_depths.get(symbol);
                 let deferred_push = push_receivers.iter().any(|span| {
-                    binding_depth
-                        .is_none_or(|binding_depth| references.get(span) != Some(binding_depth))
+                    let (Some(binding_depth), Some(reference)) =
+                        (binding_depth, references.get(span))
+                    else {
+                        return true;
+                    };
+                    reference.deferred || reference.function_depth != *binding_depth
                 });
                 let untracked_reference = references.len() != allowed.len()
                     || references.keys().any(|span| !allowed.contains(span));
@@ -10120,9 +10135,29 @@ impl<'a> Visit<'a> for JsonReplacerArrayUseCollector<'_> {
         ) {
             self.function_depth = self.function_depth.saturating_add(1);
         }
+        if matches!(
+            kind,
+            AstKind::PropertyDefinition(property) if !property.r#static
+        ) || matches!(
+            kind,
+            AstKind::AccessorProperty(property) if !property.r#static
+        ) {
+            self.deferred_class_initializer_depth =
+                self.deferred_class_initializer_depth.saturating_add(1);
+        }
     }
 
     fn leave_node(&mut self, kind: AstKind<'a>) {
+        if matches!(
+            kind,
+            AstKind::PropertyDefinition(property) if !property.r#static
+        ) || matches!(
+            kind,
+            AstKind::AccessorProperty(property) if !property.r#static
+        ) {
+            self.deferred_class_initializer_depth =
+                self.deferred_class_initializer_depth.saturating_sub(1);
+        }
         if matches!(
             kind,
             AstKind::Function(_) | AstKind::ArrowFunctionExpression(_)
@@ -10162,7 +10197,10 @@ impl<'a> Visit<'a> for JsonReplacerArrayUseCollector<'_> {
         };
         self.references.entry(symbol).or_default().insert(
             (identifier.span.start, identifier.span.end),
-            self.function_depth,
+            JsonReplacerReferenceContext {
+                function_depth: self.function_depth,
+                deferred: self.deferred_class_initializer_depth > 0,
+            },
         );
     }
 
