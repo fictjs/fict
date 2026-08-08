@@ -12393,6 +12393,21 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "null-prototype replacer array callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; Object.setPrototypeOf(replacer, null);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "Reflect null-prototype replacer array callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; Reflect.setPrototypeOf(replacer, null);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "inline null-prototype array callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 };",
+            "Object.setPrototypeOf([run], null); JSON.stringify(source);",
+        ),
+        (
             "appended replacer array callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; replacer.push(run);",
             "JSON.stringify(source, replacer);",
@@ -12608,6 +12623,21 @@ fn json_stringify_does_not_invoke_data_callables() {
         (
             "overridden JSON consumes appended replacer callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; replacer.push(run); JSON.stringify = (_source, list) => { list[0](); return ''; };",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "overridden Object setPrototypeOf consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; Object.setPrototypeOf = target => { target[0](); return target; };",
+            "Object.setPrototypeOf(replacer, null); JSON.stringify(source, replacer);",
+        ),
+        (
+            "returned null-prototype replacer callable is consumed",
+            "const run = () => { values.forEach = null; }; const consume = target => target[0](); const source = { value: 1 }; const replacer = [run];",
+            "consume(Object.setPrototypeOf(replacer, null)); JSON.stringify(source, replacer);",
+        ),
+        (
+            "null-prototype array still evaluates its spread",
+            "function* entries() { values.forEach = null; yield 'value'; } const source = { value: 1 }; const replacer = [...entries()]; Object.setPrototypeOf(replacer, null);",
             "JSON.stringify(source, replacer);",
         ),
         (

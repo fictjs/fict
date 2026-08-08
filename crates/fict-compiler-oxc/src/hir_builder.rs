@@ -15159,6 +15159,18 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 })
     }
 
+    fn is_known_array_value(&self, expression: &Expression<'_>) -> bool {
+        match expression.get_inner_expression() {
+            Expression::ArrayExpression(_) => true,
+            Expression::Identifier(identifier) => identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+                .is_some_and(|symbol| self.known_arrays.contains(&symbol)),
+            _ => false,
+        }
+    }
+
     fn json_replacer_is_definitely_generator(&self, expression: &Expression<'_>) -> bool {
         if let Expression::FunctionExpression(function) = expression.get_inner_expression() {
             return function.generator;
@@ -15238,6 +15250,85 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         true
     }
 
+    fn record_null_prototype_array_arguments(
+        &mut self,
+        call: &CallExpression<'_>,
+        result_discarded: bool,
+    ) -> bool {
+        if call.arguments.len() < 2
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return false;
+        }
+        let Some(target) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return false;
+        };
+        if !self.is_known_array_value(target)
+            || !call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+                .is_some_and(|prototype| {
+                    matches!(prototype.get_inner_expression(), Expression::NullLiteral(_))
+                })
+        {
+            return false;
+        }
+        let Some((owner, returns_target)) = [
+            (
+                StaticAliasPath::unresolved_global("Object".to_string()),
+                true,
+            ),
+            (
+                StaticAliasPath::unresolved_global("Reflect".to_string()),
+                false,
+            ),
+        ]
+        .into_iter()
+        .find(|(owner, _)| {
+            self.callable_resolves_to_path(
+                Self::immediate_callable_value(&call.callee),
+                &owner.clone().with_property("setPrototypeOf".to_string()),
+            ) && self.method_path_is_intact(owner, "setPrototypeOf")
+        }) else {
+            return false;
+        };
+        let parameters = NonConsumingParameters {
+            fixed: BTreeMap::from([(0, returns_target), (1, false)]),
+            safe_tail_start: Some(2),
+        };
+        let guard = GeneratorMethodGuard {
+            source: None,
+            owner,
+            method: "setPrototypeOf",
+        };
+        for (index, argument) in call.arguments.iter().enumerate() {
+            let argument = argument
+                .as_expression()
+                .expect("proved setPrototypeOf arguments are not spread");
+            if index == 0 && (!returns_target || result_discarded) {
+                self.record_discarded_enumerated_value(argument);
+                continue;
+            }
+            self.record_pending_callable_argument(
+                argument,
+                None,
+                Some(&parameters),
+                index,
+                result_discarded,
+                Some(&guard),
+            );
+        }
+        true
+    }
+
     fn discarded_builtin_callback_result_guard(
         &self,
         call: &CallExpression<'_>,
@@ -15301,6 +15392,9 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             return;
         }
         if self.record_json_stringify_arguments(call, result_discarded) {
+            return;
+        }
+        if self.record_null_prototype_array_arguments(call, result_discarded) {
             return;
         }
         if self.record_object_from_entries_arguments(call) {
