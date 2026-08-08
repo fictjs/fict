@@ -26428,10 +26428,30 @@ impl StaticHookAliasCollector<'_> {
         {
             return false;
         }
+        let defer_replacement = self.local_callable_target_requires_deferred_replacement(&target);
         self.insert_alias(target.clone(), source.clone());
         self.record_local_descriptor_value_capture(source, &target);
         self.record_local_callable_snapshot(source, &target);
+        if defer_replacement {
+            for span in self.local_callable_path_effect_spans(source) {
+                self.unreferenced_callable_spans.insert(span);
+                self.deferred_accessor_spans.insert(span);
+            }
+        }
         true
+    }
+
+    fn local_callable_target_requires_deferred_replacement(
+        &self,
+        target: &StaticAliasPath,
+    ) -> bool {
+        let resolved = resolve_static_alias_path(&self.aliases, target);
+        self.captured_local_descriptor_value_paths
+            .iter()
+            .chain(self.snapshotted_local_callable_source_paths.iter())
+            .chain(self.snapshotted_local_callable_targets.iter())
+            .chain(self.detached_local_object_prototype_source_paths.iter())
+            .any(|captured| target.starts_with(captured) || resolved.starts_with(captured))
     }
 
     fn record_local_callable_snapshot(
@@ -27704,14 +27724,7 @@ impl StaticHookAliasCollector<'_> {
             ),
             _ => unreachable!("callable initializer was validated above"),
         }
-        let resolved_target = resolve_static_alias_path(&self.aliases, &target);
-        if self
-            .captured_local_descriptor_value_paths
-            .iter()
-            .chain(self.snapshotted_local_callable_source_paths.iter())
-            .chain(self.detached_local_object_prototype_source_paths.iter())
-            .any(|captured| target.starts_with(captured) || resolved_target.starts_with(captured))
-        {
+        if self.local_callable_target_requires_deferred_replacement(&target) {
             let span = match inner {
                 Expression::FunctionExpression(function) => function.span,
                 Expression::ArrowFunctionExpression(function) => function.span,
@@ -30000,13 +30013,7 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         alternatives: LocalBoundCallableAlternatives,
     ) {
-        let resolved_target = resolve_static_alias_path(&self.aliases, &target);
-        let defer_replacement = self
-            .captured_local_descriptor_value_paths
-            .iter()
-            .chain(self.snapshotted_local_callable_source_paths.iter())
-            .chain(self.detached_local_object_prototype_source_paths.iter())
-            .any(|captured| target.starts_with(captured) || resolved_target.starts_with(captured));
+        let defer_replacement = self.local_callable_target_requires_deferred_replacement(&target);
         for effect in &alternatives.effect_instances {
             if defer_replacement {
                 self.unreferenced_callable_spans.insert(effect.span);
