@@ -12443,6 +12443,21 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "appended replacer property excludes getter",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = []; replacer.push('safe');",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "ignored appended callable preserves replacer properties",
+            "const run = () => { values.forEach = null; }; const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "later appended property does not affect prior serialization",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe'];",
+            "JSON.stringify(source, replacer); replacer.push('unsafe');",
+        ),
+        (
             "replacer array filters nested properties",
             "const source = { safe: { safe: 1, get unsafe() { values.forEach = null; return 2; } }, get unsafe() { values.forEach = null; return {}; } };",
             "JSON.stringify(source, ['safe']);",

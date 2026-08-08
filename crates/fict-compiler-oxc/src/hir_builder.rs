@@ -2014,6 +2014,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         json_replacer_array_uses.visit_program(program);
         let (exclusive_json_replacer_arrays, unstable_json_replacer_arrays) =
             json_replacer_array_uses.replacer_array_proofs(&known_arrays.symbols);
+        let stable_json_replacer_push_arrays = exclusive_json_replacer_arrays
+            .difference(&unstable_json_replacer_arrays)
+            .copied()
+            .collect();
         let mut generator_execution = GeneratorExecutionCollector::new(
             self.semantic.scoping(),
             &known_arrays.symbols,
@@ -2032,6 +2036,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.semantic.scoping(),
                 &generator_execution,
                 &unstable_json_replacer_arrays,
+                &stable_json_replacer_push_arrays,
             );
             collector
                 .unexecuted_expression_spans
@@ -19879,6 +19884,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     local_json_replacer_property_lists: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     unstable_json_replacer_arrays: BTreeSet<SymbolId>,
+    stable_json_replacer_push_arrays: BTreeSet<SymbolId>,
     handled_object_from_entries_hook_spans: BTreeSet<(u32, u32)>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
     local_property_descriptor_results: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -20706,6 +20712,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
         scoping: &'semantic Scoping,
         generator: &GeneratorExecutionProof,
         unstable_json_replacer_arrays: &BTreeSet<SymbolId>,
+        stable_json_replacer_push_arrays: &BTreeSet<SymbolId>,
     ) -> Self {
         Self {
             scoping,
@@ -20744,6 +20751,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_static_from_entries_sources: BTreeMap::new(),
             local_json_replacer_property_lists: BTreeMap::new(),
             unstable_json_replacer_arrays: unstable_json_replacer_arrays.clone(),
+            stable_json_replacer_push_arrays: stable_json_replacer_push_arrays.clone(),
             handled_object_from_entries_hook_spans: BTreeSet::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
             local_property_descriptor_results: BTreeMap::new(),
@@ -24515,11 +24523,54 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
-    fn invalidate_local_json_replacer_array_mutation(&mut self, call: &CallExpression<'_>) {
+    fn record_local_json_replacer_array_mutation(&mut self, call: &CallExpression<'_>) {
         let Some(receiver) = direct_mutating_array_call_receiver(call) else {
             return;
         };
         let sources = self.local_object_assign_value_paths(receiver);
+        let safe_push = (|| {
+            direct_array_push_call_receiver(call)?;
+            let [source] = sources.as_slice() else {
+                return None;
+            };
+            let root = source.binding_root()?;
+            if *source != StaticAliasPath::root(root)
+                || !self.stable_json_replacer_push_arrays.contains(&root)
+                || !self.path_is_currently_intact(&source.clone().with_property("push".to_string()))
+            {
+                return None;
+            }
+            let additions = call
+                .arguments
+                .iter()
+                .map(|argument| {
+                    argument
+                        .as_expression()
+                        .and_then(|argument| self.local_json_replacer_item(argument))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let resolved = resolve_static_alias_path(&self.aliases, source);
+            let target = [source, &resolved]
+                .into_iter()
+                .find(|target| {
+                    self.local_json_replacer_property_lists
+                        .contains_key(*target)
+                })?
+                .clone();
+            Some((target, additions))
+        })();
+        if let Some((target, additions)) = safe_push {
+            let properties = self
+                .local_json_replacer_property_lists
+                .get_mut(&target)
+                .expect("proved JSON replacer property list");
+            for addition in additions {
+                if let StaticJsonReplacerItem::Property(property) = addition {
+                    properties.insert(property);
+                }
+            }
+            return;
+        }
         let mut affected = BTreeSet::new();
         for source in &sources {
             affected.insert(source.clone());
@@ -37541,7 +37592,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        self.invalidate_local_json_replacer_array_mutation(call);
+        self.record_local_json_replacer_array_mutation(call);
         self.record_local_object_assign(call);
         let _ = self.record_local_object_value_enumeration(call);
         let local_object_from_entries = self.record_local_object_from_entries_result(call);
