@@ -8534,6 +8534,7 @@ const LOCAL_OBJECT_PROTOTYPE_LOOKUP: &str = "<object-prototype>";
 struct StaticHookAliases {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
+    assignment_target_aliases: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     snapshotted_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
@@ -20323,6 +20324,7 @@ struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    assignment_target_alias_snapshots: Vec<((u32, u32), StaticAliasPath, bool)>,
     array_lengths: BTreeMap<StaticAliasPath, usize>,
     array_length_history: BTreeMap<StaticAliasPath, BTreeSet<usize>>,
     structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
@@ -21193,6 +21195,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             scoping,
             aliases: BTreeMap::new(),
             alias_history: BTreeMap::new(),
+            assignment_target_alias_snapshots: Vec::new(),
             array_lengths: BTreeMap::new(),
             array_length_history: BTreeMap::new(),
             structured_own_properties: BTreeMap::new(),
@@ -36553,6 +36556,7 @@ impl StaticHookAliasCollector<'_> {
         let resolver = StaticHookAliases {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
+            assignment_target_aliases: BTreeMap::new(),
             unexecuted_expression_spans: BTreeSet::new(),
             snapshotted_callable_effect_spans: BTreeMap::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
@@ -36636,9 +36640,23 @@ impl StaticHookAliasCollector<'_> {
                     !target.overlaps(invalidated) && !source.overlaps(invalidated)
                 })
         });
+        let mut assignment_target_aliases =
+            BTreeMap::<(u32, u32), BTreeSet<StaticAliasPath>>::new();
+        for (span, path, historical) in self.assignment_target_alias_snapshots {
+            let candidates = if historical {
+                resolve_historical_alias_paths(&self.alias_history, &path)
+            } else {
+                BTreeSet::from([path])
+            };
+            assignment_target_aliases
+                .entry(span)
+                .or_default()
+                .extend(candidates);
+        }
         StaticHookAliases {
             aliases: self.aliases,
             member_invalidated,
+            assignment_target_aliases,
             unexecuted_expression_spans: self.unexecuted_expression_spans,
             snapshotted_callable_effect_spans,
             non_escaping_object_from_entries_calls: self.non_escaping_object_from_entries_calls,
@@ -37884,6 +37902,34 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        let mut bindings = Vec::new();
+        let mut projected_targets = Vec::new();
+        collect_pattern_assignment_targets(
+            self.scoping,
+            &assignment.left,
+            &mut bindings,
+            &mut projected_targets,
+        );
+        for target in projected_targets {
+            let Some(path) = static_alias_invalidation_path(&target.place) else {
+                continue;
+            };
+            let historical = self.path_owner_depth(&path) < self.function_depth
+                || self
+                    .cross_scope_alias_targets
+                    .iter()
+                    .any(|target| target.overlaps(&path));
+            let path = if historical {
+                path
+            } else {
+                resolve_static_alias_path(&self.aliases, &path)
+            };
+            self.assignment_target_alias_snapshots.push((
+                (assignment.span.start, assignment.span.end),
+                path,
+                historical,
+            ));
+        }
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
         let prototype_path = self.prototype_assignment_target_path(&assignment.left);
         let setter_value = matches!(
@@ -39194,9 +39240,23 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         }
     }
 
-    fn assignment_target_is_external_storage(&self, target: &AssignmentTarget<'_>) -> bool {
+    fn assignment_target_is_external_storage(
+        &self,
+        target: &AssignmentTarget<'_>,
+        assignment_span: Option<Span>,
+    ) -> bool {
         if let Some(place) = planned_assignment_target_place(self.scoping, target) {
-            return self.place_is_external_storage(&place);
+            return self.place_is_external_storage(&place)
+                || assignment_span.is_some_and(|span| {
+                    self.callback_aliases
+                        .assignment_target_aliases
+                        .get(&(span.start, span.end))
+                        .is_some_and(|aliases| {
+                            aliases
+                                .iter()
+                                .any(|alias| self.alias_path_is_external_storage(alias))
+                        })
+                });
         }
         let mut bindings = Vec::new();
         let mut projected = Vec::new();
@@ -39218,6 +39278,17 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         projected
             .iter()
             .any(|target| self.place_is_external_storage(&target.place))
+    }
+
+    fn alias_path_is_external_storage(&self, path: &StaticAliasPath) -> bool {
+        if path.properties.is_empty() && !path.element_wildcard {
+            return false;
+        }
+        match &path.root {
+            StaticAliasRoot::Binding(root) => self.external_storage_roots.contains(root),
+            StaticAliasRoot::UnresolvedGlobal(_) => true,
+            StaticAliasRoot::DynamicThis { .. } => false,
+        }
     }
 
     fn maybe_default_target_has_default(target: &AssignmentTargetMaybeDefault<'_>) -> bool {
@@ -40238,7 +40309,8 @@ impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
                 | OxcAssignmentOperator::LogicalAnd
                 | OxcAssignmentOperator::LogicalNullish
         ) {
-            let entirely_external = self.assignment_target_is_external_storage(&assignment.left);
+            let entirely_external =
+                self.assignment_target_is_external_storage(&assignment.left, Some(assignment.span));
             let mut values = Vec::new();
             let precisely_analyzed = (!entirely_external
                 || Self::assignment_target_has_default(&assignment.left))

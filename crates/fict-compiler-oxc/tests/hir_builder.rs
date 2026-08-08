@@ -2451,6 +2451,27 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "reassigned component parameter callback slot",
+            "let callbacks = {}; callbacks = holder.callbacks; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "conditionally reassigned component parameter callback slot",
+            "let callbacks = {}; if (holder.enabled) callbacks = holder.callbacks; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "captured reassigned component parameter callback slot",
+            "let callbacks = {}; const run = () => count; const install = () => { callbacks.run = run; }; callbacks = holder.callbacks;",
+            "install();",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "nested component parameter callback slot",
             "const run = () => count;",
             "holder.callbacks.run = run;",
@@ -2709,10 +2730,17 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             const run = () => count;
             const { ...objectRest } = holder;
             const [first, ...arrayRest] = holder.items;
+            let replacedExternal = holder.callbacks;
+            replacedExternal = {};
+            let replacedInBranches = holder.callbacks;
+            if (holder.first) replacedInBranches = {};
+            else replacedInBranches = {};
             local.run = run;
             alias.next ??= () => count;
             objectRest.run = run;
             arrayRest.run = run;
+            replacedExternal.run = run;
+            replacedInBranches.run = run;
             holder.label += run;
             [holder.label, local.next] = ["safe", run];
             ({ label: holder.label, next: local.next } = { label: "safe", next: run });
