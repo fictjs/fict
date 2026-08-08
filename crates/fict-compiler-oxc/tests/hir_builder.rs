@@ -12923,6 +12923,46 @@ fn object_from_entries_preserves_local_value_identities() {
             "let run = () => { values.forEach = null; }; const result = Object.fromEntries([['run', run]]); run = () => {};",
             "result.run();",
         ),
+        (
+            "stored entries callable value",
+            "const run = () => { values.forEach = null; }; const entries = [['run', run]]; const result = Object.fromEntries(entries);",
+            "result.run();",
+        ),
+        (
+            "aliased stored entries",
+            "const run = () => { values.forEach = null; }; const entries = [['run', run]]; const alias = entries; const result = Object.fromEntries(alias);",
+            "result.run();",
+        ),
+        (
+            "stored nested structured value",
+            "const box = { inner: { run() { values.forEach = null; } } }; const entries = [['box', box]]; const result = Object.fromEntries(entries);",
+            "result.box.inner.run();",
+        ),
+        (
+            "stored entries snapshot",
+            "const run = () => { values.forEach = null; }; const entries = [['run', run]]; const result = Object.fromEntries(entries); entries[0][1] = () => {};",
+            "result.run();",
+        ),
+        (
+            "stored value binding snapshot",
+            "let run = () => { values.forEach = null; }; const entries = [['run', run]]; run = () => {}; const result = Object.fromEntries(entries);",
+            "result.run();",
+        ),
+        (
+            "stored replacement before conversion",
+            "const safe = () => {}; const unsafe = () => { values.forEach = null; }; const entries = [['run', safe]]; entries[0][1] = unsafe; const result = Object.fromEntries(entries);",
+            "result.run();",
+        ),
+        (
+            "stored result exposure",
+            "const run = () => count; const entries = [['run', run]]; const result = Object.fromEntries(entries);",
+            "external(result.run);",
+        ),
+        (
+            "later stored source exposure",
+            "const run = () => count; const entries = [['run', run]]; void Object.fromEntries(entries);",
+            "external(entries);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -13003,6 +13043,46 @@ fn object_from_entries_does_not_invoke_unselected_data_values() {
             "const run = () => count;",
             "void Object.fromEntries([['run', run]]);",
         ),
+        (
+            "stored entries remain local",
+            "const run = () => { values.forEach = null; }; const entries = [['run', run]];",
+            "void Object.fromEntries(entries);",
+        ),
+        (
+            "stored generator value remains unadvanced",
+            "function* run() { values.forEach = null; } const entries = [['run', run]];",
+            "Object.fromEntries(entries).run();",
+        ),
+        (
+            "stored earlier duplicate is overwritten",
+            "const unsafe = () => { values.forEach = null; }; const safe = () => {}; const entries = [['run', unsafe], ['run', safe]];",
+            "Object.fromEntries(entries).run();",
+        ),
+        (
+            "stored reactive closure remains local",
+            "const run = () => count; const entries = [['run', run]];",
+            "void Object.fromEntries(entries);",
+        ),
+        (
+            "stored value ignores later binding replacement",
+            "let run = () => {}; const unsafe = () => { values.forEach = null; }; const entries = [['run', run]]; run = unsafe;",
+            "Object.fromEntries(entries).run();",
+        ),
+        (
+            "unused stored replacement remains unexecuted",
+            "const safe = () => {}; const unsafe = () => { values.forEach = null; }; const entries = [['run', safe]]; entries[0][1] = unsafe;",
+            "void entries;",
+        ),
+        (
+            "stored replacement does not execute replacement",
+            "const safe = () => {}; const unsafe = () => { values.forEach = null; }; const entries = [['run', safe]]; const result = Object.fromEntries(entries); entries[0][1] = unsafe;",
+            "void result;",
+        ),
+        (
+            "stored snapshot ignores later entry replacement",
+            "const safe = () => {}; const unsafe = () => { values.forEach = null; }; const entries = [['run', safe]]; const result = Object.fromEntries(entries); entries[0][1] = unsafe;",
+            "result.run();",
+        ),
     ] {
         let source = format!(
             r#"
@@ -13047,6 +13127,21 @@ fn object_from_entries_executes_iteration_and_key_hooks() {
         (
             "custom iterator",
             "const entries = [['run', 1]]; entries[Symbol.iterator] = function() { values.forEach = null; return [][Symbol.iterator](); };",
+            "Object.fromEntries(entries);",
+        ),
+        (
+            "mutated stored property key",
+            "const key = { toString() { values.forEach = null; return 'run'; } }; const entries = [['safe', 1]]; entries[0][0] = key;",
+            "Object.fromEntries(entries);",
+        ),
+        (
+            "pushed property key",
+            "const key = { toString() { values.forEach = null; return 'run'; } }; const entries = []; entries.push([key, 1]);",
+            "Object.fromEntries(entries);",
+        ),
+        (
+            "stored entry value getter",
+            "const entries = [['run', 1]]; Object.defineProperty(entries[0], 1, { get() { values.forEach = null; return 1; } });",
             "Object.fromEntries(entries);",
         ),
         (
