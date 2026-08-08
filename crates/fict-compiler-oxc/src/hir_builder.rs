@@ -39194,6 +39194,261 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 .all(|target| self.place_is_external_storage(&target.place))
     }
 
+    fn assignment_target_has_external_storage(&self, target: &AssignmentTarget<'_>) -> bool {
+        if let Some(place) = planned_assignment_target_place(self.scoping, target) {
+            return self.place_is_external_storage(&place);
+        }
+        let mut bindings = Vec::new();
+        let mut projected = Vec::new();
+        collect_pattern_assignment_targets(self.scoping, target, &mut bindings, &mut projected);
+        projected
+            .iter()
+            .any(|target| self.place_is_external_storage(&target.place))
+    }
+
+    fn destructuring_value_is_undefined(&self, expression: &Expression<'_>) -> Option<bool> {
+        let expression = expression.get_inner_expression();
+        if matches!(
+            expression,
+            Expression::UnaryExpression(unary) if unary.operator == OxcUnaryOperator::Void
+        ) || static_alias_source_path(self.scoping, expression)
+            .is_some_and(|path| path == StaticAliasPath::unresolved_global("undefined".to_string()))
+        {
+            return Some(true);
+        }
+        matches!(
+            expression,
+            Expression::NullLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NumericLiteral(_)
+                | Expression::BigIntLiteral(_)
+                | Expression::StringLiteral(_)
+                | Expression::RegExpLiteral(_)
+                | Expression::TemplateLiteral(_)
+                | Expression::ArrayExpression(_)
+                | Expression::ObjectExpression(_)
+                | Expression::FunctionExpression(_)
+                | Expression::ArrowFunctionExpression(_)
+                | Expression::ClassExpression(_)
+                | Expression::NewExpression(_)
+                | Expression::ThisExpression(_)
+                | Expression::MetaProperty(_)
+        )
+        .then_some(false)
+    }
+
+    fn collect_static_array_assignment_values<'node, 'ast>(
+        array: &'node ArrayExpression<'ast>,
+        values: &mut Vec<Option<&'node Expression<'ast>>>,
+    ) -> bool {
+        for element in &array.elements {
+            match element {
+                ArrayExpressionElement::Elision(_) => values.push(None),
+                ArrayExpressionElement::SpreadElement(spread) => {
+                    let Expression::ArrayExpression(spread) =
+                        spread.argument.get_inner_expression()
+                    else {
+                        return false;
+                    };
+                    if !Self::collect_static_array_assignment_values(spread, values) {
+                        return false;
+                    }
+                }
+                _ => values.push(Some(element.to_expression())),
+            }
+        }
+        true
+    }
+
+    fn collect_static_object_assignment_values<'node, 'ast>(
+        object: &'node ObjectExpression<'ast>,
+        values: &mut BTreeMap<String, &'node Expression<'ast>>,
+    ) -> bool {
+        for property in &object.properties {
+            let property = match property {
+                OxcObjectPropertyKind::ObjectProperty(property) => property,
+                OxcObjectPropertyKind::SpreadProperty(spread) => {
+                    let Expression::ObjectExpression(spread) =
+                        spread.argument.get_inner_expression()
+                    else {
+                        return false;
+                    };
+                    if !Self::collect_static_object_assignment_values(spread, values) {
+                        return false;
+                    }
+                    continue;
+                }
+            };
+            if property.kind != PropertyKind::Init {
+                return false;
+            }
+            let Some(name) = property.key.static_name() else {
+                return false;
+            };
+            if !property.computed && name == "__proto__" {
+                return false;
+            }
+            values.insert(name.into_owned(), &property.value);
+        }
+        true
+    }
+
+    fn collect_external_maybe_default_values<'node, 'ast>(
+        &self,
+        target: &'node AssignmentTargetMaybeDefault<'ast>,
+        value: Option<&'node Expression<'ast>>,
+        values: &mut Vec<&'node Expression<'ast>>,
+    ) -> bool {
+        if let AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) = target {
+            return match value.map(|value| self.destructuring_value_is_undefined(value)) {
+                None | Some(Some(true)) => self.collect_external_assignment_values(
+                    &default.binding,
+                    Some(&default.init),
+                    values,
+                ),
+                Some(Some(false)) => {
+                    self.collect_external_assignment_values(&default.binding, value, values)
+                }
+                Some(None) => {
+                    let source =
+                        self.collect_external_assignment_values(&default.binding, value, values);
+                    let fallback = self.collect_external_assignment_values(
+                        &default.binding,
+                        Some(&default.init),
+                        values,
+                    );
+                    source && fallback
+                }
+            };
+        }
+        let Some(target) = target.as_assignment_target() else {
+            return false;
+        };
+        self.collect_external_assignment_values(target, value, values)
+    }
+
+    fn collect_external_assignment_values<'node, 'ast>(
+        &self,
+        target: &'node AssignmentTarget<'ast>,
+        value: Option<&'node Expression<'ast>>,
+        values: &mut Vec<&'node Expression<'ast>>,
+    ) -> bool {
+        if !self.assignment_target_has_external_storage(target) {
+            return true;
+        }
+        if planned_assignment_target_place(self.scoping, target).is_some() {
+            if let Some(value) = value {
+                values.push(value);
+            }
+            return true;
+        }
+        if let Some(value) = value {
+            match value.get_inner_expression() {
+                Expression::ConditionalExpression(expression) => {
+                    return self.collect_external_assignment_values(
+                        target,
+                        Some(&expression.consequent),
+                        values,
+                    ) && self.collect_external_assignment_values(
+                        target,
+                        Some(&expression.alternate),
+                        values,
+                    );
+                }
+                Expression::LogicalExpression(expression) => {
+                    return self.collect_external_assignment_values(
+                        target,
+                        Some(&expression.left),
+                        values,
+                    ) && self.collect_external_assignment_values(
+                        target,
+                        Some(&expression.right),
+                        values,
+                    );
+                }
+                Expression::SequenceExpression(expression) => {
+                    return expression.expressions.last().is_some_and(|value| {
+                        self.collect_external_assignment_values(target, Some(value), values)
+                    });
+                }
+                Expression::AssignmentExpression(expression) => {
+                    return self.collect_external_assignment_values(
+                        target,
+                        Some(&expression.right),
+                        values,
+                    );
+                }
+                _ => {}
+            }
+        }
+        match target {
+            AssignmentTarget::ArrayAssignmentTarget(target) => {
+                let mut source_values = Vec::new();
+                if let Some(value) = value {
+                    let Expression::ArrayExpression(array) = value.get_inner_expression() else {
+                        return false;
+                    };
+                    if !Self::collect_static_array_assignment_values(array, &mut source_values) {
+                        return false;
+                    }
+                }
+                for (index, target) in target.elements.iter().enumerate() {
+                    let Some(target) = target else {
+                        continue;
+                    };
+                    let value = source_values.get(index).copied().flatten();
+                    if !self.collect_external_maybe_default_values(target, value, values) {
+                        return false;
+                    }
+                }
+                target
+                    .rest
+                    .as_ref()
+                    .is_none_or(|rest| !self.assignment_target_has_external_storage(&rest.target))
+            }
+            AssignmentTarget::ObjectAssignmentTarget(target) => {
+                let mut source_values = BTreeMap::new();
+                if let Some(value) = value {
+                    let Expression::ObjectExpression(object) = value.get_inner_expression() else {
+                        return false;
+                    };
+                    if !Self::collect_static_object_assignment_values(object, &mut source_values) {
+                        return false;
+                    }
+                }
+                for property in &target.properties {
+                    let AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) =
+                        property
+                    else {
+                        continue;
+                    };
+                    let Some(name) = property.name.static_name() else {
+                        return false;
+                    };
+                    if !self.collect_external_maybe_default_values(
+                        &property.binding,
+                        source_values.get(name.as_ref()).copied(),
+                        values,
+                    ) {
+                        return false;
+                    }
+                }
+                target
+                    .rest
+                    .as_ref()
+                    .is_none_or(|rest| !self.assignment_target_has_external_storage(&rest.target))
+            }
+            AssignmentTarget::AssignmentTargetIdentifier(_)
+            | AssignmentTarget::StaticMemberExpression(_)
+            | AssignmentTarget::ComputedMemberExpression(_)
+            | AssignmentTarget::PrivateFieldExpression(_)
+            | AssignmentTarget::TSAsExpression(_)
+            | AssignmentTarget::TSSatisfiesExpression(_)
+            | AssignmentTarget::TSNonNullExpression(_)
+            | AssignmentTarget::TSTypeAssertion(_) => false,
+        }
+    }
+
     fn place_is_external_storage(&self, place: &PlannedPlace) -> bool {
         match &place.base {
             PlannedPlaceBase::UnresolvedGlobal { .. } => !place.projections.is_empty(),
@@ -39914,6 +40169,23 @@ impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
         ) && self.assignment_target_is_external_storage(&assignment.left)
         {
             self.analyze_external_storage_value(&assignment.right);
+        } else if matches!(
+            assignment.operator,
+            OxcAssignmentOperator::Assign
+                | OxcAssignmentOperator::LogicalOr
+                | OxcAssignmentOperator::LogicalAnd
+                | OxcAssignmentOperator::LogicalNullish
+        ) {
+            let mut values = Vec::new();
+            if self.collect_external_assignment_values(
+                &assignment.left,
+                Some(&assignment.right),
+                &mut values,
+            ) {
+                for value in values {
+                    self.analyze_external_storage_value(value);
+                }
+            }
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
     }

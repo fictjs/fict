@@ -2499,6 +2499,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "{ callback: run }",
             "FICT-R005",
         ),
+        (
+            "mixed array pattern component parameter callback slot",
+            "const local = {}; const run = () => count;",
+            "[holder.run, local.safe] = [run, 0];",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "mixed object pattern component parameter callback slot",
+            "const local = {}; const run = () => count;",
+            "({ callback: holder.run, safe: local.safe } = { callback: run, safe: 0 });",
+            "run",
+            "FICT-R005",
+        ),
     ] {
         let source = format!(
             r#"
@@ -2560,6 +2574,35 @@ fn external_property_assignments_allow_definitely_primitive_results() {
             )
         }),
         "primitive storage results do not retain reactive identity: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn mixed_external_assignment_patterns_ignore_values_stored_only_locally() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const local = {};
+            const run = () => count;
+            [holder.safe, local.run] = [0, run];
+            ({ safe: holder.other, callback: local.otherRun } = { safe: 0, callback: run });
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R005"),
+        "locally retained callbacks must not be diagnosed: {:?}",
         output.diagnostics
     );
 }
