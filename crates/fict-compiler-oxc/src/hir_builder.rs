@@ -3099,7 +3099,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             immutable_storage_aliases,
         );
         external_storage.visit_program(program);
-        let mut external_storage_roots = external_storage.finish();
+        let (mut external_storage_roots, external_storage_nested_roots) = external_storage.finish();
         external_storage_roots.retain(|symbol| !mutable_component_parameters.contains(symbol));
         let local_hook_bindings: BTreeSet<_> = self
             .functions
@@ -3136,6 +3136,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             callback_timings: &callback_timings,
             callback_aliases,
             external_storage_roots: &external_storage_roots,
+            external_storage_nested_roots: &external_storage_nested_roots,
             component_parameter_symbols: &component_parameter_symbols,
             definitely_primitive_symbols: &definitely_primitive_symbols,
             diagnostics: Vec::new(),
@@ -6777,8 +6778,23 @@ struct KnownArrayCollector<'semantic> {
 struct ExternalStorageRootCollector<'semantic> {
     scoping: &'semantic Scoping,
     roots: BTreeSet<SymbolId>,
+    nested_roots: BTreeSet<SymbolId>,
     immutable_symbols: BTreeSet<SymbolId>,
-    aliases: Vec<(SymbolId, Option<SymbolId>)>,
+    aliases: Vec<ExternalStorageAlias>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ExternalStorageAliasKind {
+    Preserve,
+    Projected,
+    Rest,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExternalStorageAlias {
+    target: SymbolId,
+    source: Option<SymbolId>,
+    kind: ExternalStorageAliasKind,
 }
 
 struct KnownPrimitiveCollector<'facts, 'semantic> {
@@ -6852,32 +6868,60 @@ impl<'semantic> ExternalStorageRootCollector<'semantic> {
         Self {
             scoping,
             roots,
+            nested_roots: BTreeSet::new(),
             immutable_symbols,
             aliases: Vec::new(),
         }
     }
 
-    fn record_pattern_alias(&mut self, pattern: &BindingPattern<'_>, source: Option<SymbolId>) {
+    fn record_pattern_alias(
+        &mut self,
+        pattern: &BindingPattern<'_>,
+        source: Option<SymbolId>,
+        kind: ExternalStorageAliasKind,
+    ) {
         match pattern {
             BindingPattern::BindingIdentifier(binding) => {
                 if let Some(target) = binding.symbol_id.get()
                     && self.immutable_symbols.contains(&target)
                 {
-                    self.aliases.push((target, source));
+                    self.aliases.push(ExternalStorageAlias {
+                        target,
+                        source,
+                        kind,
+                    });
                 }
             }
             BindingPattern::ObjectPattern(object) => {
                 for property in &object.properties {
-                    self.record_pattern_alias(&property.value, source);
+                    self.record_pattern_alias(
+                        &property.value,
+                        source,
+                        ExternalStorageAliasKind::Projected,
+                    );
+                }
+                if let Some(rest) = &object.rest {
+                    self.record_pattern_alias(
+                        &rest.argument,
+                        source,
+                        ExternalStorageAliasKind::Rest,
+                    );
                 }
             }
             BindingPattern::ArrayPattern(array) => {
                 for element in array.elements.iter().flatten() {
-                    self.record_pattern_alias(element, source);
+                    self.record_pattern_alias(element, source, ExternalStorageAliasKind::Projected);
+                }
+                if let Some(rest) = &array.rest {
+                    self.record_pattern_alias(
+                        &rest.argument,
+                        source,
+                        ExternalStorageAliasKind::Rest,
+                    );
                 }
             }
             BindingPattern::AssignmentPattern(default) => {
-                self.record_pattern_alias(&default.left, source);
+                self.record_pattern_alias(&default.left, source, kind);
             }
         }
     }
@@ -6886,24 +6930,46 @@ impl<'semantic> ExternalStorageRootCollector<'semantic> {
         let Some(source) = planned_expression_place(self.scoping, source) else {
             return;
         };
+        let kind = if source.projections.is_empty() {
+            ExternalStorageAliasKind::Preserve
+        } else {
+            ExternalStorageAliasKind::Projected
+        };
         let source = match source.base {
             PlannedPlaceBase::Binding(source) => Some(source),
             PlannedPlaceBase::UnresolvedGlobal { .. } => None,
             PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => return,
         };
-        self.record_pattern_alias(target, source);
+        self.record_pattern_alias(target, source, kind);
     }
 
-    fn finish(mut self) -> BTreeSet<SymbolId> {
+    fn finish(mut self) -> (BTreeSet<SymbolId>, BTreeSet<SymbolId>) {
         loop {
             let mut changed = false;
-            for (target, source) in &self.aliases {
-                if source.is_none_or(|source| self.roots.contains(&source)) {
-                    changed |= self.roots.insert(*target);
+            for alias in &self.aliases {
+                let source_is_root = alias
+                    .source
+                    .is_none_or(|source| self.roots.contains(&source));
+                let source_is_nested = alias
+                    .source
+                    .is_some_and(|source| self.nested_roots.contains(&source));
+                if !source_is_root && !source_is_nested {
+                    continue;
+                }
+                let target_is_root = match alias.kind {
+                    ExternalStorageAliasKind::Preserve => source_is_root,
+                    ExternalStorageAliasKind::Projected => true,
+                    ExternalStorageAliasKind::Rest => false,
+                };
+                if target_is_root {
+                    changed |= self.nested_roots.remove(&alias.target);
+                    changed |= self.roots.insert(alias.target);
+                } else if !self.roots.contains(&alias.target) {
+                    changed |= self.nested_roots.insert(alias.target);
                 }
             }
             if !changed {
-                return self.roots;
+                return (self.roots, self.nested_roots);
             }
         }
     }
@@ -39126,6 +39192,7 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     callback_timings: &'facts BTreeMap<StaticAliasPath, Option<CallbackTiming>>,
     callback_aliases: &'facts StaticHookAliases,
     external_storage_roots: &'facts BTreeSet<SymbolId>,
+    external_storage_nested_roots: &'facts BTreeSet<SymbolId>,
     component_parameter_symbols: &'facts BTreeSet<SymbolId>,
     definitely_primitive_symbols: &'facts BTreeSet<SymbolId>,
     diagnostics: Vec<EscapeDiagnosticFact>,
@@ -39538,12 +39605,13 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     }
 
     fn alias_path_is_external_storage(&self, path: &StaticAliasPath) -> bool {
-        if path.properties.is_empty() && !path.element_wildcard {
-            return false;
-        }
+        let projection_depth = path.properties.len() + usize::from(path.element_wildcard);
         match &path.root {
-            StaticAliasRoot::Binding(root) => self.external_storage_roots.contains(root),
-            StaticAliasRoot::UnresolvedGlobal(_) => true,
+            StaticAliasRoot::Binding(root) => {
+                (projection_depth >= 1 && self.external_storage_roots.contains(root))
+                    || (projection_depth >= 2 && self.external_storage_nested_roots.contains(root))
+            }
+            StaticAliasRoot::UnresolvedGlobal(_) => projection_depth >= 1,
             StaticAliasRoot::DynamicThis { .. } => false,
         }
     }
@@ -39886,21 +39954,31 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         match &place.base {
             PlannedPlaceBase::UnresolvedGlobal { .. } => !place.projections.is_empty(),
             PlannedPlaceBase::Binding(_) if place.projections.is_empty() => false,
-            PlannedPlaceBase::Binding(symbol) => self.binding_is_external_storage_root(*symbol),
+            PlannedPlaceBase::Binding(symbol) => {
+                self.binding_is_external_storage_root(*symbol, place.projections.len())
+            }
             PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => false,
         }
     }
 
-    fn binding_is_external_storage_root(&self, symbol: SymbolId) -> bool {
-        if self.external_storage_roots.contains(&symbol) {
+    fn binding_is_external_storage_root(&self, symbol: SymbolId, projection_depth: usize) -> bool {
+        if projection_depth >= 1 && self.external_storage_roots.contains(&symbol) {
+            return true;
+        }
+        if projection_depth >= 2 && self.external_storage_nested_roots.contains(&symbol) {
             return true;
         }
         let resolved = self
             .callback_aliases
             .resolve(&StaticAliasPath::root(symbol));
+        let projection_depth =
+            projection_depth + resolved.properties.len() + usize::from(resolved.element_wildcard);
         match &resolved.root {
-            StaticAliasRoot::Binding(root) => self.external_storage_roots.contains(root),
-            StaticAliasRoot::UnresolvedGlobal(_) => true,
+            StaticAliasRoot::Binding(root) => {
+                (projection_depth >= 1 && self.external_storage_roots.contains(root))
+                    || (projection_depth >= 2 && self.external_storage_nested_roots.contains(root))
+            }
+            StaticAliasRoot::UnresolvedGlobal(_) => projection_depth >= 1,
             StaticAliasRoot::DynamicThis { .. } => false,
         }
     }

@@ -2597,6 +2597,34 @@ fn external_property_assignments_reject_reactive_escapes() {
             "run",
             "FICT-R005",
         ),
+        (
+            "object rest nested component parameter callback slot",
+            "const { ...rest } = holder; const run = () => count;",
+            "rest.callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "array rest nested component parameter callback slot",
+            "const [first, ...rest] = holder.items; const run = () => count;",
+            "rest[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "aliased object rest nested component parameter callback slot",
+            "const { ...rest } = holder; const alias = rest; const run = () => count;",
+            "alias.callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "projected object rest component parameter callback slot",
+            "const { ...rest } = holder; const { callbacks } = rest; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
     ] {
         let source = format!(
             r#"
@@ -2767,6 +2795,8 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             const run = () => count;
             const { ...objectRest } = holder;
             const [first, ...arrayRest] = holder.items;
+            const objectRestAlias = objectRest;
+            const arrayRestAlias = arrayRest;
             let replacedExternal = holder.callbacks;
             replacedExternal = {};
             let replacedInBranches = holder.callbacks;
@@ -2779,6 +2809,8 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             alias.next ??= () => count;
             objectRest.run = run;
             arrayRest.run = run;
+            objectRestAlias.run = run;
+            arrayRestAlias.run = run;
             replacedExternal.run = run;
             replacedInBranches.run = run;
             getLocal().run = run;
