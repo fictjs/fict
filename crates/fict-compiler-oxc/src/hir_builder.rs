@@ -3082,6 +3082,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter(|binding| !binding.mutated)
             .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
             .collect();
+        let mutable_component_parameters = component_parameter_symbols
+            .difference(&immutable_storage_aliases)
+            .copied()
+            .collect::<BTreeSet<_>>();
         let mut primitive_values = KnownPrimitiveCollector::new(
             self.semantic.scoping(),
             callback_aliases,
@@ -3095,7 +3099,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             immutable_storage_aliases,
         );
         external_storage.visit_program(program);
-        let external_storage_roots = external_storage.finish();
+        let mut external_storage_roots = external_storage.finish();
+        external_storage_roots.retain(|symbol| !mutable_component_parameters.contains(symbol));
         let local_hook_bindings: BTreeSet<_> = self
             .functions
             .iter()
@@ -8535,6 +8540,7 @@ struct StaticHookAliases {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
     assignment_target_aliases: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
+    assignment_attached_parameter_roots: BTreeMap<(u32, u32), BTreeSet<SymbolId>>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     snapshotted_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
@@ -20325,6 +20331,7 @@ struct StaticHookAliasCollector<'semantic> {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     assignment_target_alias_snapshots: Vec<((u32, u32), StaticAliasPath, bool)>,
+    assignment_attached_parameter_roots: BTreeMap<(u32, u32), BTreeSet<SymbolId>>,
     array_lengths: BTreeMap<StaticAliasPath, usize>,
     array_length_history: BTreeMap<StaticAliasPath, BTreeSet<usize>>,
     structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
@@ -21196,6 +21203,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             aliases: BTreeMap::new(),
             alias_history: BTreeMap::new(),
             assignment_target_alias_snapshots: Vec::new(),
+            assignment_attached_parameter_roots: BTreeMap::new(),
             array_lengths: BTreeMap::new(),
             array_length_history: BTreeMap::new(),
             structured_own_properties: BTreeMap::new(),
@@ -36557,6 +36565,7 @@ impl StaticHookAliasCollector<'_> {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
             assignment_target_aliases: BTreeMap::new(),
+            assignment_attached_parameter_roots: BTreeMap::new(),
             unexecuted_expression_spans: BTreeSet::new(),
             snapshotted_callable_effect_spans: BTreeMap::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
@@ -36657,6 +36666,7 @@ impl StaticHookAliasCollector<'_> {
             aliases: self.aliases,
             member_invalidated,
             assignment_target_aliases,
+            assignment_attached_parameter_roots: self.assignment_attached_parameter_roots,
             unexecuted_expression_spans: self.unexecuted_expression_spans,
             snapshotted_callable_effect_spans,
             non_escaping_object_from_entries_calls: self.non_escaping_object_from_entries_calls,
@@ -37924,6 +37934,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             } else {
                 resolve_static_alias_path(&self.aliases, &path)
             };
+            if let Some(root) = path.binding_root()
+                && self.attached_callable_parameters.contains(&root)
+            {
+                self.assignment_attached_parameter_roots
+                    .entry((assignment.span.start, assignment.span.end))
+                    .or_default()
+                    .insert(root);
+            }
             self.assignment_target_alias_snapshots.push((
                 (assignment.span.start, assignment.span.end),
                 path,
@@ -39248,14 +39266,24 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if let Some(place) = planned_assignment_target_place(self.scoping, target) {
             return self.place_is_external_storage(&place)
                 || assignment_span.is_some_and(|span| {
+                    let span = (span.start, span.end);
                     self.callback_aliases
                         .assignment_target_aliases
-                        .get(&(span.start, span.end))
+                        .get(&span)
                         .is_some_and(|aliases| {
                             aliases
                                 .iter()
                                 .any(|alias| self.alias_path_is_external_storage(alias))
                         })
+                        || self
+                            .callback_aliases
+                            .assignment_attached_parameter_roots
+                            .get(&span)
+                            .is_some_and(|parameters| {
+                                parameters
+                                    .iter()
+                                    .any(|symbol| self.component_parameter_symbols.contains(symbol))
+                            })
                 });
         }
         let mut bindings = Vec::new();

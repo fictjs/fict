@@ -2768,6 +2768,34 @@ fn local_property_assignments_do_not_escape_reactive_values() {
 }
 
 #[test]
+fn reassigned_component_parameters_do_not_remain_external_storage() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const run = () => count;
+            holder = {};
+            holder.run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R005"),
+        "a replaced parameter no longer stores into its caller-owned object: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn exported_binding_replacements_do_not_count_as_object_slots() {
     let source = r#"
         import { $state } from 'fict';
