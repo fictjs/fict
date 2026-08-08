@@ -12393,6 +12393,21 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "appended replacer array callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "appended replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = []; replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "appended replacer array generator",
+            "function* run() { values.forEach = null; } const source = { value: 1 }; const replacer = []; replacer['push'](run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
             "stored callable replacer array has an empty property list",
             "const run = () => { values.forEach = null; }; const source = { get value() { values.forEach = null; return 1; } }; const replacer = [run];",
             "JSON.stringify(source, replacer);",
@@ -12543,6 +12558,41 @@ fn json_stringify_does_not_invoke_data_callables() {
         (
             "invoked appended replacer callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; replacer.push(run); replacer[0]();",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "externally consumed appended replacer callable",
+            "const run = () => { values.forEach = null; }; const consume = value => value[0](); const source = { value: 1 }; const replacer = []; replacer.push(run); consume(replacer);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "overridden JSON consumes appended replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; replacer.push(run); JSON.stringify = (_source, list) => { list[0](); return ''; };",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "overridden Array push consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; Array.prototype.push = function(value) { value(); return this.length; }; replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "inherited Array index setter consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; Object.defineProperty(Array.prototype, '0', { configurable: true, set(value) { value(); } }); replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "inherited Object index setter consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; Object.defineProperty(Object.prototype, '0', { configurable: true, set(value) { value(); } }); replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "aliased inherited index setter consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; const prototype = Array.prototype; Object.defineProperty(prototype, '0', { configurable: true, set(value) { value(); } }); replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "looked-up inherited index setter consumes replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; const prototype = Object.getPrototypeOf([]); Object.defineProperty(prototype, '0', { configurable: true, set(value) { value(); } }); replacer.push(run);",
             "JSON.stringify(source, replacer);",
         ),
         (

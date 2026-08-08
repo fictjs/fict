@@ -2009,9 +2009,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         let mut known_arrays = KnownArrayCollector::default();
         known_arrays.visit_program(program);
+        let mut json_replacer_array_uses =
+            JsonReplacerArrayUseCollector::new(self.semantic.scoping());
+        json_replacer_array_uses.visit_program(program);
+        let exclusive_json_replacer_arrays =
+            json_replacer_array_uses.exclusive_replacer_arrays(&known_arrays.symbols);
         let mut generator_execution = GeneratorExecutionCollector::new(
             self.semantic.scoping(),
             &known_arrays.symbols,
+            &exclusive_json_replacer_arrays,
             program.source_type.is_module(),
         );
         generator_execution.visit_program(program);
@@ -2056,7 +2062,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .clone_from(&collector.executed_descriptor_callable_spans);
             executed_setter_spans.clone_from(&collector.executed_setter_spans);
         };
-        let static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
+        let mut static_hook_aliases = static_hook_aliases.finish(&mutable_alias_symbols);
+        static_hook_aliases
+            .exclusive_json_replacer_arrays
+            .clone_from(&exclusive_json_replacer_arrays);
         let mut calls = CallCollector {
             scoping: self.semantic.scoping(),
             stack: vec![FunctionId::new(0)],
@@ -7710,6 +7719,26 @@ fn direct_mutating_array_call_receiver<'a>(
     }
 }
 
+fn direct_array_push_call_receiver<'a>(call: &'a CallExpression<'a>) -> Option<&'a Expression<'a>> {
+    if call.optional {
+        return None;
+    }
+    match unwrap_transparent_call_expression(&call.callee) {
+        Expression::StaticMemberExpression(member)
+            if !member.optional && member.property.name == "push" =>
+        {
+            Some(&member.object)
+        }
+        Expression::ComputedMemberExpression(member)
+            if !member.optional
+                && static_member_name(&member.expression).as_deref() == Some("push") =>
+        {
+            Some(&member.object)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ArgumentFact {
     span: SourceSpan,
@@ -8247,6 +8276,7 @@ struct StaticHookAliases {
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     snapshotted_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
+    exclusive_json_replacer_arrays: BTreeSet<SymbolId>,
 }
 
 fn resolve_static_alias_path(
@@ -9992,6 +10022,145 @@ fn static_json_replacer_item(expression: &Expression<'_>) -> Option<StaticJsonRe
     })
 }
 
+struct JsonReplacerArrayUseCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    references: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    push_receivers: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    replacer_arguments: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
+    prototype_hazard: bool,
+}
+
+impl<'semantic> JsonReplacerArrayUseCollector<'semantic> {
+    fn new(scoping: &'semantic Scoping) -> Self {
+        Self {
+            scoping,
+            references: BTreeMap::new(),
+            push_receivers: BTreeMap::new(),
+            replacer_arguments: BTreeMap::new(),
+            prototype_hazard: false,
+        }
+    }
+
+    fn binding_reference(&self, expression: &Expression<'_>) -> Option<(SymbolId, (u32, u32))> {
+        let Expression::Identifier(identifier) = unwrap_transparent_call_expression(expression)
+        else {
+            return None;
+        };
+        let symbol = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())?;
+        Some((symbol, (identifier.span.start, identifier.span.end)))
+    }
+
+    fn exclusive_replacer_arrays(self, known_arrays: &BTreeSet<SymbolId>) -> BTreeSet<SymbolId> {
+        let Self {
+            references,
+            push_receivers,
+            replacer_arguments,
+            prototype_hazard,
+            ..
+        } = self;
+        if prototype_hazard {
+            return BTreeSet::new();
+        }
+        replacer_arguments
+            .into_iter()
+            .filter_map(|(symbol, replacer_arguments)| {
+                let push_receivers = push_receivers.get(&symbol)?;
+                let references = references.get(&symbol)?;
+                let mut allowed = replacer_arguments;
+                allowed.extend(push_receivers);
+                (known_arrays.contains(&symbol) && &allowed == references).then_some(symbol)
+            })
+            .collect()
+    }
+}
+
+impl<'a> Visit<'a> for JsonReplacerArrayUseCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let Some(reference) = identifier.reference_id.get() else {
+            return;
+        };
+        let reference = self.scoping.get_reference(reference);
+        let Some(symbol) = reference.symbol_id() else {
+            self.prototype_hazard |= matches!(
+                identifier.name.as_str(),
+                "Array" | "Object" | "Reflect" | "globalThis" | "self" | "window"
+            );
+            return;
+        };
+        self.references
+            .entry(symbol)
+            .or_default()
+            .insert((identifier.span.start, identifier.span.end));
+    }
+
+    fn visit_static_member_expression(
+        &mut self,
+        member: &oxc::ast::ast::StaticMemberExpression<'a>,
+    ) {
+        self.prototype_hazard |= matches!(
+            member.property.name.as_str(),
+            "__proto__"
+                | "__defineGetter__"
+                | "__defineSetter__"
+                | "constructor"
+                | "defineProperties"
+                | "defineProperty"
+                | "prototype"
+                | "getPrototypeOf"
+                | "setPrototypeOf"
+        );
+        oxc::ast_visit::walk::walk_static_member_expression(self, member);
+    }
+
+    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        self.prototype_hazard |= static_member_name(&member.expression).is_some_and(|property| {
+            matches!(
+                property.as_str(),
+                "__proto__"
+                    | "__defineGetter__"
+                    | "__defineSetter__"
+                    | "constructor"
+                    | "defineProperties"
+                    | "defineProperty"
+                    | "prototype"
+                    | "getPrototypeOf"
+                    | "setPrototypeOf"
+            )
+        });
+        oxc::ast_visit::walk::walk_computed_member_expression(self, member);
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let json_stringify = StaticAliasPath::unresolved_global("JSON".to_string())
+            .with_property("stringify".to_string());
+        if static_alias_source_path(self.scoping, &call.callee) == Some(json_stringify)
+            && let Some(replacer) = call
+                .arguments
+                .get(1)
+                .and_then(|argument| argument.as_expression())
+            && let Some((symbol, span)) = self.binding_reference(replacer)
+        {
+            self.replacer_arguments
+                .entry(symbol)
+                .or_default()
+                .insert(span);
+        }
+        if let Some(receiver) = direct_array_push_call_receiver(call)
+            && call
+                .arguments
+                .iter()
+                .all(|argument| argument.as_expression().is_some())
+            && let Some((symbol, span)) = self.binding_reference(receiver)
+        {
+            self.push_receivers.entry(symbol).or_default().insert(span);
+        }
+        walk_call_expression(self, call);
+    }
+}
+
 fn static_from_entries_pairs<'a, 'ast>(
     expression: &'a Expression<'ast>,
 ) -> Option<Vec<(String, &'a Expression<'ast>)>> {
@@ -10697,6 +10866,7 @@ type InstanceGeneratorBodies = BTreeMap<String, BTreeSet<GeneratorBodySpan>>;
 struct GeneratorExecutionCollector<'semantic> {
     scoping: &'semantic Scoping,
     known_arrays: &'semantic BTreeSet<SymbolId>,
+    exclusive_json_replacer_arrays: &'semantic BTreeSet<SymbolId>,
     strict_program: bool,
     binding_reads: BTreeMap<SymbolId, BTreeSet<(u32, u32)>>,
     callable_targets_by_span: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
@@ -10741,7 +10911,8 @@ struct GeneratorExecutionCollector<'semantic> {
     explicitly_merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     static_object_entries_sources: BTreeMap<StaticAliasPath, StaticAliasPath>,
-    static_json_replacer_arrays: BTreeSet<StaticAliasPath>,
+    static_json_replacer_arrays: BTreeMap<StaticAliasPath, usize>,
+    non_consuming_json_replacer_pushes: BTreeMap<(u32, u32), GeneratorMethodGuard>,
     json_serialized_value_paths: BTreeSet<StaticAliasPath>,
     directly_unexecuted_callable_spans: BTreeSet<(u32, u32)>,
 }
@@ -10750,11 +10921,13 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
     fn new(
         scoping: &'semantic Scoping,
         known_arrays: &'semantic BTreeSet<SymbolId>,
+        exclusive_json_replacer_arrays: &'semantic BTreeSet<SymbolId>,
         strict_program: bool,
     ) -> Self {
         Self {
             scoping,
             known_arrays,
+            exclusive_json_replacer_arrays,
             strict_program,
             binding_reads: BTreeMap::new(),
             callable_targets_by_span: BTreeMap::new(),
@@ -10799,7 +10972,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             explicitly_merely_observed_callable_paths: BTreeSet::new(),
             static_from_entries_sources: BTreeMap::new(),
             static_object_entries_sources: BTreeMap::new(),
-            static_json_replacer_arrays: BTreeSet::new(),
+            static_json_replacer_arrays: BTreeMap::new(),
+            non_consuming_json_replacer_pushes: BTreeMap::new(),
             json_serialized_value_paths: BTreeSet::new(),
             directly_unexecuted_callable_spans: BTreeSet::new(),
         }
@@ -14771,21 +14945,87 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: &StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
-        if self.inline_json_replacer_array_is_non_coercive(initializer) {
-            self.static_json_replacer_arrays.insert(target.clone());
+        if self.inline_json_replacer_array_is_non_coercive(initializer)
+            && let Expression::ArrayExpression(array) = initializer.get_inner_expression()
+        {
+            self.static_json_replacer_arrays
+                .insert(target.clone(), array.elements.len());
         }
     }
 
-    fn invalidate_static_json_replacer_array_mutation(&mut self, call: &CallExpression<'_>) {
+    fn record_static_json_replacer_array_mutation(&mut self, call: &CallExpression<'_>) {
         let Some(receiver) = direct_mutating_array_call_receiver(call) else {
             return;
         };
-        let Some((source, _)) = self.callable_reference(receiver) else {
+        let Some((source, source_span)) = self.callable_reference(receiver) else {
             return;
         };
         let related = self.related_callable_paths(&source);
+        let tracked = self
+            .static_json_replacer_arrays
+            .keys()
+            .filter(|target| related.iter().any(|source| source.overlaps(target)))
+            .cloned()
+            .collect::<Vec<_>>();
+        let safe_push = (|| {
+            let [target] = tracked.as_slice() else {
+                return None;
+            };
+            let root = source.binding_root()?;
+            if source != StaticAliasPath::root(root)
+                || !self.exclusive_json_replacer_arrays.contains(&root)
+                || direct_array_push_call_receiver(call).is_none()
+            {
+                return None;
+            }
+            let arguments = call
+                .arguments
+                .iter()
+                .map(|argument| argument.as_expression())
+                .collect::<Option<Vec<_>>>()?;
+            if !arguments
+                .iter()
+                .all(|argument| self.json_replacer_item_is_non_coercive(argument))
+            {
+                return None;
+            }
+            if ["Array", "Object"].into_iter().any(|constructor| {
+                !self.method_path_is_intact(
+                    &StaticAliasPath::unresolved_global(constructor.to_string())
+                        .with_property("prototype".to_string()),
+                    "",
+                )
+            }) {
+                return None;
+            }
+            let guard = GeneratorMethodGuard {
+                source: Some(source.clone()),
+                owner: StaticAliasPath::unresolved_global("Array".to_string())
+                    .with_property("prototype".to_string()),
+                method: "push",
+            };
+            if !self.method_guard_is_intact(&guard) {
+                return None;
+            }
+            let length = *self.static_json_replacer_arrays.get(target)?;
+            let new_length = length.checked_add(arguments.len())?;
+            Some((target.clone(), length, new_length, arguments, guard))
+        })();
+        if let Some((target, length, new_length, arguments, guard)) = safe_push {
+            self.record_merely_observed_value_read(source, source_span);
+            for (offset, argument) in arguments.into_iter().enumerate() {
+                self.record_callable_initializer(
+                    target.clone().with_property((length + offset).to_string()),
+                    argument,
+                );
+            }
+            self.static_json_replacer_arrays.insert(target, new_length);
+            self.non_consuming_json_replacer_pushes
+                .insert((call.span.start, call.span.end), guard);
+            return;
+        }
         self.static_json_replacer_arrays
-            .retain(|target| !related.iter().any(|source| source.overlaps(target)));
+            .retain(|target, _| !related.iter().any(|source| source.overlaps(target)));
     }
 
     fn json_replacer_is_non_coercive_array(&self, expression: &Expression<'_>) -> bool {
@@ -14802,7 +15042,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 .any(|candidate| {
                     self.is_immutable_local_callable_target(&candidate)
                         && self.method_path_is_intact(&candidate, "")
-                        && self.static_json_replacer_arrays.contains(&candidate)
+                        && self.static_json_replacer_arrays.contains_key(&candidate)
                 })
     }
 
@@ -14954,6 +15194,29 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             return;
         }
         if self.record_property_descriptor_arguments(call, result_discarded) {
+            return;
+        }
+        if let Some(guard) = self
+            .non_consuming_json_replacer_pushes
+            .get(&(call.span.start, call.span.end))
+            .cloned()
+        {
+            let parameters = NonConsumingParameters {
+                fixed: BTreeMap::new(),
+                safe_tail_start: Some(0),
+            };
+            for (index, argument) in call.arguments.iter().enumerate() {
+                self.record_pending_callable_argument(
+                    argument
+                        .as_expression()
+                        .expect("proved JSON replacer push arguments are not spread"),
+                    None,
+                    Some(&parameters),
+                    index,
+                    result_discarded,
+                    Some(&guard),
+                );
+            }
             return;
         }
         if result_discarded && self.record_discarded_object_value_enumeration(call) {
@@ -19095,7 +19358,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        self.invalidate_static_json_replacer_array_mutation(call);
+        self.record_static_json_replacer_array_mutation(call);
         self.record_assignment_callable_read(call, false);
         self.record_generator_invocation_arguments(call);
         self.record_terminal_generator_method_read(call);
@@ -35647,6 +35910,7 @@ impl StaticHookAliasCollector<'_> {
             unexecuted_expression_spans: BTreeSet::new(),
             snapshotted_callable_effect_spans: BTreeMap::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
+            exclusive_json_replacer_arrays: BTreeSet::new(),
         };
         let reflective_mutations = self
             .reflective_mutations
@@ -35732,6 +35996,7 @@ impl StaticHookAliasCollector<'_> {
             unexecuted_expression_spans: self.unexecuted_expression_spans,
             snapshotted_callable_effect_spans,
             non_escaping_object_from_entries_calls: self.non_escaping_object_from_entries_calls,
+            exclusive_json_replacer_arrays: BTreeSet::new(),
         }
     }
 }
@@ -38172,6 +38437,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                         *argument,
                         arguments,
                     )
+                    || self.is_non_escaping_json_replacer_push_argument(call, *argument)
                 {
                     continue;
                 }
@@ -38189,6 +38455,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
                 || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                 || self.is_non_escaping_string_replacer(&call.callee, index, *argument, arguments)
+                || self.is_non_escaping_json_replacer_push_argument(call, *argument)
             {
                 continue;
             }
@@ -38682,6 +38949,31 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             && self
                 .callback_timing(argument.expression)
                 .is_some_and(|timing| !timing.may_suspend)
+    }
+
+    fn is_non_escaping_json_replacer_push_argument(
+        &self,
+        call: &CallExpression<'_>,
+        argument: EscapeArgument<'_, '_>,
+    ) -> bool {
+        if argument.spread || self.callback_timing(argument.expression).is_none() {
+            return false;
+        }
+        let Some(receiver) = direct_array_push_call_receiver(call) else {
+            return false;
+        };
+        let Some(path) = static_alias_source_path(self.scoping, receiver) else {
+            return false;
+        };
+        let Some(root) = path.binding_root() else {
+            return false;
+        };
+        path == StaticAliasPath::root(root)
+            && self
+                .callback_aliases
+                .exclusive_json_replacer_arrays
+                .contains(&root)
+            && self.builtin_method_is_intact(receiver, StateReceiverKind::Array, "push")
     }
 
     fn is_non_escaping_hook_accumulator(
