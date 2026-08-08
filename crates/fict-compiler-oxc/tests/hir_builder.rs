@@ -12963,6 +12963,61 @@ fn object_from_entries_preserves_local_value_identities() {
             "const run = () => count; const entries = [['run', run]]; void Object.fromEntries(entries);",
             "external(entries);",
         ),
+        (
+            "immediate Object.entries round-trip callable",
+            "const source = { run() { values.forEach = null; } }; const result = Object.fromEntries(Object.entries(source));",
+            "result.run();",
+        ),
+        (
+            "stored Object.entries round-trip callable",
+            "const source = { run() { values.forEach = null; } }; const entries = Object.entries(source); const result = Object.fromEntries(entries);",
+            "result.run();",
+        ),
+        (
+            "aliased stored Object.entries round-trip callable",
+            "const source = { run() { values.forEach = null; } }; const entries = Object.entries(source); const alias = entries; const result = Object.fromEntries(alias);",
+            "result.run();",
+        ),
+        (
+            "Object.entries round-trip getter result",
+            "const source = { get run() { return () => { values.forEach = null; }; } }; const result = Object.fromEntries(Object.entries(source));",
+            "result.run();",
+        ),
+        (
+            "stored Object.entries round-trip getter result",
+            "const source = { get run() { return () => { values.forEach = null; }; } }; const entries = Object.entries(source); const result = Object.fromEntries(entries);",
+            "result.run();",
+        ),
+        (
+            "Object.entries round-trip advanced generator",
+            "const source = { *run() { values.forEach = null; } }; const result = Object.fromEntries(Object.entries(source));",
+            "result.run().next();",
+        ),
+        (
+            "stored Object.entries round-trip advanced generator",
+            "const source = { *run() { values.forEach = null; } }; const entries = Object.entries(source); const result = Object.fromEntries(entries);",
+            "result.run().next();",
+        ),
+        (
+            "immediate Object.entries source snapshot",
+            "const source = { *run() { values.forEach = null; } }; const result = Object.fromEntries(Object.entries(source)); source.run = function*() {};",
+            "result.run().next();",
+        ),
+        (
+            "stored Object.entries source snapshot",
+            "const source = { *run() { values.forEach = null; } }; const entries = Object.entries(source); source.run = function*() {}; const result = Object.fromEntries(entries);",
+            "result.run().next();",
+        ),
+        (
+            "Object.entries round-trip result receiver",
+            "const source = { values, run() { this.values.forEach = null; } }; const result = Object.fromEntries(Object.entries(source));",
+            "result.run();",
+        ),
+        (
+            "Object.entries round-trip result exposure",
+            "const source = { run() { return count; } }; const result = Object.fromEntries(Object.entries(source));",
+            "external(result.run);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -13047,6 +13102,41 @@ fn object_from_entries_does_not_invoke_unselected_data_values() {
             "stored entries remain local",
             "const run = () => { values.forEach = null; }; const entries = [['run', run]];",
             "void Object.fromEntries(entries);",
+        ),
+        (
+            "Object.entries round trip remains local",
+            "const run = () => { values.forEach = null; }; const source = { run };",
+            "void Object.fromEntries(Object.entries(source));",
+        ),
+        (
+            "stored Object.entries round trip remains local",
+            "const run = () => { values.forEach = null; }; const source = { run }; const entries = Object.entries(source);",
+            "void Object.fromEntries(entries);",
+        ),
+        (
+            "unselected Object.entries round-trip callable",
+            "const source = { safe() {}, unsafe() { values.forEach = null; } };",
+            "Object.fromEntries(Object.entries(source)).safe();",
+        ),
+        (
+            "Object.entries round-trip generator remains unadvanced",
+            "const source = { *run() { values.forEach = null; } };",
+            "Object.fromEntries(Object.entries(source)).run();",
+        ),
+        (
+            "stored Object.entries round-trip generator remains unadvanced",
+            "const source = { *run() { values.forEach = null; } }; const entries = Object.entries(source);",
+            "Object.fromEntries(entries).run();",
+        ),
+        (
+            "immediate Object.entries result ignores later source replacement",
+            "const unsafe = () => { values.forEach = null; }; const source = { run() {} }; const result = Object.fromEntries(Object.entries(source)); source.run = unsafe;",
+            "result.run();",
+        ),
+        (
+            "stored Object.entries snapshot ignores later source replacement",
+            "const unsafe = () => { values.forEach = null; }; const source = { run() {} }; const entries = Object.entries(source); source.run = unsafe; const result = Object.fromEntries(entries);",
+            "result.run();",
         ),
         (
             "stored generator value remains unadvanced",
@@ -13163,6 +13253,21 @@ fn object_from_entries_executes_iteration_and_key_hooks() {
             "overridden builtin",
             "Object.fromEntries = () => { values.forEach = null; return {}; };",
             "Object.fromEntries([]);",
+        ),
+        (
+            "Object.entries round-trip getter",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Object.fromEntries(Object.entries(source));",
+        ),
+        (
+            "stored Object.entries round-trip getter",
+            "const source = { get run() { values.forEach = null; return 0; } }; const entries = Object.entries(source);",
+            "Object.fromEntries(entries);",
+        ),
+        (
+            "mutated Object.entries value before conversion",
+            "const unsafe = () => { values.forEach = null; }; const source = { run() {} }; const entries = Object.entries(source); entries[0][1] = unsafe;",
+            "Object.fromEntries(entries).run();",
         ),
     ] {
         let source = format!(

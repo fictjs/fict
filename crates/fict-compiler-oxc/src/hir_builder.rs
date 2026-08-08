@@ -10592,6 +10592,12 @@ struct StoredStaticFromEntriesValues {
     values: BTreeMap<String, StaticAliasPath>,
 }
 
+struct StoredObjectEntriesRoundTrip {
+    container: StaticAliasPath,
+    container_span: (u32, u32),
+    source: StaticAliasPath,
+}
+
 enum ObjectDestructuringCandidate<'a> {
     Expression(&'a Expression<'a>),
     Stored {
@@ -10670,8 +10676,10 @@ struct GeneratorExecutionCollector<'semantic> {
     directly_unexecuted_body_spans: BTreeSet<(u32, u32)>,
     retained_invocation_spans: Vec<RetainedInvocationSpans>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
+    non_retaining_object_value_enumeration_calls: BTreeSet<(u32, u32)>,
     explicitly_merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
+    static_object_entries_sources: BTreeMap<StaticAliasPath, StaticAliasPath>,
     json_serialized_value_paths: BTreeSet<StaticAliasPath>,
     directly_unexecuted_callable_spans: BTreeSet<(u32, u32)>,
 }
@@ -10725,8 +10733,10 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             directly_unexecuted_body_spans: BTreeSet::new(),
             retained_invocation_spans: Vec::new(),
             discarded_invocation_spans: BTreeSet::new(),
+            non_retaining_object_value_enumeration_calls: BTreeSet::new(),
             explicitly_merely_observed_callable_paths: BTreeSet::new(),
             static_from_entries_sources: BTreeMap::new(),
+            static_object_entries_sources: BTreeMap::new(),
             json_serialized_value_paths: BTreeSet::new(),
             directly_unexecuted_callable_spans: BTreeSet::new(),
         }
@@ -14201,6 +14211,25 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         })
     }
 
+    fn object_entries_round_trip_source<'a>(
+        &self,
+        expression: &'a Expression<'a>,
+    ) -> Option<(&'a CallExpression<'a>, &'a Expression<'a>)> {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        if self.object_value_enumeration_method(call) != Some("entries")
+            || call
+                .arguments
+                .iter()
+                .any(|argument| argument.as_expression().is_none())
+        {
+            return None;
+        }
+        let source = call.arguments.first()?.as_expression()?;
+        Some((call, source))
+    }
+
     fn is_intact_object_from_entries_call(&self, call: &CallExpression<'_>) -> bool {
         let object = StaticAliasPath::unresolved_global("Object".to_string());
         let array_prototype = StaticAliasPath::unresolved_global("Array".to_string())
@@ -14252,6 +14281,48 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                             source: candidate,
                             source_span,
                             values,
+                        })
+                })
+                .flatten()
+            })
+    }
+
+    fn record_static_object_entries_source(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let Some((call, source)) = self.object_entries_round_trip_source(initializer) else {
+            return;
+        };
+        let snapshot = StaticAliasPath::dynamic_this(call.span)
+            .with_property("stored-object-entries-source".to_string());
+        self.record_callable_initializer(snapshot.clone(), source);
+        self.static_object_entries_sources
+            .insert(target.clone(), snapshot);
+    }
+
+    fn stored_object_entries_round_trip(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<StoredObjectEntriesRoundTrip> {
+        let (container, container_span) = self.callable_reference(expression)?;
+        if !self.method_path_is_intact(&container, "") {
+            return None;
+        }
+        self.related_callable_paths(&container)
+            .into_iter()
+            .find_map(|candidate| {
+                (self.is_immutable_local_callable_target(&candidate)
+                    && self.method_path_is_intact(&candidate, ""))
+                .then(|| {
+                    self.static_object_entries_sources
+                        .get(&candidate)
+                        .cloned()
+                        .map(|source| StoredObjectEntriesRoundTrip {
+                            container: candidate,
+                            container_span,
+                            source,
                         })
                 })
                 .flatten()
@@ -14509,6 +14580,19 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
         } else if let Some(stored) = self.stored_static_from_entries_values(source) {
             self.record_merely_observed_value_read(stored.source, stored.source_span);
+        } else if let Some(stored) = self.stored_object_entries_round_trip(source) {
+            self.record_merely_observed_value_read(stored.container, stored.container_span);
+        } else if let Some((enumeration, source)) = self.object_entries_round_trip_source(source) {
+            self.record_discarded_enumerated_value(source);
+            self.non_retaining_object_value_enumeration_calls
+                .insert((enumeration.span.start, enumeration.span.end));
+            for argument in enumeration.arguments.iter().skip(1) {
+                self.record_discarded_expression(
+                    argument
+                        .as_expression()
+                        .expect("Object.entries spread arguments were rejected"),
+                );
+            }
         } else {
             return false;
         }
@@ -14665,6 +14749,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         let result_discarded = self
             .discarded_invocation_spans
             .contains(&(call.span.start, call.span.end));
+        if self
+            .non_retaining_object_value_enumeration_calls
+            .contains(&(call.span.start, call.span.end))
+        {
+            return;
+        }
         if self.record_json_stringify_arguments(call, result_discarded) {
             return;
         }
@@ -15957,6 +16047,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         initializer: &Expression<'_>,
     ) {
         self.record_static_from_entries_source(&target, initializer);
+        self.record_static_object_entries_source(&target, initializer);
         self.record_returned_callable_result_initializer(&target, initializer);
         self.record_returned_generator_factory_initializer(&target, initializer);
         self.record_local_non_consuming_initializer(&target, initializer);
@@ -16033,17 +16124,34 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             }
             return true;
         }
-        let Some(stored) = self.stored_static_from_entries_values(source) else {
+        if let Some(stored) = self.stored_static_from_entries_values(source) {
+            let guard = Self::stored_array_iterator_guard(&stored.source);
+            for (property, value) in stored.values {
+                self.record_callable_path_initializer(
+                    target.clone().with_property(property),
+                    value,
+                    stored.source_span,
+                    Some(&guard),
+                );
+            }
+            return true;
+        }
+        if let Some(stored) = self.stored_object_entries_round_trip(source) {
+            self.record_callable_path_initializer(
+                target.clone(),
+                stored.source,
+                stored.container_span,
+                None,
+            );
+            return true;
+        }
+        let Some((_, enumerated)) = self.object_entries_round_trip_source(source) else {
             return false;
         };
-        let guard = Self::stored_array_iterator_guard(&stored.source);
-        for (property, value) in stored.values {
-            self.record_callable_path_initializer(
-                target.clone().with_property(property),
-                value,
-                stored.source_span,
-                Some(&guard),
-            );
+        if let Some((source, source_span)) = self.callable_reference(enumerated) {
+            self.record_callable_path_initializer(target.clone(), source, source_span, None);
+        } else {
+            self.record_callable_initializer(target.clone(), enumerated);
         }
         true
     }
@@ -19201,6 +19309,7 @@ struct StaticHookAliasCollector<'semantic> {
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
     local_object_assign_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_value_enumeration_results: BTreeMap<(u32, u32), StaticAliasPath>,
+    local_object_entries_values: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     local_object_from_entries_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     handled_object_from_entries_hook_spans: BTreeSet<(u32, u32)>,
@@ -20059,6 +20168,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             handled_object_spread_getter_spans: BTreeSet::new(),
             local_object_assign_results: BTreeMap::new(),
             local_object_value_enumeration_results: BTreeMap::new(),
+            local_object_entries_values: BTreeMap::new(),
             local_object_from_entries_results: BTreeMap::new(),
             local_static_from_entries_sources: BTreeMap::new(),
             handled_object_from_entries_hook_spans: BTreeSet::new(),
@@ -23163,6 +23273,8 @@ impl StaticHookAliasCollector<'_> {
         let mut alternatives = 0usize;
         let mut possible_lengths = BTreeSet::new();
         let mut open = false;
+        let exact_entries = entries && sources.len() == 1;
+        let mut entry_values = BTreeMap::new();
         for (source_index, source) in sources.iter().enumerate() {
             let getters = self.enumerable_local_getter_names(source);
             let known_properties = self.known_structured_own_properties(source);
@@ -23190,11 +23302,31 @@ impl StaticHookAliasCollector<'_> {
                     self.insert_alias(wildcard.clone(), value.clone());
                     value
                 };
-                if !getters.contains(&property)
+                let exact_value_target = value_target.clone();
+                let data_value = !getters.contains(&property)
                     || !self
-                        .record_local_getter_read(value_source.clone(), Some(value_target.clone()))
-                {
-                    self.insert_alias(value_target, value_source);
+                        .record_local_getter_read(value_source.clone(), Some(value_target.clone()));
+                if exact_entries && data_value {
+                    let snapshot_span = call.callee.span();
+                    self.dynamic_path_owner_depths.insert(
+                        (snapshot_span.start, snapshot_span.end),
+                        self.function_depth,
+                    );
+                    let snapshot = StaticAliasPath::dynamic_this(snapshot_span)
+                        .with_property(format!("<object-entry-value-{alternatives}>"));
+                    if !self.snapshot_local_callable_alias(snapshot.clone(), &value_source) {
+                        self.insert_alias(snapshot.clone(), value_source.clone());
+                        self.record_local_descriptor_value_capture(&value_source, &snapshot);
+                    }
+                    self.insert_alias(value_target, snapshot.clone());
+                    entry_values.insert(property, snapshot);
+                } else {
+                    if data_value {
+                        self.insert_alias(value_target, value_source);
+                    }
+                    if exact_entries {
+                        entry_values.insert(property, exact_value_target);
+                    }
                 }
                 alternatives = alternatives.saturating_add(1);
                 length = length.saturating_add(1);
@@ -23240,6 +23372,10 @@ impl StaticHookAliasCollector<'_> {
                 .entry(target.clone())
                 .or_default()
                 .extend((0..length).map(|index| index.to_string()));
+        }
+        if exact_entries && !open {
+            self.local_object_entries_values
+                .insert(target.clone(), entry_values);
         }
         self.local_object_value_enumeration_results
             .insert(span, target.clone());
@@ -23333,6 +23469,29 @@ impl StaticHookAliasCollector<'_> {
             .cloned()
     }
 
+    fn local_object_entries_round_trip_values(
+        &mut self,
+        source: &Expression<'_>,
+    ) -> Option<BTreeMap<String, StaticAliasPath>> {
+        let target = if let Expression::CallExpression(entries) = source.get_inner_expression() {
+            self.record_local_object_value_enumeration(entries)?
+        } else {
+            let raw = self.alias_source_path(source)?;
+            if self.path_requires_historical_aliases(&raw, self.function_depth)
+                || !self.path_is_currently_intact(&raw)
+            {
+                return None;
+            }
+            let resolved = resolve_static_alias_path(&self.aliases, &raw);
+            if self.local_object_entries_values.contains_key(&resolved) {
+                resolved
+            } else {
+                raw
+            }
+        };
+        self.local_object_entries_values.get(&target).cloned()
+    }
+
     fn record_local_object_from_entries_result(
         &mut self,
         call: &CallExpression<'_>,
@@ -23353,11 +23512,14 @@ impl StaticHookAliasCollector<'_> {
         let source = call.arguments.first()?.as_expression()?;
         let inline_entries = static_from_entries_pairs(source)
             .map(|entries| entries.into_iter().collect::<BTreeMap<_, _>>());
-        let stored_entries = inline_entries
-            .is_none()
-            .then(|| self.local_static_from_entries_values(source))
-            .flatten();
-        if inline_entries.is_none() && stored_entries.is_none() {
+        let mut path_entries = None;
+        if inline_entries.is_none() {
+            path_entries = self.local_static_from_entries_values(source);
+            if path_entries.is_none() {
+                path_entries = self.local_object_entries_round_trip_values(source);
+            }
+        }
+        if inline_entries.is_none() && path_entries.is_none() {
             self.record_inline_object_from_entries_hooks(source, call.span);
             self.conservatively_expose_descriptor_source(source);
             return None;
@@ -23392,7 +23554,7 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
         } else {
-            for (property, source) in stored_entries.expect("stored fromEntries values") {
+            for (property, source) in path_entries.expect("local fromEntries value paths") {
                 self.structured_own_properties
                     .entry(target.clone())
                     .or_default()
