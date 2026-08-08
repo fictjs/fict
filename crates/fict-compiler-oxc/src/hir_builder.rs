@@ -3040,6 +3040,62 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 ))
             })
             .collect();
+        let exported_storage_bindings = self
+            .frontend
+            .module_exports
+            .iter()
+            .filter_map(|export| match export {
+                ModuleExport::Local {
+                    target: ModuleLocalExport::Binding(binding),
+                    ..
+                } => Some(SymbolId::from_usize(binding.as_usize())),
+                ModuleExport::Local {
+                    target: ModuleLocalExport::DefaultExpression,
+                    ..
+                }
+                | ModuleExport::ReExport { .. }
+                | ModuleExport::Star { .. } => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let component_parameter_symbols = self
+            .function_facts
+            .iter()
+            .filter(|function| {
+                self.functions[function.id.as_usize()].kind == FunctionKind::Component
+            })
+            .flat_map(|function| function.parameters.iter())
+            .flat_map(|parameter| parameter.bindings.iter().copied())
+            .collect::<BTreeSet<_>>();
+        let mut external_storage_roots = component_parameter_symbols.clone();
+        external_storage_roots.extend(
+            self.frontend
+                .bindings
+                .iter()
+                .filter(|binding| binding.import.is_some())
+                .map(|binding| SymbolId::from_usize(binding.id.as_usize())),
+        );
+        external_storage_roots.extend(exported_storage_bindings.iter().copied());
+        let immutable_storage_aliases = self
+            .frontend
+            .bindings
+            .iter()
+            .filter(|binding| !binding.mutated)
+            .map(|binding| SymbolId::from_usize(binding.id.as_usize()))
+            .collect();
+        let mut primitive_values = KnownPrimitiveCollector::new(
+            self.semantic.scoping(),
+            callback_aliases,
+            &immutable_storage_aliases,
+        );
+        primitive_values.visit_program(program);
+        let definitely_primitive_symbols = primitive_values.finish();
+        let mut external_storage = ExternalStorageRootCollector::new(
+            self.semantic.scoping(),
+            external_storage_roots,
+            immutable_storage_aliases,
+        );
+        external_storage.visit_program(program);
+        let external_storage_roots = external_storage.finish();
         let local_hook_bindings: BTreeSet<_> = self
             .functions
             .iter()
@@ -3074,6 +3130,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             callback_property_captures: &callback_property_captures,
             callback_timings: &callback_timings,
             callback_aliases,
+            external_storage_roots: &external_storage_roots,
+            component_parameter_symbols: &component_parameter_symbols,
+            definitely_primitive_symbols: &definitely_primitive_symbols,
             diagnostics: Vec::new(),
         };
         collector.visit_program(program);
@@ -6710,6 +6769,139 @@ struct KnownArrayCollector<'semantic> {
     aliases: Vec<(SymbolId, SymbolId)>,
 }
 
+struct ExternalStorageRootCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    roots: BTreeSet<SymbolId>,
+    immutable_symbols: BTreeSet<SymbolId>,
+    aliases: Vec<(SymbolId, Option<SymbolId>)>,
+}
+
+struct KnownPrimitiveCollector<'facts, 'semantic> {
+    scoping: &'semantic Scoping,
+    aliases: &'facts StaticHookAliases,
+    immutable_symbols: &'facts BTreeSet<SymbolId>,
+    candidates: Vec<(SymbolId, BTreeSet<SymbolId>)>,
+}
+
+impl<'facts, 'semantic> KnownPrimitiveCollector<'facts, 'semantic> {
+    fn new(
+        scoping: &'semantic Scoping,
+        aliases: &'facts StaticHookAliases,
+        immutable_symbols: &'facts BTreeSet<SymbolId>,
+    ) -> Self {
+        Self {
+            scoping,
+            aliases,
+            immutable_symbols,
+            candidates: Vec::new(),
+        }
+    }
+
+    fn finish(self) -> BTreeSet<SymbolId> {
+        let mut known = BTreeSet::new();
+        loop {
+            let mut changed = false;
+            for (target, dependencies) in &self.candidates {
+                if dependencies.iter().all(|source| known.contains(source)) {
+                    changed |= known.insert(*target);
+                }
+            }
+            if !changed {
+                return known;
+            }
+        }
+    }
+}
+
+impl<'a> Visit<'a> for KnownPrimitiveCollector<'_, '_> {
+    fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+        for declarator in &declaration.declarations {
+            let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
+                (&declarator.id, &declarator.init)
+            else {
+                continue;
+            };
+            let Some(target) = binding.symbol_id.get() else {
+                continue;
+            };
+            if self.immutable_symbols.contains(&target)
+                && let Some(dependencies) = expression_primitive_result_dependencies(
+                    self.scoping,
+                    self.aliases,
+                    initializer,
+                )
+            {
+                self.candidates.push((target, dependencies));
+            }
+        }
+        walk_variable_declaration(self, declaration);
+    }
+}
+
+impl<'semantic> ExternalStorageRootCollector<'semantic> {
+    fn new(
+        scoping: &'semantic Scoping,
+        roots: BTreeSet<SymbolId>,
+        immutable_symbols: BTreeSet<SymbolId>,
+    ) -> Self {
+        Self {
+            scoping,
+            roots,
+            immutable_symbols,
+            aliases: Vec::new(),
+        }
+    }
+
+    fn record_alias(&mut self, target: SymbolId, source: &Expression<'_>) {
+        let Some(source) = planned_expression_place(self.scoping, source) else {
+            return;
+        };
+        match source.base {
+            PlannedPlaceBase::Binding(source) => {
+                self.aliases.push((target, Some(source)));
+            }
+            PlannedPlaceBase::UnresolvedGlobal { .. } => {
+                self.aliases.push((target, None));
+            }
+            PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => {}
+        }
+    }
+
+    fn finish(mut self) -> BTreeSet<SymbolId> {
+        loop {
+            let mut changed = false;
+            for (target, source) in &self.aliases {
+                if source.is_none_or(|source| self.roots.contains(&source)) {
+                    changed |= self.roots.insert(*target);
+                }
+            }
+            if !changed {
+                return self.roots;
+            }
+        }
+    }
+}
+
+impl<'a> Visit<'a> for ExternalStorageRootCollector<'_> {
+    fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+        for declarator in &declaration.declarations {
+            let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
+                (&declarator.id, &declarator.init)
+            else {
+                continue;
+            };
+            let Some(target) = binding.symbol_id.get() else {
+                continue;
+            };
+            if !self.immutable_symbols.contains(&target) {
+                continue;
+            }
+            self.record_alias(target, initializer);
+        }
+        walk_variable_declaration(self, declaration);
+    }
+}
+
 impl<'semantic> KnownArrayCollector<'semantic> {
     fn new(scoping: &'semantic Scoping) -> Self {
         Self {
@@ -9708,6 +9900,86 @@ fn expression_returns_definitely_primitive(
         _ => return false,
     };
     resolves_to_intact_global_method(scoping, aliases, &call.callee, "Reflect", "setPrototypeOf")
+}
+
+fn expression_primitive_result_dependencies(
+    scoping: &Scoping,
+    aliases: &StaticHookAliases,
+    expression: &Expression<'_>,
+) -> Option<BTreeSet<SymbolId>> {
+    if expression_returns_definitely_primitive(scoping, aliases, expression) {
+        return Some(BTreeSet::new());
+    }
+    match expression.get_inner_expression() {
+        Expression::NullLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BigIntLiteral(_)
+        | Expression::StringLiteral(_)
+        | Expression::TemplateLiteral(_)
+        | Expression::BinaryExpression(_)
+        | Expression::UnaryExpression(_)
+        | Expression::UpdateExpression(_) => Some(BTreeSet::new()),
+        Expression::Identifier(identifier) => {
+            Some(BTreeSet::from([identifier_symbol(scoping, identifier)?]))
+        }
+        Expression::ConditionalExpression(expression) => {
+            let mut dependencies =
+                expression_primitive_result_dependencies(scoping, aliases, &expression.consequent)?;
+            dependencies.extend(expression_primitive_result_dependencies(
+                scoping,
+                aliases,
+                &expression.alternate,
+            )?);
+            Some(dependencies)
+        }
+        Expression::LogicalExpression(expression) => {
+            let mut dependencies =
+                expression_primitive_result_dependencies(scoping, aliases, &expression.left)?;
+            dependencies.extend(expression_primitive_result_dependencies(
+                scoping,
+                aliases,
+                &expression.right,
+            )?);
+            Some(dependencies)
+        }
+        Expression::SequenceExpression(expression) => {
+            expression.expressions.last().and_then(|expression| {
+                expression_primitive_result_dependencies(scoping, aliases, expression)
+            })
+        }
+        Expression::AssignmentExpression(expression)
+            if expression.operator == OxcAssignmentOperator::Assign =>
+        {
+            expression_primitive_result_dependencies(scoping, aliases, &expression.right)
+        }
+        Expression::AssignmentExpression(expression)
+            if !matches!(
+                expression.operator,
+                OxcAssignmentOperator::LogicalOr
+                    | OxcAssignmentOperator::LogicalAnd
+                    | OxcAssignmentOperator::LogicalNullish
+            ) =>
+        {
+            Some(BTreeSet::new())
+        }
+        _ => None,
+    }
+}
+
+fn expression_result_is_definitely_primitive(
+    scoping: &Scoping,
+    aliases: &StaticHookAliases,
+    primitive_symbols: &BTreeSet<SymbolId>,
+    expression: &Expression<'_>,
+) -> bool {
+    expression_primitive_result_dependencies(scoping, aliases, expression).is_some_and(
+        |dependencies| {
+            dependencies
+                .iter()
+                .all(|symbol| primitive_symbols.contains(symbol))
+        },
+    )
 }
 
 fn resolves_to_intact_global_method(
@@ -38546,6 +38818,9 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     callback_property_captures: &'facts BTreeMap<(SymbolId, String), BTreeSet<SymbolId>>,
     callback_timings: &'facts BTreeMap<StaticAliasPath, Option<CallbackTiming>>,
     callback_aliases: &'facts StaticHookAliases,
+    external_storage_roots: &'facts BTreeSet<SymbolId>,
+    component_parameter_symbols: &'facts BTreeSet<SymbolId>,
+    definitely_primitive_symbols: &'facts BTreeSet<SymbolId>,
     diagnostics: Vec<EscapeDiagnosticFact>,
 }
 
@@ -38864,6 +39139,81 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 });
                 break;
             }
+        }
+    }
+
+    fn analyze_external_storage_value(&mut self, expression: &Expression<'_>) {
+        let expression = expression.get_inner_expression();
+        let argument = EscapeArgument {
+            expression,
+            span: source_span(expression.span()),
+            spread: false,
+        };
+        if self.direct_state_symbol(argument).is_some() {
+            self.diagnostics.push(EscapeDiagnosticFact {
+                kind: EscapeDiagnosticKind::StateSnapshot,
+                span: argument.span,
+            });
+        } else if expression_result_is_definitely_primitive(
+            self.scoping,
+            self.callback_aliases,
+            self.definitely_primitive_symbols,
+            expression,
+        ) {
+            return;
+        } else if self
+            .retained_reactive_references(expression)
+            .iter()
+            .any(|symbol| !self.component_parameter_symbols.contains(symbol))
+        {
+            self.diagnostics.push(EscapeDiagnosticFact {
+                kind: EscapeDiagnosticKind::ReactiveValue,
+                span: argument.span,
+            });
+        }
+        let captured = self.callback_captures(argument);
+        if !captured.is_empty() {
+            self.diagnostics.push(EscapeDiagnosticFact {
+                kind: EscapeDiagnosticKind::CallbackCapture(captured),
+                span: argument.span,
+            });
+        }
+    }
+
+    fn assignment_target_is_external_storage(&self, target: &AssignmentTarget<'_>) -> bool {
+        if let Some(place) = planned_assignment_target_place(self.scoping, target) {
+            return self.place_is_external_storage(&place);
+        }
+        let mut bindings = Vec::new();
+        let mut projected = Vec::new();
+        collect_pattern_assignment_targets(self.scoping, target, &mut bindings, &mut projected);
+        bindings.is_empty()
+            && !projected.is_empty()
+            && projected
+                .iter()
+                .all(|target| self.place_is_external_storage(&target.place))
+    }
+
+    fn place_is_external_storage(&self, place: &PlannedPlace) -> bool {
+        match &place.base {
+            PlannedPlaceBase::UnresolvedGlobal { .. } => !place.projections.is_empty(),
+            PlannedPlaceBase::Binding(_) if place.projections.is_empty() => false,
+            PlannedPlaceBase::Binding(symbol) => self.binding_is_external_storage_root(*symbol),
+            PlannedPlaceBase::Context { .. } | PlannedPlaceBase::Expression { .. } => false,
+        }
+    }
+
+    fn binding_is_external_storage_root(&self, symbol: SymbolId) -> bool {
+        if self.external_storage_roots.contains(&symbol) {
+            return true;
+        }
+        let resolved = self
+            .callback_aliases
+            .resolve(&StaticAliasPath::root(symbol));
+        match &resolved.root {
+            StaticAliasRoot::Binding(root) => self.external_storage_roots.contains(root),
+            StaticAliasRoot::UnresolvedGlobal(_) => true,
+            StaticAliasRoot::DynamicThis { .. } => false,
         }
     }
 
@@ -39552,6 +39902,20 @@ impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
         let arguments = escape_arguments(&call.arguments);
         self.analyze_call(call, &arguments);
         walk_call_expression(self, call);
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if matches!(
+            assignment.operator,
+            OxcAssignmentOperator::Assign
+                | OxcAssignmentOperator::LogicalOr
+                | OxcAssignmentOperator::LogicalAnd
+                | OxcAssignmentOperator::LogicalNullish
+        ) && self.assignment_target_is_external_storage(&assignment.left)
+        {
+            self.analyze_external_storage_value(&assignment.right);
+        }
+        oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
     }
 
     fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {

@@ -2406,6 +2406,290 @@ fn plain_assignment_results_do_not_escape_reactive_pattern_targets() {
 }
 
 #[test]
+fn external_property_assignments_reject_reactive_escapes() {
+    for (name, setup, assignment, expected_span, expected_code) in [
+        (
+            "component parameter callback slot",
+            "",
+            "holder.run = () => count;",
+            "() => count",
+            "FICT-R005",
+        ),
+        (
+            "aliased component parameter callback slot",
+            "const callbacks = holder.callbacks; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "immutable let component parameter callback slot",
+            "let callbacks = holder.callbacks; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "transitively aliased component parameter callback slot",
+            "const callbacks = holder.callbacks; const alias = callbacks; const run = () => count;",
+            "alias.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "nested component parameter callback slot",
+            "const run = () => count;",
+            "holder.callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "logical component parameter callback slot",
+            "const run = () => count;",
+            "holder.run ||= run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "global callback slot",
+            "const run = () => count;",
+            "globalThis.saved = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "unresolved global callback slot",
+            "const run = () => count;",
+            "registry.saved = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "global projected reactive value",
+            "const rows = $state([{ done: false }]);",
+            "globalThis.saved = rows[0];",
+            "rows[0]",
+            "FICT-R002",
+        ),
+        (
+            "component parameter state snapshot",
+            "",
+            "holder.saved = count;",
+            "count",
+            "FICT-S002",
+        ),
+        (
+            "component parameter object with a reactive primitive snapshot",
+            "const message = `Count: ${count}`;",
+            "holder.saved = { message };",
+            "{ message }",
+            "FICT-R002",
+        ),
+        (
+            "array pattern component parameter callback slot",
+            "const run = () => count;",
+            "[holder.run] = [run];",
+            "[run]",
+            "FICT-R005",
+        ),
+        (
+            "object pattern component parameter callback slot",
+            "const run = () => count;",
+            "({ callback: holder.run } = { callback: run });",
+            "{ callback: run }",
+            "FICT-R005",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    {setup}
+                    {assignment}
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == expected_code
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected {expected_code} on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn external_property_assignments_allow_definitely_primitive_results() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const message = `Count: ${count}`;
+            const alias = message;
+            const selected = holder.compact ? message : alias;
+            holder.title = alias;
+            globalThis.label = count + "";
+            holder.selected = selected;
+            holder.sequence = (count, alias);
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "primitive storage results do not retain reactive identity: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn imported_property_assignments_reject_reactive_callbacks() {
+    let source = r#"
+        import { registry } from './registry';
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const run = () => count;
+            registry.saved = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_none(), "expected a hard diagnostic");
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
+                && diagnostic.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize] == "run"
+                })
+        }),
+        "expected FICT-R005 on the imported callback slot: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn exported_object_property_assignments_reject_reactive_callbacks() {
+    let source = r#"
+        import { $state } from 'fict';
+        export const registry = {};
+        function App() {
+            const count = $state(0);
+            const run = () => count;
+            registry.saved = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_none(), "expected a hard diagnostic");
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
+                && diagnostic.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize] == "run"
+                })
+        }),
+        "expected FICT-R005 on the exported callback slot: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn local_property_assignments_do_not_escape_reactive_values() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const local = {};
+            const alias = local;
+            const run = () => count;
+            local.run = run;
+            alias.next ??= () => count;
+            holder.label += run;
+            [holder.label, local.next] = ["safe", run];
+            ({ label: holder.label, next: local.next } = { label: "safe", next: run });
+            local.run();
+            alias.next?.();
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "local slots and non-retaining assignments must remain valid: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn exported_binding_replacements_do_not_count_as_object_slots() {
+    let source = r#"
+        import { $state } from 'fict';
+        export let api;
+        function App() {
+            const count = $state(0);
+            api = { set(value) { count = value; } };
+            [api] = [{ set(value) { count = value; } }];
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R005"),
+        "replacing an exported API binding remains a supported compatibility pattern: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
 fn identity_lookup_arguments_do_not_escape_proven_builtin_receivers() {
     let source = r#"
         import { $state } from 'fict';

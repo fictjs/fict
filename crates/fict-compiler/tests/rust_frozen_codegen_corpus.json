@@ -42740,7 +42740,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "341c668bcfcae93054951233cfd9aeec99a20d8fb40a8a494baf96fc99615789"
       },
       "deviationPolicy": null
@@ -46719,6 +46725,11 @@
         "status": "ok",
         "diagnostics": [
           {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
             "code": "FICT-R002",
             "severity": "warning",
             "guaranteeClass": "fallback"
@@ -46836,6 +46847,26 @@
         "diagnostics": [
           {
             "code": "FICT-S002",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R002",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R002",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R005",
             "severity": "warning",
             "guaranteeClass": "fallback"
           }
@@ -48238,7 +48269,23 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "dcfcabc556afe9c8e944aeffd7ac410040300045232aaa1ec621bee30fdd5bf6"
       },
       "deviationPolicy": null
@@ -48263,7 +48310,18 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "abba7115aa1d8c46a1afe336c07d790925aed7b3fd1ad39bdfe76b9fce91c6fa"
       },
       "deviationPolicy": null
@@ -48288,7 +48346,13 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "432f4b05cac55b2173e2bbe9affa2895e92b770a72eea49b943b24b3810a9a61"
       },
       "deviationPolicy": null
@@ -48314,6 +48378,11 @@
       "expected": {
         "status": "ok",
         "diagnostics": [
+          {
+            "code": "FICT-R005",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
           {
             "code": "FICT-R002",
             "severity": "warning",
