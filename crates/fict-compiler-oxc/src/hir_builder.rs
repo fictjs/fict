@@ -38702,6 +38702,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                         *argument,
                         arguments,
                     )
+                    || self.is_non_escaping_json_replacer_array(&call.callee, index, *argument)
                     || self.is_non_escaping_json_replacer_push_argument(call, *argument)
                 {
                     continue;
@@ -38720,6 +38721,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                 || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
                 || self.is_non_retaining_identity_argument(&call.callee, index, *argument)
                 || self.is_non_escaping_string_replacer(&call.callee, index, *argument, arguments)
+                || self.is_non_escaping_json_replacer_array(&call.callee, index, *argument)
                 || self.is_non_escaping_json_replacer_push_argument(call, *argument)
             {
                 continue;
@@ -39214,6 +39216,45 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             && self
                 .callback_timing(argument.expression)
                 .is_some_and(|timing| !timing.may_suspend)
+    }
+
+    fn is_non_escaping_json_replacer_array(
+        &self,
+        callee: &Expression<'_>,
+        index: usize,
+        argument: EscapeArgument<'_, '_>,
+    ) -> bool {
+        if index != 1 || argument.spread || !self.is_known_array_value(argument.expression) {
+            return false;
+        }
+        let Some(path) = static_alias_source_path(self.scoping, callee) else {
+            return false;
+        };
+        let target = StaticAliasPath::unresolved_global("JSON".to_string())
+            .with_property("stringify".to_string());
+        self.callback_aliases.resolve(&path) == target
+            && self.callback_aliases.path_is_intact(&path)
+            && self.callback_aliases.path_is_intact(&target)
+    }
+
+    fn is_known_array_value(&self, expression: &Expression<'_>) -> bool {
+        if matches!(
+            expression.get_inner_expression(),
+            Expression::ArrayExpression(_)
+        ) {
+            return true;
+        }
+        let Some(raw) = static_alias_source_path(self.scoping, expression) else {
+            return false;
+        };
+        let resolved = self.callback_aliases.resolve(&raw);
+        [raw, resolved].into_iter().any(|path| {
+            path.properties.is_empty()
+                && !path.element_wildcard
+                && path
+                    .binding_root()
+                    .is_some_and(|root| self.known_arrays.contains(&root))
+        })
     }
 
     fn is_non_escaping_json_replacer_push_argument(

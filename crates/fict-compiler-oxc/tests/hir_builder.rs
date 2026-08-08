@@ -12393,6 +12393,21 @@ fn json_stringify_does_not_invoke_data_callables() {
             "JSON.stringify(source, replacer);",
         ),
         (
+            "stored replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run];",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "aliased stored replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; const alias = replacer;",
+            "JSON.stringify(source, alias);",
+        ),
+        (
+            "aliased JSON stringify with replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; const stringify = JSON.stringify;",
+            "stringify(source, replacer);",
+        ),
+        (
             "null-prototype replacer array callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; Object.setPrototypeOf(replacer, null);",
             "JSON.stringify(source, replacer);",
@@ -12623,6 +12638,11 @@ fn json_stringify_does_not_invoke_data_callables() {
         (
             "overridden JSON consumes appended replacer callable",
             "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; replacer.push(run); JSON.stringify = (_source, list) => { list[0](); return ''; };",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "overridden JSON retains replacer array reactive closure",
+            "const run = () => count; const source = { value: 1 }; const replacer = [run]; JSON.stringify = (_source, list) => consume(list);",
             "JSON.stringify(source, replacer);",
         ),
         (
