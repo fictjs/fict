@@ -2513,6 +2513,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "run",
             "FICT-R005",
         ),
+        (
+            "array pattern component parameter callback default",
+            "const run = () => count;",
+            "[holder.run = run] = [];",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "object pattern component parameter callback default",
+            "const run = () => count;",
+            "({ callback: holder.run = run } = {});",
+            "run",
+            "FICT-R005",
+        ),
     ] {
         let source = format!(
             r#"
@@ -2557,6 +2571,9 @@ fn external_property_assignments_allow_definitely_primitive_results() {
             globalThis.label = count + "";
             holder.selected = selected;
             holder.sequence = (count, alias);
+            const run = () => count;
+            [holder.defaulted] = [0];
+            [holder.safe = run] = [0];
             return count;
         }
     "#;

@@ -39206,6 +39206,63 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             .any(|target| self.place_is_external_storage(&target.place))
     }
 
+    fn maybe_default_target_has_default(target: &AssignmentTargetMaybeDefault<'_>) -> bool {
+        match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(_) => true,
+            AssignmentTargetMaybeDefault::ArrayAssignmentTarget(array) => array
+                .elements
+                .iter()
+                .flatten()
+                .any(Self::maybe_default_target_has_default),
+            AssignmentTargetMaybeDefault::ObjectAssignmentTarget(object) => {
+                object.properties.iter().any(|property| match property {
+                    AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                        property.init.is_some()
+                    }
+                    AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                        Self::maybe_default_target_has_default(&property.binding)
+                    }
+                })
+            }
+            AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(_)
+            | AssignmentTargetMaybeDefault::StaticMemberExpression(_)
+            | AssignmentTargetMaybeDefault::ComputedMemberExpression(_)
+            | AssignmentTargetMaybeDefault::PrivateFieldExpression(_)
+            | AssignmentTargetMaybeDefault::TSAsExpression(_)
+            | AssignmentTargetMaybeDefault::TSSatisfiesExpression(_)
+            | AssignmentTargetMaybeDefault::TSNonNullExpression(_)
+            | AssignmentTargetMaybeDefault::TSTypeAssertion(_) => false,
+        }
+    }
+
+    fn assignment_target_has_default(target: &AssignmentTarget<'_>) -> bool {
+        match target {
+            AssignmentTarget::ArrayAssignmentTarget(array) => array
+                .elements
+                .iter()
+                .flatten()
+                .any(Self::maybe_default_target_has_default),
+            AssignmentTarget::ObjectAssignmentTarget(object) => {
+                object.properties.iter().any(|property| match property {
+                    AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                        property.init.is_some()
+                    }
+                    AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                        Self::maybe_default_target_has_default(&property.binding)
+                    }
+                })
+            }
+            AssignmentTarget::AssignmentTargetIdentifier(_)
+            | AssignmentTarget::StaticMemberExpression(_)
+            | AssignmentTarget::ComputedMemberExpression(_)
+            | AssignmentTarget::PrivateFieldExpression(_)
+            | AssignmentTarget::TSAsExpression(_)
+            | AssignmentTarget::TSSatisfiesExpression(_)
+            | AssignmentTarget::TSNonNullExpression(_)
+            | AssignmentTarget::TSTypeAssertion(_) => false,
+        }
+    }
+
     fn destructuring_value_is_undefined(&self, expression: &Expression<'_>) -> Option<bool> {
         let expression = expression.get_inner_expression();
         if matches!(
@@ -40166,25 +40223,22 @@ impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
                 | OxcAssignmentOperator::LogicalOr
                 | OxcAssignmentOperator::LogicalAnd
                 | OxcAssignmentOperator::LogicalNullish
-        ) && self.assignment_target_is_external_storage(&assignment.left)
-        {
-            self.analyze_external_storage_value(&assignment.right);
-        } else if matches!(
-            assignment.operator,
-            OxcAssignmentOperator::Assign
-                | OxcAssignmentOperator::LogicalOr
-                | OxcAssignmentOperator::LogicalAnd
-                | OxcAssignmentOperator::LogicalNullish
         ) {
+            let entirely_external = self.assignment_target_is_external_storage(&assignment.left);
             let mut values = Vec::new();
-            if self.collect_external_assignment_values(
-                &assignment.left,
-                Some(&assignment.right),
-                &mut values,
-            ) {
+            let precisely_analyzed = (!entirely_external
+                || Self::assignment_target_has_default(&assignment.left))
+                && self.collect_external_assignment_values(
+                    &assignment.left,
+                    Some(&assignment.right),
+                    &mut values,
+                );
+            if precisely_analyzed {
                 for value in values {
                     self.analyze_external_storage_value(value);
                 }
+            } else if entirely_external {
+                self.analyze_external_storage_value(&assignment.right);
             }
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
