@@ -12377,6 +12377,61 @@ fn json_stringify_does_not_invoke_data_callables() {
             "const source = { run() { values.forEach = null; } }; const stringify = JSON.stringify;",
             "stringify(source);",
         ),
+        (
+            "inline replacer array callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 };",
+            "JSON.stringify(source, [run]);",
+        ),
+        (
+            "undefined and callable replacer array entries",
+            "const run = () => { values.forEach = null; }; const source = { get value() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source, [undefined, run]);",
+        ),
+        (
+            "stored replacer array callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run];",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "stored callable replacer array has an empty property list",
+            "const run = () => { values.forEach = null; }; const source = { get value() { values.forEach = null; return 1; } }; const replacer = [run];",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "aliased stored replacer array callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = [run]; const alias = replacer;",
+            "JSON.stringify(source, alias);",
+        ),
+        (
+            "replacer array generator remains unadvanced",
+            "function* run() { values.forEach = null; } const source = { value: 1 }; const replacer = [run];",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "generator replacer body remains unadvanced",
+            "function* replacer() { values.forEach = null; } const source = { value: 1 };",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "ignored replacer object coercion method",
+            "const source = { value: 1 }; const replacer = [{ toString() { values.forEach = null; return 'value'; } }];",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "replacer array excludes getter",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } };",
+            "JSON.stringify(source, ['safe']);",
+        ),
+        (
+            "stored replacer array excludes getter",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe'];",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "replacer array filters nested properties",
+            "const source = { safe: { safe: 1, get unsafe() { values.forEach = null; return 2; } }, get unsafe() { values.forEach = null; return {}; } };",
+            "JSON.stringify(source, ['safe']);",
+        ),
     ] {
         let source = format!(
             r#"
@@ -12414,6 +12469,111 @@ fn json_stringify_does_not_invoke_data_callables() {
             "mutating replacer",
             "const source = { value: 1 };",
             "JSON.stringify(source, () => { values.forEach = null; return 1; });",
+        ),
+        (
+            "selected getter in replacer array",
+            "const source = { get value() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source, ['value']);",
+        ),
+        (
+            "NaN property selected by replacer array",
+            "const source = { get NaN() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source, [NaN]);",
+        ),
+        (
+            "Infinity property selected by replacer array",
+            "const source = { get Infinity() { values.forEach = null; return 1; } };",
+            "JSON.stringify(source, [Infinity]);",
+        ),
+        (
+            "selected non-enumerable getter in replacer array",
+            "const source = {}; Object.defineProperty(source, 'value', { get() { values.forEach = null; return 1; } });",
+            "JSON.stringify(source, ['value']);",
+        ),
+        (
+            "selected inherited getter in replacer array",
+            "const prototype = { get value() { values.forEach = null; return 1; } }; const source = Object.create(prototype);",
+            "JSON.stringify(source, ['value']);",
+        ),
+        (
+            "array source ignores replacer property list",
+            "const source = [0]; Object.defineProperty(source, '0', { get() { values.forEach = null; return 1; } });",
+            "JSON.stringify(source, []);",
+        ),
+        (
+            "toJSON precedes replacer property filtering",
+            "const source = { toJSON() { values.forEach = null; return { value: 1 }; } };",
+            "JSON.stringify(source, []);",
+        ),
+        (
+            "replacer array index getter",
+            "const source = { value: 1 }; const replacer = ['value']; Object.defineProperty(replacer, '0', { get() { values.forEach = null; return 'value'; } });",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "reassigned replacer array item",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; replacer[0] = 'unsafe';",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "aliased replacer array item mutation",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; const alias = replacer; alias[0] = 'unsafe';",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "appended replacer array item",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; replacer.push('unsafe');",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "indirectly appended replacer array item",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; Array.prototype.push.call(replacer, 'unsafe');",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "reflectively appended replacer array item",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; Reflect.apply(Array.prototype.push, replacer, ['unsafe']);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "appended string wrapper coercion hook",
+            "const source = { safe: 1 }; const key = new String('safe'); key.toString = () => { values.forEach = null; return 'safe'; }; const replacer = []; replacer.push(key);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "invoked appended replacer callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; replacer.push(run); replacer[0]();",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "custom replacer array push mutates property list",
+            "const source = { safe: 1, get unsafe() { values.forEach = null; return 2; } }; const replacer = ['safe']; const prototype = { push() { this[0] = 'unsafe'; } }; Object.setPrototypeOf(replacer, prototype); replacer.push();",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "custom replacer array push invokes callable",
+            "const run = () => { values.forEach = null; }; const source = { value: 1 }; const replacer = []; const prototype = { push(value) { value(); } }; Object.setPrototypeOf(replacer, prototype); replacer.push(run);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "custom replacer array push advances generator",
+            "function* run() { yield; values.forEach = null; } const iterator = run(); const source = { value: 1 }; const replacer = []; const prototype = { push(value) { value.next(); value.next(); } }; Object.setPrototypeOf(replacer, prototype); replacer.push(iterator);",
+            "JSON.stringify(source, replacer);",
+        ),
+        (
+            "replacer array inherited hole getter",
+            "const source = { value: 1 }; Object.defineProperty(Array.prototype, '0', { configurable: true, get() { values.forEach = null; return 'value'; } });",
+            "JSON.stringify(source, [, 'value']);",
+        ),
+        (
+            "string wrapper coercion hook",
+            "const source = { value: 1 }; const key = new String('value'); key.toString = () => { values.forEach = null; return 'value'; };",
+            "JSON.stringify(source, [key]);",
+        ),
+        (
+            "ignored nested array still evaluates its spread",
+            "const source = { value: 1 }; function* keys() { values.forEach = null; yield 'value'; }",
+            "JSON.stringify(source, [[...keys()]]);",
         ),
     ] {
         let source = format!(

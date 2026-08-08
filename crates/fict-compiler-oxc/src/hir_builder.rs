@@ -7693,6 +7693,23 @@ fn is_mutating_array_method(name: &str) -> bool {
     )
 }
 
+fn direct_mutating_array_call_receiver<'a>(
+    call: &'a CallExpression<'a>,
+) -> Option<&'a Expression<'a>> {
+    match unwrap_transparent_call_expression(&call.callee) {
+        Expression::StaticMemberExpression(member)
+            if is_mutating_array_method(member.property.name.as_str()) =>
+        {
+            Some(&member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            let method = static_member_name(&member.expression)?;
+            is_mutating_array_method(&method).then_some(&member.object)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ArgumentFact {
     span: SourceSpan,
@@ -9931,6 +9948,50 @@ fn static_from_entries_key_name(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
+enum StaticJsonReplacerItem {
+    Property(String),
+    Ignored,
+}
+
+fn static_json_replacer_global_item(path: &StaticAliasPath) -> Option<StaticJsonReplacerItem> {
+    let StaticAliasRoot::UnresolvedGlobal(name) = &path.root else {
+        return None;
+    };
+    if !path.properties.is_empty() || path.element_wildcard {
+        return None;
+    }
+    match name.as_str() {
+        "NaN" => Some(StaticJsonReplacerItem::Property("NaN".to_string())),
+        "Infinity" => Some(StaticJsonReplacerItem::Property("Infinity".to_string())),
+        "undefined" => Some(StaticJsonReplacerItem::Ignored),
+        _ => None,
+    }
+}
+
+fn static_json_replacer_item(expression: &Expression<'_>) -> Option<StaticJsonReplacerItem> {
+    Some(match expression.get_inner_expression() {
+        Expression::StringLiteral(property) if !property.lone_surrogates => {
+            StaticJsonReplacerItem::Property(property.value.to_string())
+        }
+        Expression::NumericLiteral(property) if property.value == 0.0 => {
+            StaticJsonReplacerItem::Property("0".to_string())
+        }
+        Expression::NumericLiteral(property) => {
+            StaticJsonReplacerItem::Property(property.value.to_js_string())
+        }
+        Expression::NullLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::BigIntLiteral(_)
+        | Expression::RegExpLiteral(_)
+        | Expression::FunctionExpression(_)
+        | Expression::ArrowFunctionExpression(_)
+        | Expression::ClassExpression(_)
+        | Expression::ObjectExpression(_)
+        | Expression::ArrayExpression(_) => StaticJsonReplacerItem::Ignored,
+        _ => return None,
+    })
+}
+
 fn static_from_entries_pairs<'a, 'ast>(
     expression: &'a Expression<'ast>,
 ) -> Option<Vec<(String, &'a Expression<'ast>)>> {
@@ -10680,6 +10741,7 @@ struct GeneratorExecutionCollector<'semantic> {
     explicitly_merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     static_object_entries_sources: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    static_json_replacer_arrays: BTreeSet<StaticAliasPath>,
     json_serialized_value_paths: BTreeSet<StaticAliasPath>,
     directly_unexecuted_callable_spans: BTreeSet<(u32, u32)>,
 }
@@ -10737,6 +10799,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             explicitly_merely_observed_callable_paths: BTreeSet::new(),
             static_from_entries_sources: BTreeMap::new(),
             static_object_entries_sources: BTreeMap::new(),
+            static_json_replacer_arrays: BTreeSet::new(),
             json_serialized_value_paths: BTreeSet::new(),
             directly_unexecuted_callable_spans: BTreeSet::new(),
         }
@@ -14653,6 +14716,118 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn json_replacer_item_is_non_coercive(&self, expression: &Expression<'_>) -> bool {
+        match expression.get_inner_expression() {
+            Expression::NullLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BigIntLiteral(_)
+            | Expression::StringLiteral(_)
+            | Expression::RegExpLiteral(_)
+            | Expression::FunctionExpression(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::ClassExpression(_)
+            | Expression::ObjectExpression(_)
+            | Expression::ArrayExpression(_) => true,
+            Expression::ConditionalExpression(expression) => {
+                self.json_replacer_item_is_non_coercive(&expression.consequent)
+                    && self.json_replacer_item_is_non_coercive(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                self.json_replacer_item_is_non_coercive(&expression.left)
+                    && self.json_replacer_item_is_non_coercive(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => expression
+                .expressions
+                .last()
+                .is_some_and(|value| self.json_replacer_item_is_non_coercive(value)),
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.json_replacer_item_is_non_coercive(&expression.right)
+            }
+            _ => self
+                .callable_reference(expression)
+                .is_some_and(|(source, _)| {
+                    static_json_replacer_global_item(&source).is_some()
+                        || (self.callable_property_is_known(&source)
+                            && self.method_path_is_intact(&source, ""))
+                }),
+        }
+    }
+
+    fn inline_json_replacer_array_is_non_coercive(&self, expression: &Expression<'_>) -> bool {
+        let Expression::ArrayExpression(array) = expression.get_inner_expression() else {
+            return false;
+        };
+        array.elements.iter().all(|element| match element {
+            ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_) => false,
+            element => self.json_replacer_item_is_non_coercive(element.to_expression()),
+        })
+    }
+
+    fn record_static_json_replacer_array(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        if self.inline_json_replacer_array_is_non_coercive(initializer) {
+            self.static_json_replacer_arrays.insert(target.clone());
+        }
+    }
+
+    fn invalidate_static_json_replacer_array_mutation(&mut self, call: &CallExpression<'_>) {
+        let Some(receiver) = direct_mutating_array_call_receiver(call) else {
+            return;
+        };
+        let Some((source, _)) = self.callable_reference(receiver) else {
+            return;
+        };
+        let related = self.related_callable_paths(&source);
+        self.static_json_replacer_arrays
+            .retain(|target| !related.iter().any(|source| source.overlaps(target)));
+    }
+
+    fn json_replacer_is_non_coercive_array(&self, expression: &Expression<'_>) -> bool {
+        if self.inline_json_replacer_array_is_non_coercive(expression) {
+            return true;
+        }
+        let Some((source, _)) = self.callable_reference(expression) else {
+            return false;
+        };
+        self.method_path_is_intact(&source, "")
+            && self
+                .related_callable_paths(&source)
+                .into_iter()
+                .any(|candidate| {
+                    self.is_immutable_local_callable_target(&candidate)
+                        && self.method_path_is_intact(&candidate, "")
+                        && self.static_json_replacer_arrays.contains(&candidate)
+                })
+    }
+
+    fn json_replacer_is_definitely_generator(&self, expression: &Expression<'_>) -> bool {
+        if let Expression::FunctionExpression(function) = expression.get_inner_expression() {
+            return function.generator;
+        }
+        let Some((source, _)) = self.callable_reference(expression) else {
+            return false;
+        };
+        let candidates = self
+            .related_callable_paths(&source)
+            .into_iter()
+            .filter(|candidate| {
+                self.generator_callable_targets.contains(candidate)
+                    || self.non_generator_callable_targets.contains(candidate)
+            })
+            .collect::<Vec<_>>();
+        !candidates.is_empty()
+            && candidates.iter().all(|candidate| {
+                self.generator_callable_targets.contains(candidate)
+                    && !self.non_generator_callable_targets.contains(candidate)
+            })
+    }
+
     fn record_json_stringify_arguments(
         &mut self,
         call: &CallExpression<'_>,
@@ -14670,16 +14845,33 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         {
             return false;
         }
+        let replacer_is_array = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .is_some_and(|argument| self.json_replacer_is_non_coercive_array(argument));
+        let replacer_is_generator = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .is_some_and(|argument| self.json_replacer_is_definitely_generator(argument));
+        let mut fixed = BTreeMap::from([(0, false), (2, false)]);
+        if replacer_is_array {
+            fixed.insert(1, false);
+        }
         let parameters = NonConsumingParameters {
-            fixed: BTreeMap::from([(0, false), (2, false)]),
+            fixed,
             safe_tail_start: Some(3),
         };
         for (index, argument) in call.arguments.iter().enumerate() {
             let argument = argument
                 .as_expression()
                 .expect("JSON.stringify spread arguments were rejected");
-            if index == 0 {
+            if index == 0 || (index == 1 && replacer_is_array) {
                 self.record_json_serialized_value(argument);
+            }
+            if index == 1 && replacer_is_generator {
+                self.record_nonexecuting_callable(argument);
             }
             self.record_pending_callable_argument(
                 argument,
@@ -16046,6 +16238,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         target: StaticAliasPath,
         initializer: &Expression<'_>,
     ) {
+        self.record_static_json_replacer_array(&target, initializer);
         self.record_static_from_entries_source(&target, initializer);
         self.record_static_object_entries_source(&target, initializer);
         self.record_returned_callable_result_initializer(&target, initializer);
@@ -18902,6 +19095,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.invalidate_static_json_replacer_array_mutation(call);
         self.record_assignment_callable_read(call, false);
         self.record_generator_invocation_arguments(call);
         self.record_terminal_generator_method_read(call);
@@ -19312,6 +19506,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_object_entries_values: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     local_object_from_entries_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
+    local_json_replacer_property_lists: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     handled_object_from_entries_hook_spans: BTreeSet<(u32, u32)>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
     local_property_descriptor_results: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -20171,6 +20366,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_object_entries_values: BTreeMap::new(),
             local_object_from_entries_results: BTreeMap::new(),
             local_static_from_entries_sources: BTreeMap::new(),
+            local_json_replacer_property_lists: BTreeMap::new(),
             handled_object_from_entries_hook_spans: BTreeSet::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
             local_property_descriptor_results: BTreeMap::new(),
@@ -23826,6 +24022,130 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn record_local_json_replacer_property_list(
+        &mut self,
+        target: &StaticAliasPath,
+        initializer: &Expression<'_>,
+    ) {
+        let Some(properties) = self.local_inline_json_replacer_property_list(initializer) else {
+            return;
+        };
+        self.local_json_replacer_property_lists
+            .insert(target.clone(), properties);
+    }
+
+    fn local_json_replacer_item(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<StaticJsonReplacerItem> {
+        if let Some(item) = static_json_replacer_item(expression) {
+            return Some(item);
+        }
+        let raw = self.alias_source_path(expression)?;
+        if let Some(item) = static_json_replacer_global_item(&raw) {
+            return Some(item);
+        }
+        if self.path_requires_historical_aliases(&raw, self.function_depth)
+            || !self.path_is_currently_intact(&raw)
+        {
+            return None;
+        }
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        if let Some(item) = static_json_replacer_global_item(&resolved) {
+            return Some(item);
+        }
+        (self.local_callable_parameters.contains_key(&resolved)
+            || self.local_bound_callables.contains_key(&resolved)
+            || (is_safe_global_path(&resolved) && self.path_is_currently_intact(&raw)))
+        .then_some(StaticJsonReplacerItem::Ignored)
+    }
+
+    fn local_inline_json_replacer_property_list(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<BTreeSet<String>> {
+        let Expression::ArrayExpression(array) = expression.get_inner_expression() else {
+            return None;
+        };
+        let mut properties = BTreeSet::new();
+        for element in &array.elements {
+            let item = match element {
+                ArrayExpressionElement::Elision(_) | ArrayExpressionElement::SpreadElement(_) => {
+                    return None;
+                }
+                element => self.local_json_replacer_item(element.to_expression())?,
+            };
+            if let StaticJsonReplacerItem::Property(property) = item {
+                properties.insert(property);
+            }
+        }
+        Some(properties)
+    }
+
+    fn local_json_replacer_property_list(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<BTreeSet<String>> {
+        if let Some(properties) = self.local_inline_json_replacer_property_list(expression) {
+            return Some(properties);
+        }
+        let raw = self.alias_source_path(expression)?;
+        if self.path_requires_historical_aliases(&raw, self.function_depth)
+            || !self.path_is_currently_intact(&raw)
+        {
+            return None;
+        }
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        self.local_json_replacer_property_lists
+            .get(&resolved)
+            .or_else(|| self.local_json_replacer_property_lists.get(&raw))
+            .cloned()
+    }
+
+    fn record_local_json_replacer_array_reads(
+        &mut self,
+        replacer: &Expression<'_>,
+        span: Span,
+        result_index: &mut usize,
+    ) {
+        if matches!(
+            replacer.get_inner_expression(),
+            Expression::ArrayExpression(_)
+        ) {
+            return;
+        }
+        for source in self.local_object_assign_value_paths(replacer) {
+            let Some(length) = self.known_array_length(&source) else {
+                continue;
+            };
+            for index in 0..length {
+                let target = StaticAliasPath::dynamic_this(span)
+                    .with_property(format!("json-stringify-replacer-value-{}", *result_index));
+                *result_index = result_index.saturating_add(1);
+                self.dynamic_path_owner_depths
+                    .insert((span.start, span.end), self.function_depth);
+                self.record_local_getter_read(
+                    source.clone().with_property(index.to_string()),
+                    Some(target),
+                );
+            }
+        }
+    }
+
+    fn invalidate_local_json_replacer_array_mutation(&mut self, call: &CallExpression<'_>) {
+        let Some(receiver) = direct_mutating_array_call_receiver(call) else {
+            return;
+        };
+        let sources = self.local_object_assign_value_paths(receiver);
+        let mut affected = BTreeSet::new();
+        for source in &sources {
+            affected.insert(source.clone());
+            affected.insert(resolve_static_alias_path(&self.aliases, source));
+        }
+        self.local_json_replacer_property_lists
+            .retain(|target, _| !affected.iter().any(|source| target.overlaps(source)));
+    }
+
     fn record_local_json_to_json(
         &mut self,
         source: &StaticAliasPath,
@@ -23930,6 +24250,7 @@ impl StaticHookAliasCollector<'_> {
         span: Span,
         result_index: &mut usize,
         visiting: &mut BTreeSet<StaticAliasPath>,
+        property_list: Option<&BTreeSet<String>>,
         invoke_to_json: bool,
     ) {
         let resolved = resolve_static_alias_path(&self.aliases, &source);
@@ -23938,7 +24259,14 @@ impl StaticHookAliasCollector<'_> {
             && let Some((result, definitely_callable)) =
                 self.record_local_json_to_json(&source, span, result_index)
         {
-            self.record_local_json_serialized_path(result, span, result_index, visiting, false);
+            self.record_local_json_serialized_path(
+                result,
+                span,
+                result_index,
+                visiting,
+                property_list,
+                false,
+            );
             if definitely_callable {
                 return;
             }
@@ -23951,10 +24279,14 @@ impl StaticHookAliasCollector<'_> {
         let known_properties = self.known_structured_own_properties(&source);
         let mut properties = if let Some(length) = array_length {
             (0..length).map(|index| index.to_string()).collect()
+        } else if known_properties.is_some()
+            && let Some(property_list) = property_list
+        {
+            property_list.clone()
         } else {
             known_properties.clone().unwrap_or_default()
         };
-        if array_length.is_none() {
+        if array_length.is_none() && property_list.is_none() {
             properties.extend(getter_names);
             if known_properties.is_none() {
                 properties.extend(self.local_structured_callable_child_names(&source));
@@ -23962,6 +24294,7 @@ impl StaticHookAliasCollector<'_> {
         }
         for property in properties {
             if array_length.is_none()
+                && property_list.is_none()
                 && !self.local_own_property_may_be_enumerable(&source, &property)
             {
                 continue;
@@ -23978,9 +24311,19 @@ impl StaticHookAliasCollector<'_> {
                 } else {
                     property_source
                 };
-            self.record_local_json_serialized_path(value, span, result_index, visiting, true);
+            self.record_local_json_serialized_path(
+                value,
+                span,
+                result_index,
+                visiting,
+                property_list,
+                true,
+            );
         }
-        if array_length.is_none() && !self.enumerable_dynamic_local_getters(&source).is_empty() {
+        if array_length.is_none()
+            && property_list.is_none_or(|properties| !properties.is_empty())
+            && !self.enumerable_dynamic_local_getters(&source).is_empty()
+        {
             let target = StaticAliasPath::dynamic_this(span)
                 .with_property(format!("json-stringify-computed-value-{}", *result_index));
             *result_index = result_index.saturating_add(1);
@@ -23990,7 +24333,14 @@ impl StaticHookAliasCollector<'_> {
                 source.clone().with_property("<computed>".to_string()),
                 Some(target.clone()),
             ) {
-                self.record_local_json_serialized_path(target, span, result_index, visiting, true);
+                self.record_local_json_serialized_path(
+                    target,
+                    span,
+                    result_index,
+                    visiting,
+                    property_list,
+                    true,
+                );
             }
         }
         visiting.remove(&canonical);
@@ -24014,12 +24364,22 @@ impl StaticHookAliasCollector<'_> {
         };
         let mut result_index = 0usize;
         let mut visiting = BTreeSet::new();
+        let replacer = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression());
+        if let Some(replacer) = replacer {
+            self.record_local_json_replacer_array_reads(replacer, call.span, &mut result_index);
+        }
+        let property_list =
+            replacer.and_then(|replacer| self.local_json_replacer_property_list(replacer));
         for source in self.local_object_assign_value_paths(source) {
             self.record_local_json_serialized_path(
                 source,
                 call.span,
                 &mut result_index,
                 &mut visiting,
+                property_list.as_ref(),
                 true,
             );
         }
@@ -25542,6 +25902,8 @@ impl StaticHookAliasCollector<'_> {
         self.structured_own_properties
             .retain(|target, _| !target.starts_with(path));
         self.local_static_from_entries_sources
+            .retain(|target, _| !target.overlaps(path));
+        self.local_json_replacer_property_lists
             .retain(|target, _| !target.overlaps(path));
         self.local_object_prototypes
             .retain(|target, _| !target.starts_with(path));
@@ -27819,6 +28181,7 @@ impl StaticHookAliasCollector<'_> {
                     .insert(target.clone(), BTreeSet::new());
                 self.collect_array(&target, array);
                 self.record_local_static_from_entries_source(&target, value);
+                self.record_local_json_replacer_property_list(&target, value);
             }
             Expression::CallExpression(call) => {
                 if let Some(source) = self.alias_source_path(value) {
@@ -36793,6 +37156,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.invalidate_local_json_replacer_array_mutation(call);
         self.record_local_object_assign(call);
         let _ = self.record_local_object_value_enumeration(call);
         let local_object_from_entries = self.record_local_object_from_entries_result(call);
