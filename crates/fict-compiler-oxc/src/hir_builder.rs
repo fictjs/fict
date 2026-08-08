@@ -22416,6 +22416,36 @@ impl StaticHookAliasCollector<'_> {
         Some(target)
     }
 
+    fn record_local_object_value_enumeration(&mut self, call: &CallExpression<'_>) -> bool {
+        if !["values", "entries"]
+            .into_iter()
+            .any(|method| self.is_intact_object_method_callee(&call.callee, method))
+        {
+            return false;
+        }
+        let Some(source) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+        else {
+            return false;
+        };
+        let mut invoked = false;
+        for source in self.local_object_assign_value_paths(source) {
+            for property in self.enumerable_local_getter_names(&source) {
+                invoked |=
+                    self.record_local_getter_read(source.clone().with_property(property), None);
+            }
+            if !self.enumerable_dynamic_local_getters(&source).is_empty() {
+                invoked |= self.record_local_getter_read(
+                    source.clone().with_property("<computed>".to_string()),
+                    None,
+                );
+            }
+        }
+        invoked
+    }
+
     fn local_object_prototype_value(
         &mut self,
         expression: &Expression<'_>,
@@ -35077,6 +35107,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_object_assign(call);
+        self.record_local_object_value_enumeration(call);
         let local_object_create = self.record_local_object_create_result(call);
         self.record_local_define_property_result(call);
         self.record_local_define_properties_result(call);

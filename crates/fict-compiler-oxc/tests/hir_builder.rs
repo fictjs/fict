@@ -11732,6 +11732,113 @@ fn object_assign_invokes_local_accessors() {
 }
 
 #[test]
+fn object_value_enumeration_invokes_local_getters() {
+    for (name, helper, access) in [
+        (
+            "Object.values",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Object.values(source);",
+        ),
+        (
+            "Object.entries",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Object.entries(source);",
+        ),
+        (
+            "aliased Object.values",
+            "const source = { get run() { values.forEach = null; return 0; } }; const enumerate = Object.values;",
+            "enumerate(source);",
+        ),
+        (
+            "enumerable descriptor getter",
+            "const source = {}; Object.defineProperty(source, 'run', { enumerable: true, get() { values.forEach = null; return 0; } });",
+            "Object.values(source);",
+        ),
+        (
+            "factory getter",
+            "function create(target) { return { get run() { target.forEach = null; return 0; } }; }",
+            "Object.entries(create(values));",
+        ),
+        (
+            "dynamic getter",
+            "const key = values.length ? 'run' : 'other'; const source = { get [key]() { values.forEach = null; return 0; } };",
+            "Object.values(source);",
+        ),
+        (
+            "conditional source getter",
+            "const source = { get run() { values.forEach = null; return 0; } }; const other = {};",
+            "Object.entries(values.length ? other : source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {access}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_none(),
+            "{name}: expected the enumerable getter effect, got {:?}",
+            output.diagnostics
+        );
+    }
+
+    for (name, helper, access) in [
+        (
+            "non-enumerable getter",
+            "const source = {}; Object.defineProperty(source, 'run', { get() { values.forEach = null; return 0; } });",
+            "Object.values(source);",
+        ),
+        (
+            "Object.keys",
+            "const source = { get run() { values.forEach = null; return 0; } };",
+            "Object.keys(source);",
+        ),
+        (
+            "inherited getter",
+            "const prototype = { get run() { values.forEach = null; return 0; } }; const source = Object.create(prototype);",
+            "Object.entries(source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    {helper}
+                    {access}
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: must not invoke the getter: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn immediate_callable_assignments_preserve_unadvanced_iterator_arguments() {
     for (name, helper, invocation) in [
         (
