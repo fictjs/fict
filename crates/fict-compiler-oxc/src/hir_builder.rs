@@ -35,21 +35,24 @@ use oxc::{
             ArrayPattern, ArrowFunctionExpression, AssignmentExpression, AssignmentPattern,
             AssignmentTarget, AssignmentTargetMaybeDefault, AssignmentTargetProperty,
             AssignmentTargetRest, AssignmentTargetWithDefault, BindingIdentifier, BindingPattern,
-            BindingRestElement, CallExpression, ChainElement, Class, ClassElement, ClassType,
-            ComputedMemberExpression, Decorator, Expression, ExpressionStatement, FormalParameter,
-            FormalParameterRest, FormalParameters, Function, FunctionBody, FunctionType,
-            IdentifierReference, ImportExpression, ImportOrExportKind,
-            ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
-            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
-            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
+            BindingRestElement, BreakStatement, CallExpression, ChainElement, ChainExpression,
+            Class, ClassElement, ClassType, ComputedMemberExpression, ConditionalExpression,
+            ContinueStatement, Decorator, DoWhileStatement, Expression, ExpressionStatement,
+            ForInStatement, ForOfStatement, ForStatement, FormalParameter, FormalParameterRest,
+            FormalParameters, Function, FunctionBody, FunctionType, IdentifierReference,
+            IfStatement, ImportExpression, ImportOrExportKind, ImportPhase as OxcImportPhase,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
+            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
+            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            LabeledStatement, LogicalExpression, MemberExpression, MetaProperty,
             MethodDefinitionKind, NewExpression, ObjectAssignmentTarget, ObjectExpression,
             ObjectPattern, ObjectPropertyKind as OxcObjectPropertyKind, Program,
             PropertyDefinition, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
-            SimpleAssignmentTarget, Statement, StaticBlock, Super, TSImportEqualsDeclaration,
-            TSLiteral, TSModuleReference, TSType, TSTypeName, TSTypeOperatorOperator,
-            TaggedTemplateExpression, TemplateLiteral, ThisExpression, UpdateExpression,
-            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            SimpleAssignmentTarget, Statement, StaticBlock, Super, SwitchStatement,
+            TSImportEqualsDeclaration, TSLiteral, TSModuleReference, TSType, TSTypeName,
+            TSTypeOperatorOperator, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
+            TryStatement, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
+            VariableDeclarator, WhileStatement,
         },
         ast_kind::AstKind,
     },
@@ -20358,6 +20361,72 @@ struct ConstructorReplacementResultCollector<'collector, 'semantic> {
     results: Vec<LocalCallableResult>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ExternalStorageFlowState {
+    aliases: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    attached_alias_roots: BTreeMap<StaticAliasPath, BTreeSet<SymbolId>>,
+    attached_parameters: BTreeSet<SymbolId>,
+}
+
+impl ExternalStorageFlowState {
+    fn merge(left: Self, right: Self) -> Self {
+        let mut merged = left;
+        for (target, sources) in right.aliases {
+            merged.aliases.entry(target).or_default().extend(sources);
+        }
+        for (target, roots) in right.attached_alias_roots {
+            merged
+                .attached_alias_roots
+                .entry(target)
+                .or_default()
+                .extend(roots);
+        }
+        merged.attached_parameters.extend(right.attached_parameters);
+        merged
+    }
+
+    fn alias_candidates(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
+        resolve_historical_alias_paths(&self.aliases, path)
+    }
+
+    fn attached_roots(&self, path: &StaticAliasPath) -> BTreeSet<SymbolId> {
+        let mut roots = BTreeSet::new();
+        for candidate in self.alias_candidates(path) {
+            if let Some(root) = candidate.binding_root()
+                && self.attached_parameters.contains(&root)
+            {
+                roots.insert(root);
+            }
+            for (target, attached) in &self.attached_alias_roots {
+                if candidate.starts_with(target) {
+                    roots.extend(attached);
+                }
+            }
+        }
+        roots
+    }
+
+    fn clear_aliases(&mut self, path: &StaticAliasPath) {
+        self.aliases.retain(|target, _| !target.overlaps(path));
+        self.attached_alias_roots
+            .retain(|target, _| !target.overlaps(path));
+    }
+
+    fn insert_alias(
+        &mut self,
+        target: StaticAliasPath,
+        candidates: BTreeSet<StaticAliasPath>,
+        attached: BTreeSet<SymbolId>,
+    ) {
+        if !candidates.is_empty() {
+            self.aliases.insert(target.clone(), candidates);
+        }
+        if !attached.is_empty() {
+            self.attached_alias_roots.insert(target, attached);
+        }
+    }
+}
+
 impl<'a> Visit<'a> for LocalCallableResultCollector<'_, '_> {
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
 
@@ -20425,6 +20494,11 @@ struct StaticHookAliasCollector<'semantic> {
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     assignment_target_alias_snapshots: Vec<((u32, u32), StaticAliasPath, bool)>,
     assignment_attached_parameter_roots: BTreeMap<(u32, u32), BTreeSet<SymbolId>>,
+    external_storage_flow: ExternalStorageFlowState,
+    external_storage_function_flows: Vec<ExternalStorageFlowState>,
+    external_storage_exception_flows: Vec<ExternalStorageFlowState>,
+    external_storage_break_flows: Vec<Option<ExternalStorageFlowState>>,
+    external_storage_continue_flows: Vec<Option<ExternalStorageFlowState>>,
     array_lengths: BTreeMap<StaticAliasPath, usize>,
     array_length_history: BTreeMap<StaticAliasPath, BTreeSet<usize>>,
     structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
@@ -21298,6 +21372,11 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             alias_history: BTreeMap::new(),
             assignment_target_alias_snapshots: Vec::new(),
             assignment_attached_parameter_roots: BTreeMap::new(),
+            external_storage_flow: ExternalStorageFlowState::default(),
+            external_storage_function_flows: Vec::new(),
+            external_storage_exception_flows: Vec::new(),
+            external_storage_break_flows: Vec::new(),
+            external_storage_continue_flows: Vec::new(),
             array_lengths: BTreeMap::new(),
             array_length_history: BTreeMap::new(),
             structured_own_properties: BTreeMap::new(),
@@ -21432,7 +21511,55 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
 }
 
 impl StaticHookAliasCollector<'_> {
+    fn merge_external_storage_abrupt_flow(
+        target: &mut Option<ExternalStorageFlowState>,
+        flow: &ExternalStorageFlowState,
+    ) {
+        *target = Some(match target.take() {
+            Some(current) => ExternalStorageFlowState::merge(current, flow.clone()),
+            None => flow.clone(),
+        });
+    }
+
+    fn enter_external_storage_loop_flow(&mut self) {
+        self.external_storage_break_flows.push(None);
+        self.external_storage_continue_flows.push(None);
+    }
+
+    fn leave_external_storage_loop_flow(
+        &mut self,
+        mut completed: ExternalStorageFlowState,
+        kind: &str,
+    ) -> ExternalStorageFlowState {
+        if let Some(continued) = self
+            .external_storage_continue_flows
+            .pop()
+            .unwrap_or_else(|| panic!("a {kind} loop always records continue flows"))
+        {
+            completed = ExternalStorageFlowState::merge(completed, continued);
+        }
+        if let Some(broken) = self
+            .external_storage_break_flows
+            .pop()
+            .unwrap_or_else(|| panic!("a {kind} loop always records break flows"))
+        {
+            completed = ExternalStorageFlowState::merge(completed, broken);
+        }
+        completed
+    }
+
+    fn record_external_storage_exception_flow(&mut self) {
+        if let Some(exception) = self.external_storage_exception_flows.last_mut() {
+            *exception = ExternalStorageFlowState::merge(
+                exception.clone(),
+                self.external_storage_flow.clone(),
+            );
+        }
+    }
+
     fn record_assignment_target_alias_snapshot(&mut self, span: Span, path: StaticAliasPath) {
+        let flow_candidates = self.external_storage_flow.alias_candidates(&path);
+        let attached_roots = self.external_storage_flow.attached_roots(&path);
         let historical = self.path_owner_depth(&path) < self.function_depth
             || self
                 .cross_scope_alias_targets
@@ -21443,16 +21570,19 @@ impl StaticHookAliasCollector<'_> {
         } else {
             resolve_static_alias_path(&self.aliases, &path)
         };
-        if let Some(root) = path.binding_root()
-            && self.attached_callable_parameters.contains(&root)
-        {
+        if !attached_roots.is_empty() {
             self.assignment_attached_parameter_roots
                 .entry((span.start, span.end))
                 .or_default()
-                .insert(root);
+                .extend(attached_roots);
         }
         self.assignment_target_alias_snapshots
             .push(((span.start, span.end), path, historical));
+        self.assignment_target_alias_snapshots.extend(
+            flow_candidates
+                .into_iter()
+                .map(|candidate| ((span.start, span.end), candidate, false)),
+        );
     }
 
     fn structured_assignment_target_alias_paths(
@@ -21623,7 +21753,11 @@ impl StaticHookAliasCollector<'_> {
         bindings.visit_binding_pattern(pattern);
         self.external_callable_parameters
             .extend(bindings.symbols.iter().copied());
-        self.attached_callable_parameters.extend(bindings.symbols);
+        self.attached_callable_parameters
+            .extend(bindings.symbols.iter().copied());
+        self.external_storage_flow
+            .attached_parameters
+            .extend(bindings.symbols);
     }
 
     fn record_local_callable_parameters(
@@ -27098,6 +27232,8 @@ impl StaticHookAliasCollector<'_> {
         }
         self.detach_overwritten_local_object_prototypes(path);
         self.record_cross_scope_target(path);
+        self.external_storage_flow.clear_aliases(path);
+        self.record_external_storage_exception_flow();
         let excluded_structured_roots = self
             .returned_structured_value_instances
             .keys()
@@ -27281,7 +27417,17 @@ impl StaticHookAliasCollector<'_> {
         let returned_callable_span = self.returned_callable_capture_span(&target);
         let array_length = self.known_array_length(&source);
         let structured_instances = self.returned_structured_instances_for_path(&source);
+        let mut external_storage_alias_candidates =
+            self.external_storage_flow.alias_candidates(&source);
+        let external_storage_attached_roots = self.external_storage_flow.attached_roots(&source);
+        external_storage_alias_candidates.remove(&target);
         self.clear_overlapping_aliases(&target);
+        self.external_storage_flow.insert_alias(
+            target.clone(),
+            external_storage_alias_candidates,
+            external_storage_attached_roots,
+        );
+        self.record_external_storage_exception_flow();
         if target != source {
             if let Some(span) = returned_callable_span {
                 self.returned_callable_aliases
@@ -29261,6 +29407,12 @@ impl StaticHookAliasCollector<'_> {
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
         let target = self.canonical_returned_structured_member_path(&target);
         let target = self.canonical_object_value_enumeration_member_path(&target);
+        if self.assignment_replaces_parameter_with_local_value(&target, value)
+            && let Some(root) = target.binding_root()
+        {
+            self.external_storage_flow.attached_parameters.remove(&root);
+            self.record_external_storage_exception_flow();
+        }
         if let Expression::CallExpression(call) = value.get_inner_expression()
             && let Some(source) = self.record_local_object_assign(call)
         {
@@ -29424,13 +29576,23 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             Expression::ConditionalExpression(expression) => {
+                let baseline = self.external_storage_flow.clone();
                 self.collect_initializer(target.clone(), &expression.consequent);
+                let consequent = self.external_storage_flow.clone();
+                self.external_storage_flow = baseline;
                 self.collect_initializer(target.clone(), &expression.alternate);
+                let alternate = self.external_storage_flow.clone();
+                self.external_storage_flow = ExternalStorageFlowState::merge(consequent, alternate);
                 self.mark_alias_target_ambiguous(target);
             }
             Expression::LogicalExpression(expression) => {
+                let baseline = self.external_storage_flow.clone();
                 self.collect_initializer(target.clone(), &expression.left);
+                let left = self.external_storage_flow.clone();
+                self.external_storage_flow = baseline;
                 self.collect_initializer(target.clone(), &expression.right);
+                let right = self.external_storage_flow.clone();
+                self.external_storage_flow = ExternalStorageFlowState::merge(left, right);
                 self.mark_alias_target_ambiguous(target);
             }
             Expression::SequenceExpression(expression) => {
@@ -33744,20 +33906,16 @@ impl StaticHookAliasCollector<'_> {
         self.expand_exposed_paths(targets)
     }
 
-    fn assignment_detaches_parameter(
+    fn assignment_replaces_parameter_with_local_value(
         &self,
         target: &StaticAliasPath,
         value: &Expression<'_>,
     ) -> bool {
         target.properties.is_empty()
             && target.binding_root().is_some_and(|root| {
-                self.attached_callable_parameters.contains(&root)
+                self.external_callable_parameters.contains(&root)
                     && self.path_owner_depth(target) == self.function_depth
             })
-            && self
-                .function_control_baselines
-                .last()
-                .is_some_and(|baseline| self.control_depth == *baseline)
             && matches!(
                 value.get_inner_expression(),
                 Expression::ObjectExpression(_)
@@ -33766,6 +33924,18 @@ impl StaticHookAliasCollector<'_> {
                     | Expression::ArrowFunctionExpression(_)
                     | Expression::ClassExpression(_)
             )
+    }
+
+    fn assignment_detaches_parameter(
+        &self,
+        target: &StaticAliasPath,
+        value: &Expression<'_>,
+    ) -> bool {
+        self.assignment_replaces_parameter_with_local_value(target, value)
+            && self
+                .function_control_baselines
+                .last()
+                .is_some_and(|baseline| self.control_depth == *baseline)
     }
 
     fn constructor_may_mutate_arguments(&self, callee: &Expression<'_>) -> bool {
@@ -36983,6 +37153,13 @@ impl StaticHookAliasCollector<'_> {
 
 impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn enter_node(&mut self, kind: AstKind<'a>) {
+        if matches!(
+            kind,
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_)
+        ) {
+            self.external_storage_function_flows
+                .push(self.external_storage_flow.clone());
+        }
         if is_parameter_detachment_control_context(kind) {
             self.control_depth = self.control_depth.saturating_add(1);
         }
@@ -36991,6 +37168,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn leave_node(&mut self, kind: AstKind<'a>) {
         if is_parameter_detachment_control_context(kind) {
             self.control_depth = self.control_depth.saturating_sub(1);
+        }
+        if matches!(
+            kind,
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_)
+        ) && let Some(outer) = self.external_storage_function_flows.pop()
+        {
+            self.external_storage_flow = outer;
         }
     }
 
@@ -37003,6 +37187,241 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             return;
         }
         walk_expression(self, expression);
+    }
+
+    fn visit_if_statement(&mut self, statement: &IfStatement<'a>) {
+        let kind = AstKind::IfStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.visit_span(&statement.span);
+        self.visit_expression(&statement.test);
+        let baseline = self.external_storage_flow.clone();
+        self.visit_statement(&statement.consequent);
+        let consequent = self.external_storage_flow.clone();
+        self.external_storage_flow = baseline.clone();
+        if let Some(alternate) = &statement.alternate {
+            self.visit_statement(alternate);
+        }
+        let alternate = self.external_storage_flow.clone();
+        self.external_storage_flow = ExternalStorageFlowState::merge(consequent, alternate);
+        self.leave_node(kind);
+    }
+
+    fn visit_conditional_expression(&mut self, expression: &ConditionalExpression<'a>) {
+        let kind = AstKind::ConditionalExpression(self.alloc(expression));
+        self.enter_node(kind);
+        self.visit_span(&expression.span);
+        self.visit_expression(&expression.test);
+        let baseline = self.external_storage_flow.clone();
+        self.visit_expression(&expression.consequent);
+        let consequent = self.external_storage_flow.clone();
+        self.external_storage_flow = baseline;
+        self.visit_expression(&expression.alternate);
+        let alternate = self.external_storage_flow.clone();
+        self.external_storage_flow = ExternalStorageFlowState::merge(consequent, alternate);
+        self.leave_node(kind);
+    }
+
+    fn visit_logical_expression(&mut self, expression: &LogicalExpression<'a>) {
+        let kind = AstKind::LogicalExpression(self.alloc(expression));
+        self.enter_node(kind);
+        self.visit_span(&expression.span);
+        self.visit_expression(&expression.left);
+        let baseline = self.external_storage_flow.clone();
+        self.visit_expression(&expression.right);
+        let right = self.external_storage_flow.clone();
+        self.external_storage_flow = ExternalStorageFlowState::merge(baseline, right);
+        self.leave_node(kind);
+    }
+
+    fn visit_chain_expression(&mut self, expression: &ChainExpression<'a>) {
+        let baseline = self.external_storage_flow.clone();
+        oxc::ast_visit::walk::walk_chain_expression(self, expression);
+        let continued = self.external_storage_flow.clone();
+        self.external_storage_flow = ExternalStorageFlowState::merge(baseline, continued);
+    }
+
+    fn visit_labeled_statement(&mut self, statement: &LabeledStatement<'a>) {
+        self.external_storage_break_flows.push(None);
+        oxc::ast_visit::walk::walk_labeled_statement(self, statement);
+        if let Some(broken) = self
+            .external_storage_break_flows
+            .pop()
+            .expect("a labeled statement always records break flows")
+        {
+            self.external_storage_flow =
+                ExternalStorageFlowState::merge(self.external_storage_flow.clone(), broken);
+        }
+    }
+
+    fn visit_break_statement(&mut self, statement: &BreakStatement<'a>) {
+        let current = self.external_storage_flow.clone();
+        if statement.label.is_some() {
+            for flow in &mut self.external_storage_break_flows {
+                Self::merge_external_storage_abrupt_flow(flow, &current);
+            }
+        } else if let Some(flow) = self.external_storage_break_flows.last_mut() {
+            Self::merge_external_storage_abrupt_flow(flow, &current);
+        }
+        oxc::ast_visit::walk::walk_break_statement(self, statement);
+    }
+
+    fn visit_continue_statement(&mut self, statement: &ContinueStatement<'a>) {
+        let current = self.external_storage_flow.clone();
+        if statement.label.is_some() {
+            for flow in &mut self.external_storage_continue_flows {
+                Self::merge_external_storage_abrupt_flow(flow, &current);
+            }
+        } else if let Some(flow) = self.external_storage_continue_flows.last_mut() {
+            Self::merge_external_storage_abrupt_flow(flow, &current);
+        }
+        oxc::ast_visit::walk::walk_continue_statement(self, statement);
+    }
+
+    fn visit_while_statement(&mut self, statement: &WhileStatement<'a>) {
+        let kind = AstKind::WhileStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.visit_span(&statement.span);
+        self.visit_expression(&statement.test);
+        let baseline = self.external_storage_flow.clone();
+        self.enter_external_storage_loop_flow();
+        self.visit_statement(&statement.body);
+        let iterated =
+            self.leave_external_storage_loop_flow(self.external_storage_flow.clone(), "while");
+        self.external_storage_flow = ExternalStorageFlowState::merge(baseline, iterated);
+        self.leave_node(kind);
+    }
+
+    fn visit_do_while_statement(&mut self, statement: &DoWhileStatement<'a>) {
+        let kind = AstKind::DoWhileStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.visit_span(&statement.span);
+        self.enter_external_storage_loop_flow();
+        self.visit_statement(&statement.body);
+        self.visit_expression(&statement.test);
+        let completed =
+            self.leave_external_storage_loop_flow(self.external_storage_flow.clone(), "do-while");
+        self.external_storage_flow = completed;
+        self.leave_node(kind);
+    }
+
+    fn visit_for_statement(&mut self, statement: &ForStatement<'a>) {
+        let kind = AstKind::ForStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.enter_scope(ScopeFlags::empty(), &statement.scope_id);
+        self.visit_span(&statement.span);
+        if let Some(initializer) = &statement.init {
+            self.visit_for_statement_init(initializer);
+        }
+        if let Some(test) = &statement.test {
+            self.visit_expression(test);
+        }
+        let baseline = self.external_storage_flow.clone();
+        self.enter_external_storage_loop_flow();
+        if let Some(update) = &statement.update {
+            self.visit_expression(update);
+        }
+        self.visit_statement(&statement.body);
+        let iterated =
+            self.leave_external_storage_loop_flow(self.external_storage_flow.clone(), "for");
+        self.external_storage_flow = ExternalStorageFlowState::merge(baseline, iterated);
+        self.leave_scope();
+        self.leave_node(kind);
+    }
+
+    fn visit_for_in_statement(&mut self, statement: &ForInStatement<'a>) {
+        let kind = AstKind::ForInStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.enter_scope(ScopeFlags::empty(), &statement.scope_id);
+        self.visit_span(&statement.span);
+        self.visit_for_statement_left(&statement.left);
+        self.visit_expression(&statement.right);
+        let baseline = self.external_storage_flow.clone();
+        self.enter_external_storage_loop_flow();
+        self.visit_statement(&statement.body);
+        let iterated =
+            self.leave_external_storage_loop_flow(self.external_storage_flow.clone(), "for-in");
+        self.external_storage_flow = ExternalStorageFlowState::merge(baseline, iterated);
+        self.leave_scope();
+        self.leave_node(kind);
+    }
+
+    fn visit_for_of_statement(&mut self, statement: &ForOfStatement<'a>) {
+        let kind = AstKind::ForOfStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.enter_scope(ScopeFlags::empty(), &statement.scope_id);
+        self.visit_span(&statement.span);
+        self.visit_for_statement_left(&statement.left);
+        self.visit_expression(&statement.right);
+        let baseline = self.external_storage_flow.clone();
+        self.enter_external_storage_loop_flow();
+        self.visit_statement(&statement.body);
+        let iterated =
+            self.leave_external_storage_loop_flow(self.external_storage_flow.clone(), "for-of");
+        self.external_storage_flow = ExternalStorageFlowState::merge(baseline, iterated);
+        self.leave_scope();
+        self.leave_node(kind);
+    }
+
+    fn visit_switch_statement(&mut self, statement: &SwitchStatement<'a>) {
+        let kind = AstKind::SwitchStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.visit_span(&statement.span);
+        self.visit_expression(&statement.discriminant);
+        self.enter_scope(ScopeFlags::empty(), &statement.scope_id);
+        self.external_storage_break_flows.push(None);
+        let baseline = self.external_storage_flow.clone();
+        let mut merged = statement
+            .cases
+            .iter()
+            .all(|case| case.test.is_some())
+            .then_some(baseline.clone());
+        for case in &statement.cases {
+            self.external_storage_flow = baseline.clone();
+            self.visit_switch_case(case);
+            let branch = self.external_storage_flow.clone();
+            merged = Some(match merged {
+                Some(current) => ExternalStorageFlowState::merge(current, branch),
+                None => branch,
+            });
+        }
+        let mut completed = merged.unwrap_or(baseline);
+        if let Some(broken) = self
+            .external_storage_break_flows
+            .pop()
+            .expect("a switch always records break flows")
+        {
+            completed = ExternalStorageFlowState::merge(completed, broken);
+        }
+        self.external_storage_flow = completed;
+        self.leave_scope();
+        self.leave_node(kind);
+    }
+
+    fn visit_try_statement(&mut self, statement: &TryStatement<'a>) {
+        let kind = AstKind::TryStatement(self.alloc(statement));
+        self.enter_node(kind);
+        self.visit_span(&statement.span);
+        let baseline = self.external_storage_flow.clone();
+        self.external_storage_exception_flows.push(baseline);
+        self.visit_block_statement(&statement.block);
+        let attempted = self.external_storage_flow.clone();
+        let exceptions = self
+            .external_storage_exception_flows
+            .pop()
+            .expect("a try block always records an exception flow");
+        if let Some(outer) = self.external_storage_exception_flows.last_mut() {
+            *outer = ExternalStorageFlowState::merge(outer.clone(), exceptions.clone());
+        }
+        if let Some(handler) = &statement.handler {
+            self.external_storage_flow = exceptions;
+            self.visit_catch_clause(handler);
+            let caught = self.external_storage_flow.clone();
+            self.external_storage_flow = ExternalStorageFlowState::merge(attempted, caught);
+        }
+        if let Some(finalizer) = &statement.finalizer {
+            self.visit_block_statement(finalizer);
+        }
+        self.leave_node(kind);
     }
 
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
@@ -38362,10 +38781,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
-            && self.assignment_detaches_parameter(&path, &assignment.right)
+            && self.assignment_replaces_parameter_with_local_value(&path, &assignment.right)
             && let Some(root) = path.binding_root()
         {
-            self.attached_callable_parameters.remove(&root);
+            self.external_storage_flow.attached_parameters.remove(&root);
+            self.record_external_storage_exception_flow();
+            if self.assignment_detaches_parameter(&path, &assignment.right) {
+                self.attached_callable_parameters.remove(&root);
+            }
         }
         if assignment.operator == OxcAssignmentOperator::Assign
             && !accessor_write

@@ -2465,6 +2465,83 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "conditionally external then local component parameter callback slot",
+            "let callbacks = {}; if (holder.enabled) callbacks = holder.callbacks; else callbacks = {}; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "conditional expression external then local component parameter callback slot",
+            "const callbacks = holder.enabled ? holder.callbacks : {}; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "short-circuit component parameter callback slot",
+            "let callbacks = {}; holder.enabled && (callbacks = holder.callbacks); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "zero-iteration loop component parameter callback slot",
+            "let callbacks = holder.callbacks; while (holder.reset) callbacks = {}; const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "break-interrupted loop component parameter callback slot",
+            "let callbacks = {}; do { callbacks = holder.callbacks; if (holder.stop) break; callbacks = {}; } while (false); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "continue-interrupted loop component parameter callback slot",
+            "let callbacks = {}; for (const item of holder.items) { callbacks = holder.callbacks; if (item.skip) continue; callbacks = {}; } const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "labeled-break component parameter callback slot",
+            "let callbacks = {}; outer: { callbacks = holder.callbacks; break outer; callbacks = {}; } const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "switch external then local component parameter callback slot",
+            "let callbacks = {}; switch (holder.kind) { case 0: callbacks = holder.callbacks; break; default: callbacks = {}; } const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "try external then local catch component parameter callback slot",
+            "let callbacks = {}; try { callbacks = holder.callbacks; } catch { callbacks = {}; } const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "throw-interrupted external replacement component parameter callback slot",
+            "let callbacks = {}; try { callbacks = holder.callbacks; holder.maybeThrow(); callbacks = {}; } catch {} const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "optional call replacement component parameter callback slot",
+            "let callbacks = holder.callbacks; holder.install?.(callbacks = {}); const run = () => count;",
+            "callbacks.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "captured reassigned component parameter callback slot",
             "let callbacks = {}; const run = () => count; const install = () => { callbacks.run = run; }; callbacks = holder.callbacks;",
             "install();",
@@ -2802,6 +2879,22 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             let replacedInBranches = holder.callbacks;
             if (holder.first) replacedInBranches = {};
             else replacedInBranches = {};
+            let replacedConditionally = holder.callbacks;
+            replacedConditionally = holder.first ? {} : {};
+            let replacedBySwitch = holder.callbacks;
+            switch (holder.kind) {
+                case 0: replacedBySwitch = {}; break;
+                default: replacedBySwitch = {};
+            }
+            let replacedInForInit = holder.callbacks;
+            for (replacedInForInit = {}; false;) {}
+            let replacedInWhileTest = holder.callbacks;
+            while ((replacedInWhileTest = {}, false)) {}
+            let replacedInFinally = holder.callbacks;
+            try { if (holder.fail) throw 0; }
+            finally { replacedInFinally = {}; }
+            let replacedBeforeLabeledBreak = holder.callbacks;
+            done: { replacedBeforeLabeledBreak = {}; break done; }
             const getLocal = () => ({});
             class LocalFactory {}
             class PrimitiveFactory { constructor() { return 1; } }
@@ -2813,12 +2906,21 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             arrayRestAlias.run = run;
             replacedExternal.run = run;
             replacedInBranches.run = run;
+            replacedConditionally.run = run;
+            replacedBySwitch.run = run;
+            replacedInForInit.run = run;
+            replacedInWhileTest.run = run;
+            replacedInFinally.run = run;
+            replacedBeforeLabeledBreak.run = run;
             getLocal().run = run;
             new LocalFactory().run = run;
             new PrimitiveFactory().run = run;
             holder.label += run;
             [holder.label, local.next] = ["safe", run];
             ({ label: holder.label, next: local.next } = { label: "safe", next: run });
+            if (holder.detach) holder = {};
+            else holder = {};
+            holder.run = run;
             local.run();
             alias.next?.();
             return count;
