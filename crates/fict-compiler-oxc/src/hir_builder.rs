@@ -24870,6 +24870,20 @@ impl StaticHookAliasCollector<'_> {
         self.local_class_instance_callables.remove(target);
         self.open_local_class_instance_fields.remove(target);
         self.closed_replacement_class_instances.remove(target);
+        self.local_object_prototypes.remove(target);
+        let intrinsic_properties = BTreeSet::from([
+            "length".to_string(),
+            "name".to_string(),
+            "prototype".to_string(),
+        ]);
+        self.structured_own_properties
+            .insert(target.clone(), intrinsic_properties.clone());
+        for property in intrinsic_properties {
+            let property = target.clone().with_property(property);
+            self.descriptor_defined_properties.insert(property.clone());
+            self.enumerable_descriptor_properties.remove(&property);
+        }
+        self.open_structured_containers.remove(target);
         let prototype = target.clone().with_property("prototype".to_string());
         self.local_auto_accessor_properties.remove(target);
         self.local_auto_accessor_properties.remove(&prototype);
@@ -24904,6 +24918,16 @@ impl StaticHookAliasCollector<'_> {
         if replacement_object.is_some() {
             self.closed_replacement_class_instances
                 .insert(target.clone());
+        }
+        if let Some(super_class) = &class.super_class
+            && let Some(raw_super) = static_alias_source_path(self.scoping, super_class)
+        {
+            let super_class = resolve_static_alias_path(&self.aliases, &raw_super);
+            self.dynamic_path_owner_depths
+                .insert((class.span.start, class.span.end), self.function_depth);
+            let snapshot = StaticAliasPath::dynamic_this(class.span)
+                .with_property("class-static-prototype-snapshot".to_string());
+            self.inherit_local_object_prototype(target, &super_class, snapshot);
         }
         if replacement_object.is_none()
             && let Some(super_class) = &class.super_class
@@ -25029,6 +25053,8 @@ impl StaticHookAliasCollector<'_> {
                 }
                 if !method.r#static {
                     self.open_local_class_instance_fields.insert(target.clone());
+                } else {
+                    self.open_structured_containers.insert(target.clone());
                 }
                 continue;
             };
@@ -25061,6 +25087,12 @@ impl StaticHookAliasCollector<'_> {
             }
             self.exclude_dynamic_local_accessor_property(&method_owner, name.clone());
             let method_target = method_owner.with_property(name);
+            if method.r#static {
+                self.record_local_data_property_definition(&method_target);
+                self.descriptor_defined_properties
+                    .insert(method_target.clone());
+                self.enumerable_descriptor_properties.remove(&method_target);
+            }
             if method.kind == MethodDefinitionKind::Set {
                 if !self.local_getter_properties.contains(&method_target) {
                     self.clear_overlapping_aliases(&method_target);
@@ -25541,12 +25573,12 @@ impl StaticHookAliasCollector<'_> {
         }
         if let Some(accessors) = self.local_auto_accessor_properties.get(&source).cloned() {
             self.local_auto_accessor_properties
-                .insert(target.clone(), accessors.clone());
-            if let Some(properties) = self.structured_own_properties.get(&source).cloned() {
-                self.structured_own_properties
-                    .insert(target.clone(), properties);
-            }
-            for name in accessors {
+                .insert(target.clone(), accessors);
+        }
+        if let Some(properties) = self.structured_own_properties.get(&source).cloned() {
+            self.structured_own_properties
+                .insert(target.clone(), properties.clone());
+            for name in properties {
                 let source_property = source.clone().with_property(name.clone());
                 let target_property = target.clone().with_property(name);
                 if self
@@ -25564,9 +25596,35 @@ impl StaticHookAliasCollector<'_> {
                         .insert(target_property);
                 }
             }
-            if self.open_structured_containers.contains(&source) {
-                self.open_structured_containers.insert(target.clone());
+        }
+        if self.open_structured_containers.contains(&source) {
+            self.open_structured_containers.insert(target.clone());
+        }
+        let capture_creators = [capture_invocations.to_vec()];
+        if let Some(prototypes) = self.local_object_prototypes.get(&source).cloned() {
+            let snapshot = |snapshot: &StaticAliasPath| {
+                Self::rebase_returned_class_path(snapshot, &source, target)
+            };
+            let mut mapped_prototypes = BTreeMap::new();
+            for (prototype, prototype_snapshot) in prototypes {
+                let mapped = self
+                    .mapped_returned_callable_capture_paths(
+                        &prototype,
+                        LocalParameterInvalidationKind::Member,
+                        &capture_creators,
+                    )
+                    .unwrap_or_else(|| {
+                        BTreeSet::from([Self::rebase_returned_class_path(
+                            &prototype, &source, target,
+                        )])
+                    });
+                let prototype_snapshot = snapshot(&prototype_snapshot);
+                for prototype in mapped {
+                    mapped_prototypes.insert(prototype, prototype_snapshot.clone());
+                }
             }
+            self.local_object_prototypes
+                .insert(target.clone(), mapped_prototypes);
         }
         let source_prototype = source.clone().with_property("prototype".to_string());
         let target_prototype = target.clone().with_property("prototype".to_string());
@@ -25629,7 +25687,6 @@ impl StaticHookAliasCollector<'_> {
             .filter(|(path, _)| path.starts_with(&source) && *path != &source)
             .map(|(path, alias)| (path.clone(), alias.clone()))
             .collect::<Vec<_>>();
-        let capture_creators = [capture_invocations.to_vec()];
         for (path, alias) in aliases {
             let destination = Self::rebase_returned_class_path(&path, &source, target);
             let aliases = self
@@ -30371,20 +30428,40 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn is_local_auto_accessor_property(&self, path: &StaticAliasPath) -> bool {
+        self.local_auto_accessor_storage_property(path).is_some()
+    }
+
+    fn local_auto_accessor_storage_property(
+        &self,
+        path: &StaticAliasPath,
+    ) -> Option<StaticAliasPath> {
         let target = resolve_static_alias_slot_path(&self.aliases, path);
         if target.element_wildcard || target.properties.is_empty() {
-            return false;
+            return None;
         }
-        let mut owner = target;
-        let Some(property) = owner.properties.pop() else {
-            return false;
-        };
-        owner.element_wildcard = false;
-        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
-        [owner, resolved_owner].into_iter().any(|owner| {
-            self.local_auto_accessor_properties
-                .get(&owner)
-                .is_some_and(|properties| properties.contains(&property))
+        let mut candidates = BTreeSet::from([target.clone()]);
+        candidates.extend(self.local_object_prototype_member_paths(&target));
+        let accessors = candidates
+            .into_iter()
+            .filter(|candidate| {
+                let mut owner = candidate.clone();
+                let Some(property) = owner.properties.pop() else {
+                    return false;
+                };
+                owner.element_wildcard = false;
+                let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+                [owner, resolved_owner].into_iter().any(|owner| {
+                    self.local_auto_accessor_properties
+                        .get(&owner)
+                        .is_some_and(|properties| properties.contains(&property))
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        (accessors.len() == 1).then(|| {
+            accessors
+                .into_iter()
+                .next()
+                .expect("one local auto-accessor storage property")
         })
     }
 
@@ -30420,14 +30497,7 @@ impl StaticHookAliasCollector<'_> {
             return;
         };
         owner.element_wildcard = false;
-        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
-        if respect_accessors
-            && [owner.clone(), resolved_owner].into_iter().any(|owner| {
-                self.local_auto_accessor_properties
-                    .get(&owner)
-                    .is_some_and(|properties| properties.contains(&property))
-            })
-        {
+        if respect_accessors && self.is_local_auto_accessor_property(target) {
             return;
         }
         let Some((owner, properties)) = self.tracked_structured_own_properties(&owner) else {
@@ -31507,12 +31577,14 @@ impl StaticHookAliasCollector<'_> {
             .get(&source.clone().with_property("prototype".to_string()))
             .cloned();
         let static_class_accessors = self.local_auto_accessor_properties.get(&source).cloned();
-        let static_class_properties = static_class_accessors
-            .as_ref()
-            .and_then(|_| self.structured_own_properties.get(&source).cloned());
-        let static_class_open =
-            static_class_accessors.is_some() && self.open_structured_containers.contains(&source);
-        let static_accessor_descriptors = static_class_accessors
+        let static_class_properties = local_class
+            .then(|| self.structured_own_properties.get(&source).cloned())
+            .flatten();
+        let static_class_open = local_class && self.open_structured_containers.contains(&source);
+        let static_class_prototypes = local_class
+            .then(|| self.local_object_prototypes.get(&source).cloned())
+            .flatten();
+        let static_class_descriptors = static_class_properties
             .iter()
             .flatten()
             .map(|name| {
@@ -31682,7 +31754,11 @@ impl StaticHookAliasCollector<'_> {
         if static_class_open {
             self.open_structured_containers.insert(target.clone());
         }
-        for (name, defined, enumerable) in static_accessor_descriptors {
+        if let Some(prototypes) = static_class_prototypes {
+            self.local_object_prototypes
+                .insert(target.clone(), prototypes);
+        }
+        for (name, defined, enumerable) in static_class_descriptors {
             let property = target.clone().with_property(name);
             if defined {
                 self.descriptor_defined_properties.insert(property.clone());
@@ -35004,7 +35080,7 @@ impl StaticHookAliasCollector<'_> {
         self.record_deferred_callable_alias(span, target.clone(), source);
     }
 
-    fn alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
+    fn direct_alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
         let expression = unwrap_transparent_call_expression(expression);
         planned_expression_place(self.scoping, expression)
             .and_then(|place| {
@@ -35018,6 +35094,19 @@ impl StaticHookAliasCollector<'_> {
                 )
             })
             .or_else(|| self.prototype_derived_path(expression))
+    }
+
+    fn alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
+        let path = self.direct_alias_source_path(expression)?;
+        let slot = resolve_static_alias_slot_path(&self.aliases, &path);
+        if self.aliases.contains_key(&slot) {
+            return Some(path);
+        }
+        let prototypes = self.local_object_prototype_member_paths(&path);
+        if prototypes.len() == 1 {
+            return prototypes.first().cloned();
+        }
+        Some(path)
     }
 
     fn current_value_alias_candidates(
@@ -38194,7 +38283,10 @@ impl StaticHookAliasCollector<'_> {
                         self.record_local_setter_path_invocations(&path, source.clone());
                     let retains_getter = !self.local_getter_resolution(&path, false).1.is_empty();
                     if !invokes_setter && !retains_getter {
-                        self.insert_alias(path, source.clone());
+                        let storage_path = self
+                            .local_auto_accessor_storage_property(&path)
+                            .unwrap_or(path);
+                        self.insert_alias(storage_path, source.clone());
                     }
                 }
             }
@@ -40170,9 +40262,10 @@ impl StaticHookAliasCollector<'_> {
     ) -> bool {
         let source = resolve_static_alias_path(&self.aliases, raw_source);
         let structured = self.structured_own_properties.contains_key(&source);
+        let local_class = self.local_class_instances.contains(&source);
         let callable = self.local_callable_parameters.contains_key(&source)
             || self.local_bound_callables.contains_key(&source)
-            || self.local_class_instances.contains(&source)
+            || local_class
             || self
                 .local_callable_parameter_history
                 .get(&source)
@@ -40203,7 +40296,7 @@ impl StaticHookAliasCollector<'_> {
                 .local_object_prototypes
                 .iter()
                 .any(|(owner, prototypes)| {
-                    owner.starts_with(&source)
+                    (owner.starts_with(&source) && !(local_class && owner == &source))
                         || prototypes
                             .keys()
                             .any(|prototype| prototype.starts_with(&source))
@@ -40217,7 +40310,10 @@ impl StaticHookAliasCollector<'_> {
                 .iter()
                 .any(|path| path != &source && path.starts_with(&source))
             || self.descriptor_defined_properties.iter().any(|path| {
-                path.starts_with(&source) && !self.is_local_auto_accessor_property(path)
+                path.starts_with(&source)
+                    && !(local_class
+                        && path.properties.len() == source.properties.len().saturating_add(1))
+                    && !self.is_local_auto_accessor_property(path)
             })
         {
             return false;
@@ -42201,7 +42297,10 @@ impl StaticHookAliasCollector<'_> {
                     let ambiguous = targets.len() != 1 || sources.len() != 1;
                     let mut applied = false;
                     for target in targets {
-                        let target = resolve_static_alias_slot_path(&self.aliases, &target);
+                        let own_target = resolve_static_alias_slot_path(&self.aliases, &target);
+                        let target = self
+                            .local_auto_accessor_storage_property(&own_target)
+                            .unwrap_or_else(|| own_target.clone());
                         self.cross_scope_alias_targets
                             .retain(|candidate| !candidate.overlaps(&target));
                         if sources.is_empty() {
@@ -42209,7 +42308,7 @@ impl StaticHookAliasCollector<'_> {
                             applied = true;
                             continue;
                         }
-                        self.record_local_own_property_assignment(&target);
+                        self.record_local_own_property_assignment(&own_target);
                         for source in &sources {
                             let source = resolve_static_alias_path(&self.aliases, source);
                             self.insert_alias(target.clone(), source);
@@ -45773,9 +45872,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             && !(stores_externally && deferred_class_effect.is_some())
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
         {
-            self.collect_initializer(path.clone(), &assignment.right);
+            let storage_path = self
+                .local_auto_accessor_storage_property(&path)
+                .unwrap_or_else(|| path.clone());
+            self.collect_initializer(storage_path.clone(), &assignment.right);
             if conditional {
-                self.mark_alias_target_ambiguous(path);
+                self.mark_alias_target_ambiguous(storage_path);
             }
         } else if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(source) = self.alias_source_path(&assignment.right)
@@ -45822,7 +45924,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .map_or(self.control_depth > 0, |baseline| {
                     self.control_depth > *baseline
                 });
-            let path = self.alias_source_path(&expression.argument);
+            let path = self.direct_alias_source_path(&expression.argument);
             let deferred_class_instance_delete = path.as_ref().and_then(|path| {
                 self.deferred_class_instance_operation_span(path)
                     .map(|span| (span, path.clone()))

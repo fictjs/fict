@@ -5165,6 +5165,126 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "subclass inherits a static auto-accessor value",
+            "class Parent { static accessor item = local; } class Box extends Parent {} holder.item = Box.item;",
+            true,
+        ),
+        (
+            "subclass inherits a static field value",
+            "class Parent { static item = local; } class Box extends Parent {} holder.item = Box.item;",
+            true,
+        ),
+        (
+            "subclass inherits a static method",
+            "class Parent { static expose() { holder.item = local; } } class Box extends Parent {} Box.expose();",
+            true,
+        ),
+        (
+            "subclass inherits a static getter",
+            "class Parent { static get item() { holder.item = local; return {}; } } class Box extends Parent {} void Box.item;",
+            true,
+        ),
+        (
+            "subclass inherits a static setter",
+            "class Parent { static set item(value) { holder.item = value; } } class Box extends Parent {} Box.item = local;",
+            true,
+        ),
+        (
+            "inherited static getter receives the subclass",
+            "class Parent { static get item() { holder.item = this.own; return {}; } } class Box extends Parent { static own = local; } void Box.item;",
+            true,
+        ),
+        (
+            "inherited static method receives the subclass",
+            "class Parent { static expose() { holder.item = this.item; } } class Box extends Parent { static item = local; } Box.expose();",
+            true,
+        ),
+        (
+            "subclass static field shadows an inherited field",
+            "class Parent { static item = local; } class Box extends Parent { static item = {}; } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "subclass static method shadows an inherited method",
+            "class Parent { static expose() { holder.item = local; } } class Box extends Parent { static expose() {} } Box.expose();",
+            false,
+        ),
+        (
+            "subclass static getter shadows an inherited getter",
+            "class Parent { static get item() { holder.item = local; return {}; } } class Box extends Parent { static get item() { return {}; } } void Box.item;",
+            false,
+        ),
+        (
+            "subclass static setter shadows an inherited getter",
+            "class Parent { static get item() { holder.item = local; return {}; } } class Box extends Parent { static set item(value) {} } void Box.item;",
+            false,
+        ),
+        (
+            "subclass sees a later superclass static field write",
+            "class Parent { static item = {}; } class Box extends Parent {} Parent.item = local; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "subclass static field assignment creates an own value",
+            "class Parent { static item = local; } class Box extends Parent {} Box.item = {}; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "deleting a subclass static field reveals the inherited value",
+            "class Parent { static item = local; } class Box extends Parent { static item = {}; } delete Box.item; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "deleting an inherited static field preserves it",
+            "class Parent { static item = local; } class Box extends Parent {} delete Box.item; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "inherited static auto-accessor assignment updates the subclass value",
+            "class Parent { static accessor item = {}; } class Box extends Parent {} Box.item = local; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "inherited static auto-accessor assignment updates the superclass storage",
+            "class Parent { static accessor item = {}; } class Box extends Parent {} Box.item = local; holder.item = Parent.item;",
+            true,
+        ),
+        (
+            "inherited static auto-accessor assignment remains non-own",
+            "class Parent { static accessor item = {}; } class Box extends Parent {} Box.item = local; const copy = { ...Box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "deleting an inherited static auto-accessor preserves its subclass value",
+            "class Parent { static accessor item = {}; } class Box extends Parent {} Box.item = local; delete Box.item; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "object spread excludes inherited static fields",
+            "class Parent { static item = local; } class Box extends Parent {} const copy = { ...Box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "multi-level subclasses inherit static fields",
+            "class Parent { static item = local; } class Middle extends Parent {} class Box extends Middle {} holder.item = Box.item;",
+            true,
+        ),
+        (
+            "subclass retains its original superclass after binding reassignment",
+            "let Parent = class { static item = local; }; class Box extends Parent {} Parent = class {}; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "detached subclass retains inherited static fields",
+            "class Parent { static item = local; } let Box = class extends Parent {}; const Alias = Box; Box = class {}; holder.item = Alias.item;",
+            true,
+        ),
+        (
+            "returned subclass inherits captured static fields",
+            "function derive(Parent) { return class extends Parent {}; } class Parent { static item = local; } const Box = derive(Parent); holder.item = Box.item;",
+            true,
+        ),
+        (
             "static field replaces an earlier alias eagerly",
             "const container = { item: local }; const fresh = {}; class Box { static value = (container.item = fresh); } void Box; holder.item = container.item;",
             false,
