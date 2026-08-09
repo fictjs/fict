@@ -8957,6 +8957,9 @@ fn dynamic_property_alias_remainder<'a>(
     }
     let property_index = owner.len();
     let property = candidate.properties.get(property_index)?;
+    if is_non_enumerable_internal_class_property(property) {
+        return None;
+    }
     if target.properties[marker + 1..].contains(property) {
         return None;
     }
@@ -28389,6 +28392,33 @@ impl StaticHookAliasCollector<'_> {
                 alternatives = alternatives.saturating_add(1);
                 length = length.saturating_add(1);
             }
+            for (dynamic_index, value_source) in self
+                .enumerable_dynamic_data_property_sources(source)
+                .into_iter()
+                .enumerate()
+            {
+                let value_target = if entries {
+                    let entry = target.with_property(format!(
+                        "<object-entry-{source_index}-computed-data-{dynamic_index}>"
+                    ));
+                    self.structured_own_properties.insert(
+                        entry.clone(),
+                        BTreeSet::from(["0".to_string(), "1".to_string()]),
+                    );
+                    self.array_lengths.insert(entry.clone(), 2);
+                    self.insert_alias(wildcard.clone(), entry.clone());
+                    entry.with_property("1".to_string())
+                } else {
+                    let value = target.with_property(format!(
+                        "<object-value-{source_index}-computed-data-{dynamic_index}>"
+                    ));
+                    self.insert_alias(wildcard.clone(), value.clone());
+                    value
+                };
+                self.insert_alias(value_target, value_source);
+                alternatives = alternatives.saturating_add(1);
+                open = true;
+            }
             if !self.enumerable_dynamic_local_getters(source).is_empty() {
                 let value_target = if entries {
                     let entry =
@@ -28438,6 +28468,50 @@ impl StaticHookAliasCollector<'_> {
         self.local_object_value_enumeration_results
             .insert(span, target.clone());
         Some(target)
+    }
+
+    fn enumerable_dynamic_data_property_sources(
+        &self,
+        owner: &StaticAliasPath,
+    ) -> BTreeSet<StaticAliasPath> {
+        let resolved_owner = resolve_static_alias_path(&self.aliases, owner);
+        let owners = BTreeSet::from([owner.clone(), resolved_owner]);
+        let targets = self
+            .aliases
+            .keys()
+            .chain(self.alias_history.keys())
+            .filter(|target| {
+                dynamic_property_alias_marker(target).is_some_and(|marker| {
+                    target.properties[marker] == DYNAMIC_DATA_PROPERTY
+                        && dynamic_property_alias_owner(target)
+                            .is_some_and(|owner| owners.contains(&owner))
+                })
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut sources = BTreeSet::new();
+        for target in targets {
+            let Some(target_owner) = dynamic_property_alias_owner(&target) else {
+                continue;
+            };
+            let historical = self.path_requires_historical_aliases(&target, self.function_depth);
+            let candidates = self.aliases.get(&target).into_iter().chain(
+                historical
+                    .then(|| self.alias_history.get(&target))
+                    .flatten()
+                    .into_iter()
+                    .flatten(),
+            );
+            sources.extend(
+                candidates
+                    .filter(|source| {
+                        source.starts_with(&target_owner)
+                            && source.properties.len() > target_owner.properties.len()
+                    })
+                    .cloned(),
+            );
+        }
+        sources
     }
 
     fn record_inline_object_from_entries_hooks(

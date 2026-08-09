@@ -4915,6 +4915,26 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "computed instance field appears in Object.values",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); const values = Object.values(box); holder.item = values[0];",
+            true,
+        ),
+        (
+            "computed instance field appears in Object.entries",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); const entries = Object.entries(box); holder.item = entries[0][1];",
+            true,
+        ),
+        (
+            "computed instance field Object.values snapshots its value",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); const values = Object.values(box); box.item = {}; holder.item = values[0];",
+            true,
+        ),
+        (
+            "inherited computed instance field appears in Object.values",
+            "const key = holder.key; class Parent { [key] = local; } class Box extends Parent {} const box = new Box(); const values = Object.values(box); holder.item = values[0];",
+            true,
+        ),
+        (
             "computed instance field preserves a nested local value",
             "const key = holder.key; class Box { [key] = { nested: local }; } const box = new Box(); holder.item = box.item.nested;",
             true,
@@ -5677,6 +5697,61 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         (
             "computed static field remains enumerable",
             "const key = holder.key; class Box { static [key] = local; } const copy = { ...Box }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "computed static field appears in Object.values",
+            "const key = holder.key; class Box { static [key] = local; } const values = Object.values(Box); holder.item = values[0];",
+            true,
+        ),
+        (
+            "fresh computed static field stays fresh in Object.values",
+            "const key = holder.key; class Box { static [key] = {}; } const values = Object.values(Box); holder.item = values[0];",
+            false,
+        ),
+        (
+            "multiple computed static fields remain candidates in Object.values",
+            "const first = holder.first; const second = holder.second; class Box { static [first] = {}; static [second] = local; } const values = Object.values(Box); holder.item = values[0];",
+            true,
+        ),
+        (
+            "computed static field appears in Object.entries",
+            "const key = holder.key; class Box { static [key] = local; } const entries = Object.entries(Box); holder.item = entries[0][1];",
+            true,
+        ),
+        (
+            "computed static field Object.entries snapshots its value",
+            "const key = holder.key; class Box { static [key] = local; } const entries = Object.entries(Box); Box.item = {}; holder.item = entries[0][1];",
+            true,
+        ),
+        (
+            "inherited computed static field stays absent from Object.values",
+            "const key = holder.key; class Parent { static [key] = local; } class Box extends Parent {} const values = Object.values(Box); holder.item = values[0];",
+            false,
+        ),
+        (
+            "own computed static field excludes an inherited value from Object.values",
+            "const parentKey = holder.parentKey; const ownKey = holder.ownKey; class Parent { static [parentKey] = local; } class Box extends Parent { static [ownKey] = {}; } const values = Object.values(Box); holder.item = values[0];",
+            false,
+        ),
+        (
+            "computed static method stays absent from Object.values",
+            "const key = holder.key; class Box { static [key]() { return local; } } const values = Object.values(Box); holder.item = values[0];",
+            false,
+        ),
+        (
+            "detached class Object.values preserves a computed static field",
+            "const key = holder.key; let Box = class { static [key] = local; }; const Alias = Box; Box = class {}; const values = Object.values(Alias); holder.item = values[0];",
+            true,
+        ),
+        (
+            "returned class Object.values maps a computed static field",
+            "const key = holder.key; function makeBox(value) { return class { static [key] = value; }; } const Box = makeBox(local); const values = Object.values(Box); holder.item = values[0];",
+            true,
+        ),
+        (
+            "computed static callable field remains invokable through Object.values",
+            "const key = holder.key; class Box { static [key] = () => { holder.item = local; }; } const values = Object.values(Box); values[0]();",
             true,
         ),
         (
