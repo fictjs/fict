@@ -25062,6 +25062,7 @@ impl StaticHookAliasCollector<'_> {
             let snapshot = StaticAliasPath::dynamic_this(class.span)
                 .with_property("class-static-prototype-snapshot".to_string());
             self.inherit_local_object_prototype(target, &super_class, snapshot);
+            self.copy_dynamic_property_aliases(target, &super_class);
         }
         if replacement_object.is_none()
             && let Some(super_class) = &class.super_class
@@ -25627,6 +25628,30 @@ impl StaticHookAliasCollector<'_> {
                 .entry(format!("<auto-accessor:{name}@{start}:{end}>"))
                 .or_default()
                 .push(callable);
+        }
+    }
+
+    fn copy_dynamic_property_aliases(
+        &mut self,
+        target: &StaticAliasPath,
+        source: &StaticAliasPath,
+    ) {
+        let aliases = self
+            .aliases
+            .keys()
+            .chain(self.alias_history.keys())
+            .chain(self.ambiguous_alias_targets.iter())
+            .filter(|alias| dynamic_property_alias_owner(alias).as_ref() == Some(source))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for alias in aliases {
+            let inherited = Self::rebase_returned_class_path(&alias, source, target);
+            self.insert_alias(inherited.clone(), alias.clone());
+            if self.ambiguous_alias_targets.contains(&alias)
+                || self.path_requires_historical_aliases(&alias, self.function_depth)
+            {
+                self.ambiguous_alias_targets.insert(inherited);
+            }
         }
     }
 

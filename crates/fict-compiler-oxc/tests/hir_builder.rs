@@ -5375,6 +5375,21 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "subclass dynamically invokes an inherited computed static method",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent {} Box[key]();",
+            true,
+        ),
+        (
+            "grandchild dynamically invokes an inherited computed static method",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Middle extends Parent {} class Box extends Middle {} Box[key]();",
+            true,
+        ),
+        (
+            "subclass dynamically reads an inherited computed static field",
+            "const key = holder.key; class Parent { static [key] = local; } class Box extends Parent {} holder.item = Box[key];",
+            true,
+        ),
+        (
             "subclass method shadows an inherited computed static method",
             "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent { static item() {} } Box.item();",
             false,
@@ -5392,6 +5407,11 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         (
             "subclass member preserves other inherited computed static method keys",
             "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent { static item() {} } Box.other();",
+            true,
+        ),
+        (
+            "subclass member preserves a dynamic inherited computed static method key",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent { static item() {} } Box[key]();",
             true,
         ),
         (
