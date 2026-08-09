@@ -20656,12 +20656,26 @@ struct DeferredArrayMutationValue {
 #[derive(Clone)]
 struct DeferredClassInstanceValue {
     value: DeferredArrayMutationValue,
-    shape: DeferredClassInstanceValueShape,
+    shapes: BTreeMap<Vec<String>, DeferredClassInstanceValueShape>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct LocalClassInstanceInitializer {
+    class_span: (u32, u32),
+    value_span: (u32, u32),
+    receiver_span: (u32, u32),
+    order: usize,
+}
+
+#[derive(Clone)]
+struct DeferredClassInstanceArrayMutation {
+    target: StaticAliasPath,
+    mutation: DeferredArrayMutation,
+    conditional: bool,
 }
 
 #[derive(Clone)]
 enum DeferredClassInstanceValueShape {
-    Plain,
     Object {
         properties: BTreeSet<String>,
         open: bool,
@@ -21315,6 +21329,8 @@ struct StaticHookAliasCollector<'semantic> {
     // Callable state changes are ordered because later writes or removals in the same invocation
     // replace earlier ones. The conservative activation path still joins them as possible history.
     deferred_callable_operations: BTreeMap<(u32, u32), Vec<DeferredCallableOperation>>,
+    deferred_class_instance_array_mutations:
+        BTreeMap<(u32, u32), Vec<DeferredClassInstanceArrayMutation>>,
     deferred_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     suppressed_deferred_array_alias_root: Option<StaticAliasPath>,
     deferred_array_snapshot_index: usize,
@@ -21720,6 +21736,7 @@ impl LocalGetterResultDefinedness {
 
 #[derive(Clone)]
 struct LocalClassInstanceCallable {
+    initializer: Option<LocalClassInstanceInitializer>,
     value: Option<DeferredClassInstanceValue>,
     source: Option<StaticAliasPath>,
     parameters: Vec<LocalCallableParameter>,
@@ -22404,6 +22421,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             returned_callable_effects: BTreeMap::new(),
             local_callable_external_storage_effects: BTreeMap::new(),
             deferred_callable_operations: BTreeMap::new(),
+            deferred_class_instance_array_mutations: BTreeMap::new(),
             deferred_callable_ambiguous_targets: BTreeMap::new(),
             suppressed_deferred_array_alias_root: None,
             deferred_array_snapshot_index: 0,
@@ -24687,6 +24705,7 @@ impl StaticHookAliasCollector<'_> {
         }
         if let Some(alternatives) = self.local_bound_callable_initializer(value) {
             return vec![LocalClassInstanceCallable {
+                initializer: None,
                 value: None,
                 source: None,
                 parameters: Vec::new(),
@@ -24744,6 +24763,7 @@ impl StaticHookAliasCollector<'_> {
             _ => Vec::new(),
         };
         vec![LocalClassInstanceCallable {
+            initializer: None,
             value: None,
             source,
             parameters,
@@ -24972,9 +24992,26 @@ impl StaticHookAliasCollector<'_> {
                 method.kind == MethodDefinitionKind::Method,
             );
         }
+        let mut initializer_order = self
+            .local_class_instance_callables
+            .get(target)
+            .into_iter()
+            .flat_map(|fields| fields.values())
+            .flatten()
+            .filter_map(|callable| callable.initializer.map(|initializer| initializer.order))
+            .max()
+            .map_or(0, |order| order.saturating_add(1));
+        let class_span = (class.span.start, class.span.end);
         for element in &class.body.body {
             let ClassElement::PropertyDefinition(property) = element else {
                 continue;
+            };
+            let order = if property.r#static {
+                None
+            } else {
+                let order = initializer_order;
+                initializer_order = initializer_order.saturating_add(1);
+                Some(order)
             };
             if matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) {
                 continue;
@@ -24998,41 +25035,86 @@ impl StaticHookAliasCollector<'_> {
             if replacement_object.is_some() {
                 continue;
             }
+            let receiver_span = (property.span.start, property.span.end);
+            let value_span = property.value.as_ref().map_or(receiver_span, |value| {
+                (value.span().start, value.span().end)
+            });
+            let initializer = LocalClassInstanceInitializer {
+                class_span,
+                value_span,
+                receiver_span,
+                order: order.expect("an instance field always has an initializer order"),
+            };
             self.local_class_instance_fields
                 .entry(target.clone())
                 .or_default()
                 .insert(name.clone());
-            if let Some(callables) = self.local_class_instance_callables.get_mut(target) {
-                callables.remove(&name);
-            }
             let Some(value) = &property.value else {
+                self.local_class_instance_callables
+                    .entry(target.clone())
+                    .or_default()
+                    .entry(name)
+                    .or_default()
+                    .push(LocalClassInstanceCallable {
+                        initializer: Some(initializer),
+                        value: Some(DeferredClassInstanceValue {
+                            value: DeferredArrayMutationValue {
+                                sources: Vec::new(),
+                                opaque: false,
+                                definedness: LocalGetterResultDefinedness::Undefined,
+                            },
+                            shapes: BTreeMap::new(),
+                        }),
+                        source: None,
+                        parameters: Vec::new(),
+                        dynamic_receiver: None,
+                        lexical_receiver: false,
+                        generator: false,
+                        unknown: false,
+                        bound_callables: Vec::new(),
+                        bound_historical: false,
+                        exposures: BTreeSet::new(),
+                        effect_instances: Vec::new(),
+                    });
                 continue;
             };
             if !matches!(
                 value.get_inner_expression(),
                 Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
             ) {
-                if let Some(value) = self.deferred_class_instance_value(value) {
-                    self.local_class_instance_callables
-                        .entry(target.clone())
-                        .or_default()
-                        .insert(
-                            name,
-                            vec![LocalClassInstanceCallable {
-                                value: Some(value),
-                                source: None,
-                                parameters: Vec::new(),
-                                dynamic_receiver: None,
-                                lexical_receiver: false,
-                                generator: false,
-                                unknown: false,
-                                bound_callables: Vec::new(),
-                                bound_historical: false,
-                                exposures: BTreeSet::new(),
-                                effect_instances: Vec::new(),
-                            }],
-                        );
-                }
+                let receiver = StaticAliasPath::dynamic_this(property.span);
+                self.dynamic_path_owner_depths
+                    .insert(receiver_span, self.function_depth);
+                self.dynamic_this_roots.push(Some(receiver));
+                let deferred = self.deferred_class_instance_value(value);
+                self.dynamic_this_roots.pop();
+                let value = deferred.unwrap_or_else(|| DeferredClassInstanceValue {
+                    value: DeferredArrayMutationValue {
+                        sources: Vec::new(),
+                        opaque: false,
+                        definedness: self.local_getter_expression_definedness(value),
+                    },
+                    shapes: BTreeMap::new(),
+                });
+                self.local_class_instance_callables
+                    .entry(target.clone())
+                    .or_default()
+                    .entry(name)
+                    .or_default()
+                    .push(LocalClassInstanceCallable {
+                        initializer: Some(initializer),
+                        value: Some(value),
+                        source: None,
+                        parameters: Vec::new(),
+                        dynamic_receiver: None,
+                        lexical_receiver: false,
+                        generator: false,
+                        unknown: false,
+                        bound_callables: Vec::new(),
+                        bound_historical: false,
+                        exposures: BTreeSet::new(),
+                        effect_instances: Vec::new(),
+                    });
                 continue;
             }
             let span = match value.get_inner_expression() {
@@ -25053,11 +25135,16 @@ impl StaticHookAliasCollector<'_> {
                 self.returned_callable_spans.insert((span.start, span.end));
                 self.record_local_callable_effect_span(field_target, (span.start, span.end));
             }
-            let callable = self.local_class_instance_callables(value, property.span);
+            let mut callable = self.local_class_instance_callables(value, property.span);
+            for callable in &mut callable {
+                callable.initializer = Some(initializer);
+            }
             self.local_class_instance_callables
                 .entry(target.clone())
                 .or_default()
-                .insert(name, callable);
+                .entry(name)
+                .or_default()
+                .extend(callable);
         }
         if let Some(object) = replacement_object {
             self.record_replacement_object_callables(target, object);
@@ -25687,15 +25774,14 @@ impl StaticHookAliasCollector<'_> {
         self.copy_dynamic_local_getters(target, &prototype);
         self.copy_dynamic_local_setters(target, &prototype);
         self.copy_dynamic_local_accessor_exclusions(target, &prototype);
+        self.structured_own_properties
+            .entry(target.clone())
+            .or_default();
         let fields = self
             .local_class_instance_fields
             .get(class)
             .cloned()
             .unwrap_or_default();
-        self.structured_own_properties
-            .entry(target.clone())
-            .or_default()
-            .extend(fields.iter().cloned());
         for field in &fields {
             self.exclude_dynamic_local_accessor_property(target, field.clone());
         }
@@ -25730,86 +25816,249 @@ impl StaticHookAliasCollector<'_> {
             .get(class)
             .cloned()
             .unwrap_or_default();
+        let mut ordered = BTreeMap::<
+            (usize, String),
+            (
+                LocalClassInstanceInitializer,
+                Vec<LocalClassInstanceCallable>,
+            ),
+        >::new();
+        let mut unordered = BTreeMap::<String, Vec<LocalClassInstanceCallable>>::new();
         for (name, callables) in callables {
-            let instance_field = target.clone().with_property(name);
-            self.clear_overlapping_aliases(&instance_field);
-            let ambiguous = callables.len() > 1;
             for callable in callables {
-                if let Some(value) = callable.value {
-                    self.apply_deferred_class_instance_value(&instance_field, &value);
+                if let Some(initializer) = callable.initializer {
+                    ordered
+                        .entry((initializer.order, name.clone()))
+                        .or_insert_with(|| (initializer, Vec::new()))
+                        .1
+                        .push(callable);
+                } else {
+                    unordered.entry(name.clone()).or_default().push(callable);
+                }
+            }
+        }
+        for ((_, name), (initializer, callables)) in ordered {
+            self.replay_deferred_class_instance_array_mutations(target, class, initializer);
+            self.materialize_class_instance_field_callables(
+                target,
+                name,
+                callables,
+                Some(initializer),
+            );
+        }
+        for (name, callables) in unordered {
+            self.materialize_class_instance_field_callables(target, name, callables, None);
+        }
+    }
+
+    fn rebase_class_instance_receiver_path(
+        path: &StaticAliasPath,
+        initializer: LocalClassInstanceInitializer,
+        target: &StaticAliasPath,
+    ) -> StaticAliasPath {
+        let receiver = StaticAliasPath::dynamic_this(Span::new(
+            initializer.receiver_span.0,
+            initializer.receiver_span.1,
+        ));
+        if path.root != receiver.root {
+            return path.clone();
+        }
+        let mut rebased = target.clone();
+        rebased.properties.extend(path.properties.iter().cloned());
+        rebased.element_wildcard |= path.element_wildcard;
+        rebased.canonicalized()
+    }
+
+    fn rebase_class_instance_invocation_argument(
+        argument: &mut LocalInvocationArgument,
+        initializer: LocalClassInstanceInitializer,
+        target: &StaticAliasPath,
+    ) {
+        argument.raw =
+            Self::rebase_class_instance_receiver_path(&argument.raw, initializer, target);
+        argument.resolved =
+            Self::rebase_class_instance_receiver_path(&argument.resolved, initializer, target);
+        if let Some(elements) = &mut argument.known_array_elements {
+            for element in elements {
+                let LocalInvocationKnownArrayElement::References(sources) = element else {
                     continue;
+                };
+                *sources = sources
+                    .iter()
+                    .map(|source| {
+                        Self::rebase_class_instance_receiver_path(source, initializer, target)
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    fn rebase_class_instance_deferred_value(
+        value: &mut DeferredArrayMutationValue,
+        initializer: LocalClassInstanceInitializer,
+        target: &StaticAliasPath,
+    ) {
+        for source in &mut value.sources {
+            Self::rebase_class_instance_invocation_argument(source, initializer, target);
+        }
+    }
+
+    fn rebase_class_instance_array_mutation(
+        mutation: &DeferredArrayMutation,
+        initializer: LocalClassInstanceInitializer,
+        target: &StaticAliasPath,
+    ) -> DeferredArrayMutation {
+        let mut mutation = mutation.clone();
+        match &mut mutation.kind {
+            DeferredArrayMutationKind::Fill { value, .. } => {
+                Self::rebase_class_instance_deferred_value(value, initializer, target);
+            }
+            DeferredArrayMutationKind::Push(values)
+            | DeferredArrayMutationKind::Unshift(values)
+            | DeferredArrayMutationKind::Splice { values, .. } => {
+                for value in values {
+                    Self::rebase_class_instance_deferred_value(value, initializer, target);
                 }
-                for effect in callable.effect_instances.clone() {
-                    self.record_local_callable_effect_span(instance_field.clone(), effect.span);
-                    if !effect.capture_invocations.is_empty() {
-                        self.record_local_callable_effect_creator(
-                            instance_field.clone(),
-                            effect.span,
-                            effect.capture_invocations,
-                        );
-                    }
+            }
+            DeferredArrayMutationKind::Reverse
+            | DeferredArrayMutationKind::Sort
+            | DeferredArrayMutationKind::CopyWithin { .. }
+            | DeferredArrayMutationKind::Pop
+            | DeferredArrayMutationKind::Shift
+            | DeferredArrayMutationKind::Opaque => {}
+        }
+        mutation
+    }
+
+    fn replay_deferred_class_instance_array_mutations(
+        &mut self,
+        target: &StaticAliasPath,
+        class: &StaticAliasPath,
+        initializer: LocalClassInstanceInitializer,
+    ) {
+        let mutations = self
+            .deferred_class_instance_array_mutations
+            .get(&initializer.class_span)
+            .cloned()
+            .unwrap_or_default();
+        let historical = self.path_requires_historical_aliases(class, self.function_depth);
+        let mappers =
+            self.returned_callable_effect_creators(class, initializer.class_span, historical);
+        for operation in mutations {
+            let StaticAliasRoot::DynamicThis { start, end } = &operation.mutation.snapshot.root
+            else {
+                continue;
+            };
+            if *start < initializer.value_span.0 || *end > initializer.value_span.1 {
+                continue;
+            }
+            let rebased_target =
+                Self::rebase_class_instance_receiver_path(&operation.target, initializer, target);
+            if rebased_target == operation.target {
+                continue;
+            }
+            let mutation = Self::rebase_class_instance_array_mutation(
+                &operation.mutation,
+                initializer,
+                target,
+            );
+            let applied = self.apply_deferred_array_mutation(&rebased_target, &mutation, &mappers);
+            if operation.conditional && applied {
+                self.array_lengths.remove(&rebased_target);
+                self.open_structured_containers
+                    .insert(rebased_target.clone());
+                self.ambiguous_alias_targets
+                    .insert(rebased_target.with_element_wildcard());
+            }
+        }
+    }
+
+    fn materialize_class_instance_field_callables(
+        &mut self,
+        target: &StaticAliasPath,
+        name: String,
+        callables: Vec<LocalClassInstanceCallable>,
+        initializer: Option<LocalClassInstanceInitializer>,
+    ) {
+        let instance_field = target.clone().with_property(name);
+        self.clear_overlapping_aliases(&instance_field);
+        self.record_local_own_property_assignment(&instance_field);
+        let ambiguous = callables.len() > 1;
+        for callable in callables {
+            if let Some(value) = callable.value {
+                self.apply_deferred_class_instance_value(&instance_field, &value, initializer);
+                continue;
+            }
+            for effect in callable.effect_instances.clone() {
+                self.record_local_callable_effect_span(instance_field.clone(), effect.span);
+                if !effect.capture_invocations.is_empty() {
+                    self.record_local_callable_effect_creator(
+                        instance_field.clone(),
+                        effect.span,
+                        effect.capture_invocations,
+                    );
                 }
-                if let Some(source) = callable.source.clone() {
-                    self.insert_alias(instance_field.clone(), source);
-                    self.transient_callable_alias_targets
-                        .insert(instance_field.clone());
-                    continue;
+            }
+            if let Some(source) = callable.source.clone() {
+                self.insert_alias(instance_field.clone(), source);
+                self.transient_callable_alias_targets
+                    .insert(instance_field.clone());
+                continue;
+            }
+            if !callable.bound_callables.is_empty() {
+                for bound in callable.bound_callables {
+                    self.record_local_bound_callable(instance_field.clone(), bound);
                 }
-                if !callable.bound_callables.is_empty() {
-                    for bound in callable.bound_callables {
-                        self.record_local_bound_callable(instance_field.clone(), bound);
-                    }
-                    if callable.bound_historical {
-                        self.mark_alias_target_ambiguous(instance_field.clone());
-                    }
-                    self.record_callable_exposures(instance_field.clone(), callable.exposures);
-                    continue;
+                if callable.bound_historical {
+                    self.mark_alias_target_ambiguous(instance_field.clone());
                 }
-                self.record_local_callable_signature(
-                    instance_field.clone(),
-                    callable.parameters.clone(),
-                );
-                if let Some(receiver) = callable.dynamic_receiver {
-                    self.record_local_callable_receiver(instance_field.clone(), receiver.clone());
-                    if callable.lexical_receiver {
-                        self.record_local_bound_callable(
-                            instance_field.clone(),
-                            LocalBoundCallable {
-                                parameters: self
-                                    .local_callable_parameters
-                                    .get(&instance_field)
-                                    .cloned()
-                                    .unwrap_or_default(),
-                                arguments: Vec::new(),
-                                receiver: vec![self.collect_local_invocation_path(target.clone())],
-                                dynamic_receiver: Some(receiver),
-                                generator: callable.generator,
-                                unknown: false,
-                            },
-                        );
-                    }
-                }
-                if callable.generator {
-                    self.record_local_generator(instance_field.clone());
-                }
-                if callable.unknown {
+                self.record_callable_exposures(instance_field.clone(), callable.exposures);
+                continue;
+            }
+            self.record_local_callable_signature(
+                instance_field.clone(),
+                callable.parameters.clone(),
+            );
+            if let Some(receiver) = callable.dynamic_receiver {
+                self.record_local_callable_receiver(instance_field.clone(), receiver.clone());
+                if callable.lexical_receiver {
                     self.record_local_bound_callable(
                         instance_field.clone(),
                         LocalBoundCallable {
-                            parameters: callable.parameters,
+                            parameters: self
+                                .local_callable_parameters
+                                .get(&instance_field)
+                                .cloned()
+                                .unwrap_or_default(),
                             arguments: Vec::new(),
-                            receiver: Vec::new(),
-                            dynamic_receiver: None,
-                            generator: false,
-                            unknown: true,
+                            receiver: vec![self.collect_local_invocation_path(target.clone())],
+                            dynamic_receiver: Some(receiver),
+                            generator: callable.generator,
+                            unknown: false,
                         },
                     );
                 }
-                self.record_callable_exposures(instance_field.clone(), callable.exposures);
             }
-            if ambiguous {
-                self.mark_alias_target_ambiguous(instance_field);
+            if callable.generator {
+                self.record_local_generator(instance_field.clone());
             }
+            if callable.unknown {
+                self.record_local_bound_callable(
+                    instance_field.clone(),
+                    LocalBoundCallable {
+                        parameters: callable.parameters,
+                        arguments: Vec::new(),
+                        receiver: Vec::new(),
+                        dynamic_receiver: None,
+                        generator: false,
+                        unknown: true,
+                    },
+                );
+            }
+            self.record_callable_exposures(instance_field.clone(), callable.exposures);
+        }
+        if ambiguous {
+            self.mark_alias_target_ambiguous(instance_field);
         }
     }
 
@@ -32955,8 +33204,34 @@ impl StaticHookAliasCollector<'_> {
         ) {
             return None;
         }
-        let value = self.deferred_array_mutation_value(expression)?;
-        let shape = match expression.get_inner_expression() {
+        let mut value = self.deferred_array_mutation_value(expression)?;
+        let mut shapes = BTreeMap::new();
+        let mut synthetic_arrays = BTreeSet::new();
+        self.collect_deferred_class_instance_value_shapes(
+            expression,
+            &[],
+            &mut shapes,
+            &mut synthetic_arrays,
+        );
+        value.sources.retain(|source| {
+            let synthetic_container = matches!(
+                &source.raw.root,
+                StaticAliasRoot::DynamicThis { start, end }
+                    if synthetic_arrays.contains(&(*start, *end))
+            ) && source.known_array_container;
+            !synthetic_container
+        });
+        Some(DeferredClassInstanceValue { value, shapes })
+    }
+
+    fn collect_deferred_class_instance_value_shapes(
+        &mut self,
+        expression: &Expression<'_>,
+        prefix: &[String],
+        shapes: &mut BTreeMap<Vec<String>, DeferredClassInstanceValueShape>,
+        synthetic_arrays: &mut BTreeSet<(u32, u32)>,
+    ) {
+        match expression.get_inner_expression() {
             Expression::ObjectExpression(object) => {
                 let mut properties = BTreeSet::new();
                 let mut open = false;
@@ -32971,9 +33246,32 @@ impl StaticHookAliasCollector<'_> {
                         open = true;
                     }
                 }
-                DeferredClassInstanceValueShape::Object { properties, open }
+                shapes.insert(
+                    prefix.to_vec(),
+                    DeferredClassInstanceValueShape::Object { properties, open },
+                );
+                for property in &object.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        continue;
+                    };
+                    if property.kind != PropertyKind::Init || property.method {
+                        continue;
+                    }
+                    let Some(name) = property.key.static_name() else {
+                        continue;
+                    };
+                    let mut nested = prefix.to_vec();
+                    nested.push(name.into_owned());
+                    self.collect_deferred_class_instance_value_shapes(
+                        &property.value,
+                        &nested,
+                        shapes,
+                        synthetic_arrays,
+                    );
+                }
             }
             Expression::ArrayExpression(array) => {
+                synthetic_arrays.insert((array.span.start, array.span.end));
                 let lengths = self.possible_array_initializer_lengths(expression);
                 let length = if lengths.len() == 1 {
                     lengths.first().copied()
@@ -32997,15 +33295,50 @@ impl StaticHookAliasCollector<'_> {
                         .map(|(index, _)| index.to_string())
                         .collect()
                 };
-                DeferredClassInstanceValueShape::Array {
-                    length,
-                    properties,
-                    open,
+                shapes.insert(
+                    prefix.to_vec(),
+                    DeferredClassInstanceValueShape::Array {
+                        length,
+                        properties,
+                        open,
+                    },
+                );
+                for (index, element) in array.elements.iter().enumerate() {
+                    let Some(element) = element.as_expression() else {
+                        continue;
+                    };
+                    let mut nested = prefix.to_vec();
+                    nested.push(index.to_string());
+                    self.collect_deferred_class_instance_value_shapes(
+                        element,
+                        &nested,
+                        shapes,
+                        synthetic_arrays,
+                    );
                 }
             }
-            _ => DeferredClassInstanceValueShape::Plain,
-        };
-        Some(DeferredClassInstanceValue { value, shape })
+            Expression::SequenceExpression(sequence) => {
+                if let Some(value) = sequence.expressions.last() {
+                    self.collect_deferred_class_instance_value_shapes(
+                        value,
+                        prefix,
+                        shapes,
+                        synthetic_arrays,
+                    );
+                }
+            }
+            Expression::AssignmentExpression(assignment)
+                if assignment.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.collect_deferred_class_instance_value_shapes(
+                    &assignment.right,
+                    prefix,
+                    shapes,
+                    synthetic_arrays,
+                );
+            }
+            _ => {}
+        }
     }
 
     fn deferred_array_mutation_values(
@@ -33055,10 +33388,23 @@ impl StaticHookAliasCollector<'_> {
             return None;
         }
         let raw_source = self.alias_source_path(receiver)?;
-        let root = raw_source.binding_root()?;
-        if !self.attached_callable_parameters.contains(&root)
-            || self.binding_owner_depths.get(&root).copied() != Some(self.function_depth)
-        {
+        let captured_parameter = raw_source.binding_root().is_some_and(|root| {
+            self.attached_callable_parameters.contains(&root)
+                && self.binding_owner_depths.get(&root).copied() == Some(self.function_depth)
+        });
+        let instance_receiver = matches!(&raw_source.root, StaticAliasRoot::DynamicThis { .. })
+            && self
+                .class_effect_contexts
+                .last()
+                .copied()
+                .flatten()
+                .is_some_and(|context| context.captures_same_depth)
+            && self
+                .dynamic_this_roots
+                .last()
+                .and_then(Option::as_ref)
+                .is_some_and(|receiver| receiver.root == raw_source.root);
+        if !captured_parameter && !instance_receiver {
             return None;
         }
         let stable_arguments = call.arguments.iter().all(|argument| {
@@ -41551,8 +41897,16 @@ impl StaticHookAliasCollector<'_> {
         &mut self,
         target: &StaticAliasPath,
         value: &DeferredClassInstanceValue,
+        initializer: Option<LocalClassInstanceInitializer>,
     ) {
-        let sources = self.mapped_deferred_array_value_sources(&value.value, &[]);
+        let mut deferred = value.value.clone();
+        if let Some(initializer) = initializer {
+            let mut instance = target.clone();
+            instance.properties.pop();
+            instance.element_wildcard = false;
+            Self::rebase_class_instance_deferred_value(&mut deferred, initializer, &instance);
+        }
+        let sources = self.mapped_deferred_array_value_sources(&deferred, &[]);
         self.clear_overlapping_aliases(target);
         for (suffix, sources) in sources {
             let Some(suffix) = suffix else {
@@ -41603,27 +41957,30 @@ impl StaticHookAliasCollector<'_> {
             .insert(value.value.definedness);
         self.local_value_definedness
             .insert(target.clone(), value.value.definedness);
-        match &value.shape {
-            DeferredClassInstanceValueShape::Plain => {}
-            DeferredClassInstanceValueShape::Object { properties, open } => {
-                self.structured_own_properties
-                    .insert(target.clone(), properties.clone());
-                if *open {
-                    self.open_structured_containers.insert(target.clone());
+        for (suffix, shape) in &value.shapes {
+            let mut shaped_target = target.clone();
+            shaped_target.properties.extend(suffix.iter().cloned());
+            match shape {
+                DeferredClassInstanceValueShape::Object { properties, open } => {
+                    self.structured_own_properties
+                        .insert(shaped_target.clone(), properties.clone());
+                    if *open {
+                        self.open_structured_containers.insert(shaped_target);
+                    }
                 }
-            }
-            DeferredClassInstanceValueShape::Array {
-                length,
-                properties,
-                open,
-            } => {
-                self.structured_own_properties
-                    .insert(target.clone(), properties.clone());
-                if let Some(length) = length {
-                    self.array_lengths.insert(target.clone(), *length);
-                }
-                if *open || length.is_none() {
-                    self.open_structured_containers.insert(target.clone());
+                DeferredClassInstanceValueShape::Array {
+                    length,
+                    properties,
+                    open,
+                } => {
+                    self.structured_own_properties
+                        .insert(shaped_target.clone(), properties.clone());
+                    if let Some(length) = length {
+                        self.array_lengths.insert(shaped_target.clone(), *length);
+                    }
+                    if *open || length.is_none() {
+                        self.open_structured_containers.insert(shaped_target);
+                    }
                 }
             }
         }
@@ -45075,11 +45432,29 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         };
         walk_call_expression(self, call);
         if let Some((span, target, mutation)) = deferred_array_mutation {
-            self.record_deferred_callable_operation(
-                span,
-                target,
-                DeferredCallableOperationKind::ArrayMutation(mutation),
-            );
+            if matches!(&target.root, StaticAliasRoot::DynamicThis { .. })
+                && self
+                    .class_effect_contexts
+                    .last()
+                    .copied()
+                    .flatten()
+                    .is_some_and(|context| context.captures_same_depth)
+            {
+                self.deferred_class_instance_array_mutations
+                    .entry(span)
+                    .or_default()
+                    .push(DeferredClassInstanceArrayMutation {
+                        target,
+                        mutation,
+                        conditional: !unconditional,
+                    });
+            } else {
+                self.record_deferred_callable_operation(
+                    span,
+                    target,
+                    DeferredCallableOperationKind::ArrayMutation(mutation),
+                );
+            }
         }
         self.activate_precise_local_alias_invocations(&local_invocations, local_alias_timing);
         if let Some((generator_advance_invocations, segment)) = generator_advance_invocations {

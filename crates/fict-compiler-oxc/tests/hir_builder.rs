@@ -5160,6 +5160,126 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "array mutation result field remains a primitive",
+            "const items = []; class Box { value = items.push(local); } const box = new Box(); holder.item = box.value;",
+            false,
+        ),
+        (
+            "later instance field pushes into an earlier array field",
+            "class Box { items = []; value = this.items.push(local); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "later instance field shifts an earlier array field",
+            "class Box { items = [local, {}]; value = this.items.shift(); } const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "later field replacement wins over an instance array mutation",
+            "class Box { items = []; value = this.items.push(local); items = []; } const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "instance array mutation uses the latest duplicate field",
+            "class Box { items = [local]; items = []; value = this.items.push(local); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "separate instances do not share an array field blueprint",
+            "class Box { items = []; } const first = new Box(); const second = new Box(); first.items.push(local); holder.item = second.items[0];",
+            false,
+        ),
+        (
+            "each instance independently replays its field array mutation",
+            "class Box { items = []; value = this.items.push(local); } const first = new Box(); const second = new Box(); second.items.shift(); holder.item = first.items[0];",
+            true,
+        ),
+        (
+            "instance array mutation reads another field",
+            "class Box { source = local; items = []; value = this.items.push(this.source); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "instance array mutation rebases a nested receiver",
+            "class Box { state = { items: [] }; value = this.state.items.push(local); } const box = new Box(); holder.item = box.state.items[0];",
+            true,
+        ),
+        (
+            "instance array mutation reverses an earlier field",
+            "class Box { items = [local, {}]; value = this.items.reverse(); } const box = new Box(); holder.item = box.items[1];",
+            true,
+        ),
+        (
+            "instance array alias observes a later field mutation",
+            "class Box { items = []; alias = this.items; value = this.items.push(local); } const box = new Box(); holder.item = box.alias[0];",
+            true,
+        ),
+        (
+            "subclass field mutates an inherited array field",
+            "class Base { items = []; } class Box extends Base { value = this.items.push(local); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "inherited field mutation runs for a subclass instance",
+            "class Base { items = []; value = this.items.push(local); } class Box extends Base {} const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "returned class instance mutation maps a factory argument",
+            "function make(value) { return class { items = []; field = this.items.push(value); }; } const Box = make(local); const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "returned class instance mutation maps a fresh factory argument",
+            "function make(value) { return class { items = []; field = this.items.push(value); }; } const Box = make({}); const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "instance array mutation rechecks the builtin method",
+            "class Box { items = []; value = this.items.push(local); } Array.prototype.push = () => 0; const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "unconstructed instance array mutation remains inert",
+            "class Box { items = []; value = this.items.push(local); } void Box;",
+            false,
+        ),
+        (
+            "conditional instance array removal preserves the prior element",
+            "class Box { items = [local]; value = holder.enabled && this.items.pop(); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "conditional instance array insertion preserves the possible value",
+            "class Box { items = []; value = holder.enabled && this.items.push(local); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "multiple instance array mutations retain evaluation order",
+            "class Box { items = []; value = (this.items.push(local), this.items.shift()); } const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "later duplicate field clears an earlier local value",
+            "class Box { item = local; item = {}; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "uninitialized duplicate field clears an earlier local value",
+            "class Box { item = local; item; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "uninitialized subclass field shadows an inherited local value",
+            "class Base { item = local; } class Box extends Base { item; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later instance field reads an earlier field",
+            "class Box { item = local; copy = this.item; } const box = new Box(); holder.item = box.copy;",
+            true,
+        ),
+        (
             "unconstructed instance field preserves an own property",
             "const container = { item: local }; class Box { value = delete container.item; } void Box; holder.item = container.item;",
             true,
