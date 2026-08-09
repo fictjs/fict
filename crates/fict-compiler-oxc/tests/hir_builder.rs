@@ -3025,6 +3025,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "later-exposed conditional parameterized popped array element callback slot",
+            "const local = {}; const other = {}; const pop = source => source.pop(); const popped = pop(holder.enabled ? [local] : [other]); holder.item = local; const run = () => count;",
+            "popped.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "mixed conditional parameterized popped array element callback slot",
+            "const local = {}; const pop = source => source.pop(); const run = () => count;",
+            "pop(holder.enabled ? [local] : [holder.item]).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "wrapped nested external array element callback slot",
             "const local = { child: holder.item }; const make = () => Array.of(local); const run = () => count;",
             "make()[0].child.run = run;",
@@ -4123,6 +4137,7 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             const count = $state(0);
             const run = () => count;
             const local = {};
+            const otherLocal = {};
             const reversed = [local].reverse();
             const sorted = [local].sort();
             const copiedWithin = [local].copyWithin(0, 0);
@@ -4163,6 +4178,9 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             const poppedSnapshot = popParameter([popParameterValue]);
             popParameterValue = globalThis.external;
             const poppedLater = popLocalLater();
+            const poppedConditional = popParameter(
+                globalThis.flag ? [local] : [otherLocal]
+            );
             reversed[0].run = run;
             sorted[0].run = run;
             copiedWithin[0].run = run;
@@ -4186,6 +4204,7 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             shiftedApply.run = run;
             poppedSnapshot.run = run;
             poppedLater.run = run;
+            poppedConditional.run = run;
             [local].reverse()[0].run = run;
             [local].pop().run = run;
             popWrapped().run = run;
