@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    sync::Arc,
+};
 
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
@@ -21079,6 +21082,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_callable_effect_creator_history: LocalCallableEffectCreatorMap,
     returned_callable_spans: BTreeSet<(u32, u32)>,
     returned_callable_effects: BTreeMap<(u32, u32), BTreeSet<LocalCallableCapturedEffect>>,
+    local_callable_external_storage_effects: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     returned_callable_aliases: BTreeMap<(u32, u32), BTreeSet<(StaticAliasPath, StaticAliasPath)>>,
     returned_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     generator_callable_body_spans: BTreeMap<(u32, u32), (u32, u32)>,
@@ -21731,12 +21735,26 @@ struct LocalInvocationFact {
     arguments: Vec<LocalInvocationArgumentSegment>,
     argument_offset: usize,
     function_depth: usize,
+    external_storage_context: ExternalStorageInvocationContext,
     bound_receiver: Vec<LocalInvocationArgument>,
     dynamic_receiver: LocalInvocationDynamicReceiver,
     generator: LocalInvocationGenerator,
     result_discarded: bool,
     force_argument_exposure: bool,
     construct: bool,
+}
+
+#[derive(Clone)]
+struct ExternalStorageInvocationContext {
+    owner_callable_span: Option<(u32, u32)>,
+    snapshot: Option<Arc<ExternalStorageInvocationSnapshot>>,
+    inline_callable_span: Option<(u32, u32)>,
+}
+
+#[derive(Clone)]
+struct ExternalStorageInvocationSnapshot {
+    aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    flow: ExternalStorageFlowState,
 }
 
 struct LocalObjectPrototype {
@@ -21877,6 +21895,45 @@ impl LocalInvocationFact {
 }
 
 impl<'semantic> StaticHookAliasCollector<'semantic> {
+    fn external_storage_invocation_context(&self) -> ExternalStorageInvocationContext {
+        let owner_callable_span = (self.function_depth > 1)
+            .then(|| self.current_callable_effect_span())
+            .flatten();
+        ExternalStorageInvocationContext {
+            owner_callable_span,
+            snapshot: owner_callable_span.is_none().then(|| {
+                Arc::new(ExternalStorageInvocationSnapshot {
+                    aliases: self.aliases.clone(),
+                    flow: self.external_storage_flow.clone(),
+                })
+            }),
+            inline_callable_span: None,
+        }
+    }
+
+    fn external_storage_inline_invocation_context(
+        &self,
+        expression: &Expression<'_>,
+    ) -> ExternalStorageInvocationContext {
+        let span = unwrap_transparent_call_expression(expression).span();
+        ExternalStorageInvocationContext {
+            inline_callable_span: Some((span.start, span.end)),
+            ..self.external_storage_invocation_context()
+        }
+    }
+
+    fn external_storage_inline_indirection_context(
+        &self,
+        callee: &Expression<'_>,
+    ) -> ExternalStorageInvocationContext {
+        let target = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => &member.object,
+            Expression::ComputedMemberExpression(member) => &member.object,
+            _ => callee,
+        };
+        self.external_storage_inline_invocation_context(target)
+    }
+
     fn new(
         scoping: &'semantic Scoping,
         generator: &GeneratorExecutionProof,
@@ -21978,6 +22035,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_callable_effect_creator_history: BTreeMap::new(),
             returned_callable_spans: generator.returned_callable_spans.clone(),
             returned_callable_effects: BTreeMap::new(),
+            local_callable_external_storage_effects: BTreeMap::new(),
             returned_callable_aliases: BTreeMap::new(),
             returned_callable_ambiguous_targets: BTreeMap::new(),
             generator_callable_body_spans: BTreeMap::new(),
@@ -22207,6 +22265,7 @@ impl StaticHookAliasCollector<'_> {
 
     fn resolved_external_storage_alias_candidates(
         &self,
+        aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
         flow: &ExternalStorageFlowState,
         path: &StaticAliasPath,
     ) -> BTreeSet<StaticAliasPath> {
@@ -22223,7 +22282,7 @@ impl StaticHookAliasCollector<'_> {
                 );
                 break;
             }
-            let resolved = resolve_static_alias_path(&self.aliases, &current);
+            let resolved = resolve_static_alias_path(aliases, &current);
             if !candidates.contains(&resolved) {
                 pending.push_back(resolved);
             }
@@ -22237,54 +22296,40 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn alias_path_targets_external_storage(&self, path: &StaticAliasPath) -> bool {
-        self.resolved_external_storage_alias_candidates(&self.external_storage_flow, path)
-            .into_iter()
-            .any(|candidate| {
-                if !self
-                    .external_storage_flow
-                    .storage_container_attached_roots(&candidate)
-                    .is_empty()
-                {
-                    return true;
+        self.resolved_external_storage_alias_candidates(
+            &self.aliases,
+            &self.external_storage_flow,
+            path,
+        )
+        .into_iter()
+        .any(|candidate| {
+            if !self
+                .external_storage_flow
+                .storage_container_attached_roots(&candidate)
+                .is_empty()
+            {
+                return true;
+            }
+            let projection_depth =
+                candidate.properties.len() + usize::from(candidate.element_wildcard);
+            match candidate.root {
+                StaticAliasRoot::Binding(root) => {
+                    projection_depth >= 1
+                        && (self.external_callable_parameters.contains(&root)
+                            || self
+                                .scoping
+                                .symbol_flags(root)
+                                .contains(SymbolFlags::Import))
                 }
-                let projection_depth =
-                    candidate.properties.len() + usize::from(candidate.element_wildcard);
-                match candidate.root {
-                    StaticAliasRoot::Binding(root) => {
-                        projection_depth >= 1
-                            && (self.external_callable_parameters.contains(&root)
-                                || self
-                                    .scoping
-                                    .symbol_flags(root)
-                                    .contains(SymbolFlags::Import))
-                    }
-                    StaticAliasRoot::UnresolvedGlobal(_) => projection_depth >= 1,
-                    StaticAliasRoot::DynamicThis { .. } => false,
-                }
-            })
+                StaticAliasRoot::UnresolvedGlobal(_) => projection_depth >= 1,
+                StaticAliasRoot::DynamicThis { .. } => false,
+            }
+        })
     }
 
     fn record_externally_stored_value(&mut self, expression: &Expression<'_>) {
         if let Some(source) = self.alias_source_path(expression) {
-            let sources = if self.path_requires_historical_aliases(&source, self.function_depth) {
-                resolve_historical_alias_paths(&self.alias_history, &source)
-            } else {
-                BTreeSet::from([resolve_static_alias_path(&self.aliases, &source)])
-            };
-            for source in sources {
-                let StaticAliasRoot::Binding(root) = source.root else {
-                    continue;
-                };
-                if self.mutable_symbols.contains(&root) {
-                    continue;
-                }
-                if source.properties.is_empty() && !source.element_wildcard {
-                    self.externally_stored_nested_roots.remove(&root);
-                    self.externally_stored_roots.insert(root);
-                } else if !self.externally_stored_roots.contains(&root) {
-                    self.externally_stored_nested_roots.insert(root);
-                }
-            }
+            self.record_externally_stored_path(source);
             return;
         }
         match expression.get_inner_expression() {
@@ -22336,9 +22381,38 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn record_externally_stored_path(&mut self, source: StaticAliasPath) {
+        let sources = if self.path_requires_historical_aliases(&source, self.function_depth) {
+            resolve_historical_alias_paths(&self.alias_history, &source)
+        } else {
+            BTreeSet::from([resolve_static_alias_path(&self.aliases, &source)])
+        };
+        for source in sources {
+            self.record_resolved_externally_stored_path(source);
+        }
+    }
+
+    fn record_resolved_externally_stored_path(&mut self, source: StaticAliasPath) {
+        let StaticAliasRoot::Binding(root) = source.root else {
+            return;
+        };
+        if self.mutable_symbols.contains(&root) {
+            return;
+        }
+        if source.properties.is_empty() && !source.element_wildcard {
+            self.externally_stored_nested_roots.remove(&root);
+            self.externally_stored_roots.insert(root);
+        } else if !self.externally_stored_roots.contains(&root) {
+            self.externally_stored_nested_roots.insert(root);
+        }
+    }
+
     fn record_assignment_target_alias_snapshot(&mut self, span: Span, path: StaticAliasPath) {
-        let flow_candidates =
-            self.resolved_external_storage_alias_candidates(&self.external_storage_flow, &path);
+        let flow_candidates = self.resolved_external_storage_alias_candidates(
+            &self.aliases,
+            &self.external_storage_flow,
+            &path,
+        );
         let attached_roots = flow_candidates
             .iter()
             .flat_map(|candidate| self.external_storage_flow.attached_roots(candidate))
@@ -23493,13 +23567,17 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn current_returned_callable_span(&self) -> Option<(u32, u32)> {
+        self.current_callable_effect_span()
+            .filter(|span| self.returned_callable_spans.contains(span))
+    }
+
+    fn current_callable_effect_span(&self) -> Option<(u32, u32)> {
         self.class_effect_contexts
             .last()
             .copied()
             .flatten()
             .map(|context| context.span)
             .or_else(|| self.current_callable_spans.last().copied())
-            .filter(|span| self.returned_callable_spans.contains(span))
     }
 
     fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
@@ -25827,6 +25905,7 @@ impl StaticHookAliasCollector<'_> {
                     callee: Some(callee.clone()),
                     historical_callee: false,
                     function_depth: self.function_depth,
+                    external_storage_context: self.external_storage_invocation_context(),
                     bound_receiver: Vec::new(),
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                     generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -26879,6 +26958,7 @@ impl StaticHookAliasCollector<'_> {
                 historical_callee: self
                     .path_requires_historical_aliases(&callee, self.function_depth),
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -27510,6 +27590,7 @@ impl StaticHookAliasCollector<'_> {
                 callee: Some(target.clone()),
                 historical_callee: false,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -27530,6 +27611,7 @@ impl StaticHookAliasCollector<'_> {
             callee: None,
             historical_callee: false,
             function_depth: self.function_depth,
+            external_storage_context: self.external_storage_inline_invocation_context(target),
             bound_receiver: receiver,
             dynamic_receiver: LocalInvocationDynamicReceiver::Known(
                 Self::inline_callable_receiver(target),
@@ -27659,6 +27741,7 @@ impl StaticHookAliasCollector<'_> {
                 callee: None,
                 historical_callee: false,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_inline_indirection_context(callee),
                 bound_receiver: call_receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::Known(
                     self.inline_function_indirection_receiver(callee, "call"),
@@ -27695,6 +27778,7 @@ impl StaticHookAliasCollector<'_> {
                     callee: Some(target.clone()),
                     historical_callee: false,
                     function_depth: self.function_depth,
+                    external_storage_context: self.external_storage_invocation_context(),
                     bound_receiver: call_receiver,
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                     generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -27715,6 +27799,7 @@ impl StaticHookAliasCollector<'_> {
                 callee: Some(resolved_callee.clone()),
                 historical_callee: false,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: self.invocation_reference_receiver(callee),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -27735,6 +27820,7 @@ impl StaticHookAliasCollector<'_> {
             callee: None,
             historical_callee: false,
             function_depth: self.function_depth,
+            external_storage_context: self.external_storage_inline_invocation_context(callee),
             bound_receiver: self.invocation_reference_receiver(callee),
             dynamic_receiver: LocalInvocationDynamicReceiver::Known(
                 Self::inline_callable_receiver(callee),
@@ -29516,6 +29602,7 @@ impl StaticHookAliasCollector<'_> {
                     callee: Some(callee.clone()),
                     historical_callee: historical,
                     function_depth: self.function_depth,
+                    external_storage_context: self.external_storage_invocation_context(),
                     bound_receiver: receiver.clone(),
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                     generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -30035,6 +30122,7 @@ impl StaticHookAliasCollector<'_> {
                 callee: Some(callee.clone()),
                 historical_callee: false,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: receiver,
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -30071,6 +30159,7 @@ impl StaticHookAliasCollector<'_> {
             callee: Some(resolved_callee.clone()),
             historical_callee: false,
             function_depth: self.function_depth,
+            external_storage_context: self.external_storage_invocation_context(),
             bound_receiver: receiver,
             dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
             generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -30175,6 +30264,7 @@ impl StaticHookAliasCollector<'_> {
                 callee: Some(callee.clone()),
                 historical_callee: historical,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: bound_receiver.clone(),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::Known(false),
@@ -30205,6 +30295,7 @@ impl StaticHookAliasCollector<'_> {
             callee: Some(callee.clone()),
             historical_callee: false,
             function_depth: self.function_depth,
+            external_storage_context: self.external_storage_invocation_context(),
             bound_receiver: vec![self.collect_local_invocation_path(owner.clone())],
             dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
             generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -33101,6 +33192,7 @@ impl StaticHookAliasCollector<'_> {
             callee: Some(resolved_callee.clone()),
             historical_callee: false,
             function_depth: self.function_depth,
+            external_storage_context: self.external_storage_invocation_context(),
             bound_receiver,
             dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
             generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -33277,6 +33369,7 @@ impl StaticHookAliasCollector<'_> {
                     callee: Some(resolved_callee.clone()),
                     historical_callee: false,
                     function_depth: self.function_depth,
+                    external_storage_context: self.external_storage_invocation_context(),
                     bound_receiver: receiver.clone(),
                     dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                     generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -33862,6 +33955,7 @@ impl StaticHookAliasCollector<'_> {
                 arguments: arguments.clone(),
                 argument_offset: 0,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: Vec::new(),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -33933,6 +34027,7 @@ impl StaticHookAliasCollector<'_> {
                 arguments,
                 argument_offset: 0,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: Vec::new(),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -33981,6 +34076,7 @@ impl StaticHookAliasCollector<'_> {
                 arguments,
                 argument_offset: 0,
                 function_depth: self.function_depth,
+                external_storage_context: self.external_storage_invocation_context(),
                 bound_receiver: Vec::new(),
                 dynamic_receiver: LocalInvocationDynamicReceiver::ResolveFromCallee,
                 generator: LocalInvocationGenerator::ResolveFromCallee,
@@ -39396,6 +39492,145 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn map_external_storage_effect_through_invocation(
+        &self,
+        invocation: &LocalInvocationFact,
+        effect: &StaticAliasPath,
+    ) -> BTreeSet<StaticAliasPath> {
+        let mut additions = LocalInvocationEffectAdditions::new();
+        let mut matched = false;
+        for parameters in self.invocation_parameter_sets(invocation) {
+            for parameter in parameters {
+                if effect.root != StaticAliasRoot::Binding(parameter.symbol) {
+                    continue;
+                }
+                matched = true;
+                let Some((argument_index, properties, element_wildcard)) =
+                    parameter.map_invalidation(effect, LocalParameterInvalidationKind::Exposure)
+                else {
+                    continue;
+                };
+                for argument in invocation.arguments_for_parameter(argument_index) {
+                    self.map_local_invocation_effect(
+                        &argument,
+                        &properties,
+                        element_wildcard,
+                        LocalParameterInvalidationKind::Exposure,
+                        invocation.function_depth,
+                        &mut additions,
+                    );
+                }
+            }
+        }
+        if !invocation.construct {
+            for receiver in self.invocation_dynamic_receivers(invocation) {
+                if effect.root != receiver.root {
+                    continue;
+                }
+                matched = true;
+                for invocation_receiver in &invocation.bound_receiver {
+                    self.map_local_invocation_effect(
+                        invocation_receiver,
+                        &effect.properties,
+                        effect.element_wildcard,
+                        LocalParameterInvalidationKind::Exposure,
+                        invocation.function_depth,
+                        &mut additions,
+                    );
+                }
+            }
+        }
+        if matched {
+            additions.into_keys().collect()
+        } else {
+            BTreeSet::from([effect.clone()])
+        }
+    }
+
+    fn record_invoked_external_storage_path(
+        &mut self,
+        path: StaticAliasPath,
+        snapshot: &ExternalStorageInvocationSnapshot,
+    ) {
+        let candidates = self.resolved_external_storage_alias_candidates(
+            &snapshot.aliases,
+            &snapshot.flow,
+            &path,
+        );
+        for candidate in candidates {
+            self.record_resolved_externally_stored_path(candidate);
+        }
+    }
+
+    fn propagate_local_external_storage_effects(&mut self) {
+        if self.local_callable_external_storage_effects.is_empty() {
+            return;
+        }
+        let invocations = self
+            .local_invocations
+            .clone()
+            .into_iter()
+            .flat_map(|invocation| self.specialize_returned_callable_invocation(invocation))
+            .flat_map(|invocation| self.bound_invocation_variants(invocation))
+            .filter(|invocation| {
+                !self.invocation_is_definitely_generator(invocation)
+                    || (!invocation.result_discarded && !invocation.construct)
+            })
+            .collect::<Vec<_>>();
+        let mut effects = self.local_callable_external_storage_effects.clone();
+        for _ in 0..=invocations.len() {
+            let previous_len = effects.values().map(BTreeSet::len).sum::<usize>();
+            for invocation in &invocations {
+                let mut instances = self.invocation_callable_effect_instances(invocation);
+                if let Some((start, end)) = invocation.external_storage_context.inline_callable_span
+                {
+                    instances.insert((
+                        StaticAliasPath::dynamic_this(Span::new(start, end)),
+                        (start, end),
+                        false,
+                    ));
+                }
+                for (target, span, historical) in instances {
+                    let creators =
+                        self.returned_callable_effect_creators(&target, span, historical);
+                    let Some(callee_effects) = effects.get(&span).cloned() else {
+                        continue;
+                    };
+                    let mut mapped = BTreeSet::new();
+                    for effect in callee_effects {
+                        let captures = self
+                            .mapped_returned_callable_capture_paths(
+                                &effect,
+                                LocalParameterInvalidationKind::Exposure,
+                                &creators,
+                            )
+                            .unwrap_or_else(|| BTreeSet::from([effect]));
+                        for capture in captures {
+                            mapped.extend(self.map_external_storage_effect_through_invocation(
+                                invocation, &capture,
+                            ));
+                        }
+                    }
+                    if let Some(owner) = invocation.external_storage_context.owner_callable_span {
+                        effects.entry(owner).or_default().extend(mapped);
+                    } else {
+                        let snapshot = invocation
+                            .external_storage_context
+                            .snapshot
+                            .clone()
+                            .expect("top-level local invocation snapshot");
+                        for path in mapped {
+                            self.record_invoked_external_storage_path(path, &snapshot);
+                        }
+                    }
+                }
+            }
+            if effects.values().map(BTreeSet::len).sum::<usize>() == previous_len {
+                break;
+            }
+        }
+    }
+
     fn propagate_local_invocation_invalidations(&mut self) {
         let invocation_variants = self
             .local_invocations
@@ -39522,6 +39757,7 @@ impl StaticHookAliasCollector<'_> {
 
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
         self.activate_invoked_returned_callable_effects();
+        self.propagate_local_external_storage_effects();
         for path in self.deferred_exposed_paths.clone() {
             for path in resolve_historical_exposed_paths(
                 &self.alias_history,
@@ -41202,10 +41438,25 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .as_ref()
                 .and_then(static_alias_invalidation_path)
                 .is_some_and(|path| self.alias_path_targets_external_storage(&path));
-        // Nested callable bodies require invocation-time capture binding; recording their source
-        // symbols globally would taint values from calls that happen only after a reassignment.
-        if stores_externally && self.function_depth <= 1 {
-            self.record_externally_stored_value(&assignment.right);
+        if stores_externally {
+            if self.function_depth <= 1 {
+                self.record_externally_stored_value(&assignment.right);
+            } else {
+                // Nested callable bodies bind captures and parameters when invoked. Reuse the
+                // invocation effect machinery so an uncalled helper (or one called only after a
+                // reassignment) cannot taint an older local value.
+                let mut exposed = BTreeSet::new();
+                self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
+                if let Some(span) = self.current_callable_effect_span() {
+                    self.local_callable_external_storage_effects
+                        .entry(span)
+                        .or_default()
+                        .extend(exposed.iter().cloned());
+                }
+                for path in self.prepare_exposed_paths(exposed) {
+                    self.invalidate_exposed_path(path);
+                }
+            }
         }
         let prototype_path = self.prototype_assignment_target_path(&assignment.left);
         let setter_value = matches!(

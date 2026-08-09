@@ -2976,6 +2976,90 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "called helper-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const expose = () => { holder.item = local; }; expose(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameter helper-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const expose = value => { holder.item = value; }; expose(local); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "IIFE-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); (value => { holder.item = value; })(local); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "call-indirected helper-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const expose = value => { holder.item = value; }; expose.call(null, local); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "bound helper-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const expose = value => { holder.item = value; }; const bound = expose.bind(null, local); bound(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "returned helper-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const makeExpose = value => () => { holder.item = value; }; const expose = makeExpose(local); expose(); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "object method-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const api = { expose(value) { holder.item = value; } }; api.expose(local); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "class method-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); class Exposer { expose(value) { holder.item = value; } } const api = new Exposer(); api.expose(local); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "called-before-rebind helper-exposed copied array element callback slot",
+            "const local = {}; let alias = local; const items = [local]; const copy = items.slice(); const expose = () => { holder.item = alias; }; expose(); alias = {}; const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "called-before-rebind parameter helper-exposed copied array element callback slot",
+            "const local = {}; let alias = local; const items = [local]; const copy = items.slice(); const expose = value => { holder.item = value; }; expose(alias); alias = {}; const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "transitive helper-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const expose = value => { holder.item = value; }; const forward = value => expose(value); forward(local); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "transitive called-before-rebind helper-exposed copied array element callback slot",
+            "const local = {}; let alias = local; const items = [local]; const copy = items.slice(); const expose = () => { holder.item = alias; }; const forward = () => expose(); forward(); alias = {}; const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "conditional wrapped external array element callback slot",
             "const local = {}; const items = [holder.item]; const make = (flag) => flag ? items.slice() : Array.of(local); const run = () => count;",
             "make(holder.enabled)[0].run = run;",
@@ -4062,12 +4146,31 @@ fn detached_and_one_way_external_storage_values_do_not_taint_sources() {
             const neverStored = {};
             const neverExpose = () => { holder.never = neverStored; };
             neverStored.run = run;
+            const neverForwarded = {};
+            const exposeNeverForwarded = value => { holder.forwarded = value; };
+            const neverForward = () => exposeNeverForwarded(neverForwarded);
+            neverForwarded.run = run;
             const delayed = {};
             let delayedAlias = delayed;
             const exposeDelayed = () => { holder.delayed = delayedAlias; };
             delayedAlias = {};
             exposeDelayed();
             delayed.run = run;
+            const parameterDelayed = {};
+            let parameterDelayedAlias = parameterDelayed;
+            const exposeParameterDelayed = value => { holder.parameterDelayed = value; };
+            parameterDelayedAlias = {};
+            exposeParameterDelayed(parameterDelayedAlias);
+            parameterDelayed.run = run;
+            const transitivelyDelayed = {};
+            let transitivelyDelayedAlias = transitivelyDelayed;
+            const exposeTransitivelyDelayed = () => {
+                holder.transitivelyDelayed = transitivelyDelayedAlias;
+            };
+            const forwardTransitivelyDelayed = () => exposeTransitivelyDelayed();
+            transitivelyDelayedAlias = {};
+            forwardTransitivelyDelayed();
+            transitivelyDelayed.run = run;
             return count;
         }
     "#;
