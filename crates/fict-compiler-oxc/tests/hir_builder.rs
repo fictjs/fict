@@ -5165,6 +5165,86 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "computed static method may run through a known member",
+            "const key = holder.key; class Box { static [key]() { holder.item = local; } } Box.item();",
+            true,
+        ),
+        (
+            "computed static method runs through a computed member",
+            "const key = holder.key; class Box { static [key]() { holder.item = local; } } Box[key]();",
+            true,
+        ),
+        (
+            "later known static method excludes an earlier computed method",
+            "const key = holder.key; class Box { static [key]() { holder.item = local; } static item() {} } Box.item();",
+            false,
+        ),
+        (
+            "later known static method preserves other computed method keys",
+            "const key = holder.key; class Box { static [key]() { holder.item = local; } static item() {} } Box[key]();",
+            true,
+        ),
+        (
+            "later computed static method may replace an earlier known method",
+            "const key = holder.key; class Box { static item() {} static [key]() { holder.item = local; } } Box.item();",
+            true,
+        ),
+        (
+            "static field excludes a computed static method",
+            "const key = holder.key; class Box { static item = () => {}; static [key]() { holder.item = local; } } Box.item();",
+            false,
+        ),
+        (
+            "static field preserves other computed method keys",
+            "const key = holder.key; class Box { static item = () => {}; static [key]() { holder.item = local; } } Box[key]();",
+            true,
+        ),
+        (
+            "known assignment replaces a computed static method",
+            "const key = holder.key; class Box { static [key]() { holder.item = local; } } Box.item = () => {}; Box.item();",
+            false,
+        ),
+        (
+            "computed static method remains absent from object spread",
+            "const key = holder.key; class Box { static [key]() { holder.item = local; } } const copy = { ...Box }; copy.item();",
+            false,
+        ),
+        (
+            "open class spread still excludes a known static method",
+            "const key = holder.key; class Box { static [key] = {}; static expose() { holder.item = local; } } const copy = { ...Box }; copy.expose();",
+            false,
+        ),
+        (
+            "computed static method receives its class",
+            "const key = holder.key; class Box { static own = local; static [key]() { holder.item = this.own; } } Box.item();",
+            true,
+        ),
+        (
+            "subclass inherits a computed static method",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent {} Box.item();",
+            true,
+        ),
+        (
+            "detached class preserves a computed static method",
+            "const key = holder.key; let Box = class { static [key]() { holder.item = local; } }; const Alias = Box; Box = class {}; Alias.item();",
+            true,
+        ),
+        (
+            "detached computed static method remains absent from spread",
+            "const key = holder.key; let Box = class { static [key]() { holder.item = local; } }; const Alias = Box; Box = class {}; const copy = { ...Alias }; copy.item();",
+            false,
+        ),
+        (
+            "returned class maps a computed static method capture",
+            "const key = holder.key; function makeBox(value) { return class { static [key]() { holder.item = value; } }; } const Box = makeBox(local); Box.item();",
+            true,
+        ),
+        (
+            "returned computed static method remains absent from spread",
+            "const key = holder.key; function makeBox(value) { return class { static [key]() { holder.item = value; } }; } const Box = makeBox(local); const copy = { ...Box }; copy.item();",
+            false,
+        ),
+        (
             "computed static field preserves nested local values",
             "const key = holder.key; class Box { static [key] = { nested: local }; } holder.item = Box.item.nested;",
             true,
