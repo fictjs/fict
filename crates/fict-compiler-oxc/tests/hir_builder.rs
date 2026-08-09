@@ -4905,6 +4905,81 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "constructed auto-accessor materializes its local value",
+            "class Box { accessor item = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "class expression auto-accessor materializes its local value",
+            "const Box = class { accessor item = local; }; const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "returned class auto-accessor materializes its local value",
+            "function makeBox() { return class { accessor item = local; }; } const Box = makeBox(); const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "external auto-accessor assignment materializes its local value",
+            "class Box { accessor item = {}; } const box = new Box(); box.item = local; holder.item = box.item;",
+            true,
+        ),
+        (
+            "external auto-accessor assignment replaces its local value",
+            "class Box { accessor item = local; } const box = new Box(); box.item = {}; holder.item = box.item;",
+            false,
+        ),
+        (
+            "auto-accessor assignment replaces its local value",
+            "class Box { accessor item = local; reset = (this.item = {}); } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "auto-accessor deletion preserves its inherited property",
+            "class Box { accessor item = local; removed = delete this.item; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "external auto-accessor assignment remains non-enumerable",
+            "class Box { accessor item = {}; } const box = new Box(); box.item = local; const copy = { ...box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "external auto-accessor deletion preserves its value",
+            "class Box { accessor item = local; } const box = new Box(); delete box.item; holder.item = box.item;",
+            true,
+        ),
+        (
+            "auto-accessor is absent from object spread",
+            "class Box { accessor item = local; } const box = new Box(); const copy = { ...box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "inherited auto-accessor materializes its local value",
+            "class Parent { accessor item = local; } class Box extends Parent {} const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "instance field shadows an inherited auto-accessor",
+            "class Parent { accessor item = local; } class Box extends Parent { item = {}; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "instance field over an inherited auto-accessor remains enumerable",
+            "class Parent { accessor item = {}; } class Box extends Parent { item = local; } const box = new Box(); const copy = { ...box }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "later method overrides an auto-accessor",
+            "class Box { accessor item = local; item() {} } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later auto-accessor overrides a method",
+            "class Box { item() {} accessor item = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
             "static field replaces an earlier alias eagerly",
             "const container = { item: local }; const fresh = {}; class Box { static value = (container.item = fresh); } void Box; holder.item = container.item;",
             false,
@@ -8418,6 +8493,11 @@ fn pure_local_calls_preserve_receiver_methods() {
             "helper.inspect(values);",
         ),
         (
+            "read-only class auto-accessor",
+            "class Helper { accessor inspect = target => target.length; } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
             "arrow instance field lexical receiver",
             "class Helper { inspect = () => { this.forEach = null; }; } const helper = new Helper();",
             "helper.inspect.call(values);",
@@ -8435,6 +8515,11 @@ fn pure_local_calls_preserve_receiver_methods() {
         (
             "unadvanced generator instance field",
             "class Helper { inspect = function* (target) { target.forEach = null; }; } const helper = new Helper();",
+            "helper.inspect(values);",
+        ),
+        (
+            "unadvanced generator auto-accessor",
+            "class Helper { accessor inspect = function* (target) { target.forEach = null; }; } const helper = new Helper();",
             "helper.inspect(values);",
         ),
         (

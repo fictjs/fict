@@ -20665,6 +20665,7 @@ struct LocalClassInstanceInitializer {
     value_span: (u32, u32),
     receiver_span: (u32, u32),
     order: usize,
+    auto_accessor: bool,
 }
 
 #[derive(Clone)]
@@ -21372,6 +21373,7 @@ struct StaticHookAliasCollector<'semantic> {
     escaped_callable_effect_targets: BTreeSet<StaticAliasPath>,
     local_class_instances: BTreeSet<StaticAliasPath>,
     local_class_instance_fields: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    local_auto_accessor_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     local_class_instance_callables:
         BTreeMap<StaticAliasPath, BTreeMap<String, Vec<LocalClassInstanceCallable>>>,
     open_local_class_instance_fields: BTreeSet<StaticAliasPath>,
@@ -21489,6 +21491,7 @@ struct DeferredClassStateSnapshot {
     transient_callable_alias_targets: BTreeSet<StaticAliasPath>,
     local_class_instances: BTreeSet<StaticAliasPath>,
     local_class_instance_fields: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    local_auto_accessor_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     local_class_instance_callables:
         BTreeMap<StaticAliasPath, BTreeMap<String, Vec<LocalClassInstanceCallable>>>,
     open_local_class_instance_fields: BTreeSet<StaticAliasPath>,
@@ -22459,6 +22462,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             escaped_callable_effect_targets: BTreeSet::new(),
             local_class_instances: BTreeSet::new(),
             local_class_instance_fields: BTreeMap::new(),
+            local_auto_accessor_properties: BTreeMap::new(),
             local_class_instance_callables: BTreeMap::new(),
             open_local_class_instance_fields: BTreeSet::new(),
             closed_replacement_class_instances: BTreeSet::new(),
@@ -24375,6 +24379,7 @@ impl StaticHookAliasCollector<'_> {
             transient_callable_alias_targets: self.transient_callable_alias_targets.clone(),
             local_class_instances: self.local_class_instances.clone(),
             local_class_instance_fields: self.local_class_instance_fields.clone(),
+            local_auto_accessor_properties: self.local_auto_accessor_properties.clone(),
             local_class_instance_callables: self.local_class_instance_callables.clone(),
             open_local_class_instance_fields: self.open_local_class_instance_fields.clone(),
             closed_replacement_class_instances: self.closed_replacement_class_instances.clone(),
@@ -24458,6 +24463,7 @@ impl StaticHookAliasCollector<'_> {
         restore_path_set!(transient_callable_alias_targets);
         restore_path_set!(local_class_instances);
         restore_path_map!(local_class_instance_fields);
+        restore_path_map!(local_auto_accessor_properties);
         restore_path_map!(local_class_instance_callables);
         restore_path_set!(open_local_class_instance_fields);
         restore_path_set!(closed_replacement_class_instances);
@@ -24864,6 +24870,8 @@ impl StaticHookAliasCollector<'_> {
         self.local_class_instance_callables.remove(target);
         self.open_local_class_instance_fields.remove(target);
         self.closed_replacement_class_instances.remove(target);
+        let prototype = target.clone().with_property("prototype".to_string());
+        self.local_auto_accessor_properties.remove(&prototype);
         let replacement_object = class_guaranteed_returned_object(class);
         let preserves_instance = Self::class_preserves_instance_prototype(class);
         if preserves_instance || replacement_object.is_some() {
@@ -24899,10 +24907,17 @@ impl StaticHookAliasCollector<'_> {
                 self.open_local_class_instance_fields.insert(target.clone());
             }
             let super_prototype = super_class.with_property("prototype".to_string());
-            let prototype = target.clone().with_property("prototype".to_string());
             self.copy_dynamic_local_getters(&prototype, &super_prototype);
             self.copy_dynamic_local_setters(&prototype, &super_prototype);
             self.copy_dynamic_local_accessor_exclusions(&prototype, &super_prototype);
+            if let Some(accessors) = self
+                .local_auto_accessor_properties
+                .get(&super_prototype)
+                .cloned()
+            {
+                self.local_auto_accessor_properties
+                    .insert(prototype.clone(), accessors);
+            }
             let inherited = self
                 .local_callable_parameters
                 .keys()
@@ -24920,6 +24935,25 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         for element in &class.body.body {
+            if let ClassElement::AccessorProperty(property) = element {
+                if property.r#static
+                    || matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_))
+                {
+                    continue;
+                }
+                let Some(name) = property.key.static_name() else {
+                    self.open_local_class_instance_fields.insert(target.clone());
+                    continue;
+                };
+                let name = name.into_owned();
+                self.exclude_dynamic_local_accessor_property(&prototype, name.clone());
+                self.clear_overlapping_aliases(&prototype.clone().with_property(name.clone()));
+                self.local_auto_accessor_properties
+                    .entry(prototype.clone())
+                    .or_default()
+                    .insert(name);
+                continue;
+            }
             let ClassElement::MethodDefinition(method) = element else {
                 continue;
             };
@@ -24959,9 +24993,14 @@ impl StaticHookAliasCollector<'_> {
             let method_owner = if method.r#static {
                 target.clone()
             } else {
-                target.clone().with_property("prototype".to_string())
+                prototype.clone()
             };
             let name = name.into_owned();
+            if !method.r#static
+                && let Some(accessors) = self.local_auto_accessor_properties.get_mut(&prototype)
+            {
+                accessors.remove(&name);
+            }
             self.exclude_dynamic_local_accessor_property(&method_owner, name.clone());
             let method_target = method_owner.with_property(name);
             if method.kind == MethodDefinitionKind::Set {
@@ -25013,31 +25052,48 @@ impl StaticHookAliasCollector<'_> {
             .map_or(0, |order| order.saturating_add(1));
         let class_span = (class.span.start, class.span.end);
         for element in &class.body.body {
-            let ClassElement::PropertyDefinition(property) = element else {
-                continue;
+            let (key, value, span, is_static, auto_accessor) = match element {
+                ClassElement::PropertyDefinition(property) => (
+                    &property.key,
+                    property.value.as_ref(),
+                    property.span,
+                    property.r#static,
+                    false,
+                ),
+                ClassElement::AccessorProperty(property) if !property.r#static => (
+                    &property.key,
+                    property.value.as_ref(),
+                    property.span,
+                    false,
+                    true,
+                ),
+                ClassElement::AccessorProperty(_) => continue,
+                ClassElement::MethodDefinition(_)
+                | ClassElement::StaticBlock(_)
+                | ClassElement::TSIndexSignature(_) => continue,
             };
-            let order = if property.r#static {
+            let order = if is_static {
                 None
             } else {
                 let order = initializer_order;
                 initializer_order = initializer_order.saturating_add(1);
                 Some(order)
             };
-            if matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) {
+            if matches!(key, OxcPropertyKey::PrivateIdentifier(_)) {
                 continue;
             }
-            let Some(name) = property.key.static_name() else {
-                if !property.r#static {
+            let Some(name) = key.static_name() else {
+                if !is_static {
                     self.open_local_class_instance_fields.insert(target.clone());
                 }
                 continue;
             };
             let name = name.into_owned();
-            if property.r#static {
+            if is_static {
                 self.exclude_dynamic_local_accessor_property(target, name.clone());
                 let property_target = target.clone().with_property(name);
                 self.clear_overlapping_aliases(&property_target);
-                if let Some(value) = &property.value {
+                if let Some(value) = value {
                     self.collect_initializer(property_target, value);
                 }
                 continue;
@@ -25045,8 +25101,8 @@ impl StaticHookAliasCollector<'_> {
             if replacement_object.is_some() {
                 continue;
             }
-            let receiver_span = (property.span.start, property.span.end);
-            let value_span = property.value.as_ref().map_or(receiver_span, |value| {
+            let receiver_span = (span.start, span.end);
+            let value_span = value.map_or(receiver_span, |value| {
                 (value.span().start, value.span().end)
             });
             let initializer = LocalClassInstanceInitializer {
@@ -25054,16 +25110,33 @@ impl StaticHookAliasCollector<'_> {
                 value_span,
                 receiver_span,
                 order: order.expect("an instance field always has an initializer order"),
+                auto_accessor,
             };
-            self.local_class_instance_fields
-                .entry(target.clone())
-                .or_default()
-                .insert(name.clone());
-            let Some(value) = &property.value else {
+            if !auto_accessor {
+                self.local_class_instance_fields
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(name.clone());
+            }
+            let accessor_is_public = auto_accessor
+                && self
+                    .local_auto_accessor_properties
+                    .get(&prototype)
+                    .is_some_and(|properties| properties.contains(&name))
+                && !self
+                    .local_class_instance_fields
+                    .get(target)
+                    .is_some_and(|fields| fields.contains(&name));
+            let materialized_name = if auto_accessor && !accessor_is_public {
+                format!("<auto-accessor:{name}@{}:{}>", span.start, span.end)
+            } else {
+                name
+            };
+            let Some(value) = value else {
                 self.local_class_instance_callables
                     .entry(target.clone())
                     .or_default()
-                    .entry(name)
+                    .entry(materialized_name)
                     .or_default()
                     .push(LocalClassInstanceCallable {
                         initializer: Some(initializer),
@@ -25092,7 +25165,7 @@ impl StaticHookAliasCollector<'_> {
                 value.get_inner_expression(),
                 Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
             ) {
-                let receiver = StaticAliasPath::dynamic_this(property.span);
+                let receiver = StaticAliasPath::dynamic_this(span);
                 self.dynamic_path_owner_depths
                     .insert(receiver_span, self.function_depth);
                 self.dynamic_this_roots.push(Some(receiver));
@@ -25109,7 +25182,7 @@ impl StaticHookAliasCollector<'_> {
                 self.local_class_instance_callables
                     .entry(target.clone())
                     .or_default()
-                    .entry(name)
+                    .entry(materialized_name)
                     .or_default()
                     .push(LocalClassInstanceCallable {
                         initializer: Some(initializer),
@@ -25135,7 +25208,7 @@ impl StaticHookAliasCollector<'_> {
             let field_target = target
                 .clone()
                 .with_property("prototype".to_string())
-                .with_property(name.clone());
+                .with_property(materialized_name.clone());
             self.record_unreferenced_callable_span(&field_target, span);
             let generator = matches!(
                 value.get_inner_expression(),
@@ -25145,14 +25218,14 @@ impl StaticHookAliasCollector<'_> {
                 self.returned_callable_spans.insert((span.start, span.end));
                 self.record_local_callable_effect_span(field_target, (span.start, span.end));
             }
-            let mut callable = self.local_class_instance_callables(value, property.span);
+            let mut callable = self.local_class_instance_callables(value, span);
             for callable in &mut callable {
                 callable.initializer = Some(initializer);
             }
             self.local_class_instance_callables
                 .entry(target.clone())
                 .or_default()
-                .entry(name)
+                .entry(materialized_name)
                 .or_default()
                 .extend(callable);
         }
@@ -25324,6 +25397,16 @@ impl StaticHookAliasCollector<'_> {
         if let Some(fields) = self.local_class_instance_fields.get(&source).cloned() {
             self.local_class_instance_fields
                 .insert(target.clone(), fields);
+        }
+        let source_prototype = source.clone().with_property("prototype".to_string());
+        let target_prototype = target.clone().with_property("prototype".to_string());
+        if let Some(accessors) = self
+            .local_auto_accessor_properties
+            .get(&source_prototype)
+            .cloned()
+        {
+            self.local_auto_accessor_properties
+                .insert(target_prototype, accessors);
         }
         if let Some(mut callables) = self.local_class_instance_callables.get(&source).cloned() {
             for alternatives in callables.values_mut() {
@@ -25784,6 +25867,12 @@ impl StaticHookAliasCollector<'_> {
         self.copy_dynamic_local_getters(target, &prototype);
         self.copy_dynamic_local_setters(target, &prototype);
         self.copy_dynamic_local_accessor_exclusions(target, &prototype);
+        if let Some(accessors) = self.local_auto_accessor_properties.get(&prototype).cloned() {
+            self.local_auto_accessor_properties
+                .insert(target.clone(), accessors);
+        } else {
+            self.local_auto_accessor_properties.remove(target);
+        }
         self.structured_own_properties
             .entry(target.clone())
             .or_default();
@@ -25982,6 +26071,7 @@ impl StaticHookAliasCollector<'_> {
                             callables,
                             Some(initializer),
                             &mappers,
+                            None,
                         );
                     }
                     let mut owner = rebased_target.clone();
@@ -26052,12 +26142,18 @@ impl StaticHookAliasCollector<'_> {
         initializer: Option<LocalClassInstanceInitializer>,
     ) {
         let instance_field = target.clone().with_property(name);
+        let own_property = !callables.iter().any(|callable| {
+            callable
+                .initializer
+                .is_some_and(|initializer| initializer.auto_accessor)
+        });
         self.materialize_class_instance_callables_at(
             &instance_field,
             target,
             callables,
             initializer,
             &[],
+            Some(own_property),
         );
     }
 
@@ -26068,9 +26164,14 @@ impl StaticHookAliasCollector<'_> {
         callables: Vec<LocalClassInstanceCallable>,
         initializer: Option<LocalClassInstanceInitializer>,
         mappers: &[Vec<LocalInvocationFact>],
+        own_property: Option<bool>,
     ) {
         self.clear_overlapping_aliases(value_target);
-        self.record_local_own_property_assignment(value_target);
+        match own_property {
+            Some(true) => self.record_local_data_property_definition(value_target),
+            Some(false) => {}
+            None => self.record_local_own_property_assignment(value_target),
+        }
         let ambiguous = callables.len() > 1;
         for callable in callables {
             if let Some(value) = callable.value {
@@ -30047,6 +30148,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target| !target.starts_with(path));
         self.local_class_instance_fields
             .retain(|target, _| !target.starts_with(path));
+        self.local_auto_accessor_properties
+            .retain(|target, _| !target.starts_with(path));
         self.local_class_instance_callables
             .retain(|target, _| !target.starts_with(path));
         self.open_local_class_instance_fields
@@ -30069,11 +30172,51 @@ impl StaticHookAliasCollector<'_> {
         if !self.local_getter_resolution(&target, false).1.is_empty() {
             return;
         }
+        self.record_local_own_property(&target, true);
+    }
+
+    fn is_local_auto_accessor_property(&self, path: &StaticAliasPath) -> bool {
+        let target = resolve_static_alias_slot_path(&self.aliases, path);
+        if target.element_wildcard || target.properties.is_empty() {
+            return false;
+        }
         let mut owner = target;
+        let Some(property) = owner.properties.pop() else {
+            return false;
+        };
+        owner.element_wildcard = false;
+        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+        [owner, resolved_owner].into_iter().any(|owner| {
+            self.local_auto_accessor_properties
+                .get(&owner)
+                .is_some_and(|properties| properties.contains(&property))
+        })
+    }
+
+    fn record_local_data_property_definition(&mut self, path: &StaticAliasPath) {
+        let target = resolve_static_alias_slot_path(&self.aliases, path);
+        self.record_local_own_property(&target, false);
+    }
+
+    fn record_local_own_property(&mut self, target: &StaticAliasPath, respect_accessors: bool) {
+        if target.element_wildcard || target.properties.is_empty() {
+            return;
+        }
+        let mut owner = target.clone();
         let Some(property) = owner.properties.pop() else {
             return;
         };
         owner.element_wildcard = false;
+        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+        if respect_accessors
+            && [owner.clone(), resolved_owner].into_iter().any(|owner| {
+                self.local_auto_accessor_properties
+                    .get(&owner)
+                    .is_some_and(|properties| properties.contains(&property))
+            })
+        {
+            return;
+        }
         let Some((owner, properties)) = self.tracked_structured_own_properties(&owner) else {
             return;
         };
@@ -30160,6 +30303,8 @@ impl StaticHookAliasCollector<'_> {
         self.local_class_instances
             .retain(|target| !target.starts_with(&path));
         self.local_class_instance_fields
+            .retain(|target, _| !target.starts_with(&path));
+        self.local_auto_accessor_properties
             .retain(|target, _| !target.starts_with(&path));
         self.local_class_instance_callables
             .retain(|target, _| !target.starts_with(&path));
@@ -31142,6 +31287,10 @@ impl StaticHookAliasCollector<'_> {
             return false;
         }
         let class_fields = self.local_class_instance_fields.get(&source).cloned();
+        let class_accessors = self
+            .local_auto_accessor_properties
+            .get(&source.clone().with_property("prototype".to_string()))
+            .cloned();
         let mut class_callables = self.local_class_instance_callables.get(&source).cloned();
         if let Some(callables) = &mut class_callables {
             for alternatives in callables.values_mut() {
@@ -31282,6 +31431,12 @@ impl StaticHookAliasCollector<'_> {
         if let Some(fields) = class_fields {
             self.local_class_instance_fields
                 .insert(target.clone(), fields);
+        }
+        if let Some(accessors) = class_accessors {
+            self.local_auto_accessor_properties.insert(
+                target.clone().with_property("prototype".to_string()),
+                accessors,
+            );
         }
         if let Some(callables) = class_callables {
             self.local_class_instance_callables
@@ -44139,7 +44294,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                         captures_same_depth: true,
                     }),
             );
-            self.dynamic_this_roots.push(None);
+            self.dynamic_this_roots
+                .push((!property.r#static).then(|| StaticAliasPath::dynamic_this(property.span)));
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
             self.class_effect_contexts.pop();
@@ -44354,6 +44510,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .iter()
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, fields)| (target.clone(), fields.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_auto_accessor_properties = self
+            .local_auto_accessor_properties
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, properties)| (target.clone(), properties.clone()))
             .collect::<Vec<_>>();
         let outer_local_class_instance_callables = self
             .local_class_instance_callables
@@ -44592,6 +44754,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         });
         self.local_class_instance_fields
             .extend(outer_local_class_instance_fields);
+        self.local_auto_accessor_properties.retain(|target, _| {
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
+        });
+        self.local_auto_accessor_properties
+            .extend(outer_local_auto_accessor_properties);
         self.local_class_instance_callables.retain(|target, _| {
             Self::path_owner_depth_from_maps(
                 binding_owner_depths,
@@ -44795,6 +44966,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .iter()
             .filter(|(target, _)| self.path_owner_depth(target) < depth)
             .map(|(target, fields)| (target.clone(), fields.clone()))
+            .collect::<Vec<_>>();
+        let outer_local_auto_accessor_properties = self
+            .local_auto_accessor_properties
+            .iter()
+            .filter(|(target, _)| self.path_owner_depth(target) < depth)
+            .map(|(target, properties)| (target.clone(), properties.clone()))
             .collect::<Vec<_>>();
         let outer_local_class_instance_callables = self
             .local_class_instance_callables
@@ -45021,6 +45198,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         });
         self.local_class_instance_fields
             .extend(outer_local_class_instance_fields);
+        self.local_auto_accessor_properties.retain(|target, _| {
+            Self::path_owner_depth_from_maps(
+                binding_owner_depths,
+                dynamic_path_owner_depths,
+                target,
+            ) >= depth
+        });
+        self.local_auto_accessor_properties
+            .extend(outer_local_auto_accessor_properties);
         self.local_class_instance_callables.retain(|target, _| {
             Self::path_owner_depth_from_maps(
                 binding_owner_depths,
@@ -45131,6 +45317,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 | OxcAssignmentOperator::LogicalNullish
         )
         .then_some(&assignment.right);
+        let auto_accessor_write = assignment.operator == OxcAssignmentOperator::Assign
+            && place
+                .as_ref()
+                .and_then(static_alias_invalidation_path)
+                .is_some_and(|path| self.is_local_auto_accessor_property(&path));
         let mut accessor_write =
             if let Some(path) = place.as_ref().and_then(static_alias_invalidation_path) {
                 let invokes_setter = self.record_local_setter_invocations(&path, setter_value);
@@ -45305,7 +45496,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     conditional,
                 });
         }
-        self.invalidate_place(place.clone());
+        if !auto_accessor_write {
+            self.invalidate_place(place.clone());
+        }
         if let Some(path) = prototype_path {
             self.invalidate_path(path, true);
         }
