@@ -4865,6 +4865,71 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "unconstructed instance field preserves an earlier alias",
+            "const container = { item: local }; const fresh = {}; class Box { value = (container.item = fresh); } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "constructed instance field replaces an earlier alias",
+            "const container = { item: local }; const fresh = {}; class Box { value = (container.item = fresh); } new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "unconstructed class expression preserves an earlier alias",
+            "const container = { item: local }; const fresh = {}; const Box = class { value = (container.item = fresh); }; void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "constructed class expression replaces an earlier alias",
+            "const container = { item: local }; const fresh = {}; const Box = class { value = (container.item = fresh); }; new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "unconstructed instance field preserves an earlier alias before a fresh object write",
+            "const container = { item: local }; class Box { value = (container.item = {}); } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "constructed instance field replaces an earlier alias with a fresh object",
+            "const container = { item: local }; class Box { value = (container.item = {}); } new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "unconstructed auto-accessor preserves an earlier alias",
+            "const container = { item: local }; const fresh = {}; class Box { accessor value = (container.item = fresh); } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "constructed auto-accessor replaces an earlier alias",
+            "const container = { item: local }; const fresh = {}; class Box { accessor value = (container.item = fresh); } new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "static field replaces an earlier alias eagerly",
+            "const container = { item: local }; const fresh = {}; class Box { static value = (container.item = fresh); } void Box; holder.item = container.item;",
+            false,
+        ),
+        (
+            "later instance field replaces an earlier field alias",
+            "const container = { item: {} }; const fresh = {}; class Box { first = (container.item = local); second = (container.item = fresh); } new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "later instance field can restore the local alias",
+            "const container = { item: {} }; const fresh = {}; class Box { first = (container.item = fresh); second = (container.item = local); } new Box(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "unconstructed instance field preserves an array element",
+            "const items = [local]; class Box { value = items.pop(); } void Box; holder.item = items[0];",
+            true,
+        ),
+        (
+            "unconstructed instance field preserves an own property",
+            "const container = { item: local }; class Box { value = delete container.item; } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
             "static field runs before capture rebind",
             "const container = { item: {} }; let captured = local; class Box { static value = (container.item = captured); } captured = {}; holder.item = container.item;",
             true,

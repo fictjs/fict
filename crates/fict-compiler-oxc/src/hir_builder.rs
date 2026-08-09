@@ -21341,6 +21341,11 @@ struct ClassEffectContext {
     captures_same_depth: bool,
 }
 
+struct DeferredClassAliasSnapshot {
+    aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    dynamic_roots: BTreeSet<(u32, u32)>,
+}
+
 struct StoredSpreadAliasSources {
     historical: bool,
     entries: BTreeSet<StoredSpreadAliasSource>,
@@ -24161,6 +24166,23 @@ impl StaticHookAliasCollector<'_> {
             .flatten()
             .map(|context| context.span)
             .or_else(|| self.current_callable_spans.last().copied())
+    }
+
+    fn deferred_class_alias_snapshot(&self) -> DeferredClassAliasSnapshot {
+        DeferredClassAliasSnapshot {
+            aliases: self.aliases.clone(),
+            dynamic_roots: self.dynamic_path_owner_depths.keys().copied().collect(),
+        }
+    }
+
+    fn restore_deferred_class_aliases(&mut self, snapshot: DeferredClassAliasSnapshot) {
+        self.aliases.retain(|target, _| {
+            let StaticAliasRoot::DynamicThis { start, end } = &target.root else {
+                return false;
+            };
+            !snapshot.dynamic_roots.contains(&(*start, *end))
+        });
+        self.aliases.extend(snapshot.aliases);
     }
 
     fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
@@ -33466,13 +33488,6 @@ impl StaticHookAliasCollector<'_> {
         target: &StaticAliasPath,
         value: &Expression<'_>,
     ) {
-        if self
-            .class_effect_contexts
-            .last()
-            .is_some_and(Option::is_some)
-        {
-            return;
-        }
         let Some(span) = self.deferred_callable_alias_capture_span(target) else {
             return;
         };
@@ -42328,6 +42343,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
+            let alias_snapshot = (!property.r#static).then(|| self.deferred_class_alias_snapshot());
             if !property.r#static
                 && let Some(class_span) = self.current_class_spans.last().copied()
             {
@@ -42350,6 +42366,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
             self.class_effect_contexts.pop();
+            if let Some(snapshot) = alias_snapshot {
+                self.restore_deferred_class_aliases(snapshot);
+            }
         }
         self.leave_node(kind);
     }
@@ -42364,6 +42383,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
+            let alias_snapshot = (!property.r#static).then(|| self.deferred_class_alias_snapshot());
             if !property.r#static
                 && let Some(class_span) = self.current_class_spans.last().copied()
             {
@@ -42385,6 +42405,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
             self.class_effect_contexts.pop();
+            if let Some(snapshot) = alias_snapshot {
+                self.restore_deferred_class_aliases(snapshot);
+            }
         }
         self.leave_node(kind);
     }
