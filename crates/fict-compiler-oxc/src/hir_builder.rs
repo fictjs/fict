@@ -8718,6 +8718,7 @@ impl StaticAliasPath {
 }
 
 const DYNAMIC_STRUCTURED_MEMBER: &str = "<computed-structured>";
+const DYNAMIC_DATA_PROPERTY: &str = "<computed-data-property>";
 const LOCAL_OBJECT_PROTOTYPE_LOOKUP: &str = "<object-prototype>";
 
 #[derive(Debug, Default)]
@@ -8819,6 +8820,22 @@ fn resolve_static_alias_path_chain_with_mode(
                     })
                     .max_by_key(|(length, _)| *length)
                     .map(|(_, resolved)| resolved)
+            })
+            .or_else(|| {
+                aliases
+                    .iter()
+                    .filter_map(|(target, source)| {
+                        let remaining = dynamic_data_property_alias_remainder(
+                            target,
+                            &current,
+                            allow_exact_alias,
+                        )?;
+                        let mut resolved = source.clone();
+                        resolved.properties.extend_from_slice(remaining);
+                        Some((target.properties.len(), resolved.canonicalized()))
+                    })
+                    .max_by_key(|(length, _)| *length)
+                    .map(|(_, resolved)| resolved)
             });
         let Some(replacement) = replacement else {
             break;
@@ -8894,8 +8911,86 @@ fn resolve_historical_alias_paths_with_mode(
                 pending.push_back(candidate.canonicalized());
             }
         }
+        for (target, sources) in aliases {
+            let Some(remaining) =
+                dynamic_data_property_alias_remainder(target, &current, allow_exact_alias)
+            else {
+                continue;
+            };
+            for source in sources {
+                let mut candidate = source.clone();
+                candidate.properties.extend_from_slice(remaining);
+                pending.push_back(candidate.canonicalized());
+            }
+        }
     }
     resolved
+}
+
+fn dynamic_data_property_alias_remainder<'a>(
+    target: &StaticAliasPath,
+    candidate: &'a StaticAliasPath,
+    allow_exact_alias: bool,
+) -> Option<&'a [String]> {
+    if target.element_wildcard || target.root != candidate.root {
+        return None;
+    }
+    let marker = target
+        .properties
+        .iter()
+        .rposition(|property| property == DYNAMIC_DATA_PROPERTY)?;
+    let owner = &target.properties[..marker];
+    if !candidate.properties.starts_with(owner) {
+        return None;
+    }
+    if candidate.element_wildcard {
+        return (allow_exact_alias && candidate.properties == owner)
+            .then_some(&candidate.properties[candidate.properties.len()..]);
+    }
+    let property_index = owner.len();
+    let property = candidate.properties.get(property_index)?;
+    if target.properties[marker + 1..].contains(property) {
+        return None;
+    }
+    let remaining = &candidate.properties[property_index + 1..];
+    (allow_exact_alias || !remaining.is_empty()).then_some(remaining)
+}
+
+fn dynamic_data_property_alias_owner(target: &StaticAliasPath) -> Option<StaticAliasPath> {
+    let marker = target
+        .properties
+        .iter()
+        .rposition(|property| property == DYNAMIC_DATA_PROPERTY)?;
+    let mut owner = target.clone();
+    owner.properties.truncate(marker);
+    Some(owner)
+}
+
+fn dynamic_data_property_alias_with_exclusion(
+    target: &StaticAliasPath,
+    owner: &StaticAliasPath,
+    property: &str,
+) -> Option<StaticAliasPath> {
+    if dynamic_data_property_alias_owner(target).as_ref() != Some(owner) {
+        return None;
+    }
+    let marker = target
+        .properties
+        .iter()
+        .rposition(|candidate| candidate == DYNAMIC_DATA_PROPERTY)?;
+    if target.properties[marker + 1..]
+        .iter()
+        .any(|excluded| excluded == property)
+    {
+        return None;
+    }
+    let mut excluded = target.properties[marker + 1..].to_vec();
+    excluded.push(property.to_string());
+    excluded.sort_unstable();
+    let mut renamed = target.clone();
+    renamed.properties.truncate(marker + 1);
+    renamed.properties.extend(excluded);
+    Some(renamed)
 }
 
 fn element_wildcard_alias_remainder<'a>(
@@ -22850,11 +22945,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_externally_stored_path(&mut self, source: StaticAliasPath) {
-        let mut sources = if self.path_requires_historical_aliases(&source, self.function_depth) {
-            resolve_historical_alias_paths(&self.alias_history, &source)
-        } else {
-            BTreeSet::from([resolve_static_alias_path(&self.aliases, &source)])
-        };
+        let (_, mut sources) = self.current_value_alias_candidates(&source);
         if !self
             .returned_structured_instances_for_path(&source)
             .is_empty()
@@ -24890,6 +24981,7 @@ impl StaticHookAliasCollector<'_> {
         // Public methods and auto-accessors are installed before static field initialization, so
         // any same-named static data field wins regardless of its textual position.
         let mut static_data_properties = BTreeSet::new();
+        let mut remaining_static_data_properties = BTreeMap::<String, usize>::new();
         let mut has_dynamic_static_data_property = false;
         let mut has_dynamic_static_auto_accessor = false;
         for element in &class.body.body {
@@ -24900,7 +24992,9 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             if let Some(name) = property.key.static_name() {
-                static_data_properties.insert(name.into_owned());
+                let name = name.into_owned();
+                static_data_properties.insert(name.clone());
+                *remaining_static_data_properties.entry(name).or_default() += 1;
             } else {
                 has_dynamic_static_data_property = true;
             }
@@ -25171,8 +25265,35 @@ impl StaticHookAliasCollector<'_> {
             if matches!(key, OxcPropertyKey::PrivateIdentifier(_)) {
                 continue;
             }
-            let Some(name) = key.static_name() else {
-                if is_static && auto_accessor {
+            let static_name = key.static_name().map(|name| name.into_owned());
+            if is_static
+                && !auto_accessor
+                && let Some(name) = &static_name
+                && let Some(count) = remaining_static_data_properties.get_mut(name)
+            {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    remaining_static_data_properties.remove(name);
+                }
+            }
+            let Some(name) = static_name else {
+                if is_static && !auto_accessor {
+                    if let Some(value) = value {
+                        let hidden_target = target.clone().with_property(format!(
+                            "<computed-static-field-value@{}:{}>",
+                            span.start, span.end
+                        ));
+                        self.collect_initializer(hidden_target.clone(), value);
+                        let mut dynamic_target = target
+                            .clone()
+                            .with_property(DYNAMIC_DATA_PROPERTY.to_string());
+                        dynamic_target
+                            .properties
+                            .extend(remaining_static_data_properties.keys().cloned());
+                        self.insert_alias(dynamic_target.clone(), hidden_target);
+                        self.ambiguous_alias_targets.insert(dynamic_target);
+                    }
+                } else if is_static && auto_accessor {
                     if let Some(value) = value {
                         let hidden_target = target.clone().with_property(format!(
                             "<computed-static-auto-accessor@{}:{}>",
@@ -25185,7 +25306,6 @@ impl StaticHookAliasCollector<'_> {
                 }
                 continue;
             };
-            let name = name.into_owned();
             if is_static {
                 let public_auto_accessor = !auto_accessor
                     || self
@@ -30117,10 +30237,11 @@ impl StaticHookAliasCollector<'_> {
                 .cross_scope_alias_targets
                 .iter()
                 .any(|target| target.overlaps(path))
-            || self
-                .ambiguous_alias_targets
-                .iter()
-                .any(|target| target.overlaps(path))
+            || self.ambiguous_alias_targets.iter().any(|target| {
+                target.overlaps(path)
+                    || dynamic_data_property_alias_owner(target)
+                        .is_some_and(|owner| path.starts_with(&owner))
+            })
             || self
                 .historical_local_object_prototype_snapshots
                 .iter()
@@ -30424,7 +30545,77 @@ impl StaticHookAliasCollector<'_> {
         if !self.local_getter_resolution(&target, false).1.is_empty() {
             return;
         }
+        self.exclude_dynamic_data_property_value(&target);
         self.record_local_own_property(&target, true);
+    }
+
+    fn exclude_dynamic_data_property_value(&mut self, path: &StaticAliasPath) {
+        let target = resolve_static_alias_slot_path(&self.aliases, path);
+        if target.element_wildcard || target.properties.is_empty() {
+            return;
+        }
+        let mut owner = target.clone();
+        let Some(property) = owner.properties.pop() else {
+            return;
+        };
+        owner.element_wildcard = false;
+        let renames = self
+            .aliases
+            .keys()
+            .chain(self.alias_history.keys())
+            .chain(self.ambiguous_alias_targets.iter())
+            .filter_map(|target| {
+                dynamic_data_property_alias_with_exclusion(target, &owner, &property)
+                    .map(|renamed| (target.clone(), renamed))
+            })
+            .collect::<BTreeMap<_, _>>();
+        for (current, renamed) in renames {
+            if let Some(source) = self.aliases.remove(&current) {
+                self.aliases.insert(renamed.clone(), source);
+            }
+            if let Some(sources) = self.alias_history.remove(&current) {
+                self.alias_history
+                    .entry(renamed.clone())
+                    .or_default()
+                    .extend(sources);
+            }
+            if self.ambiguous_alias_targets.remove(&current) {
+                self.ambiguous_alias_targets.insert(renamed.clone());
+            }
+            if self.cross_scope_alias_targets.remove(&current) {
+                self.cross_scope_alias_targets.insert(renamed.clone());
+            }
+            for targets in self.deferred_callable_ambiguous_targets.values_mut() {
+                if targets.remove(&current) {
+                    targets.insert(renamed.clone());
+                }
+            }
+            if let Some(sources) = self.external_storage_flow.aliases.remove(&current) {
+                self.external_storage_flow
+                    .aliases
+                    .entry(renamed.clone())
+                    .or_default()
+                    .extend(sources);
+            }
+            if let Some(roots) = self
+                .external_storage_flow
+                .attached_alias_roots
+                .remove(&current)
+            {
+                self.external_storage_flow
+                    .attached_alias_roots
+                    .entry(renamed.clone())
+                    .or_default()
+                    .extend(roots);
+            }
+            if let Some(copies) = self.external_storage_flow.shallow_copies.remove(&current) {
+                self.external_storage_flow
+                    .shallow_copies
+                    .entry(renamed)
+                    .or_default()
+                    .extend(copies);
+            }
+        }
     }
 
     fn is_local_auto_accessor_property(&self, path: &StaticAliasPath) -> bool {
@@ -30519,6 +30710,9 @@ impl StaticHookAliasCollector<'_> {
         let Some(property) = owner.properties.pop() else {
             return;
         };
+        if self.deferred_callable_alias_capture_span(path).is_none() {
+            self.exclude_dynamic_data_property_value(path);
+        }
         let structured_sources = self.returned_structured_instances_for_path(&owner);
         if !structured_sources.is_empty() {
             let known_own_property = structured_sources.into_iter().any(|(source, _)| {
@@ -35093,13 +35287,36 @@ impl StaticHookAliasCollector<'_> {
                         .map(|path| &path.root),
                 )
             })
+            .or_else(|| {
+                let Expression::ComputedMemberExpression(member) = expression else {
+                    return None;
+                };
+                if static_member_name(&member.expression).is_some() {
+                    return None;
+                }
+                let owner = self.alias_source_path(&member.object)?;
+                let resolved =
+                    resolve_static_alias_path(&self.aliases, &owner).with_element_wildcard();
+                self.aliases
+                    .keys()
+                    .chain(self.alias_history.keys())
+                    .any(|target| {
+                        dynamic_data_property_alias_remainder(target, &resolved, true).is_some()
+                    })
+                    .then(|| owner.with_element_wildcard())
+            })
             .or_else(|| self.prototype_derived_path(expression))
     }
 
     fn alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
         let path = self.direct_alias_source_path(expression)?;
         let slot = resolve_static_alias_slot_path(&self.aliases, &path);
-        if self.aliases.contains_key(&slot) {
+        if self.aliases.contains_key(&slot)
+            || self
+                .aliases
+                .keys()
+                .any(|target| dynamic_data_property_alias_remainder(target, &path, true).is_some())
+        {
             return Some(path);
         }
         let prototypes = self.local_object_prototype_member_paths(&path);
@@ -35113,12 +35330,27 @@ impl StaticHookAliasCollector<'_> {
         &self,
         path: &StaticAliasPath,
     ) -> (bool, BTreeSet<StaticAliasPath>) {
-        let historical = self.path_requires_historical_aliases(path, self.function_depth);
-        let candidates = if historical {
+        let prototypes = self.local_object_prototype_member_paths(path);
+        let historical = prototypes.len() > 1
+            || self.path_requires_historical_aliases(path, self.function_depth)
+            || prototypes.iter().any(|prototype| {
+                self.path_requires_historical_aliases(prototype, self.function_depth)
+            });
+        let mut candidates = if historical {
             resolve_historical_alias_paths(&self.alias_history, path)
         } else {
             BTreeSet::from([resolve_static_alias_path(&self.aliases, path)])
         };
+        for prototype in prototypes {
+            if historical {
+                candidates.extend(resolve_historical_alias_paths(
+                    &self.alias_history,
+                    &prototype,
+                ));
+            } else {
+                candidates.insert(resolve_static_alias_path(&self.aliases, &prototype));
+            }
+        }
         (historical, candidates)
     }
 
@@ -42938,6 +43170,7 @@ impl StaticHookAliasCollector<'_> {
         if target.element_wildcard || target.properties.is_empty() {
             return false;
         }
+        self.exclude_dynamic_data_property_value(&target);
         let mut owner = target.clone();
         let Some(property) = owner.properties.pop() else {
             return false;

@@ -5160,6 +5160,96 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "computed static field may expose its local value",
+            "const key = holder.key; class Box { static [key] = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "computed static field preserves nested local values",
+            "const key = holder.key; class Box { static [key] = { nested: local }; } holder.item = Box.item.nested;",
+            true,
+        ),
+        (
+            "computed static field supports a computed read",
+            "const key = holder.key; class Box { static [key] = local; } holder.item = Box[key];",
+            true,
+        ),
+        (
+            "multiple computed static fields preserve possible local values",
+            "const first = holder.first; const second = holder.second; class Box { static [first] = {}; static [second] = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "later known static field excludes an earlier computed value",
+            "const key = holder.key; class Box { static [key] = local; static item = {}; } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "later computed static field may replace an earlier known value",
+            "const key = holder.key; class Box { static item = {}; static [key] = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "known assignment replaces a computed static field value",
+            "const key = holder.key; class Box { static [key] = local; } Box.item = {}; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "known deletion removes a possible computed static field value",
+            "const key = holder.key; class Box { static [key] = local; } delete Box.item; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "conditional assignment preserves a computed static field candidate",
+            "const key = holder.key; class Box { static [key] = local; } if (holder.flag) Box.item = {}; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "conditional deletion preserves a computed static field candidate",
+            "const key = holder.key; class Box { static [key] = local; } if (holder.flag) delete Box.item; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "uninvoked assignment helper preserves a computed static field value",
+            "const key = holder.key; class Box { static [key] = local; } const clear = () => { Box.item = {}; }; void clear; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "invoked assignment helper replaces a computed static field value",
+            "const key = holder.key; class Box { static [key] = local; } const clear = () => { Box.item = {}; }; clear(); holder.item = Box.item;",
+            false,
+        ),
+        (
+            "computed static field remains enumerable",
+            "const key = holder.key; class Box { static [key] = local; } const copy = { ...Box }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "computed static field spread snapshots its value",
+            "const key = holder.key; class Box { static [key] = local; } const copy = { ...Box }; Box.item = {}; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "detached class preserves a computed static field value",
+            "const key = holder.key; let Box = class { static [key] = local; }; const Alias = Box; Box = class {}; holder.item = Alias.item;",
+            true,
+        ),
+        (
+            "returned class maps a computed static field value",
+            "const key = holder.key; function makeBox(value) { return class { static [key] = value; }; } const Box = makeBox(local); holder.item = Box.item;",
+            true,
+        ),
+        (
+            "computed subclass static field may reveal an inherited value",
+            "class Parent { static item = local; } const key = holder.key; class Box extends Parent { static [key] = {}; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "computed subclass static field may shadow an inherited value",
+            "class Parent { static item = {}; } const key = holder.key; class Box extends Parent { static [key] = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
             "static field remains enumerable beside an auto-accessor",
             "class Box { static accessor hidden = {}; static item = local; } const copy = { ...Box }; holder.item = copy.item;",
             true,
