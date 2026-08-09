@@ -2927,6 +2927,55 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "later-exposed copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); holder.item = local; const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed aliased copied array element callback slot",
+            "const local = {}; const items = [local]; const copy = items.slice(); const item = copy[0]; holder.item = local; const run = () => count;",
+            "item.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed wrapped array element callback slot",
+            "const local = {}; const items = [local]; const make = () => items.slice(); holder.item = local; const run = () => count;",
+            "make()[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed object spread member callback slot",
+            "const local = {}; const source = { item: local }; const copy = { ...source }; holder.item = local; const run = () => count;",
+            "copy.item.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed preserved alias callback slot",
+            "const local = {}; const alias = local; holder.item = alias; const run = () => count;",
+            "local.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed copied mutable alias callback slot",
+            "const local = {}; let alias = local; const items = [alias]; const copy = items.slice(); holder.item = alias; alias = {}; const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed projected alias callback slot",
+            "const local = { child: {} }; holder.item = local.child; const run = () => count;",
+            "local.child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "conditional wrapped external array element callback slot",
             "const local = {}; const items = [holder.item]; const make = (flag) => flag ? items.slice() : Array.of(local); const run = () => count;",
             "make(holder.enabled)[0].run = run;",
@@ -3988,6 +4037,53 @@ fn wrapped_local_array_results_preserve_local_elements() {
             )
         }),
         "wrapped fresh arrays must not make proven-local elements opaque: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn detached_and_one_way_external_storage_values_do_not_taint_sources() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const run = () => count;
+            let rebound = {};
+            holder.rebound = rebound;
+            rebound = {};
+            rebound.run = run;
+            const local = {};
+            const copy = { ...local };
+            holder.copy = copy;
+            local.run = run;
+            const projected = { child: {} };
+            holder.child = projected.child;
+            projected.run = run;
+            const neverStored = {};
+            const neverExpose = () => { holder.never = neverStored; };
+            neverStored.run = run;
+            const delayed = {};
+            let delayedAlias = delayed;
+            const exposeDelayed = () => { holder.delayed = delayedAlias; };
+            delayedAlias = {};
+            exposeDelayed();
+            delayed.run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+                || diagnostic
+                    .primary_span
+                    .is_none_or(|span| &source[span.start() as usize..span.end() as usize] != "run")
+        }),
+        "detached values and one-way copy sources must not inherit external storage: {:?}",
         output.diagnostics
     );
 }
