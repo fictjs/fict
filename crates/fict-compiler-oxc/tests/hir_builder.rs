@@ -5180,6 +5180,111 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "computed instance method may run through a known member",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } } const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "computed instance method runs through a computed member",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } } const box = new Box(); box[key]();",
+            true,
+        ),
+        (
+            "later known instance method excludes an earlier computed method",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } item() {} } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "later known instance method preserves other computed method keys",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } item() {} } const box = new Box(); box[key]();",
+            true,
+        ),
+        (
+            "later instance getter excludes an earlier computed method",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } get item() { return () => {}; } } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "later instance auto-accessor excludes an earlier computed method",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } accessor item = () => {}; } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "later computed instance method may replace an earlier known method",
+            "const key = holder.key; class Box { item() {} [key]() { holder.item = local; } } const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "instance field shadows a computed instance method",
+            "const key = holder.key; class Box { item = () => {}; [key]() { holder.item = local; } } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "instance field preserves other computed method keys",
+            "const key = holder.key; class Box { item = () => {}; [key]() { holder.item = local; } } const box = new Box(); box[key]();",
+            true,
+        ),
+        (
+            "own assignment replaces a computed instance method",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } } const box = new Box(); box.item = () => {}; box.item();",
+            false,
+        ),
+        (
+            "prototype assignment replaces a computed instance method",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } } const box = new Box(); Box.prototype.item = () => {}; box.item();",
+            false,
+        ),
+        (
+            "prototype assignment before construction replaces a computed instance method",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } } Box.prototype.item = () => {}; const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "prototype assignment preserves other computed instance method keys",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } } const box = new Box(); Box.prototype.item = () => {}; box[key]();",
+            true,
+        ),
+        (
+            "computed instance method remains absent from object spread",
+            "const key = holder.key; class Box { [key]() { holder.item = local; } } const box = new Box(); const copy = { ...box }; copy.item();",
+            false,
+        ),
+        (
+            "unadvanced computed generator instance method remains inert",
+            "const key = holder.key; class Box { *[key]() { holder.item = local; } } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "advanced computed generator instance method runs",
+            "const key = holder.key; class Box { *[key]() { holder.item = local; } } const box = new Box(); box.item().next();",
+            true,
+        ),
+        (
+            "computed instance method receives its instance",
+            "const key = holder.key; class Box { own = local; [key]() { holder.item = this.own; } } const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "subclass inherits a computed instance method",
+            "const key = holder.key; class Parent { [key]() { holder.item = local; } } class Box extends Parent {} const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "detached class preserves a computed instance method",
+            "const key = holder.key; let Box = class { [key]() { holder.item = local; } }; const Alias = Box; Box = class {}; const box = new Alias(); box.item();",
+            true,
+        ),
+        (
+            "returned class maps a computed instance method capture",
+            "const key = holder.key; function makeBox(value) { return class { [key]() { holder.item = value; } }; } const Box = makeBox(local); const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "returned computed instance method remains absent from spread",
+            "const key = holder.key; function makeBox(value) { return class { [key]() { holder.item = value; } }; } const Box = makeBox(local); const box = new Box(); const copy = { ...box }; copy.item();",
+            false,
+        ),
+        (
             "computed static field may expose its local value",
             "const key = holder.key; class Box { static [key] = local; } holder.item = Box.item;",
             true,

@@ -8725,6 +8725,7 @@ const LOCAL_OBJECT_PROTOTYPE_LOOKUP: &str = "<object-prototype>";
 fn is_non_enumerable_internal_class_property(property: &str) -> bool {
     property == DYNAMIC_METHOD_PROPERTY
         || property.starts_with("<computed-static-field-value@")
+        || property.starts_with("<computed-instance-method-value@")
         || property.starts_with("<computed-static-method-value@")
         || property.starts_with("<computed-static-auto-accessor@")
         || property.starts_with("<static-auto-accessor:")
@@ -24984,9 +24985,12 @@ impl StaticHookAliasCollector<'_> {
         let prototype = target.clone().with_property("prototype".to_string());
         self.local_auto_accessor_properties.remove(target);
         self.local_auto_accessor_properties.remove(&prototype);
-        // Public methods and auto-accessors are installed before static field initialization, so
-        // any same-named static data field wins regardless of its textual position.
+        // Public methods and auto-accessors are installed before field initialization. Static
+        // fields therefore win regardless of source order, while instance fields always shadow
+        // same-named prototype methods on each constructed instance.
+        let mut instance_data_properties = BTreeSet::new();
         let mut static_data_properties = BTreeSet::new();
+        let mut remaining_instance_callable_properties = BTreeMap::<String, usize>::new();
         let mut remaining_static_data_properties = BTreeMap::<String, usize>::new();
         let mut remaining_static_callable_properties = BTreeMap::<String, usize>::new();
         let mut has_dynamic_static_data_property = false;
@@ -24995,14 +24999,18 @@ impl StaticHookAliasCollector<'_> {
             let ClassElement::PropertyDefinition(property) = element else {
                 continue;
             };
-            if !property.r#static || matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) {
+            if matches!(&property.key, OxcPropertyKey::PrivateIdentifier(_)) {
                 continue;
             }
             if let Some(name) = property.key.static_name() {
                 let name = name.into_owned();
-                static_data_properties.insert(name.clone());
-                *remaining_static_data_properties.entry(name).or_default() += 1;
-            } else {
+                if property.r#static {
+                    static_data_properties.insert(name.clone());
+                    *remaining_static_data_properties.entry(name).or_default() += 1;
+                } else {
+                    instance_data_properties.insert(name);
+                }
+            } else if property.r#static {
                 has_dynamic_static_data_property = true;
             }
         }
@@ -25019,13 +25027,16 @@ impl StaticHookAliasCollector<'_> {
                 | ClassElement::StaticBlock(_)
                 | ClassElement::TSIndexSignature(_) => continue,
             };
-            if !is_static || matches!(key, OxcPropertyKey::PrivateIdentifier(_)) {
+            if matches!(key, OxcPropertyKey::PrivateIdentifier(_)) {
                 continue;
             }
-            if let Some(name) = key.static_name() {
-                *remaining_static_callable_properties
-                    .entry(name.into_owned())
-                    .or_default() += 1;
+            if let Some(name) = key.static_name().map(|name| name.into_owned()) {
+                let remaining = if is_static {
+                    &mut remaining_static_callable_properties
+                } else {
+                    &mut remaining_instance_callable_properties
+                };
+                *remaining.entry(name).or_default() += 1;
             }
         }
         let replacement_object = class_guaranteed_returned_object(class);
@@ -25114,13 +25125,17 @@ impl StaticHookAliasCollector<'_> {
                     continue;
                 }
                 let static_name = property.key.static_name().map(|name| name.into_owned());
-                if property.r#static
-                    && let Some(name) = &static_name
-                    && let Some(count) = remaining_static_callable_properties.get_mut(name)
-                {
-                    *count = count.saturating_sub(1);
-                    if *count == 0 {
-                        remaining_static_callable_properties.remove(name);
+                if let Some(name) = &static_name {
+                    let remaining = if property.r#static {
+                        &mut remaining_static_callable_properties
+                    } else {
+                        &mut remaining_instance_callable_properties
+                    };
+                    if let Some(count) = remaining.get_mut(name) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            remaining.remove(name);
+                        }
                     }
                 }
                 let Some(name) = static_name else {
@@ -25161,13 +25176,17 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             let static_name = method.key.static_name().map(|name| name.into_owned());
-            if method.r#static
-                && let Some(name) = &static_name
-                && let Some(count) = remaining_static_callable_properties.get_mut(name)
-            {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    remaining_static_callable_properties.remove(name);
+            if let Some(name) = &static_name {
+                let remaining = if method.r#static {
+                    &mut remaining_static_callable_properties
+                } else {
+                    &mut remaining_instance_callable_properties
+                };
+                if let Some(count) = remaining.get_mut(name) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        remaining.remove(name);
+                    }
                 }
             }
             let Some(name) = static_name else {
@@ -25192,20 +25211,35 @@ impl StaticHookAliasCollector<'_> {
                     self.record_dynamic_local_setter(owner, setter.clone());
                     self.record_class_function_callable(setter, &method.value, false);
                     self.defer_local_setter(method.value.span);
-                } else if method.kind == MethodDefinitionKind::Method && method.r#static {
+                } else if method.kind == MethodDefinitionKind::Method {
                     let span = method.value.span;
-                    let method_target = target.clone().with_property(format!(
-                        "<computed-static-method-value@{}:{}>",
-                        span.start, span.end
+                    let method_kind = if method.r#static {
+                        "static"
+                    } else {
+                        "instance"
+                    };
+                    let method_target = owner.clone().with_property(format!(
+                        "<computed-{method_kind}-method-value@{}:{}>",
+                        span.start, span.end,
                     ));
                     self.record_class_function_callable(method_target.clone(), &method.value, true);
-                    let mut dynamic_target = target
-                        .clone()
-                        .with_property(DYNAMIC_METHOD_PROPERTY.to_string());
+                    let mut dynamic_target =
+                        owner.with_property(DYNAMIC_METHOD_PROPERTY.to_string());
+                    let (data_properties, callable_properties) = if method.r#static {
+                        (
+                            &static_data_properties,
+                            &remaining_static_callable_properties,
+                        )
+                    } else {
+                        (
+                            &instance_data_properties,
+                            &remaining_instance_callable_properties,
+                        )
+                    };
                     dynamic_target.properties.extend(
-                        static_data_properties
+                        data_properties
                             .iter()
-                            .chain(remaining_static_callable_properties.keys())
+                            .chain(callable_properties.keys())
                             .cloned(),
                     );
                     self.insert_alias(dynamic_target.clone(), method_target);
@@ -30625,14 +30659,51 @@ impl StaticHookAliasCollector<'_> {
             return;
         };
         owner.element_wildcard = false;
-        let renames = self
+        let dynamic_targets = self
             .aliases
             .keys()
             .chain(self.alias_history.keys())
             .chain(self.ambiguous_alias_targets.iter())
+            .filter(|target| dynamic_property_alias_owner(target).is_some())
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut affected = dynamic_targets
+            .iter()
+            .filter(|candidate| {
+                dynamic_property_alias_owner(candidate).as_ref() == Some(&owner)
+                    || self
+                        .aliases
+                        .get(*candidate)
+                        .into_iter()
+                        .chain(self.alias_history.get(*candidate).into_iter().flatten())
+                        .any(|source| dynamic_property_alias_owner(source).as_ref() == Some(&owner))
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        loop {
+            let dependents = dynamic_targets
+                .iter()
+                .filter(|candidate| !affected.contains(*candidate))
+                .filter(|candidate| {
+                    self.aliases
+                        .get(*candidate)
+                        .into_iter()
+                        .chain(self.alias_history.get(*candidate).into_iter().flatten())
+                        .any(|source| affected.contains(source))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if dependents.is_empty() {
+                break;
+            }
+            affected.extend(dependents);
+        }
+        let renames = affected
+            .into_iter()
             .filter_map(|target| {
-                dynamic_property_alias_with_exclusion(target, &owner, &property)
-                    .map(|renamed| (target.clone(), renamed))
+                let target_owner = dynamic_property_alias_owner(&target)?;
+                dynamic_property_alias_with_exclusion(&target, &target_owner, &property)
+                    .map(|renamed| (target, renamed))
             })
             .collect::<BTreeMap<_, _>>();
         for (current, renamed) in renames {
@@ -30650,6 +30721,10 @@ impl StaticHookAliasCollector<'_> {
             }
             if self.cross_scope_alias_targets.remove(&current) {
                 self.cross_scope_alias_targets.insert(renamed.clone());
+            }
+            if self.transient_callable_alias_targets.remove(&current) {
+                self.transient_callable_alias_targets
+                    .insert(renamed.clone());
             }
             for targets in self.deferred_callable_ambiguous_targets.values_mut() {
                 if targets.remove(&current) {
@@ -40605,11 +40680,13 @@ impl StaticHookAliasCollector<'_> {
             || self
                 .open_structured_containers
                 .iter()
-                .any(|path| path.starts_with(&source))
-            || self
-                .ambiguous_alias_targets
-                .iter()
-                .any(|path| path.overlaps(&source))
+                .any(|path| path.starts_with(&source) && !(local_class && path == &source))
+            || self.ambiguous_alias_targets.iter().any(|path| {
+                path.overlaps(&source)
+                    && !(local_class
+                        && dynamic_property_alias_owner(path)
+                            .is_some_and(|owner| owner.starts_with(&source)))
+            })
             || self
                 .dynamic_getter_properties
                 .keys()
