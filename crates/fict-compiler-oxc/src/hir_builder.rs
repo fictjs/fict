@@ -20992,6 +20992,7 @@ struct StaticHookAliasCollector<'semantic> {
     mutable_symbols: BTreeSet<SymbolId>,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    externally_stored_value_paths: BTreeSet<StaticAliasPath>,
     externally_stored_roots: BTreeSet<SymbolId>,
     externally_stored_nested_roots: BTreeSet<SymbolId>,
     assignment_target_alias_snapshots: Vec<((u32, u32), StaticAliasPath, bool)>,
@@ -21801,6 +21802,7 @@ struct ExternalStorageInvocationContext {
 #[derive(Clone)]
 struct ExternalStorageInvocationSnapshot {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    detached_aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     flow: ExternalStorageFlowState,
 }
 
@@ -21951,6 +21953,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             snapshot: owner_callable_span.is_none().then(|| {
                 Arc::new(ExternalStorageInvocationSnapshot {
                     aliases: self.aliases.clone(),
+                    detached_aliases: BTreeMap::new(),
                     flow: self.external_storage_flow.clone(),
                 })
             }),
@@ -21995,6 +21998,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             mutable_symbols: mutable_symbols.clone(),
             aliases: BTreeMap::new(),
             alias_history: BTreeMap::new(),
+            externally_stored_value_paths: BTreeSet::new(),
             externally_stored_roots: BTreeSet::new(),
             externally_stored_nested_roots: BTreeSet::new(),
             assignment_target_alias_snapshots: Vec::new(),
@@ -22497,6 +22501,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_resolved_externally_stored_path(&mut self, source: StaticAliasPath) {
+        self.externally_stored_value_paths.insert(source.clone());
         let StaticAliasRoot::Binding(root) = source.root else {
             return;
         };
@@ -24589,12 +24594,51 @@ impl StaticHookAliasCollector<'_> {
         self.insert_alias(target.clone(), source.clone());
         self.pending_returned_structured_dynamic_invocations
             .extend(pending_dynamic);
+        self.record_returned_structured_value_captures(target, &source, capture_invocations);
         instances.push(ReturnedStructuredValueInstance {
             source,
             capture_invocations: capture_invocations.to_vec(),
         });
         self.returned_structured_value_instances
             .insert(target.clone(), instances);
+    }
+
+    fn record_returned_structured_value_captures(
+        &mut self,
+        target: &StaticAliasPath,
+        source: &StaticAliasPath,
+        capture_invocations: &[LocalInvocationFact],
+    ) {
+        if capture_invocations.is_empty() {
+            return;
+        }
+        let properties = self
+            .aliases
+            .keys()
+            .filter(|property| {
+                property.starts_with(source)
+                    && (property.properties.len() > source.properties.len()
+                        || property.element_wildcard)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let creators = vec![capture_invocations.to_vec()];
+        for property in properties {
+            let resolved = resolve_static_alias_path(&self.aliases, &property);
+            let Some(captures) = self.mapped_returned_callable_capture_paths(
+                &resolved,
+                LocalParameterInvalidationKind::Member,
+                &creators,
+            ) else {
+                continue;
+            };
+            let captured_target = Self::rebase_returned_class_path(&property, source, target);
+            for capture in captures {
+                if !capture.overlaps(&captured_target) {
+                    self.record_local_identity_capture(&capture, &captured_target);
+                }
+            }
+        }
     }
 
     fn rebase_returned_class_path(
@@ -32805,7 +32849,8 @@ impl StaticHookAliasCollector<'_> {
             Expression::CallExpression(call) => {
                 if let Some(source) = self.alias_source_path(value) {
                     if !self.snapshot_local_callable_alias(target.clone(), &source) {
-                        self.insert_alias(target, source);
+                        self.insert_alias(target.clone(), source.clone());
+                        self.record_local_identity_capture(&source, &target);
                     }
                 } else {
                     self.record_callable_result_initializer(target, call);
@@ -32850,7 +32895,8 @@ impl StaticHookAliasCollector<'_> {
                 if let Some(source) = self.alias_source_path(value)
                     && !self.snapshot_local_callable_alias(target.clone(), &source)
                 {
-                    self.insert_alias(target, source);
+                    self.insert_alias(target.clone(), source.clone());
+                    self.record_local_identity_capture(&source, &target);
                 }
             }
         }
@@ -38075,6 +38121,7 @@ impl StaticHookAliasCollector<'_> {
         let deferred_slot_invalidated = rebase_paths(&self.deferred_slot_invalidated);
         let deferred_slot_member_invalidated = rebase_paths(&self.deferred_slot_member_invalidated);
         let deferred_exposed_paths = rebase_paths(&self.deferred_exposed_paths);
+        let externally_stored = rebase_paths(&self.externally_stored_value_paths);
         self.clear_overlapping_aliases(target);
         for path in &callable_paths {
             let destination = Self::rebase_returned_class_path(path, &source, target);
@@ -38169,6 +38216,21 @@ impl StaticHookAliasCollector<'_> {
         self.deferred_slot_member_invalidated
             .extend(deferred_slot_member_invalidated);
         self.deferred_exposed_paths.extend(deferred_exposed_paths);
+        self.externally_stored_value_paths
+            .retain(|path| !path.starts_with(&source));
+        for path in externally_stored {
+            self.record_resolved_externally_stored_path(path);
+        }
+        // External-storage effects are propagated after traversal. Rebase only snapshots from
+        // invocations already seen so calls after the overwrite still observe the new value.
+        for invocation in &mut self.local_invocations {
+            let Some(snapshot) = invocation.external_storage_context.snapshot.as_mut() else {
+                continue;
+            };
+            Arc::make_mut(snapshot)
+                .detached_aliases
+                .insert(source.clone(), target.clone());
+        }
         self.insert_alias(source, target.clone());
         true
     }
@@ -38183,6 +38245,25 @@ impl StaticHookAliasCollector<'_> {
             resolve_static_alias_path(&self.aliases, source),
             target.clone(),
         ));
+    }
+
+    fn record_local_identity_capture(
+        &mut self,
+        source: &StaticAliasPath,
+        target: &StaticAliasPath,
+    ) {
+        // A nested function reads outer bindings when invoked, not when its body is visited.
+        if self.path_owner_depth(source) != self.function_depth
+            || self.path_owner_depth(target) != self.function_depth
+            || (source.properties.is_empty()
+                && !source.element_wildcard
+                && !source
+                    .binding_root()
+                    .is_some_and(|root| self.mutable_symbols.contains(&root)))
+        {
+            return;
+        }
+        self.record_local_descriptor_value_capture(source, target);
     }
 
     fn detach_overwritten_local_descriptor_values(&mut self, path: &StaticAliasPath) {
@@ -40295,7 +40376,8 @@ impl StaticHookAliasCollector<'_> {
             &path,
         );
         for candidate in candidates {
-            self.record_resolved_externally_stored_path(candidate);
+            let detached = resolve_static_alias_path(&snapshot.detached_aliases, &candidate);
+            self.record_resolved_externally_stored_path(detached);
         }
     }
 

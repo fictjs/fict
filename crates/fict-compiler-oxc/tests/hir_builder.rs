@@ -3088,6 +3088,41 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "exposed-before-rebind parameterized returned object callback slot",
+            "let local = {}; const make = value => ({ child: value }); const result = make(local); holder.item = local; local = {}; const run = () => count;",
+            "result.child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "exposed-before-rebind local alias callback slot",
+            "let local = {}; const alias = local; holder.item = local; local = {}; const run = () => count;",
+            "alias.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "exposed-before-rebind local member alias callback slot",
+            "const local = { item: {} }; const alias = local.item; holder.item = local.item; local.item = {}; const run = () => count;",
+            "alias.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "helper-exposed-before-rebind local alias callback slot",
+            "let local = {}; const alias = local; const expose = value => { holder.item = value; }; expose(local); local = {}; const run = () => count;",
+            "alias.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "helper-exposed-before-rebind returned object callback slot",
+            "let local = {}; const make = value => ({ child: value }); const result = make(local); const expose = value => { holder.item = value; }; expose(local); local = {}; const run = () => count;",
+            "result.child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "later-exposed aliased copied array element callback slot",
             "const local = {}; const items = [local]; const copy = items.slice(); const item = copy[0]; holder.item = local; const run = () => count;",
             "item.run = run;",
@@ -3793,6 +3828,11 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             const count = $state(0);
             const local = {};
             const alias = local;
+            let reboundLocal = {};
+            const reboundAlias = reboundLocal;
+            const reboundAliasAgain = reboundLocal;
+            const reboundContainer = { item: {} };
+            const reboundMemberAlias = reboundContainer.item;
             const run = () => count;
             const { ...objectRest } = holder;
             const [first, ...arrayRest] = holder.items;
@@ -3863,6 +3903,11 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             const localFromItems = Array.from(localItems);
             const localOfItems = Array.of(localItem);
             local.run = run;
+            reboundLocal = holder.item;
+            reboundContainer.item = holder.item;
+            reboundAlias.run = run;
+            reboundAliasAgain.run = run;
+            reboundMemberAlias.run = run;
             alias.next ??= () => count;
             objectRest.run = run;
             arrayRest.run = run;
@@ -4016,13 +4061,17 @@ fn returned_structured_parameter_storage_is_instance_specific() {
             const exposedArray = makeArray(exposed);
             const localObject = makeObject(objectLocal);
             const localArray = makeArray(arrayLocal);
+            let reboundSource = {};
+            const reboundResult = makeObject(reboundSource);
             const overwrittenResult = makeObject(exposed);
             holder.item = exposed;
+            reboundSource = holder.item;
             overwrittenResult.child = {};
             void exposedObject;
             void exposedArray;
             localObject.child.run = run;
             localArray[0].child.run = run;
+            reboundResult.child.run = run;
             overwrittenResult.child.run = run;
             return count;
         }
