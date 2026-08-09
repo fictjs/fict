@@ -22316,6 +22316,30 @@ impl StaticHookAliasCollector<'_> {
         flow: &ExternalStorageFlowState,
         path: &StaticAliasPath,
     ) -> BTreeSet<StaticAliasPath> {
+        // Invocation snapshots must not be combined with returned instances created in a later
+        // collector state. Current-state callers use the wrapper below to bind those instances.
+        self.resolved_external_storage_alias_candidates_inner(aliases, flow, path, false)
+    }
+
+    fn resolved_current_external_storage_alias_candidates(
+        &self,
+        path: &StaticAliasPath,
+    ) -> BTreeSet<StaticAliasPath> {
+        self.resolved_external_storage_alias_candidates_inner(
+            &self.aliases,
+            &self.external_storage_flow,
+            path,
+            true,
+        )
+    }
+
+    fn resolved_external_storage_alias_candidates_inner(
+        &self,
+        aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
+        flow: &ExternalStorageFlowState,
+        path: &StaticAliasPath,
+        bind_returned_structures: bool,
+    ) -> BTreeSet<StaticAliasPath> {
         let mut candidates = BTreeSet::new();
         let mut pending = VecDeque::from([path.clone()]);
         while let Some(current) = pending.pop_front() {
@@ -22338,40 +22362,67 @@ impl StaticHookAliasCollector<'_> {
                     pending.push_back(candidate);
                 }
             }
+            if bind_returned_structures {
+                for (source, capture_invocations) in
+                    self.returned_structured_instances_for_path(&current)
+                {
+                    let resolved_source = resolve_static_alias_path(aliases, &source);
+                    if !candidates.contains(&source) {
+                        pending.push_back(source);
+                    }
+                    if !candidates.contains(&resolved_source) {
+                        pending.push_back(resolved_source.clone());
+                    }
+                    if let Some(mapped) = self.mapped_returned_callable_capture_paths(
+                        &resolved_source,
+                        LocalParameterInvalidationKind::Member,
+                        std::slice::from_ref(&capture_invocations),
+                    ) {
+                        for candidate in mapped {
+                            if candidates.len() >= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS {
+                                candidates.insert(
+                                    StaticAliasPath::unresolved_global(
+                                        "<opaque-storage-alias>".to_string(),
+                                    )
+                                    .with_property("value".to_string()),
+                                );
+                                return candidates;
+                            }
+                            candidates.insert(candidate);
+                        }
+                    }
+                }
+            }
         }
         candidates
     }
 
     fn alias_path_targets_external_storage(&self, path: &StaticAliasPath) -> bool {
-        self.resolved_external_storage_alias_candidates(
-            &self.aliases,
-            &self.external_storage_flow,
-            path,
-        )
-        .into_iter()
-        .any(|candidate| {
-            if !self
-                .external_storage_flow
-                .storage_container_attached_roots(&candidate)
-                .is_empty()
-            {
-                return true;
-            }
-            let projection_depth =
-                candidate.properties.len() + usize::from(candidate.element_wildcard);
-            match candidate.root {
-                StaticAliasRoot::Binding(root) => {
-                    projection_depth >= 1
-                        && (self.external_callable_parameters.contains(&root)
-                            || self
-                                .scoping
-                                .symbol_flags(root)
-                                .contains(SymbolFlags::Import))
+        self.resolved_current_external_storage_alias_candidates(path)
+            .into_iter()
+            .any(|candidate| {
+                if !self
+                    .external_storage_flow
+                    .storage_container_attached_roots(&candidate)
+                    .is_empty()
+                {
+                    return true;
                 }
-                StaticAliasRoot::UnresolvedGlobal(_) => projection_depth >= 1,
-                StaticAliasRoot::DynamicThis { .. } => false,
-            }
-        })
+                let projection_depth =
+                    candidate.properties.len() + usize::from(candidate.element_wildcard);
+                match candidate.root {
+                    StaticAliasRoot::Binding(root) => {
+                        projection_depth >= 1
+                            && (self.external_callable_parameters.contains(&root)
+                                || self
+                                    .scoping
+                                    .symbol_flags(root)
+                                    .contains(SymbolFlags::Import))
+                    }
+                    StaticAliasRoot::UnresolvedGlobal(_) => projection_depth >= 1,
+                    StaticAliasRoot::DynamicThis { .. } => false,
+                }
+            })
     }
 
     fn record_externally_stored_value(&mut self, expression: &Expression<'_>) {
@@ -22429,11 +22480,17 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_externally_stored_path(&mut self, source: StaticAliasPath) {
-        let sources = if self.path_requires_historical_aliases(&source, self.function_depth) {
+        let mut sources = if self.path_requires_historical_aliases(&source, self.function_depth) {
             resolve_historical_alias_paths(&self.alias_history, &source)
         } else {
             BTreeSet::from([resolve_static_alias_path(&self.aliases, &source)])
         };
+        if !self
+            .returned_structured_instances_for_path(&source)
+            .is_empty()
+        {
+            sources.extend(self.resolved_current_external_storage_alias_candidates(&source));
+        }
         for source in sources {
             self.record_resolved_externally_stored_path(source);
         }
@@ -22455,11 +22512,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_assignment_target_alias_snapshot(&mut self, span: Span, path: StaticAliasPath) {
-        let flow_candidates = self.resolved_external_storage_alias_candidates(
-            &self.aliases,
-            &self.external_storage_flow,
-            &path,
-        );
+        let flow_candidates = self.resolved_current_external_storage_alias_candidates(&path);
         let attached_roots = flow_candidates
             .iter()
             .flat_map(|candidate| self.external_storage_flow.attached_roots(candidate))

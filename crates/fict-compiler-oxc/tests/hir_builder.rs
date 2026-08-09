@@ -3060,6 +3060,34 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "later-exposed parameterized returned object callback slot",
+            "const local = {}; const make = value => ({ child: value }); const result = make(local); holder.item = local; const run = () => count;",
+            "result.child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed parameterized structured array result callback slot",
+            "const local = {}; const make = value => Array.of({ child: value }); const result = make(local); holder.item = local; const run = () => count;",
+            "result[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "returned parameter member stored externally callback slot",
+            "const local = {}; const make = value => ({ child: value }); const result = make(local); holder.item = result.child; const run = () => count;",
+            "result.child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed destructured parameter returned object callback slot",
+            "const local = {}; const make = ({ value }) => ({ child: value }); const result = make({ value: local }); holder.item = local; const run = () => count;",
+            "result.child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "later-exposed aliased copied array element callback slot",
             "const local = {}; const items = [local]; const copy = items.slice(); const item = copy[0]; holder.item = local; const run = () => count;",
             "item.run = run;",
@@ -3968,6 +3996,51 @@ fn local_property_assignments_do_not_escape_reactive_values() {
             )
         }),
         "local slots and non-retaining assignments must remain valid: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn returned_structured_parameter_storage_is_instance_specific() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const run = () => count;
+            const exposed = {};
+            const objectLocal = {};
+            const arrayLocal = {};
+            const makeObject = value => ({ child: value });
+            const makeArray = value => Array.of({ child: value });
+            const exposedObject = makeObject(exposed);
+            const exposedArray = makeArray(exposed);
+            const localObject = makeObject(objectLocal);
+            const localArray = makeArray(arrayLocal);
+            const overwrittenResult = makeObject(exposed);
+            holder.item = exposed;
+            overwrittenResult.child = {};
+            void exposedObject;
+            void exposedArray;
+            localObject.child.run = run;
+            localArray[0].child.run = run;
+            overwrittenResult.child.run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "factory invocations and overwritten members must keep distinct storage identity: {:?}",
         output.diagnostics
     );
 }
