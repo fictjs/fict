@@ -26310,7 +26310,8 @@ impl StaticHookAliasCollector<'_> {
             self.exclude_dynamic_local_accessor_property(target, field.clone());
         }
         let open_fields = self.open_local_class_instance_fields.contains(class);
-        if open_fields && !self.closed_replacement_class_instances.contains(class) {
+        let closed_replacement = self.closed_replacement_class_instances.contains(class);
+        if open_fields && !closed_replacement {
             self.open_structured_containers.insert(target.clone());
         }
         let methods = self
@@ -26321,7 +26322,7 @@ impl StaticHookAliasCollector<'_> {
             .filter(|candidate| {
                 candidate.starts_with(&prototype)
                     && candidate.properties.len() > prototype.properties.len()
-                    && !open_fields
+                    && !closed_replacement
                     && !fields.contains(&candidate.properties[prototype.properties.len()])
             })
             .cloned()

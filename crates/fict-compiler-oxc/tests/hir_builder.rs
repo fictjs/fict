@@ -5160,6 +5160,26 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "computed instance field preserves a known method candidate",
+            "const key = holder.key; class Box { [key] = {}; expose() { holder.item = local; } } const box = new Box(); box.expose();",
+            true,
+        ),
+        (
+            "computed instance auto-accessor preserves a known method candidate",
+            "const key = holder.key; class Box { accessor [key] = {}; expose() { holder.item = local; } } const box = new Box(); box.expose();",
+            true,
+        ),
+        (
+            "computed instance getter preserves a known method candidate",
+            "const key = holder.key; class Box { get [key]() { return {}; } expose() { holder.item = local; } } const box = new Box(); box.expose();",
+            true,
+        ),
+        (
+            "replacement object does not inherit its class method",
+            "class Box { constructor() { return { expose() {} }; } expose() { holder.item = local; } } const box = new Box(); box.expose();",
+            false,
+        ),
+        (
             "computed static field may expose its local value",
             "const key = holder.key; class Box { static [key] = local; } holder.item = Box.item;",
             true,
