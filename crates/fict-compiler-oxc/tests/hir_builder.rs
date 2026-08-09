@@ -5020,6 +5020,86 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "computed static auto-accessor materializes its local value",
+            "const key = holder.key; class Box { static accessor [key] = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "computed static auto-accessor supports a computed read",
+            "const key = holder.key; class Box { static accessor [key] = local; } holder.item = Box[key];",
+            true,
+        ),
+        (
+            "computed static auto-accessor remains non-enumerable",
+            "const key = holder.key; class Box { static accessor [key] = local; } const copy = { ...Box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "computed static auto-accessor remains absent from value enumeration",
+            "const key = holder.key; class Box { static accessor [key] = local; } const values = Object.values(Box); holder.item = values[0];",
+            false,
+        ),
+        (
+            "computed static auto-accessor assignment updates its storage",
+            "const key = holder.key; class Box { static accessor [key] = {}; } Box[key] = local; holder.item = Box[key];",
+            true,
+        ),
+        (
+            "subclass inherits a computed static auto-accessor",
+            "const key = holder.key; class Parent { static accessor [key] = local; } class Box extends Parent {} holder.item = Box[key];",
+            true,
+        ),
+        (
+            "inherited computed static auto-accessor assignment updates superclass storage",
+            "const key = holder.key; class Parent { static accessor [key] = {}; } class Box extends Parent {} Box[key] = local; holder.item = Parent[key];",
+            true,
+        ),
+        (
+            "inherited computed static auto-accessor assignment remains non-own",
+            "const key = holder.key; class Parent { static accessor [key] = {}; } class Box extends Parent {} Box[key] = local; const copy = { ...Box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "subclass field shadows an inherited computed static auto-accessor",
+            "const key = holder.key; class Parent { static accessor [key] = local; } class Box extends Parent { static item = {}; } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "subclass field preserves other inherited computed static auto-accessor keys",
+            "const key = holder.key; class Parent { static accessor [key] = local; } class Box extends Parent { static item = {}; } holder.item = Box[key];",
+            true,
+        ),
+        (
+            "later static method shadows a computed static auto-accessor",
+            "const key = holder.key; class Box { static accessor [key] = local; static item() {} } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "later computed static auto-accessor may shadow an earlier method",
+            "const key = holder.key; class Box { static item() {} static accessor [key] = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "static field shadows a computed static auto-accessor",
+            "const key = holder.key; class Box { static accessor [key] = local; static item = {}; } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "multiple computed static auto-accessors preserve possible values",
+            "const first = holder.first; const second = holder.second; class Box { static accessor [first] = {}; static accessor [second] = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "detached class preserves a computed static auto-accessor",
+            "const key = holder.key; let Box = class { static accessor [key] = local; }; const Alias = Box; Box = class {}; holder.item = Alias[key];",
+            true,
+        ),
+        (
+            "returned class maps a computed static auto-accessor value",
+            "const key = holder.key; function makeBox(value) { return class { static accessor [key] = value; }; } const Box = makeBox(local); holder.item = Box[key];",
+            true,
+        ),
+        (
             "class expression static auto-accessor materializes its local value",
             "const Box = class { static accessor item = local; }; holder.item = Box.item;",
             true,
