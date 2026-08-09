@@ -20668,10 +20668,17 @@ struct LocalClassInstanceInitializer {
 }
 
 #[derive(Clone)]
-struct DeferredClassInstanceArrayMutation {
+struct DeferredClassInstanceOperation {
+    span: (u32, u32),
     target: StaticAliasPath,
-    mutation: DeferredArrayMutation,
+    kind: DeferredClassInstanceOperationKind,
     conditional: bool,
+}
+
+#[derive(Clone)]
+enum DeferredClassInstanceOperationKind {
+    Assignment(DeferredClassInstanceValue),
+    ArrayMutation(DeferredArrayMutation),
 }
 
 #[derive(Clone)]
@@ -21329,8 +21336,7 @@ struct StaticHookAliasCollector<'semantic> {
     // Callable state changes are ordered because later writes or removals in the same invocation
     // replace earlier ones. The conservative activation path still joins them as possible history.
     deferred_callable_operations: BTreeMap<(u32, u32), Vec<DeferredCallableOperation>>,
-    deferred_class_instance_array_mutations:
-        BTreeMap<(u32, u32), Vec<DeferredClassInstanceArrayMutation>>,
+    deferred_class_instance_operations: BTreeMap<(u32, u32), Vec<DeferredClassInstanceOperation>>,
     deferred_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     suppressed_deferred_array_alias_root: Option<StaticAliasPath>,
     deferred_array_snapshot_index: usize,
@@ -22421,7 +22427,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             returned_callable_effects: BTreeMap::new(),
             local_callable_external_storage_effects: BTreeMap::new(),
             deferred_callable_operations: BTreeMap::new(),
-            deferred_class_instance_array_mutations: BTreeMap::new(),
+            deferred_class_instance_operations: BTreeMap::new(),
             deferred_callable_ambiguous_targets: BTreeMap::new(),
             suppressed_deferred_array_alias_root: None,
             deferred_array_snapshot_index: 0,
@@ -25838,7 +25844,7 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         for ((_, name), (initializer, callables)) in ordered {
-            self.replay_deferred_class_instance_array_mutations(target, class, initializer);
+            self.replay_deferred_class_instance_operations(target, class, initializer);
             self.materialize_class_instance_field_callables(
                 target,
                 name,
@@ -25930,26 +25936,24 @@ impl StaticHookAliasCollector<'_> {
         mutation
     }
 
-    fn replay_deferred_class_instance_array_mutations(
+    fn replay_deferred_class_instance_operations(
         &mut self,
         target: &StaticAliasPath,
         class: &StaticAliasPath,
         initializer: LocalClassInstanceInitializer,
     ) {
-        let mutations = self
-            .deferred_class_instance_array_mutations
+        let operations = self
+            .deferred_class_instance_operations
             .get(&initializer.class_span)
             .cloned()
             .unwrap_or_default();
         let historical = self.path_requires_historical_aliases(class, self.function_depth);
         let mappers =
             self.returned_callable_effect_creators(class, initializer.class_span, historical);
-        for operation in mutations {
-            let StaticAliasRoot::DynamicThis { start, end } = &operation.mutation.snapshot.root
-            else {
-                continue;
-            };
-            if *start < initializer.value_span.0 || *end > initializer.value_span.1 {
+        for operation in operations {
+            if operation.span.0 < initializer.value_span.0
+                || operation.span.1 > initializer.value_span.1
+            {
                 continue;
             }
             let rebased_target =
@@ -25957,18 +25961,40 @@ impl StaticHookAliasCollector<'_> {
             if rebased_target == operation.target {
                 continue;
             }
-            let mutation = Self::rebase_class_instance_array_mutation(
-                &operation.mutation,
-                initializer,
-                target,
-            );
-            let applied = self.apply_deferred_array_mutation(&rebased_target, &mutation, &mappers);
-            if operation.conditional && applied {
-                self.array_lengths.remove(&rebased_target);
-                self.open_structured_containers
-                    .insert(rebased_target.clone());
-                self.ambiguous_alias_targets
-                    .insert(rebased_target.with_element_wildcard());
+            match operation.kind {
+                DeferredClassInstanceOperationKind::Assignment(value) => {
+                    self.apply_deferred_class_instance_value(
+                        &rebased_target,
+                        &value,
+                        Some(initializer),
+                        Some(target),
+                        &mappers,
+                    );
+                    let mut owner = rebased_target.clone();
+                    let method = owner.properties.pop();
+                    owner.element_wildcard = false;
+                    if method.as_deref().is_some_and(is_mutating_array_method)
+                        && self.known_array_path(&owner)
+                    {
+                        self.member_invalidated.insert(rebased_target.clone());
+                    }
+                    if operation.conditional {
+                        self.ambiguous_alias_targets.insert(rebased_target);
+                    }
+                }
+                DeferredClassInstanceOperationKind::ArrayMutation(mutation) => {
+                    let mutation =
+                        Self::rebase_class_instance_array_mutation(&mutation, initializer, target);
+                    let applied =
+                        self.apply_deferred_array_mutation(&rebased_target, &mutation, &mappers);
+                    if operation.conditional && applied {
+                        self.array_lengths.remove(&rebased_target);
+                        self.open_structured_containers
+                            .insert(rebased_target.clone());
+                        self.ambiguous_alias_targets
+                            .insert(rebased_target.with_element_wildcard());
+                    }
+                }
             }
         }
     }
@@ -25986,7 +26012,13 @@ impl StaticHookAliasCollector<'_> {
         let ambiguous = callables.len() > 1;
         for callable in callables {
             if let Some(value) = callable.value {
-                self.apply_deferred_class_instance_value(&instance_field, &value, initializer);
+                self.apply_deferred_class_instance_value(
+                    &instance_field,
+                    &value,
+                    initializer,
+                    initializer.map(|_| target),
+                    &[],
+                );
                 continue;
             }
             for effect in callable.effect_instances.clone() {
@@ -41898,15 +41930,14 @@ impl StaticHookAliasCollector<'_> {
         target: &StaticAliasPath,
         value: &DeferredClassInstanceValue,
         initializer: Option<LocalClassInstanceInitializer>,
+        instance: Option<&StaticAliasPath>,
+        mappers: &[Vec<LocalInvocationFact>],
     ) {
         let mut deferred = value.value.clone();
-        if let Some(initializer) = initializer {
-            let mut instance = target.clone();
-            instance.properties.pop();
-            instance.element_wildcard = false;
-            Self::rebase_class_instance_deferred_value(&mut deferred, initializer, &instance);
+        if let (Some(initializer), Some(instance)) = (initializer, instance) {
+            Self::rebase_class_instance_deferred_value(&mut deferred, initializer, instance);
         }
-        let sources = self.mapped_deferred_array_value_sources(&deferred, &[]);
+        let sources = self.mapped_deferred_array_value_sources(&deferred, mappers);
         self.clear_overlapping_aliases(target);
         for (suffix, sources) in sources {
             let Some(suffix) = suffix else {
@@ -45136,6 +45167,37 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .function_control_baselines
             .last()
             .is_some_and(|baseline| self.control_depth > *baseline);
+        let deferred_class_instance_assignment =
+            if assignment.operator == OxcAssignmentOperator::Assign {
+                self.class_effect_contexts
+                    .last()
+                    .copied()
+                    .flatten()
+                    .filter(|context| context.captures_same_depth)
+                    .and_then(|context| {
+                        let receiver = self.dynamic_this_roots.last().and_then(Option::as_ref)?;
+                        let target = place.as_ref().and_then(|place| {
+                            static_alias_invalidation_path_with_context(place, Some(&receiver.root))
+                        })?;
+                        if !matches!(&target.root, StaticAliasRoot::DynamicThis { .. }) {
+                            return None;
+                        }
+                        let value = self
+                            .deferred_class_instance_value(&assignment.right)
+                            .unwrap_or_else(|| DeferredClassInstanceValue {
+                                value: DeferredArrayMutationValue {
+                                    sources: Vec::new(),
+                                    opaque: false,
+                                    definedness: self
+                                        .local_getter_expression_definedness(&assignment.right),
+                                },
+                                shapes: BTreeMap::new(),
+                            });
+                        Some((context.span, target, value))
+                    })
+            } else {
+                None
+            };
         if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(source) = destructuring_source
         {
@@ -45156,6 +45218,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         for span in suppressed_getter_reads {
             self.handled_local_getter_read_spans.remove(&span);
+        }
+        if !accessor_write && let Some((span, target, value)) = deferred_class_instance_assignment {
+            self.deferred_class_instance_operations
+                .entry(span)
+                .or_default()
+                .push(DeferredClassInstanceOperation {
+                    span: (assignment.span.start, assignment.span.end),
+                    target,
+                    kind: DeferredClassInstanceOperationKind::Assignment(value),
+                    conditional,
+                });
         }
         self.invalidate_place(place.clone());
         if let Some(path) = prototype_path {
@@ -45440,12 +45513,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     .flatten()
                     .is_some_and(|context| context.captures_same_depth)
             {
-                self.deferred_class_instance_array_mutations
+                self.deferred_class_instance_operations
                     .entry(span)
                     .or_default()
-                    .push(DeferredClassInstanceArrayMutation {
+                    .push(DeferredClassInstanceOperation {
+                        span: (call.span.start, call.span.end),
                         target,
-                        mutation,
+                        kind: DeferredClassInstanceOperationKind::ArrayMutation(mutation),
                         conditional: !unconditional,
                     });
             } else {

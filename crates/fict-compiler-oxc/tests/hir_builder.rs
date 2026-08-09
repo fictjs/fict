@@ -5280,6 +5280,76 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "instance field assignment replaces an earlier array",
+            "class Box { items = [local]; reset = (this.items = []); } const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "instance field assignment installs a local array value",
+            "class Box { items = []; reset = (this.items = [local]); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "instance field assignment replaces an earlier object",
+            "class Box { item = local; reset = (this.item = {}); } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "instance field assignment installs a local object value",
+            "class Box { item = {}; reset = (this.item = local); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "instance field assignment replaces a nested array",
+            "class Box { state = { items: [local] }; reset = (this.state.items = []); } const box = new Box(); holder.item = box.state.items[0];",
+            false,
+        ),
+        (
+            "instance field assignment reads an earlier field",
+            "class Box { source = local; item = {}; reset = (this.item = this.source); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "instance field assignment precedes a later array removal",
+            "class Box { items = []; value = (this.items = [local], this.items.shift()); } const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "instance field assignment precedes a later array insertion",
+            "class Box { items = [local]; value = (this.items = [], this.items.push(local)); } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "conditional instance field replacement preserves the prior value",
+            "class Box { item = local; reset = holder.enabled && (this.item = {}); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "conditional instance field assignment preserves the possible value",
+            "class Box { item = {}; reset = holder.enabled && (this.item = local); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "returned class assignment maps a factory argument",
+            "function make(value) { return class { item = {}; reset = (this.item = value); }; } const Box = make(local); const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "returned class assignment maps a fresh factory argument",
+            "function make(value) { return class { item = local; reset = (this.item = value); }; } const Box = make({}); const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "unconstructed instance field assignment remains inert",
+            "class Box { item = {}; reset = (this.item = local); } void Box;",
+            false,
+        ),
+        (
+            "instance field method override suppresses a later array mutation",
+            "class Box { items = []; override = (this.items.push = () => 0); value = this.items.push(local); } const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
             "unconstructed instance field preserves an own property",
             "const container = { item: local }; class Box { value = delete container.item; } void Box; holder.item = container.item;",
             true,
