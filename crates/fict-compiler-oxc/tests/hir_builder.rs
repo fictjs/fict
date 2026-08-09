@@ -5633,6 +5633,90 @@ fn class_instance_field_callable_assignments_follow_construction_timing() {
 }
 
 #[test]
+fn exposed_class_instance_generator_fields_propagate_captures() {
+    for (name, setup, expected_escape) in [
+        (
+            "direct generator field",
+            "class Box { item = function* () { yield count; }; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "assigned generator field",
+            "class Box { item = () => 0; reset = (this.item = function* () { yield count; }); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "direct async generator field",
+            "class Box { item = async function* () { yield count; }; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "nested assigned generator field",
+            "class Box { state = { item: () => 0 }; reset = (this.state.item = function* () { yield count; }); } const box = new Box(); holder.item = box.state.item;",
+            true,
+        ),
+        (
+            "conditional assigned generator field remains possible",
+            "class Box { item = () => 0; reset = holder.enabled && (this.item = function* () { yield count; }); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "later direct field replaces a generator",
+            "class Box { item = function* () { yield count; }; item = () => 0; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later assignment replaces a generator",
+            "class Box { item = () => 0; first = (this.item = function* () { yield count; }); second = (this.item = () => 0); } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "unconstructed generator field remains inert",
+            "class Box { item = function* () { yield count; }; } void Box;",
+            false,
+        ),
+        (
+            "discarded generator field read remains local",
+            "class Box { item = function* () { yield count; }; } const box = new Box(); void box.item;",
+            false,
+        ),
+        (
+            "unadvanced generator field call remains unexecuted",
+            "class Box { item = function* () { yield count; }; } const box = new Box(); box.item();",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    {setup}
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let escape_codes = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            escape_codes.contains(&"FICT-R005"),
+            expected_escape,
+            "{name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn callback_property_captures_follow_assignment_timing() {
     let mut mismatches = Vec::new();
     for (name, setup, expected_escape) in [

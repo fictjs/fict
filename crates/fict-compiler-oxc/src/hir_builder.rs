@@ -24760,14 +24760,11 @@ impl StaticHookAliasCollector<'_> {
                 ),
             };
         let effect_instances = match value.get_inner_expression() {
-            Expression::FunctionExpression(function) if !function.generator => {
-                vec![LocalCallableEffectResult {
-                    span: (function.span.start, function.span.end),
-                    capture_invocations: Vec::new(),
-                    class: false,
-                }]
-            }
-            Expression::FunctionExpression(_) => Vec::new(),
+            Expression::FunctionExpression(function) => vec![LocalCallableEffectResult {
+                span: (function.span.start, function.span.end),
+                capture_invocations: Vec::new(),
+                class: false,
+            }],
             Expression::ArrowFunctionExpression(function) => vec![LocalCallableEffectResult {
                 span: (function.span.start, function.span.end),
                 capture_invocations: Vec::new(),
