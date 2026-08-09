@@ -4760,6 +4760,41 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "first advance stops before post-yield alias write",
+            "const container = { item: {} }; function* assign() { yield 0; container.item = local; } const iterator = assign(); iterator.next(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "first advance reaches pre-yield alias write",
+            "const container = { item: {} }; function* assign() { container.item = local; yield 0; } const iterator = assign(); iterator.next(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "second advance reaches post-yield alias write",
+            "const container = { item: {} }; function* assign() { yield 0; container.item = local; } const iterator = assign(); iterator.next(); iterator.next(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "post-yield capture reads at resume time",
+            "const container = { item: {} }; let captured = local; function* assign() { yield 0; container.item = captured; } const iterator = assign(); iterator.next(); captured = {}; iterator.next(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "two advances stop before the third segment",
+            "const container = { item: {} }; function* assign() { yield 0; yield 1; container.item = local; } const iterator = assign(); iterator.next(); iterator.next(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "third advance reaches the third segment",
+            "const container = { item: {} }; function* assign() { yield 0; yield 1; container.item = local; } const iterator = assign(); iterator.next(); iterator.next(); iterator.next(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "later generator segment replaces an earlier alias",
+            "const container = { item: {} }; const fresh = {}; function* assign() { container.item = local; yield 0; container.item = fresh; } const iterator = assign(); iterator.next(); iterator.next(); holder.item = container.item;",
+            false,
+        ),
+        (
             "conditional invocation preserves the previous alias",
             "const container = { item: local }; const fresh = {}; const assign = () => { container.item = fresh; }; holder.enabled && assign(); holder.item = container.item;",
             true,

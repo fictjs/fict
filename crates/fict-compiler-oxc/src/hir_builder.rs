@@ -66,6 +66,7 @@ use oxc::{
             walk_call_expression, walk_expression, walk_expression_statement, walk_function,
             walk_function_body, walk_jsx_element, walk_return_statement, walk_statements,
             walk_ts_import_equals_declaration, walk_variable_declaration, walk_variable_declarator,
+            walk_yield_expression,
         },
     },
     semantic::{Scoping, Semantic, SemanticBuilder},
@@ -10909,7 +10910,7 @@ struct GeneratorExecutionProof {
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     returned_callable_spans: BTreeSet<(u32, u32)>,
     precisely_advanced_generator_paths: BTreeSet<StaticAliasPath>,
-    precise_generator_advance_spans: BTreeSet<(u32, u32)>,
+    precise_generator_advance_indices: BTreeMap<(u32, u32), usize>,
 }
 
 #[derive(Default)]
@@ -20105,7 +20106,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             })
             .collect::<Vec<_>>();
         let mut precisely_advanced_generator_paths = BTreeSet::new();
-        let mut precise_generator_advance_spans = BTreeSet::new();
+        let mut precise_generator_advance_indices = BTreeMap::new();
         for target in self
             .generator_result_reads
             .iter()
@@ -20150,8 +20151,12 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 continue;
             }
             precisely_advanced_generator_paths.insert(target);
-            precise_generator_advance_spans
-                .extend(advances.into_iter().map(|advance| advance.call_span));
+            precise_generator_advance_indices.extend(
+                advances
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, advance)| (advance.call_span, index)),
+            );
         }
         for retained in self.retained_invocation_spans {
             if unexecuted.contains(&retained.target) {
@@ -20175,7 +20180,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             merely_observed_callable_paths: merely_observed,
             returned_callable_spans,
             precisely_advanced_generator_paths,
-            precise_generator_advance_spans,
+            precise_generator_advance_indices,
         }
     }
 }
@@ -21102,6 +21107,33 @@ impl<'a> Visit<'a> for GeneratorSuspensionCollector {
     }
 }
 
+fn has_linear_generator_segments(body: &FunctionBody<'_>) -> bool {
+    for statement in &body.statements {
+        if let Statement::ExpressionStatement(statement) = statement
+            && let Expression::YieldExpression(expression) =
+                statement.expression.get_inner_expression()
+        {
+            if expression.delegate {
+                return false;
+            }
+            let mut nested = GeneratorSuspensionCollector::default();
+            if let Some(argument) = &expression.argument {
+                nested.visit_expression(argument);
+            }
+            if nested.suspended {
+                return false;
+            }
+            continue;
+        }
+        let mut nested = GeneratorSuspensionCollector::default();
+        nested.visit_statement(statement);
+        if nested.suspended {
+            return false;
+        }
+    }
+    true
+}
+
 struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     known_arrays: &'semantic BTreeSet<SymbolId>,
@@ -21202,7 +21234,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_callable_external_storage_effects: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     // Alias writes are ordered because a later write in the same invocation replaces an earlier
     // one. The conservative activation path still consumes them as a set of possible histories.
-    deferred_callable_aliases: BTreeMap<(u32, u32), Vec<(StaticAliasPath, StaticAliasPath)>>,
+    deferred_callable_aliases: BTreeMap<(u32, u32), Vec<DeferredCallableAlias>>,
     deferred_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     generator_callable_body_spans: BTreeMap<(u32, u32), (u32, u32)>,
     active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
@@ -21261,9 +21293,10 @@ struct StaticHookAliasCollector<'semantic> {
     dynamic_this_roots: Vec<Option<StaticAliasPath>>,
     generator_iterator_invocations: BTreeMap<StaticAliasPath, Vec<LocalInvocationFact>>,
     precisely_advanced_generator_paths: BTreeSet<StaticAliasPath>,
-    precise_generator_advance_spans: BTreeSet<(u32, u32)>,
+    precise_generator_advance_indices: BTreeMap<(u32, u32), usize>,
     tracked_generator_invocation_spans: BTreeSet<(u32, u32)>,
-    single_step_generator_callable_spans: BTreeSet<(u32, u32)>,
+    segmented_generator_callable_spans: BTreeSet<(u32, u32)>,
+    generator_alias_segments: Vec<Option<usize>>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_generator_body_spans: BTreeSet<(u32, u32)>,
     unexecuted_generator_callable_paths: BTreeSet<StaticAliasPath>,
@@ -21433,6 +21466,13 @@ struct LocalCallableCapturedEffect {
     slot: bool,
     member: bool,
     exposure: bool,
+}
+
+#[derive(Clone)]
+struct DeferredCallableAlias {
+    target: StaticAliasPath,
+    source: StaticAliasPath,
+    generator_segment: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -21970,7 +22010,7 @@ enum LocalInvocationGenerator {
 enum LocalAliasInvocationTiming {
     Eager,
     DeferredGenerator,
-    GeneratorAdvance,
+    GeneratorAdvance(usize),
 }
 
 impl LocalInvocationFact {
@@ -22277,9 +22317,10 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             precisely_advanced_generator_paths: generator
                 .precisely_advanced_generator_paths
                 .clone(),
-            precise_generator_advance_spans: generator.precise_generator_advance_spans.clone(),
+            precise_generator_advance_indices: generator.precise_generator_advance_indices.clone(),
             tracked_generator_invocation_spans: BTreeSet::new(),
-            single_step_generator_callable_spans: BTreeSet::new(),
+            segmented_generator_callable_spans: BTreeSet::new(),
+            generator_alias_segments: Vec::new(),
             discarded_invocation_spans: generator.discarded_invocation_spans.clone(),
             unexecuted_generator_body_spans: generator.unexecuted_body_spans.clone(),
             unexecuted_generator_callable_paths: generator.unexecuted_callable_paths.clone(),
@@ -29470,10 +29511,20 @@ impl StaticHookAliasCollector<'_> {
         self.record_external_storage_exception_flow();
         if target != source {
             if let Some(span) = returned_callable_span {
+                let generator_segment = self
+                    .current_callable_spans
+                    .last()
+                    .is_some_and(|callable| *callable == span)
+                    .then(|| self.generator_alias_segments.last().copied().flatten())
+                    .flatten();
                 self.deferred_callable_aliases
                     .entry(span)
                     .or_default()
-                    .push((target.clone(), source.clone()));
+                    .push(DeferredCallableAlias {
+                        target: target.clone(),
+                        source: source.clone(),
+                        generator_segment,
+                    });
             } else {
                 self.alias_history
                     .entry(target.clone())
@@ -40470,12 +40521,16 @@ impl StaticHookAliasCollector<'_> {
                         .external_storage_context
                         .owner_callable_span
                         .is_none()
-                    && (!generator || timing == LocalAliasInvocationTiming::GeneratorAdvance);
-                let aliases = self
+                    && (!generator
+                        || matches!(timing, LocalAliasInvocationTiming::GeneratorAdvance(_)));
+                let mut aliases = self
                     .deferred_callable_aliases
                     .get(&span)
                     .cloned()
                     .unwrap_or_default();
+                if let LocalAliasInvocationTiming::GeneratorAdvance(segment) = timing {
+                    aliases.retain(|alias| alias.generator_segment == Some(segment));
+                }
                 let ambiguous_targets = self
                     .deferred_callable_ambiguous_targets
                     .get(&span)
@@ -40488,7 +40543,7 @@ impl StaticHookAliasCollector<'_> {
                     self.deferred_generator_alias_effects.extend(
                         aliases
                             .iter()
-                            .map(|(target, _)| (instance_target.clone(), span, target.clone()))
+                            .map(|alias| (instance_target.clone(), span, alias.target.clone()))
                             .chain(
                                 ambiguous_targets
                                     .iter()
@@ -40501,7 +40556,7 @@ impl StaticHookAliasCollector<'_> {
                     self.imprecisely_invoked_alias_effects.extend(
                         aliases
                             .iter()
-                            .map(|(target, _)| (instance_target.clone(), span, target.clone()))
+                            .map(|alias| (instance_target.clone(), span, alias.target.clone()))
                             .chain(
                                 ambiguous_targets
                                     .iter()
@@ -40523,7 +40578,9 @@ impl StaticHookAliasCollector<'_> {
                         })
                         .collect()
                 };
-                for (target, source) in aliases {
+                for alias in aliases {
+                    let target = alias.target;
+                    let source = alias.source;
                     let effect = (instance_target.clone(), span, target.clone());
                     let targets = if target.properties.is_empty() && !target.element_wildcard {
                         BTreeSet::from([target])
@@ -40653,7 +40710,9 @@ impl StaticHookAliasCollector<'_> {
                 .get(span)
                 .cloned()
                 .unwrap_or_default();
-            for (target, source) in aliases {
+            for alias in aliases {
+                let target = alias.target;
+                let source = alias.source;
                 let effect = (instance_target.clone(), *span, target.clone());
                 if self.precisely_activated_alias_effect(&effect, &instance, &escaped_instances) {
                     continue;
@@ -40912,29 +40971,22 @@ impl StaticHookAliasCollector<'_> {
     fn precise_generator_advance_invocations(
         &self,
         call: &CallExpression<'_>,
-    ) -> Vec<LocalInvocationFact> {
-        if !self
-            .precise_generator_advance_spans
-            .contains(&(call.span.start, call.span.end))
-        {
-            return Vec::new();
-        }
-        let Some(raw) = self.direct_generator_advance_path(call) else {
-            return Vec::new();
-        };
+    ) -> Option<(Vec<LocalInvocationFact>, usize)> {
+        let segment = *self
+            .precise_generator_advance_indices
+            .get(&(call.span.start, call.span.end))?;
+        let raw = self.direct_generator_advance_path(call)?;
         let resolved = resolve_static_alias_path(&self.aliases, &raw);
-        [raw, resolved]
-            .into_iter()
-            .find_map(|path| {
-                self.precisely_advanced_generator_paths
-                    .contains(&path)
-                    .then(|| self.generator_iterator_invocations.get(&path).cloned())
-                    .flatten()
-            })
-            .unwrap_or_default()
+        let invocations = [raw, resolved].into_iter().find_map(|path| {
+            self.precisely_advanced_generator_paths
+                .contains(&path)
+                .then(|| self.generator_iterator_invocations.get(&path).cloned())
+                .flatten()
+        })?;
+        Some((invocations, segment))
     }
 
-    fn generator_advance_is_single_step(&self, invocations: &[LocalInvocationFact]) -> bool {
+    fn generator_advance_is_segmented(&self, invocations: &[LocalInvocationFact]) -> bool {
         let mut spans = BTreeSet::new();
         for invocation in invocations {
             if !self.invocation_is_definitely_generator(invocation) {
@@ -40947,9 +40999,13 @@ impl StaticHookAliasCollector<'_> {
             );
         }
         !spans.is_empty()
-            && spans
-                .iter()
-                .all(|span| self.single_step_generator_callable_spans.contains(span))
+            && spans.iter().all(|span| {
+                self.segmented_generator_callable_spans.contains(span)
+                    && self
+                        .deferred_callable_ambiguous_targets
+                        .get(span)
+                        .is_none_or(BTreeSet::is_empty)
+            })
     }
 
     fn materialize_default_derived_alternative(
@@ -42316,13 +42372,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 (function.span.start, function.span.end),
                 (body.span.start, body.span.end),
             );
-            if !function.r#async {
-                let mut suspensions = GeneratorSuspensionCollector::default();
-                suspensions.visit_function_body(body);
-                if !suspensions.suspended {
-                    self.single_step_generator_callable_spans
-                        .insert((function.span.start, function.span.end));
-                }
+            if !function.r#async && has_linear_generator_segments(body) {
+                self.segmented_generator_callable_spans
+                    .insert((function.span.start, function.span.end));
             }
         }
         if function.r#type == FunctionType::FunctionDeclaration
@@ -42544,7 +42596,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         );
         self.dynamic_this_roots
             .push(Some(StaticAliasPath::dynamic_this(function.span)));
+        self.generator_alias_segments
+            .push((function.generator && !function.r#async).then_some(0));
         walk_function(self, function, flags);
+        self.generator_alias_segments.pop();
         self.dynamic_this_roots.pop();
         self.class_effect_contexts.pop();
         self.current_callable_spans.pop();
@@ -42798,6 +42853,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         walk_function_body(self, body);
     }
 
+    fn visit_yield_expression(&mut self, expression: &oxc::ast::ast::YieldExpression<'a>) {
+        walk_yield_expression(self, expression);
+        if let Some(Some(segment)) = self.generator_alias_segments.last_mut() {
+            *segment = segment.saturating_add(1);
+        }
+    }
+
     fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
         if self.function_depth > 0
             && (self
@@ -42965,7 +43027,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.current_callable_spans
             .push((function.span.start, function.span.end));
         self.class_effect_contexts.push(None);
+        self.generator_alias_segments.push(None);
         walk_arrow_function_expression(self, function);
+        self.generator_alias_segments.pop();
         self.class_effect_contexts.pop();
         self.current_callable_spans.pop();
         let changed_outer_targets = self
@@ -43622,9 +43686,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         };
         walk_call_expression(self, call);
         self.activate_precise_local_alias_invocations(&local_invocations, local_alias_timing);
-        if !generator_advance_invocations.is_empty() {
-            let timing = if self.generator_advance_is_single_step(&generator_advance_invocations) {
-                LocalAliasInvocationTiming::GeneratorAdvance
+        if let Some((generator_advance_invocations, segment)) = generator_advance_invocations {
+            let timing = if self.generator_advance_is_segmented(&generator_advance_invocations) {
+                LocalAliasInvocationTiming::GeneratorAdvance(segment)
             } else {
                 LocalAliasInvocationTiming::Eager
             };
