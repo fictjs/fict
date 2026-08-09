@@ -29511,20 +29511,7 @@ impl StaticHookAliasCollector<'_> {
         self.record_external_storage_exception_flow();
         if target != source {
             if let Some(span) = returned_callable_span {
-                let generator_segment = self
-                    .current_callable_spans
-                    .last()
-                    .is_some_and(|callable| *callable == span)
-                    .then(|| self.generator_alias_segments.last().copied().flatten())
-                    .flatten();
-                self.deferred_callable_aliases
-                    .entry(span)
-                    .or_default()
-                    .push(DeferredCallableAlias {
-                        target: target.clone(),
-                        source: source.clone(),
-                        generator_segment,
-                    });
+                self.record_deferred_callable_alias(span, target.clone(), source.clone());
             } else {
                 self.alias_history
                     .entry(target.clone())
@@ -29550,6 +29537,28 @@ impl StaticHookAliasCollector<'_> {
                     .collect(),
             );
         }
+    }
+
+    fn record_deferred_callable_alias(
+        &mut self,
+        span: (u32, u32),
+        target: StaticAliasPath,
+        source: StaticAliasPath,
+    ) {
+        let generator_segment = self
+            .current_callable_spans
+            .last()
+            .is_some_and(|callable| *callable == span)
+            .then(|| self.generator_alias_segments.last().copied().flatten())
+            .flatten();
+        self.deferred_callable_aliases
+            .entry(span)
+            .or_default()
+            .push(DeferredCallableAlias {
+                target,
+                source,
+                generator_segment,
+            });
     }
 
     fn known_array_length(&self, path: &StaticAliasPath) -> Option<usize> {
@@ -33380,11 +33389,13 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             Expression::ObjectExpression(object) => {
+                self.prepare_deferred_structured_initializer(&target, value);
                 self.structured_own_properties
                     .insert(target.clone(), BTreeSet::new());
                 self.collect_object(&target, object);
             }
             Expression::ArrayExpression(array) => {
+                self.prepare_deferred_structured_initializer(&target, value);
                 self.structured_own_properties
                     .insert(target.clone(), BTreeSet::new());
                 self.collect_array(&target, array);
@@ -33448,6 +33459,32 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
         }
+    }
+
+    fn prepare_deferred_structured_initializer(
+        &mut self,
+        target: &StaticAliasPath,
+        value: &Expression<'_>,
+    ) {
+        if self
+            .class_effect_contexts
+            .last()
+            .is_some_and(Option::is_some)
+        {
+            return;
+        }
+        let Some(span) = self.deferred_callable_alias_capture_span(target) else {
+            return;
+        };
+        let source = StaticAliasPath::dynamic_this(value.span());
+        self.dynamic_path_owner_depths
+            .insert((value.span().start, value.span().end), self.function_depth);
+        self.structured_own_properties
+            .insert(source.clone(), BTreeSet::new());
+        // The span is a shared blueprint for runtime instances. Joining later member histories is
+        // conservative and prevents one invocation from rewriting an earlier instance.
+        self.ambiguous_alias_targets.insert(source.clone());
+        self.record_deferred_callable_alias(span, target.clone(), source);
     }
 
     fn alias_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {

@@ -4795,6 +4795,51 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "later generator segment replaces an earlier alias with a fresh object",
+            "const container = { item: {} }; function* assign() { container.item = local; yield 0; container.item = {}; } const iterator = assign(); iterator.next(); iterator.next(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "invoked arrow replaces an earlier alias with a fresh object",
+            "const container = { item: local }; const assign = () => { container.item = {}; }; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "uninvoked arrow preserves an earlier alias before a fresh object write",
+            "const container = { item: local }; const assign = () => { container.item = {}; }; void assign; holder.item = container.item;",
+            true,
+        ),
+        (
+            "fresh nested literals replace an earlier alias",
+            "const container = { item: local }; const assign = () => { container.item = { nested: [1, { ok: true }] }; }; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "fresh array replaces an earlier alias",
+            "const container = { item: local }; const assign = () => { container.item = []; }; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "fresh object member retains a local alias",
+            "const container = { item: {} }; const assign = () => { container.item = { child: local }; }; assign(); holder.item = container.item.child;",
+            true,
+        ),
+        (
+            "fresh array element retains a local alias",
+            "const container = { item: {} }; const assign = () => { container.item = [local]; }; assign(); holder.item = container.item[0];",
+            true,
+        ),
+        (
+            "later fresh instance does not rewrite a retained instance",
+            "const container = { item: {} }; const fresh = {}; const assign = value => { container.item = { child: value }; }; assign(local); const retained = container.item; assign(fresh); holder.item = retained.child;",
+            true,
+        ),
+        (
+            "later fresh instance replaces the current instance",
+            "const container = { item: {} }; const fresh = {}; const assign = value => { container.item = { child: value }; }; assign(local); const retained = container.item; assign(fresh); void retained; holder.item = container.item.child;",
+            false,
+        ),
+        (
             "conditional invocation preserves the previous alias",
             "const container = { item: local }; const fresh = {}; const assign = () => { container.item = fresh; }; holder.enabled && assign(); holder.item = container.item;",
             true,
