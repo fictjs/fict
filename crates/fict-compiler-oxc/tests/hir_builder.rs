@@ -5270,6 +5270,31 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "subclass method shadows an inherited computed instance method",
+            "const key = holder.key; class Parent { [key]() { holder.item = local; } } class Box extends Parent { item() {} } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "subclass field shadows an inherited computed instance method",
+            "const key = holder.key; class Parent { [key]() { holder.item = local; } } class Box extends Parent { item = () => {}; } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "subclass auto-accessor shadows an inherited computed instance method",
+            "const key = holder.key; class Parent { [key]() { holder.item = local; } } class Box extends Parent { accessor item = () => {}; } const box = new Box(); box.item();",
+            false,
+        ),
+        (
+            "subclass member preserves other inherited computed instance method keys",
+            "const key = holder.key; class Parent { [key]() { holder.item = local; } } class Box extends Parent { item() {} } const box = new Box(); box[key]();",
+            true,
+        ),
+        (
+            "grandchild retains an inherited computed instance method exclusion",
+            "const key = holder.key; class Parent { [key]() { holder.item = local; } } class Middle extends Parent { item() {} } class Box extends Middle {} const box = new Box(); box.item();",
+            false,
+        ),
+        (
             "detached class preserves a computed instance method",
             "const key = holder.key; let Box = class { [key]() { holder.item = local; } }; const Alias = Box; Box = class {}; const box = new Alias(); box.item();",
             true,
@@ -5347,6 +5372,26 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         (
             "subclass inherits a computed static method",
             "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent {} Box.item();",
+            true,
+        ),
+        (
+            "subclass method shadows an inherited computed static method",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent { static item() {} } Box.item();",
+            false,
+        ),
+        (
+            "subclass field shadows an inherited computed static method",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent { static item = () => {}; } Box.item();",
+            false,
+        ),
+        (
+            "subclass auto-accessor shadows an inherited computed static method",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent { static accessor item = () => {}; } Box.item();",
+            false,
+        ),
+        (
+            "subclass member preserves other inherited computed static method keys",
+            "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent { static item() {} } Box.other();",
             true,
         ),
         (

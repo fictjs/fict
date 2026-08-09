@@ -25151,6 +25151,7 @@ impl StaticHookAliasCollector<'_> {
                 } else {
                     &prototype
                 };
+                self.exclude_dynamic_property_value(&owner.clone().with_property(name.clone()));
                 self.exclude_dynamic_local_accessor_property(owner, name.clone());
                 self.clear_overlapping_aliases(&owner.clone().with_property(name.clone()));
                 if !property.r#static || !static_data_properties.contains(&name) {
@@ -25280,6 +25281,9 @@ impl StaticHookAliasCollector<'_> {
             }
             self.exclude_dynamic_local_accessor_property(&method_owner, name.clone());
             let method_target = method_owner.with_property(name);
+            if !method.r#static {
+                self.exclude_dynamic_property_value(&method_target);
+            }
             if method.r#static {
                 self.record_local_data_property_definition(&method_target);
                 self.descriptor_defined_properties
@@ -30816,6 +30820,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn record_local_data_property_definition(&mut self, path: &StaticAliasPath) {
+        self.exclude_dynamic_property_value(path);
         let target = resolve_static_alias_slot_path(&self.aliases, path);
         self.record_local_own_property(&target, false);
     }
