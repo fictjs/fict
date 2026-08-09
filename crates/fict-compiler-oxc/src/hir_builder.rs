@@ -24953,6 +24953,8 @@ impl StaticHookAliasCollector<'_> {
                 self.insert_alias(inherited_method, method);
             }
         }
+        let mut own_instance_auto_accessor_properties = BTreeSet::new();
+        let mut own_static_auto_accessor_properties = BTreeSet::new();
         for element in &class.body.body {
             if let ClassElement::PropertyDefinition(property) = element
                 && property.r#static
@@ -24981,6 +24983,12 @@ impl StaticHookAliasCollector<'_> {
                 self.exclude_dynamic_local_accessor_property(owner, name.clone());
                 self.clear_overlapping_aliases(&owner.clone().with_property(name.clone()));
                 if !property.r#static || !static_data_properties.contains(&name) {
+                    let own_accessors = if property.r#static {
+                        &mut own_static_auto_accessor_properties
+                    } else {
+                        &mut own_instance_auto_accessor_properties
+                    };
+                    own_accessors.insert(name.clone());
                     self.local_auto_accessor_properties
                         .entry(owner.clone())
                         .or_default()
@@ -25030,8 +25038,26 @@ impl StaticHookAliasCollector<'_> {
                 prototype.clone()
             };
             let name = name.into_owned();
-            if let Some(accessors) = self.local_auto_accessor_properties.get_mut(&method_owner) {
-                accessors.remove(&name);
+            let own_accessors = if method.r#static {
+                &mut own_static_auto_accessor_properties
+            } else {
+                &mut own_instance_auto_accessor_properties
+            };
+            let preserves_auto_accessor_getter =
+                method.kind == MethodDefinitionKind::Set && own_accessors.contains(&name);
+            if !preserves_auto_accessor_getter {
+                let shadows_auto_accessor = self
+                    .local_auto_accessor_properties
+                    .get(&method_owner)
+                    .is_some_and(|accessors| accessors.contains(&name));
+                if shadows_auto_accessor && !method.r#static {
+                    self.hide_inherited_auto_accessor_initializers(target, &name);
+                }
+                own_accessors.remove(&name);
+                if let Some(accessors) = self.local_auto_accessor_properties.get_mut(&method_owner)
+                {
+                    accessors.remove(&name);
+                }
             }
             self.exclude_dynamic_local_accessor_property(&method_owner, name.clone());
             let method_target = method_owner.with_property(name);
@@ -25146,7 +25172,12 @@ impl StaticHookAliasCollector<'_> {
                 }
                 self.exclude_dynamic_local_accessor_property(target, name.clone());
                 let property_target = target.clone().with_property(name);
-                self.clear_overlapping_aliases(&property_target);
+                let retained_setter = if auto_accessor {
+                    self.clear_local_auto_accessor_value(&property_target)
+                } else {
+                    self.clear_overlapping_aliases(&property_target);
+                    None
+                };
                 self.structured_own_properties
                     .entry(target.clone())
                     .or_default();
@@ -25162,7 +25193,10 @@ impl StaticHookAliasCollector<'_> {
                         .remove(&property_target);
                 }
                 if let Some(value) = value {
-                    self.collect_initializer(property_target, value);
+                    self.collect_initializer(property_target.clone(), value);
+                }
+                if let Some(setter) = retained_setter {
+                    self.local_setter_properties.insert(property_target, setter);
                 }
                 continue;
             }
@@ -25302,6 +25336,42 @@ impl StaticHookAliasCollector<'_> {
         }
         if let Some(object) = replacement_object {
             self.record_replacement_object_callables(target, object);
+        }
+    }
+
+    fn hide_inherited_auto_accessor_initializers(&mut self, class: &StaticAliasPath, name: &str) {
+        let Some(callables) = self
+            .local_class_instance_callables
+            .get_mut(class)
+            .and_then(|fields| fields.remove(name))
+        else {
+            return;
+        };
+        let mut visible = Vec::new();
+        let mut hidden = Vec::new();
+        for callable in callables {
+            let Some(initializer) = callable.initializer else {
+                visible.push(callable);
+                continue;
+            };
+            if initializer.auto_accessor {
+                hidden.push((initializer.receiver_span, callable));
+            } else {
+                visible.push(callable);
+            }
+        }
+        let fields = self
+            .local_class_instance_callables
+            .entry(class.clone())
+            .or_default();
+        if !visible.is_empty() {
+            fields.insert(name.to_string(), visible);
+        }
+        for ((start, end), callable) in hidden {
+            fields
+                .entry(format!("<auto-accessor:{name}@{start}:{end}>"))
+                .or_default()
+                .push(callable);
         }
     }
 
@@ -26019,7 +26089,10 @@ impl StaticHookAliasCollector<'_> {
             instance_method
                 .properties
                 .extend_from_slice(&method.properties[prototype.properties.len()..]);
-            self.insert_alias(instance_method.clone(), method);
+            self.insert_alias(instance_method.clone(), method.clone());
+            if let Some(setter) = self.local_setter_properties.get(&method).cloned() {
+                self.replace_local_setter(instance_method.clone(), setter);
+            }
             self.transient_callable_alias_targets
                 .insert(instance_method);
         }
@@ -26279,7 +26352,12 @@ impl StaticHookAliasCollector<'_> {
         mappers: &[Vec<LocalInvocationFact>],
         own_property: Option<bool>,
     ) {
-        self.clear_overlapping_aliases(value_target);
+        let retained_setter = if own_property == Some(false) {
+            self.clear_local_auto_accessor_value(value_target)
+        } else {
+            self.clear_overlapping_aliases(value_target);
+            None
+        };
         match own_property {
             Some(true) => self.record_local_data_property_definition(value_target),
             Some(false) => {}
@@ -26364,6 +26442,10 @@ impl StaticHookAliasCollector<'_> {
         }
         if ambiguous {
             self.mark_alias_target_ambiguous(value_target.clone());
+        }
+        if let Some(setter) = retained_setter {
+            self.local_setter_properties
+                .insert(value_target.clone(), setter);
         }
     }
 
@@ -30313,6 +30395,15 @@ impl StaticHookAliasCollector<'_> {
                 properties.remove(property);
             }
         }
+    }
+
+    fn clear_local_auto_accessor_value(
+        &mut self,
+        property: &StaticAliasPath,
+    ) -> Option<StaticAliasPath> {
+        let retained_setter = self.local_setter_properties.get(property).cloned();
+        self.clear_overlapping_aliases(property);
+        retained_setter
     }
 
     fn record_local_data_property_definition(&mut self, path: &StaticAliasPath) {

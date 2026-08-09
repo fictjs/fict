@@ -4980,6 +4980,41 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "later setter preserves an auto-accessor getter",
+            "class Box { accessor item = local; set item(value) {} } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "later setter prevents an auto-accessor backing write",
+            "class Box { accessor item = local; set item(value) {} } const box = new Box(); box.item = {}; holder.item = box.item;",
+            true,
+        ),
+        (
+            "earlier setter is replaced by an auto-accessor",
+            "class Box { set item(value) {} accessor item = {}; } const box = new Box(); box.item = local; holder.item = box.item;",
+            true,
+        ),
+        (
+            "subclass setter shadows an inherited auto-accessor getter",
+            "class Parent { accessor item = local; } class Box extends Parent { set item(value) {} } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later setter still executes beside an auto-accessor getter",
+            "class Box { accessor item = {}; set item(value) { holder.item = value; } } const box = new Box(); box.item = local;",
+            true,
+        ),
+        (
+            "later getter replaces an auto-accessor getter",
+            "class Box { accessor item = local; get item() { return {}; } } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "subclass getter shadows an inherited auto-accessor getter",
+            "class Parent { accessor item = local; } class Box extends Parent { get item() { return {}; } } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
             "static auto-accessor materializes its local value",
             "class Box { static accessor item = local; } holder.item = Box.item;",
             true,
@@ -5078,6 +5113,31 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             "later static auto-accessor overrides a method",
             "class Box { static item() {} static accessor item = local; } holder.item = Box.item;",
             true,
+        ),
+        (
+            "later static setter preserves an auto-accessor getter",
+            "class Box { static accessor item = local; static set item(value) {} } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "later static setter prevents an auto-accessor backing write",
+            "class Box { static accessor item = local; static set item(value) {} } Box.item = {}; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "earlier static setter is replaced by an auto-accessor",
+            "class Box { static set item(value) {} static accessor item = {}; } Box.item = local; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "later static setter still executes beside an auto-accessor getter",
+            "class Box { static accessor item = {}; static set item(value) { holder.item = value; } } Box.item = local;",
+            true,
+        ),
+        (
+            "later static getter replaces an auto-accessor getter",
+            "class Box { static accessor item = local; static get item() { return {}; } } holder.item = Box.item;",
+            false,
         ),
         (
             "later static field overrides an auto-accessor",
