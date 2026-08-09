@@ -8733,6 +8733,7 @@ fn is_non_enumerable_internal_class_property(property: &str) -> bool {
         || property.starts_with("<computed-key-")
         || property.starts_with("<object-assign-computed-data@")
         || property.starts_with("<computed-instance-field-value@")
+        || property.starts_with("<computed-instance-auto-accessor@")
         || property.starts_with("<computed-instance-method-value@")
         || property.starts_with("<computed-static-method-value@")
         || property.starts_with("<computed-static-auto-accessor@")
@@ -21780,6 +21781,10 @@ struct DeferredCallableOperation {
 #[derive(Clone)]
 enum DeferredCallableOperationKind {
     Alias(StaticAliasPath),
+    AutoAccessorAlias {
+        source: StaticAliasPath,
+        strong: bool,
+    },
     ComputedDataAlias {
         source: StaticAliasPath,
         strong: bool,
@@ -21916,6 +21921,11 @@ struct LocalClassInstanceCallable {
 #[derive(Clone, PartialEq, Eq)]
 enum LocalClassInstanceDynamicProperty {
     Data(String),
+    AutoAccessor {
+        discriminator: String,
+        exclusions: BTreeSet<String>,
+        active: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -25256,8 +25266,12 @@ impl StaticHookAliasCollector<'_> {
         let mut remaining_instance_callable_properties = BTreeMap::<String, usize>::new();
         let mut remaining_static_data_properties = BTreeMap::<String, usize>::new();
         let mut remaining_static_callable_properties = BTreeMap::<String, usize>::new();
+        let mut remaining_instance_auto_accessor_overrides = BTreeMap::<String, usize>::new();
+        let mut remaining_static_auto_accessor_overrides = BTreeMap::<String, usize>::new();
         let mut has_dynamic_static_data_property = false;
         let mut has_dynamic_static_auto_accessor = false;
+        let mut dynamic_instance_auto_accessor_properties =
+            BTreeMap::<(u32, u32), LocalClassInstanceDynamicProperty>::new();
         for element in &class.body.body {
             let ClassElement::PropertyDefinition(property) = element else {
                 continue;
@@ -25278,13 +25292,19 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         for element in &class.body.body {
-            let (key, is_static) = match element {
+            let (key, is_static, replaces_auto_accessor_getter) = match element {
                 ClassElement::MethodDefinition(method)
                     if method.kind != MethodDefinitionKind::Constructor =>
                 {
-                    (&method.key, method.r#static)
+                    (
+                        &method.key,
+                        method.r#static,
+                        method.kind != MethodDefinitionKind::Set,
+                    )
                 }
-                ClassElement::AccessorProperty(property) => (&property.key, property.r#static),
+                ClassElement::AccessorProperty(property) => {
+                    (&property.key, property.r#static, true)
+                }
                 ClassElement::MethodDefinition(_)
                 | ClassElement::PropertyDefinition(_)
                 | ClassElement::StaticBlock(_)
@@ -25299,7 +25319,15 @@ impl StaticHookAliasCollector<'_> {
                 } else {
                     &mut remaining_instance_callable_properties
                 };
-                *remaining.entry(name).or_default() += 1;
+                *remaining.entry(name.clone()).or_default() += 1;
+                if replaces_auto_accessor_getter {
+                    let remaining = if is_static {
+                        &mut remaining_static_auto_accessor_overrides
+                    } else {
+                        &mut remaining_instance_auto_accessor_overrides
+                    };
+                    *remaining.entry(name).or_default() += 1;
+                }
             }
         }
         let replacement_object = class_guaranteed_returned_object(class);
@@ -25401,11 +25429,22 @@ impl StaticHookAliasCollector<'_> {
                             remaining.remove(name);
                         }
                     }
+                    let remaining = if property.r#static {
+                        &mut remaining_static_auto_accessor_overrides
+                    } else {
+                        &mut remaining_instance_auto_accessor_overrides
+                    };
+                    if let Some(count) = remaining.get_mut(name) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            remaining.remove(name);
+                        }
+                    }
                 }
                 let Some(name) = static_name else {
+                    let span = property.span;
                     if property.r#static {
                         has_dynamic_static_auto_accessor = true;
-                        let span = property.span;
                         let hidden_target = target.clone().with_property(format!(
                             "<computed-static-auto-accessor@{}:{}>",
                             span.start, span.end
@@ -25413,22 +25452,50 @@ impl StaticHookAliasCollector<'_> {
                         let mut dynamic_target = target
                             .clone()
                             .with_property(DYNAMIC_AUTO_ACCESSOR_PROPERTY.to_string());
+                        if let Some(key) = property.key.as_expression() {
+                            dynamic_target
+                                .properties
+                                .push(self.computed_property_key_discriminator(key));
+                        }
                         dynamic_target.properties.extend(
                             static_data_properties
                                 .iter()
-                                .chain(remaining_static_callable_properties.keys())
+                                .chain(remaining_static_auto_accessor_overrides.keys())
                                 .cloned(),
                         );
+                        self.clear_matching_dynamic_method_for_auto_accessor(&dynamic_target);
+                        self.clear_matching_dynamic_auto_accessor_property(&dynamic_target);
                         self.insert_alias(dynamic_target.clone(), hidden_target);
                         self.ambiguous_alias_targets.insert(dynamic_target);
                     } else {
                         self.open_local_class_instance_fields.insert(target.clone());
+                        if let Some(key) = property.key.as_expression() {
+                            let discriminator = self.computed_property_key_discriminator(key);
+                            let dynamic_target = prototype
+                                .clone()
+                                .with_property(DYNAMIC_AUTO_ACCESSOR_PROPERTY.to_string())
+                                .with_property(discriminator.clone());
+                            self.clear_matching_dynamic_method_for_auto_accessor(&dynamic_target);
+                            dynamic_instance_auto_accessor_properties.insert(
+                                (span.start, span.end),
+                                LocalClassInstanceDynamicProperty::AutoAccessor {
+                                    discriminator,
+                                    exclusions: instance_data_properties
+                                        .iter()
+                                        .chain(remaining_instance_auto_accessor_overrides.keys())
+                                        .cloned()
+                                        .collect(),
+                                    active: true,
+                                },
+                            );
+                        }
                     }
                     continue;
                 };
                 let owner = if property.r#static {
                     target
                 } else {
+                    self.exclude_inherited_dynamic_auto_accessor_initializers(target, &name);
                     &prototype
                 };
                 self.exclude_dynamic_property_value(&owner.clone().with_property(name.clone()));
@@ -25469,6 +25536,19 @@ impl StaticHookAliasCollector<'_> {
                         remaining.remove(name);
                     }
                 }
+                if method.kind != MethodDefinitionKind::Set {
+                    let remaining = if method.r#static {
+                        &mut remaining_static_auto_accessor_overrides
+                    } else {
+                        &mut remaining_instance_auto_accessor_overrides
+                    };
+                    if let Some(count) = remaining.get_mut(name) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            remaining.remove(name);
+                        }
+                    }
+                }
             }
             let Some(name) = static_name else {
                 let owner = if method.r#static {
@@ -25504,8 +25584,15 @@ impl StaticHookAliasCollector<'_> {
                         span.start, span.end,
                     ));
                     self.record_class_function_callable(method_target.clone(), &method.value, true);
+                    let discriminator = method
+                        .key
+                        .as_expression()
+                        .map(|key| self.computed_property_key_discriminator(key));
                     let mut dynamic_target =
                         owner.with_property(DYNAMIC_METHOD_PROPERTY.to_string());
+                    if let Some(discriminator) = &discriminator {
+                        dynamic_target.properties.push(discriminator.clone());
+                    }
                     let (data_properties, callable_properties) = if method.r#static {
                         (
                             &static_data_properties,
@@ -25523,6 +25610,26 @@ impl StaticHookAliasCollector<'_> {
                             .chain(callable_properties.keys())
                             .cloned(),
                     );
+                    if method.r#static {
+                        self.clear_matching_dynamic_auto_accessor_for_method_property(
+                            &dynamic_target,
+                        );
+                    } else if let Some(discriminator) = &discriminator {
+                        for property in dynamic_instance_auto_accessor_properties.values_mut() {
+                            let LocalClassInstanceDynamicProperty::AutoAccessor {
+                                discriminator: accessor_discriminator,
+                                active,
+                                ..
+                            } = property
+                            else {
+                                continue;
+                            };
+                            if accessor_discriminator == discriminator {
+                                *active = false;
+                            }
+                        }
+                    }
+                    self.clear_matching_dynamic_method_property(&dynamic_target);
                     self.insert_alias(dynamic_target.clone(), method_target);
                     self.ambiguous_alias_targets.insert(dynamic_target);
                 }
@@ -25536,6 +25643,7 @@ impl StaticHookAliasCollector<'_> {
             let method_owner = if method.r#static {
                 target.clone()
             } else {
+                self.exclude_inherited_dynamic_auto_accessor_initializers(target, &name);
                 prototype.clone()
             };
             let own_accessors = if method.r#static {
@@ -25569,7 +25677,17 @@ impl StaticHookAliasCollector<'_> {
                     .entry(target.clone())
                     .or_default()
                     .insert(name);
-                self.record_local_data_property_definition(&method_target);
+                if method.kind == MethodDefinitionKind::Set {
+                    let preserved_auto_accessors =
+                        self.own_static_dynamic_auto_accessor_targets(target);
+                    self.exclude_dynamic_property_value_preserving_auto_accessors(
+                        &method_target,
+                        &preserved_auto_accessors,
+                    );
+                    self.record_local_own_property(&method_target, false);
+                } else {
+                    self.record_local_data_property_definition(&method_target);
+                }
                 self.descriptor_defined_properties
                     .insert(method_target.clone());
                 self.enumerable_descriptor_properties.remove(&method_target);
@@ -25663,23 +25781,35 @@ impl StaticHookAliasCollector<'_> {
                     remaining_static_data_properties.remove(name);
                 }
             }
-            let dynamic_property = if !is_static && !auto_accessor && static_name.is_none() {
-                key.as_expression().map(|key| {
-                    LocalClassInstanceDynamicProperty::Data(
-                        self.computed_property_key_discriminator(key),
-                    )
-                })
+            let dynamic_property = if !is_static && static_name.is_none() {
+                if auto_accessor {
+                    dynamic_instance_auto_accessor_properties
+                        .get(&(span.start, span.end))
+                        .cloned()
+                } else {
+                    key.as_expression().map(|key| {
+                        LocalClassInstanceDynamicProperty::Data(
+                            self.computed_property_key_discriminator(key),
+                        )
+                    })
+                }
             } else {
                 None
             };
             let name = if let Some(name) = static_name {
                 name
-            } else if dynamic_property.is_some() {
+            } else if let Some(dynamic_property) = &dynamic_property {
                 self.open_local_class_instance_fields.insert(target.clone());
-                format!(
-                    "<computed-instance-field-value@{}:{}>",
-                    span.start, span.end
-                )
+                match dynamic_property {
+                    LocalClassInstanceDynamicProperty::Data(_) => format!(
+                        "<computed-instance-field-value@{}:{}>",
+                        span.start, span.end
+                    ),
+                    LocalClassInstanceDynamicProperty::AutoAccessor { .. } => format!(
+                        "<computed-instance-auto-accessor@{}:{}>",
+                        span.start, span.end
+                    ),
+                }
             } else {
                 if is_static && !auto_accessor {
                     if let Some(value) = value {
@@ -25695,6 +25825,9 @@ impl StaticHookAliasCollector<'_> {
                         dynamic_target
                             .properties
                             .extend(remaining_static_data_properties.keys().cloned());
+                        self.clear_matching_dynamic_auto_accessor_for_data_property(
+                            &dynamic_target,
+                        );
                         self.clear_matching_dynamic_data_property(&dynamic_target);
                         self.insert_alias(dynamic_target.clone(), hidden_target);
                         self.ambiguous_alias_targets.insert(dynamic_target);
@@ -25788,11 +25921,12 @@ impl StaticHookAliasCollector<'_> {
                     .local_class_instance_fields
                     .get(target)
                     .is_some_and(|fields| fields.contains(&name));
-            let materialized_name = if auto_accessor && !accessor_is_public {
-                format!("<auto-accessor:{name}@{}:{}>", span.start, span.end)
-            } else {
-                name
-            };
+            let materialized_name =
+                if auto_accessor && dynamic_property.is_none() && !accessor_is_public {
+                    format!("<auto-accessor:{name}@{}:{}>", span.start, span.end)
+                } else {
+                    name
+                };
             let Some(value) = value else {
                 self.local_class_instance_callables
                     .entry(target.clone())
@@ -25934,6 +26068,23 @@ impl StaticHookAliasCollector<'_> {
                 .entry(format!("<auto-accessor:{name}@{start}:{end}>"))
                 .or_default()
                 .push(callable);
+        }
+    }
+
+    fn exclude_inherited_dynamic_auto_accessor_initializers(
+        &mut self,
+        class: &StaticAliasPath,
+        name: &str,
+    ) {
+        let Some(fields) = self.local_class_instance_callables.get_mut(class) else {
+            return;
+        };
+        for callable in fields.values_mut().flatten() {
+            if let Some(LocalClassInstanceDynamicProperty::AutoAccessor { exclusions, .. }) =
+                &mut callable.dynamic_property
+            {
+                exclusions.insert(name.to_string());
+            }
         }
     }
 
@@ -26858,9 +27009,27 @@ impl StaticHookAliasCollector<'_> {
                     callables,
                     dynamic_target,
                 } => {
+                    let dynamic_target = dynamic_target.map(|dynamic_target| {
+                        Self::rebase_class_instance_receiver_path(
+                            &dynamic_target,
+                            initializer,
+                            target,
+                        )
+                    });
+                    let auto_accessor_storage =
+                        dynamic_target.as_ref().and_then(|dynamic_target| {
+                            self.local_computed_auto_accessor_storage_property(dynamic_target)
+                        });
+                    let value_target = auto_accessor_storage
+                        .as_ref()
+                        .unwrap_or(&rebased_target)
+                        .clone();
+                    if auto_accessor_storage.is_some() && !operation.conditional {
+                        self.clear_alias_target_history(&value_target);
+                    }
                     if callables.is_empty() {
                         self.apply_deferred_class_instance_value(
-                            &rebased_target,
+                            &value_target,
                             &value,
                             Some(initializer),
                             Some(target),
@@ -26868,7 +27037,7 @@ impl StaticHookAliasCollector<'_> {
                         );
                     } else {
                         self.materialize_class_instance_callables_at(
-                            &rebased_target,
+                            &value_target,
                             target,
                             callables,
                             Some(initializer),
@@ -26876,12 +27045,9 @@ impl StaticHookAliasCollector<'_> {
                             None,
                         );
                     }
-                    if let Some(dynamic_target) = dynamic_target {
-                        let dynamic_target = Self::rebase_class_instance_receiver_path(
-                            &dynamic_target,
-                            initializer,
-                            target,
-                        );
+                    if let Some(dynamic_target) = dynamic_target
+                        && auto_accessor_storage.is_none()
+                    {
                         if !operation.conditional {
                             self.clear_matching_dynamic_data_property(&dynamic_target);
                         }
@@ -26895,16 +27061,16 @@ impl StaticHookAliasCollector<'_> {
                             self.open_structured_containers.insert(owner);
                         }
                     }
-                    let mut owner = rebased_target.clone();
+                    let mut owner = value_target.clone();
                     let method = owner.properties.pop();
                     owner.element_wildcard = false;
                     if method.as_deref().is_some_and(is_mutating_array_method)
                         && self.known_array_path(&owner)
                     {
-                        self.member_invalidated.insert(rebased_target.clone());
+                        self.member_invalidated.insert(value_target.clone());
                     }
                     if operation.conditional {
-                        self.ambiguous_alias_targets.insert(rebased_target);
+                        self.ambiguous_alias_targets.insert(value_target);
                     }
                 }
                 DeferredClassInstanceOperationKind::ArrayMutation(mutation) => {
@@ -26984,14 +27150,36 @@ impl StaticHookAliasCollector<'_> {
             &[],
             Some(own_property),
         );
-        if let Some(LocalClassInstanceDynamicProperty::Data(key)) = dynamic_property {
-            let dynamic_target = self.dynamic_data_property_target_with_discriminator(target, key);
-            self.clear_matching_dynamic_data_property(&dynamic_target);
-            let has_previous_value = self.has_other_dynamic_data_property(&dynamic_target);
-            self.insert_alias(dynamic_target.clone(), instance_field);
-            if has_previous_value {
+        match dynamic_property {
+            Some(LocalClassInstanceDynamicProperty::Data(key)) => {
+                let dynamic_target =
+                    self.dynamic_data_property_target_with_discriminator(target, key);
+                self.clear_matching_dynamic_auto_accessor_for_data_property(&dynamic_target);
+                self.clear_matching_dynamic_data_property(&dynamic_target);
+                let has_previous_value = self.has_other_dynamic_data_property(&dynamic_target);
+                self.insert_alias(dynamic_target.clone(), instance_field);
+                if has_previous_value {
+                    self.ambiguous_alias_targets.insert(dynamic_target);
+                }
+            }
+            Some(LocalClassInstanceDynamicProperty::AutoAccessor {
+                discriminator,
+                exclusions,
+                active,
+            }) => {
+                if !active {
+                    return;
+                }
+                let owner = resolve_static_alias_path(&self.aliases, target);
+                let mut dynamic_target = owner
+                    .with_property(DYNAMIC_AUTO_ACCESSOR_PROPERTY.to_string())
+                    .with_property(discriminator);
+                dynamic_target.properties.extend(exclusions);
+                self.clear_matching_dynamic_auto_accessor_property(&dynamic_target);
+                self.insert_alias(dynamic_target.clone(), instance_field);
                 self.ambiguous_alias_targets.insert(dynamic_target);
             }
+            None => {}
         }
     }
 
@@ -31146,9 +31334,12 @@ impl StaticHookAliasCollector<'_> {
         self.record_local_own_property(&target, true);
     }
 
-    fn dynamic_data_property_key(target: &StaticAliasPath) -> Option<&str> {
+    fn dynamic_property_key<'a>(
+        target: &'a StaticAliasPath,
+        expected_marker: &str,
+    ) -> Option<&'a str> {
         let marker = dynamic_property_alias_marker(target)?;
-        (target.properties.get(marker)?.as_str() == DYNAMIC_DATA_PROPERTY)
+        (target.properties.get(marker)?.as_str() == expected_marker)
             .then(|| {
                 target.properties[marker + 1..]
                     .iter()
@@ -31158,22 +31349,99 @@ impl StaticHookAliasCollector<'_> {
             .flatten()
     }
 
-    fn matching_dynamic_data_property_targets(
+    fn dynamic_data_property_key(target: &StaticAliasPath) -> Option<&str> {
+        Self::dynamic_property_key(target, DYNAMIC_DATA_PROPERTY)
+    }
+
+    fn clear_matching_dynamic_data_property(&mut self, target: &StaticAliasPath) -> bool {
+        let targets = self.matching_dynamic_property_targets(target, DYNAMIC_DATA_PROPERTY);
+        self.clear_matching_dynamic_property_targets(targets)
+    }
+
+    fn clear_matching_dynamic_auto_accessor_property(&mut self, target: &StaticAliasPath) -> bool {
+        let targets =
+            self.matching_dynamic_property_targets(target, DYNAMIC_AUTO_ACCESSOR_PROPERTY);
+        self.clear_matching_dynamic_property_targets(targets)
+    }
+
+    fn clear_matching_dynamic_method_property(&mut self, target: &StaticAliasPath) -> bool {
+        let targets = self.matching_dynamic_property_targets(target, DYNAMIC_METHOD_PROPERTY);
+        self.clear_matching_dynamic_property_targets(targets)
+    }
+
+    fn dynamic_property_target_with_marker(
+        target: &StaticAliasPath,
+        source_marker: &str,
+        target_marker: &str,
+    ) -> Option<StaticAliasPath> {
+        let owner = dynamic_property_alias_owner(target)?;
+        let key = Self::dynamic_property_key(target, source_marker)?;
+        Some(
+            owner
+                .with_property(target_marker.to_string())
+                .with_property(key.to_string()),
+        )
+    }
+
+    fn clear_matching_dynamic_method_for_auto_accessor(
+        &mut self,
+        target: &StaticAliasPath,
+    ) -> bool {
+        let Some(dynamic_target) = Self::dynamic_property_target_with_marker(
+            target,
+            DYNAMIC_AUTO_ACCESSOR_PROPERTY,
+            DYNAMIC_METHOD_PROPERTY,
+        ) else {
+            return false;
+        };
+        self.clear_matching_dynamic_method_property(&dynamic_target)
+    }
+
+    fn clear_matching_dynamic_auto_accessor_for_method_property(
+        &mut self,
+        target: &StaticAliasPath,
+    ) -> bool {
+        let Some(dynamic_target) = Self::dynamic_property_target_with_marker(
+            target,
+            DYNAMIC_METHOD_PROPERTY,
+            DYNAMIC_AUTO_ACCESSOR_PROPERTY,
+        ) else {
+            return false;
+        };
+        self.clear_matching_dynamic_auto_accessor_property(&dynamic_target)
+    }
+
+    fn clear_matching_dynamic_auto_accessor_for_data_property(
+        &mut self,
+        target: &StaticAliasPath,
+    ) -> bool {
+        let Some(dynamic_target) = Self::dynamic_property_target_with_marker(
+            target,
+            DYNAMIC_DATA_PROPERTY,
+            DYNAMIC_AUTO_ACCESSOR_PROPERTY,
+        ) else {
+            return false;
+        };
+        self.clear_matching_dynamic_auto_accessor_property(&dynamic_target)
+    }
+
+    fn matching_dynamic_property_targets(
         &self,
         target: &StaticAliasPath,
+        marker: &str,
     ) -> BTreeSet<StaticAliasPath> {
         let Some(owner) = dynamic_property_alias_owner(target) else {
             return BTreeSet::new();
         };
         let owner = resolve_static_alias_path(&self.aliases, &owner);
-        let Some(key) = Self::dynamic_data_property_key(target) else {
+        let Some(key) = Self::dynamic_property_key(target, marker) else {
             return BTreeSet::new();
         };
         self.aliases
             .keys()
             .chain(self.alias_history.keys())
             .chain(self.ambiguous_alias_targets.iter())
-            .filter(|candidate| Self::dynamic_data_property_key(candidate) == Some(key))
+            .filter(|candidate| Self::dynamic_property_key(candidate, marker) == Some(key))
             .filter(|candidate| {
                 dynamic_property_alias_owner(candidate)
                     .map(|candidate_owner| {
@@ -31185,8 +31453,10 @@ impl StaticHookAliasCollector<'_> {
             .collect()
     }
 
-    fn clear_matching_dynamic_data_property(&mut self, target: &StaticAliasPath) -> bool {
-        let targets = self.matching_dynamic_data_property_targets(target);
+    fn clear_matching_dynamic_property_targets(
+        &mut self,
+        targets: BTreeSet<StaticAliasPath>,
+    ) -> bool {
         if targets.is_empty() {
             return false;
         }
@@ -31206,6 +31476,20 @@ impl StaticHookAliasCollector<'_> {
                 .retain(|candidate| !targets.iter().any(|target| candidate.overlaps(target)));
         }
         true
+    }
+
+    fn clear_alias_target_history(&mut self, target: &StaticAliasPath) {
+        self.alias_history
+            .retain(|candidate, _| !candidate.overlaps(target));
+        self.ambiguous_alias_targets
+            .retain(|candidate| !candidate.overlaps(target));
+        self.cross_scope_alias_targets
+            .retain(|candidate| !candidate.overlaps(target));
+        self.transient_callable_alias_targets
+            .retain(|candidate| !candidate.overlaps(target));
+        for targets in self.deferred_callable_ambiguous_targets.values_mut() {
+            targets.retain(|candidate| !candidate.overlaps(target));
+        }
     }
 
     fn has_other_dynamic_data_property(&self, target: &StaticAliasPath) -> bool {
@@ -31231,6 +31515,38 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn exclude_dynamic_property_value(&mut self, path: &StaticAliasPath) {
+        self.exclude_dynamic_property_value_preserving_auto_accessors(path, &BTreeSet::new());
+    }
+
+    fn own_static_dynamic_auto_accessor_targets(
+        &self,
+        class: &StaticAliasPath,
+    ) -> BTreeSet<StaticAliasPath> {
+        self.aliases
+            .iter()
+            .filter(|(target, _)| {
+                is_dynamic_auto_accessor_alias(target)
+                    && dynamic_property_alias_owner(target).as_ref() == Some(class)
+            })
+            .filter_map(|(target, source)| {
+                let storage = dynamic_auto_accessor_storage_alias(&self.aliases, source);
+                (storage.starts_with(class)
+                    && storage
+                        .properties
+                        .get(class.properties.len())
+                        .is_some_and(|property| {
+                            property.starts_with("<computed-static-auto-accessor@")
+                        }))
+                .then(|| target.clone())
+            })
+            .collect()
+    }
+
+    fn exclude_dynamic_property_value_preserving_auto_accessors(
+        &mut self,
+        path: &StaticAliasPath,
+        preserved_auto_accessors: &BTreeSet<StaticAliasPath>,
+    ) {
         let target = resolve_static_alias_slot_path(&self.aliases, path);
         if target.element_wildcard || target.properties.is_empty() {
             return;
@@ -31245,7 +31561,10 @@ impl StaticHookAliasCollector<'_> {
             .keys()
             .chain(self.alias_history.keys())
             .chain(self.ambiguous_alias_targets.iter())
-            .filter(|target| dynamic_property_alias_owner(target).is_some())
+            .filter(|target| {
+                dynamic_property_alias_owner(target).is_some()
+                    && !preserved_auto_accessors.contains(*target)
+            })
             .cloned()
             .collect::<BTreeSet<_>>();
         let mut affected = dynamic_targets
@@ -31348,6 +31667,14 @@ impl StaticHookAliasCollector<'_> {
         &self,
         path: &StaticAliasPath,
     ) -> Option<StaticAliasPath> {
+        self.local_auto_accessor_storage_match(path)
+            .map(|(storage, _)| storage)
+    }
+
+    fn local_auto_accessor_storage_match(
+        &self,
+        path: &StaticAliasPath,
+    ) -> Option<(StaticAliasPath, bool)> {
         let target = resolve_static_alias_slot_path(&self.aliases, path);
         if target.properties.is_empty() && !target.element_wildcard {
             return None;
@@ -31371,6 +31698,7 @@ impl StaticHookAliasCollector<'_> {
             })
             .cloned()
             .collect::<BTreeSet<_>>();
+        let definite = !accessors.is_empty();
         for candidate in &candidates {
             for (target, source) in &self.aliases {
                 if !is_dynamic_auto_accessor_alias(target) {
@@ -31407,10 +31735,56 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         (accessors.len() == 1).then(|| {
+            (
+                accessors
+                    .into_iter()
+                    .next()
+                    .expect("one local auto-accessor storage property"),
+                definite,
+            )
+        })
+    }
+
+    fn local_computed_auto_accessor_storage_property(
+        &self,
+        dynamic_data_target: &StaticAliasPath,
+    ) -> Option<StaticAliasPath> {
+        let owner = dynamic_property_alias_owner(dynamic_data_target)?;
+        let owner = resolve_static_alias_path(&self.aliases, &owner);
+        let key = Self::dynamic_data_property_key(dynamic_data_target)?;
+        let mut accessors = BTreeSet::new();
+        for (target, source) in &self.aliases {
+            if Self::dynamic_property_key(target, DYNAMIC_AUTO_ACCESSOR_PROPERTY) != Some(key) {
+                continue;
+            }
+            let Some(candidate_owner) = dynamic_property_alias_owner(target) else {
+                continue;
+            };
+            if resolve_static_alias_path(&self.aliases, &candidate_owner) == owner {
+                accessors.insert(dynamic_auto_accessor_storage_alias(&self.aliases, source));
+            }
+        }
+        for (target, sources) in &self.alias_history {
+            if Self::dynamic_property_key(target, DYNAMIC_AUTO_ACCESSOR_PROPERTY) != Some(key) {
+                continue;
+            }
+            let Some(candidate_owner) = dynamic_property_alias_owner(target) else {
+                continue;
+            };
+            if resolve_static_alias_path(&self.aliases, &candidate_owner) != owner {
+                continue;
+            }
+            accessors.extend(
+                sources
+                    .iter()
+                    .map(|source| dynamic_auto_accessor_storage_alias(&self.aliases, source)),
+            );
+        }
+        (accessors.len() == 1).then(|| {
             accessors
                 .into_iter()
                 .next()
-                .expect("one local auto-accessor storage property")
+                .expect("one matching computed auto-accessor storage property")
         })
     }
 
@@ -31645,6 +32019,29 @@ impl StaticHookAliasCollector<'_> {
             target,
             DeferredCallableOperationKind::Alias(source),
         );
+    }
+
+    fn mark_deferred_auto_accessor_alias(
+        &mut self,
+        span: (u32, u32),
+        target: &StaticAliasPath,
+        strong: bool,
+    ) {
+        let Some(operations) = self.deferred_callable_operations.get_mut(&span) else {
+            return;
+        };
+        for operation in operations {
+            if operation.target != *target {
+                continue;
+            }
+            let DeferredCallableOperationKind::Alias(source) = &operation.kind else {
+                continue;
+            };
+            operation.kind = DeferredCallableOperationKind::AutoAccessorAlias {
+                source: source.clone(),
+                strong,
+            };
+        }
     }
 
     fn record_deferred_callable_operation(
@@ -43307,10 +43704,13 @@ impl StaticHookAliasCollector<'_> {
                         self.imprecisely_invoked_alias_effects.insert(effect);
                         continue;
                     }
-                    let (source, computed_strong) = match &operation.kind {
-                        DeferredCallableOperationKind::Alias(source) => (source, None),
+                    let (source, computed_strong, auto_accessor_strong) = match &operation.kind {
+                        DeferredCallableOperationKind::Alias(source) => (source, None, None),
+                        DeferredCallableOperationKind::AutoAccessorAlias { source, strong } => {
+                            (source, None, Some(*strong))
+                        }
                         DeferredCallableOperationKind::ComputedDataAlias { source, strong } => {
-                            (source, Some(*strong))
+                            (source, Some(*strong), None)
                         }
                         DeferredCallableOperationKind::DeleteOwnProperty
                         | DeferredCallableOperationKind::DeleteComputedDataProperty
@@ -43368,6 +43768,9 @@ impl StaticHookAliasCollector<'_> {
                         }
                         let dynamic_ambiguous = computed_strong.is_some()
                             && self.has_other_dynamic_data_property(&target);
+                        if auto_accessor_strong == Some(true) && !ambiguous {
+                            self.clear_alias_target_history(&target);
+                        }
                         self.cross_scope_alias_targets
                             .retain(|candidate| !candidate.overlaps(&target));
                         if sources.is_empty() {
@@ -43379,7 +43782,7 @@ impl StaticHookAliasCollector<'_> {
                             if let Some(owner) = dynamic_property_alias_owner(&target) {
                                 self.open_structured_containers.insert(owner);
                             }
-                        } else {
+                        } else if auto_accessor_strong.is_none() {
                             self.record_local_own_property_assignment(&own_target);
                         }
                         for source in &sources {
@@ -43387,7 +43790,11 @@ impl StaticHookAliasCollector<'_> {
                             self.insert_alias(target.clone(), source);
                             applied = true;
                         }
-                        if ambiguous || computed_strong == Some(false) || dynamic_ambiguous {
+                        if ambiguous
+                            || computed_strong == Some(false)
+                            || auto_accessor_strong == Some(false)
+                            || dynamic_ambiguous
+                        {
                             self.mark_alias_target_ambiguous(target);
                         }
                     }
@@ -43453,6 +43860,7 @@ impl StaticHookAliasCollector<'_> {
     ) -> bool {
         match operation {
             DeferredCallableOperationKind::Alias(_)
+            | DeferredCallableOperationKind::AutoAccessorAlias { .. }
             | DeferredCallableOperationKind::ComputedDataAlias { .. } => false,
             DeferredCallableOperationKind::DeleteOwnProperty => {
                 self.apply_deferred_own_property_deletion(raw_target)
@@ -44096,6 +44504,7 @@ impl StaticHookAliasCollector<'_> {
                 };
                 let sources = match operation.kind {
                     DeferredCallableOperationKind::Alias(source)
+                    | DeferredCallableOperationKind::AutoAccessorAlias { source, .. }
                     | DeferredCallableOperationKind::ComputedDataAlias { source, .. } => {
                         let sources = self
                             .mapped_returned_callable_capture_paths(
@@ -46775,13 +47184,21 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         .then_some(&assignment.right);
         let auto_accessor_storage = (assignment.operator == OxcAssignmentOperator::Assign)
             .then(|| {
-                place
+                dynamic_data_assignment
                     .as_ref()
-                    .and_then(static_alias_invalidation_path)
-                    .and_then(|path| self.local_auto_accessor_storage_property(&path))
+                    .and_then(|(target, _)| {
+                        self.local_computed_auto_accessor_storage_property(target)
+                    })
+                    .map(|storage| (storage, true))
+                    .or_else(|| {
+                        place
+                            .as_ref()
+                            .and_then(static_alias_invalidation_path)
+                            .and_then(|path| self.local_auto_accessor_storage_match(&path))
+                    })
                     .or_else(|| {
                         self.dynamic_computed_assignment_target_alias_path(&assignment.left)
-                            .and_then(|path| self.local_auto_accessor_storage_property(&path))
+                            .and_then(|path| self.local_auto_accessor_storage_match(&path))
                     })
             })
             .flatten();
@@ -47034,12 +47451,25 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     }
                 }
             } else if let Some(path) = place.as_ref().and_then(static_alias_invalidation_path) {
-                let storage_path = auto_accessor_storage
+                let storage_match = auto_accessor_storage
                     .clone()
-                    .or_else(|| self.local_auto_accessor_storage_property(&path))
-                    .unwrap_or_else(|| path.clone());
+                    .or_else(|| self.local_auto_accessor_storage_match(&path));
+                let auto_accessor = storage_match.is_some();
+                let (storage_path, definite) =
+                    storage_match.unwrap_or_else(|| (path.clone(), true));
+                let deferred = self.deferred_callable_alias_capture_span(&storage_path);
+                if auto_accessor && definite && !conditional && deferred.is_none() {
+                    self.clear_alias_target_history(&storage_path);
+                }
                 self.collect_initializer(storage_path.clone(), &assignment.right);
-                if conditional {
+                if auto_accessor && let Some(span) = deferred {
+                    self.mark_deferred_auto_accessor_alias(
+                        span,
+                        &storage_path,
+                        definite && !conditional,
+                    );
+                }
+                if conditional || (auto_accessor && !definite) {
                     self.mark_alias_target_ambiguous(storage_path);
                 }
             }

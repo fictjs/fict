@@ -5365,6 +5365,196 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "computed instance auto-accessor materializes its local value",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "computed instance auto-accessor supports a computed read",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); holder.item = box[key];",
+            true,
+        ),
+        (
+            "computed instance auto-accessor assignment updates its storage",
+            "const key = holder.key; class Box { accessor [key] = {}; } const box = new Box(); box[key] = local; holder.item = box.item;",
+            true,
+        ),
+        (
+            "same-key assignment replaces a computed instance auto-accessor value",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); box[key] = {}; holder.item = box[key];",
+            false,
+        ),
+        (
+            "uninvoked same-key computed auto-accessor assignment preserves its value",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); const reset = () => { box[key] = {}; }; void reset; holder.item = box[key];",
+            true,
+        ),
+        (
+            "invoked same-key computed auto-accessor assignment replaces its value",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); const reset = () => { box[key] = {}; }; reset(); holder.item = box[key];",
+            false,
+        ),
+        (
+            "conditionally invoked same-key computed auto-accessor assignment preserves its value",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); const reset = () => { box[key] = {}; }; if (holder.flag) reset(); holder.item = box[key];",
+            true,
+        ),
+        (
+            "known assignment preserves a possible computed instance auto-accessor value",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); box.item = {}; holder.item = box[key];",
+            true,
+        ),
+        (
+            "known assignment replaces the matching computed instance auto-accessor read",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); box.item = {}; holder.item = box.item;",
+            false,
+        ),
+        (
+            "computed instance auto-accessor storage is isolated per instance",
+            "const key = holder.key; class Box { accessor [key] = {}; } const first = new Box(); const second = new Box(); first[key] = local; holder.item = second.item;",
+            false,
+        ),
+        (
+            "computed instance auto-accessor remains non-enumerable",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); const copy = { ...box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "computed instance auto-accessor remains absent from value enumeration",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); const values = Object.values(box); holder.item = values[0];",
+            false,
+        ),
+        (
+            "Object.assign excludes a computed instance auto-accessor",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); const copy = Object.assign({}, box); holder.item = copy.item;",
+            false,
+        ),
+        (
+            "deleting an instance property preserves a computed prototype auto-accessor",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); delete box[key]; holder.item = box[key];",
+            true,
+        ),
+        (
+            "computed instance auto-accessor initializer waits for construction",
+            "const container = { item: {} }; const key = holder.key; class Box { accessor [key] = (container.item = local); } void Box; holder.item = container.item;",
+            false,
+        ),
+        (
+            "computed instance auto-accessor initializer runs during construction",
+            "const container = { item: {} }; const key = holder.key; class Box { accessor [key] = (container.item = local); } new Box(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "later instance initializer updates a same-key computed auto-accessor",
+            "const key = holder.key; class Box { accessor [key] = local; reset = (this[key] = {}); } const box = new Box(); holder.item = box[key];",
+            false,
+        ),
+        (
+            "conditional instance initializer preserves a same-key computed auto-accessor value",
+            "const key = holder.key; class Box { accessor [key] = local; reset = holder.flag && (this[key] = {}); } const box = new Box(); holder.item = box[key];",
+            true,
+        ),
+        (
+            "same-key computed instance field shadows a computed auto-accessor",
+            "const key = holder.key; class Box { accessor [key] = local; [key] = {}; } const box = new Box(); holder.item = box[key];",
+            false,
+        ),
+        (
+            "subclass inherits a computed instance auto-accessor",
+            "const key = holder.key; class Parent { accessor [key] = local; } class Box extends Parent {} const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "inherited computed instance auto-accessor assignment updates one instance",
+            "const key = holder.key; class Parent { accessor [key] = {}; } class Box extends Parent {} const first = new Box(); const second = new Box(); first[key] = local; holder.item = first[key]; void second;",
+            true,
+        ),
+        (
+            "inherited computed instance auto-accessor storage remains isolated",
+            "const key = holder.key; class Parent { accessor [key] = {}; } class Box extends Parent {} const first = new Box(); const second = new Box(); first[key] = local; holder.item = second[key];",
+            false,
+        ),
+        (
+            "subclass method shadows an inherited computed instance auto-accessor",
+            "const key = holder.key; class Parent { accessor [key] = local; } class Box extends Parent { item() {} } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "subclass setter shadows an inherited computed instance auto-accessor getter",
+            "const key = holder.key; class Parent { accessor [key] = local; } class Box extends Parent { set item(value) {} } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "subclass setter preserves other inherited computed instance auto-accessor keys",
+            "const key = holder.key; class Parent { accessor [key] = local; } class Box extends Parent { set item(value) {} } const box = new Box(); holder.item = box[key];",
+            true,
+        ),
+        (
+            "instance field shadows an inherited computed auto-accessor",
+            "const key = holder.key; class Parent { accessor [key] = local; } class Box extends Parent { item = {}; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later method shadows a computed instance auto-accessor",
+            "const key = holder.key; class Box { accessor [key] = local; item() {} } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later same-key computed method shadows a computed instance auto-accessor",
+            "const key = holder.key; class Box { accessor [key] = local; [key]() {} } const box = new Box(); holder.item = box[key];",
+            false,
+        ),
+        (
+            "later same-key computed instance auto-accessor shadows a computed method",
+            "const key = holder.key; class Box { [key]() {} accessor [key] = local; } const box = new Box(); holder.item = box[key];",
+            true,
+        ),
+        (
+            "later setter preserves a computed instance auto-accessor getter",
+            "const key = holder.key; class Box { accessor [key] = local; set item(value) {} } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "later setter prevents a computed instance auto-accessor backing write",
+            "const key = holder.key; class Box { accessor [key] = local; set item(value) {} } const box = new Box(); box.item = {}; holder.item = box.item;",
+            true,
+        ),
+        (
+            "later setter executes beside a computed instance auto-accessor getter",
+            "const key = holder.key; class Box { accessor [key] = {}; set item(value) { holder.item = value; } } const box = new Box(); box.item = local;",
+            true,
+        ),
+        (
+            "later computed instance auto-accessor may shadow an earlier method",
+            "const key = holder.key; class Box { item() {} accessor [key] = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "later same-key computed instance auto-accessor replaces an earlier value",
+            "const key = holder.key; class Box { accessor [key] = local; accessor [key] = {}; } const box = new Box(); holder.item = box[key];",
+            false,
+        ),
+        (
+            "different computed instance auto-accessor keys preserve possible values",
+            "const first = holder.first; const second = holder.second; class Box { accessor [first] = local; accessor [second] = {}; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "computed instance auto-accessor preserves a callable value",
+            "const key = holder.key; class Box { accessor [key] = () => { holder.item = local; }; } const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "returned class maps a computed instance auto-accessor value",
+            "const key = holder.key; function makeBox(value) { return class { accessor [key] = value; }; } const Box = makeBox(local); const box = new Box(); holder.item = box[key];",
+            true,
+        ),
+        (
+            "returned class maps a fresh computed instance auto-accessor value",
+            "const key = holder.key; function makeBox(value) { return class { accessor [key] = value; }; } const Box = makeBox({}); const box = new Box(); holder.item = box[key];",
+            false,
+        ),
+        (
             "instance field shadows an inherited auto-accessor",
             "class Parent { accessor item = local; } class Box extends Parent { item = {}; } const box = new Box(); holder.item = box.item;",
             false,
@@ -5450,8 +5640,48 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "same-key assignment replaces a computed static auto-accessor value",
+            "const key = holder.key; class Box { static accessor [key] = local; } Box[key] = {}; holder.item = Box[key];",
+            false,
+        ),
+        (
+            "known assignment preserves a possible computed static auto-accessor value",
+            "const key = holder.key; class Box { static accessor [key] = local; } Box.item = {}; holder.item = Box[key];",
+            true,
+        ),
+        (
+            "known assignment replaces the matching computed static auto-accessor read",
+            "const key = holder.key; class Box { static accessor [key] = local; } Box.item = {}; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "later setter preserves a computed static auto-accessor getter",
+            "const key = holder.key; class Box { static accessor [key] = local; static set item(value) {} } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "later setter prevents a computed static auto-accessor backing write",
+            "const key = holder.key; class Box { static accessor [key] = local; static set item(value) {} } Box.item = {}; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "later setter executes beside a computed static auto-accessor getter",
+            "const key = holder.key; class Box { static accessor [key] = {}; static set item(value) { holder.item = value; } } Box.item = local;",
+            true,
+        ),
+        (
             "subclass inherits a computed static auto-accessor",
             "const key = holder.key; class Parent { static accessor [key] = local; } class Box extends Parent {} holder.item = Box[key];",
+            true,
+        ),
+        (
+            "subclass setter shadows an inherited computed static auto-accessor getter",
+            "const key = holder.key; class Parent { static accessor [key] = local; } class Box extends Parent { static set item(value) {} } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "subclass setter preserves other inherited computed static auto-accessor keys",
+            "const key = holder.key; class Parent { static accessor [key] = local; } class Box extends Parent { static set item(value) {} } holder.item = Box[key];",
             true,
         ),
         (
@@ -5480,6 +5710,16 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "later same-key computed method shadows a computed static auto-accessor",
+            "const key = holder.key; class Box { static accessor [key] = local; static [key]() {} } holder.item = Box[key];",
+            false,
+        ),
+        (
+            "later same-key computed static auto-accessor shadows a computed method",
+            "const key = holder.key; class Box { static [key]() {} static accessor [key] = local; } holder.item = Box[key];",
+            true,
+        ),
+        (
             "later computed static auto-accessor may shadow an earlier method",
             "const key = holder.key; class Box { static item() {} static accessor [key] = local; } holder.item = Box.item;",
             true,
@@ -5493,6 +5733,16 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             "multiple computed static auto-accessors preserve possible values",
             "const first = holder.first; const second = holder.second; class Box { static accessor [first] = {}; static accessor [second] = local; } holder.item = Box.item;",
             true,
+        ),
+        (
+            "later same-key computed static auto-accessor replaces an earlier value",
+            "const key = holder.key; class Box { static accessor [key] = local; static accessor [key] = {}; } holder.item = Box[key];",
+            false,
+        ),
+        (
+            "same-key computed static field shadows a computed auto-accessor",
+            "const key = holder.key; class Box { static accessor [key] = local; static [key] = {}; } holder.item = Box[key];",
+            false,
         ),
         (
             "detached class preserves a computed static auto-accessor",
