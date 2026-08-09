@@ -3046,6 +3046,13 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "wrapped literal nested external array element callback slot",
+            "const make = () => Array.of({ child: holder.item }); const run = () => count;",
+            "make()[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "later-exposed copied array element callback slot",
             "const local = {}; const items = [local]; const copy = items.slice(); holder.item = local; const run = () => count;",
             "copy[0].run = run;",
@@ -4162,6 +4169,10 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             let popParameterValue = local;
             const popLater = item => () => popParameter([item]);
             const popLocalLater = popLater(local);
+            const makeEmptyObject = () => Array.of({});
+            const makeNestedObject = () => Array.of({ child: {} });
+            const makeNestedArray = () => Array.of([{}]);
+            const makeChildObject = value => Array.of({ child: value });
             const poppedWrapped = popWrapped();
             const shiftedWrapped = shiftWrapped();
             const poppedCaptured = popCaptured();
@@ -4181,6 +4192,8 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             const poppedConditional = popParameter(
                 globalThis.flag ? [local] : [otherLocal]
             );
+            const emptyObject = makeEmptyObject();
+            const childObject = makeChildObject(local);
             reversed[0].run = run;
             sorted[0].run = run;
             copiedWithin[0].run = run;
@@ -4205,6 +4218,12 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             poppedSnapshot.run = run;
             poppedLater.run = run;
             poppedConditional.run = run;
+            emptyObject[0].run = run;
+            makeEmptyObject()[0].run = run;
+            makeNestedObject()[0].child.run = run;
+            makeNestedArray()[0][0].run = run;
+            childObject[0].child.run = run;
+            makeChildObject(local)[0].child.run = run;
             [local].reverse()[0].run = run;
             [local].pop().run = run;
             popWrapped().run = run;
