@@ -8728,6 +8728,7 @@ fn is_non_enumerable_internal_class_property(property: &str) -> bool {
         property,
         DYNAMIC_METHOD_PROPERTY | DYNAMIC_AUTO_ACCESSOR_PROPERTY
     ) || property.starts_with("<computed-static-field-value@")
+        || property.starts_with("<computed-object-property-value@")
         || property.starts_with("<computed-instance-field-value@")
         || property.starts_with("<computed-instance-method-value@")
         || property.starts_with("<computed-static-method-value@")
@@ -39985,17 +39986,26 @@ impl StaticHookAliasCollector<'_> {
                     self.record_dynamic_local_setter(target.clone(), setter.clone());
                     self.collect_callable_initializer(setter, &property.value);
                     self.defer_local_setter(span);
+                } else {
+                    let hidden_target = target.with_property(format!(
+                        "<computed-object-property-value@{}:{}>",
+                        span.start, span.end
+                    ));
+                    self.record_local_value_definedness(hidden_target.clone(), &property.value);
+                    if !self.collect_callable_initializer(hidden_target.clone(), &property.value) {
+                        self.collect_initializer(hidden_target.clone(), &property.value);
+                    }
+                    let dynamic_target = target.with_property(DYNAMIC_DATA_PROPERTY.to_string());
+                    let has_previous_value = self.aliases.contains_key(&dynamic_target)
+                        || self
+                            .alias_history
+                            .get(&dynamic_target)
+                            .is_some_and(|sources| !sources.is_empty());
+                    self.insert_alias(dynamic_target.clone(), hidden_target);
+                    if has_previous_value {
+                        self.ambiguous_alias_targets.insert(dynamic_target);
+                    }
                 }
-                self.ambiguous_alias_targets.extend(
-                    self.aliases
-                        .keys()
-                        .filter(|candidate| candidate.starts_with(target))
-                        .cloned(),
-                );
-                self.aliases
-                    .retain(|candidate, _| !candidate.starts_with(target));
-                self.local_value_definedness
-                    .retain(|candidate, _| !candidate.starts_with(target));
                 self.open_structured_containers.insert(target.clone());
                 continue;
             };
@@ -40006,6 +40016,7 @@ impl StaticHookAliasCollector<'_> {
                 .insert(name.clone());
             self.exclude_dynamic_local_accessor_property(target, name.clone());
             let property_target = target.with_property(name);
+            self.exclude_dynamic_property_value(&property_target);
             if property.kind == PropertyKind::Set {
                 if !self.local_getter_properties.contains(&property_target) {
                     self.clear_overlapping_aliases(&property_target);

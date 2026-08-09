@@ -4895,6 +4895,111 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "computed object property materializes its local value",
+            "const key = holder.key; const source = { [key]: local }; holder.item = source.item;",
+            true,
+        ),
+        (
+            "computed object property supports a computed read",
+            "const key = holder.key; const source = { [key]: local }; holder.item = source[key];",
+            true,
+        ),
+        (
+            "computed object property remains enumerable",
+            "const key = holder.key; const source = { [key]: local }; const copy = { ...source }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "computed object property appears in Object.values",
+            "const key = holder.key; const source = { [key]: local }; const values = Object.values(source); holder.item = values[0];",
+            true,
+        ),
+        (
+            "computed object property appears in Object.entries",
+            "const key = holder.key; const source = { [key]: local }; const entries = Object.entries(source); holder.item = entries[0][1];",
+            true,
+        ),
+        (
+            "computed object property preserves a nested local value",
+            "const key = holder.key; const source = { [key]: { nested: local } }; holder.item = source.item.nested;",
+            true,
+        ),
+        (
+            "computed object property snapshots its initializer value",
+            "const key = holder.key; let captured = local; const source = { [key]: captured }; captured = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "later known object property shadows a computed property",
+            "const key = holder.key; const source = { [key]: local, item: {} }; holder.item = source.item;",
+            false,
+        ),
+        (
+            "later computed object property may shadow a known property",
+            "const key = holder.key; const source = { item: {}, [key]: local }; holder.item = source.item;",
+            true,
+        ),
+        (
+            "multiple computed object properties preserve possible values",
+            "const first = holder.first; const second = holder.second; const source = { [first]: {}, [second]: local }; holder.item = source.item;",
+            true,
+        ),
+        (
+            "known assignment replaces a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "known deletion removes a possible computed object property value",
+            "const key = holder.key; const source = { [key]: local }; delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "conditional assignment preserves a computed object property candidate",
+            "const key = holder.key; const source = { [key]: local }; if (holder.flag) source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "matching computed assignment replaces a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; source[key] = {}; holder.item = source[key];",
+            false,
+        ),
+        (
+            "computed object callable property remains invokable",
+            "const key = holder.key; const source = { [key]: () => { holder.item = local; } }; source.item();",
+            true,
+        ),
+        (
+            "computed object method remains invokable",
+            "const key = holder.key; const source = { [key]() { holder.item = local; } }; source.item();",
+            true,
+        ),
+        (
+            "computed object method remains enumerable",
+            "const key = holder.key; const source = { [key]() { holder.item = local; } }; const values = Object.values(source); values[0]();",
+            true,
+        ),
+        (
+            "later known data property shadows a computed object method",
+            "const key = holder.key; const source = { [key]() { holder.item = local; }, item: {} }; source.item();",
+            false,
+        ),
+        (
+            "later known getter shadows a computed object property",
+            "const key = holder.key; const source = { [key]: local, get item() { return {}; } }; holder.item = source.item;",
+            false,
+        ),
+        (
+            "detached object preserves a computed property",
+            "const key = holder.key; let source = { [key]: local }; const retained = source; source = {}; holder.item = retained.item;",
+            true,
+        ),
+        (
+            "returned object maps a computed property value",
+            "const key = holder.key; function makeSource(value) { return { [key]: value }; } const source = makeSource(local); holder.item = source.item;",
+            true,
+        ),
+        (
             "computed instance field materializes its local value",
             "const key = holder.key; class Box { [key] = local; } const box = new Box(); holder.item = box.item;",
             true,
