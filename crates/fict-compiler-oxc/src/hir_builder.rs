@@ -21084,8 +21084,10 @@ struct StaticHookAliasCollector<'semantic> {
     returned_callable_spans: BTreeSet<(u32, u32)>,
     returned_callable_effects: BTreeMap<(u32, u32), BTreeSet<LocalCallableCapturedEffect>>,
     local_callable_external_storage_effects: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
-    returned_callable_aliases: BTreeMap<(u32, u32), BTreeSet<(StaticAliasPath, StaticAliasPath)>>,
-    returned_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
+    // Alias writes are ordered because a later write in the same invocation replaces an earlier
+    // one. The conservative activation path still consumes them as a set of possible histories.
+    deferred_callable_aliases: BTreeMap<(u32, u32), Vec<(StaticAliasPath, StaticAliasPath)>>,
+    deferred_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     generator_callable_body_spans: BTreeMap<(u32, u32), (u32, u32)>,
     active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
     active_returned_callable_creator_owners:
@@ -21142,6 +21144,8 @@ struct StaticHookAliasCollector<'semantic> {
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_generator_body_spans: BTreeSet<(u32, u32)>,
     unexecuted_generator_callable_paths: BTreeSet<StaticAliasPath>,
+    precisely_invoked_alias_effects: BTreeSet<LocalCallableAliasEffect>,
+    imprecisely_invoked_alias_effects: BTreeSet<LocalCallableAliasEffect>,
 }
 
 #[derive(Clone)]
@@ -21820,6 +21824,7 @@ struct LocalSetPrototypeOf {
 type LocalCallableEffectCreatorMap =
     BTreeMap<(StaticAliasPath, (u32, u32)), Vec<Vec<LocalInvocationFact>>>;
 type ActiveReturnedCallableInstance = (StaticAliasPath, (u32, u32), bool);
+type LocalCallableAliasEffect = (StaticAliasPath, (u32, u32), StaticAliasPath);
 type PendingReturnedClassMaterializationMap =
     BTreeMap<(u32, u32), Vec<(StaticAliasPath, Vec<LocalInvocationFact>)>>;
 type PendingReturnedStructuredMaterializationMap =
@@ -22087,8 +22092,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             returned_callable_spans: generator.returned_callable_spans.clone(),
             returned_callable_effects: BTreeMap::new(),
             local_callable_external_storage_effects: BTreeMap::new(),
-            returned_callable_aliases: BTreeMap::new(),
-            returned_callable_ambiguous_targets: BTreeMap::new(),
+            deferred_callable_aliases: BTreeMap::new(),
+            deferred_callable_ambiguous_targets: BTreeMap::new(),
             generator_callable_body_spans: BTreeMap::new(),
             active_returned_callable_instances: BTreeMap::new(),
             active_returned_callable_creator_owners: BTreeMap::new(),
@@ -22138,6 +22143,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             discarded_invocation_spans: generator.discarded_invocation_spans.clone(),
             unexecuted_generator_body_spans: generator.unexecuted_body_spans.clone(),
             unexecuted_generator_callable_paths: generator.unexecuted_callable_paths.clone(),
+            precisely_invoked_alias_effects: BTreeSet::new(),
+            imprecisely_invoked_alias_effects: BTreeSet::new(),
         }
     }
 }
@@ -23912,6 +23919,31 @@ impl StaticHookAliasCollector<'_> {
 
     fn returned_callable_capture_span(&self, path: &StaticAliasPath) -> Option<(u32, u32)> {
         let span = self.current_returned_callable_span()?;
+        self.callable_alias_capture_span_for(path, span)
+    }
+
+    fn deferred_callable_alias_capture_span(&self, path: &StaticAliasPath) -> Option<(u32, u32)> {
+        let span = self.current_callable_effect_span()?;
+        // The component body itself is analyzed eagerly. Nested callables and instance field
+        // initializers must instead snapshot alias writes until their invocation or construction.
+        if self.function_depth <= 1
+            && !self
+                .class_effect_contexts
+                .last()
+                .copied()
+                .flatten()
+                .is_some_and(|context| context.span == span)
+        {
+            return None;
+        }
+        self.callable_alias_capture_span_for(path, span)
+    }
+
+    fn callable_alias_capture_span_for(
+        &self,
+        path: &StaticAliasPath,
+        span: (u32, u32),
+    ) -> Option<(u32, u32)> {
         let captures_same_depth = self
             .class_effect_contexts
             .last()
@@ -29224,7 +29256,7 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn mark_alias_target_ambiguous(&mut self, path: StaticAliasPath) {
-        let returned_callable_span = self.returned_callable_capture_span(&path);
+        let returned_callable_span = self.deferred_callable_alias_capture_span(&path);
         self.transient_callable_alias_targets
             .retain(|target| !target.overlaps(&path));
         self.local_callable_parameters
@@ -29254,7 +29286,7 @@ impl StaticHookAliasCollector<'_> {
         self.default_derived_constructors
             .retain(|target, _| !target.overlaps(&path));
         if let Some(span) = returned_callable_span {
-            self.returned_callable_ambiguous_targets
+            self.deferred_callable_ambiguous_targets
                 .entry(span)
                 .or_default()
                 .insert(path);
@@ -29264,7 +29296,14 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn insert_alias(&mut self, target: StaticAliasPath, source: StaticAliasPath) {
-        let returned_callable_span = self.returned_callable_capture_span(&target);
+        let returned_callable_span = self.deferred_callable_alias_capture_span(&target);
+        let outer_cross_scope_targets = returned_callable_span.is_some().then(|| {
+            self.cross_scope_alias_targets
+                .iter()
+                .filter(|candidate| candidate.overlaps(&target))
+                .cloned()
+                .collect::<BTreeSet<_>>()
+        });
         let array_length = self.known_array_length(&source);
         let structured_instances = self.returned_structured_instances_for_path(&source);
         let mut external_storage_alias_candidates =
@@ -29272,6 +29311,12 @@ impl StaticHookAliasCollector<'_> {
         let external_storage_attached_roots = self.external_storage_flow.attached_roots(&source);
         external_storage_alias_candidates.remove(&target);
         self.clear_overlapping_aliases(&target);
+        if let Some(outer_cross_scope_targets) = outer_cross_scope_targets {
+            self.cross_scope_alias_targets
+                .retain(|candidate| !candidate.overlaps(&target));
+            self.cross_scope_alias_targets
+                .extend(outer_cross_scope_targets);
+        }
         self.external_storage_flow.insert_alias(
             target.clone(),
             external_storage_alias_candidates,
@@ -29280,10 +29325,10 @@ impl StaticHookAliasCollector<'_> {
         self.record_external_storage_exception_flow();
         if target != source {
             if let Some(span) = returned_callable_span {
-                self.returned_callable_aliases
+                self.deferred_callable_aliases
                     .entry(span)
                     .or_default()
-                    .insert((target.clone(), source.clone()));
+                    .push((target.clone(), source.clone()));
             } else {
                 self.alias_history
                     .entry(target.clone())
@@ -40082,19 +40127,204 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
-    fn activate_returned_callable_aliases(
+    fn activate_precise_local_alias_invocations(&mut self, invocations: &[LocalInvocationFact]) {
+        // Apply only direct, unconditional, eagerly executed invocations in source order. Any
+        // conditional, deferred, or escaping instance is rejoined by the conservative pass.
+        let unconditional = self
+            .function_control_baselines
+            .last()
+            .map_or(self.control_depth == 0, |baseline| {
+                self.control_depth == *baseline
+            });
+        let invocations = invocations
+            .iter()
+            .cloned()
+            .flat_map(|invocation| self.specialize_returned_callable_invocation(invocation))
+            .flat_map(|invocation| self.bound_invocation_variants(invocation))
+            .collect::<Vec<_>>();
+        for invocation in invocations {
+            let instances = self.invocation_callable_effect_instances(&invocation);
+            for (instance_target, span, historical) in instances {
+                let precise = unconditional
+                    && invocation.owner_returned_callable_span.is_none()
+                    && invocation
+                        .external_storage_context
+                        .owner_callable_span
+                        .is_none()
+                    && !self.invocation_is_definitely_generator(&invocation);
+                let aliases = self
+                    .deferred_callable_aliases
+                    .get(&span)
+                    .cloned()
+                    .unwrap_or_default();
+                let ambiguous_targets = self
+                    .deferred_callable_ambiguous_targets
+                    .get(&span)
+                    .cloned()
+                    .unwrap_or_default();
+                if aliases.is_empty() && ambiguous_targets.is_empty() {
+                    continue;
+                }
+                if !precise {
+                    self.imprecisely_invoked_alias_effects.extend(
+                        aliases
+                            .iter()
+                            .map(|(target, _)| (instance_target.clone(), span, target.clone()))
+                            .chain(
+                                ambiguous_targets
+                                    .iter()
+                                    .map(|target| (instance_target.clone(), span, target.clone())),
+                            ),
+                    );
+                    continue;
+                }
+                let creators =
+                    self.returned_callable_effect_creators(&instance_target, span, historical);
+                let mappers = if creators.is_empty() {
+                    vec![vec![invocation.clone()]]
+                } else {
+                    creators
+                        .into_iter()
+                        .map(|mut creators| {
+                            creators.insert(0, invocation.clone());
+                            creators
+                        })
+                        .collect()
+                };
+                for (target, source) in aliases {
+                    let effect = (instance_target.clone(), span, target.clone());
+                    let targets = if target.properties.is_empty() && !target.element_wildcard {
+                        BTreeSet::from([target])
+                    } else {
+                        self.mapped_returned_callable_capture_paths(
+                            &target,
+                            LocalParameterInvalidationKind::Slot,
+                            &mappers,
+                        )
+                        .unwrap_or_else(|| BTreeSet::from([target]))
+                    };
+                    let sources = self
+                        .mapped_returned_callable_capture_paths(
+                            &source,
+                            LocalParameterInvalidationKind::Member,
+                            &mappers,
+                        )
+                        .unwrap_or_else(|| BTreeSet::from([source]));
+                    if !self.alias_effect_targets_are_materializable(
+                        &targets,
+                        invocation.function_depth,
+                    ) {
+                        self.imprecisely_invoked_alias_effects.insert(effect);
+                        continue;
+                    }
+                    let ambiguous = targets.len() != 1 || sources.len() != 1;
+                    let mut applied = false;
+                    for target in targets {
+                        let target = resolve_static_alias_slot_path(&self.aliases, &target);
+                        self.cross_scope_alias_targets
+                            .retain(|candidate| !candidate.overlaps(&target));
+                        if sources.is_empty() {
+                            self.mark_alias_target_ambiguous(target);
+                            applied = true;
+                            continue;
+                        }
+                        for source in &sources {
+                            let source = resolve_static_alias_path(&self.aliases, source);
+                            self.insert_alias(target.clone(), source);
+                            applied = true;
+                        }
+                        if ambiguous {
+                            self.mark_alias_target_ambiguous(target);
+                        }
+                    }
+                    if applied {
+                        self.precisely_invoked_alias_effects.insert(effect);
+                    }
+                }
+                for target in ambiguous_targets {
+                    let effect = (instance_target.clone(), span, target.clone());
+                    let targets = if target.properties.is_empty() && !target.element_wildcard {
+                        BTreeSet::from([target])
+                    } else {
+                        self.mapped_returned_callable_capture_paths(
+                            &target,
+                            LocalParameterInvalidationKind::Slot,
+                            &mappers,
+                        )
+                        .unwrap_or_else(|| BTreeSet::from([target]))
+                    };
+                    if !self.alias_effect_targets_are_materializable(
+                        &targets,
+                        invocation.function_depth,
+                    ) {
+                        self.imprecisely_invoked_alias_effects.insert(effect);
+                        continue;
+                    }
+                    let mut applied = false;
+                    for target in targets {
+                        let target = resolve_static_alias_slot_path(&self.aliases, &target);
+                        self.mark_alias_target_ambiguous(target);
+                        applied = true;
+                    }
+                    if applied {
+                        self.precisely_invoked_alias_effects.insert(effect);
+                    }
+                }
+            }
+        }
+    }
+
+    fn alias_effect_targets_are_materializable(
+        &self,
+        targets: &BTreeSet<StaticAliasPath>,
+        invocation_depth: usize,
+    ) -> bool {
+        // Function-owned dynamic paths can be returned-structure blueprints shared by several
+        // instances. Leave those to creator-aware materialization instead of mutating them here.
+        targets.iter().all(|target| match &target.root {
+            StaticAliasRoot::Binding(root) => self
+                .binding_owner_depths
+                .get(root)
+                .is_some_and(|owner| *owner <= invocation_depth),
+            StaticAliasRoot::DynamicThis { .. } => self.path_owner_depth(target) < invocation_depth,
+            StaticAliasRoot::UnresolvedGlobal(_) => true,
+        })
+    }
+
+    fn precisely_activated_alias_effect(
+        &self,
+        effect: &LocalCallableAliasEffect,
+        instance: &(StaticAliasPath, (u32, u32)),
+        escaped_instances: &BTreeSet<(StaticAliasPath, (u32, u32))>,
+    ) -> bool {
+        self.precisely_invoked_alias_effects.contains(effect)
+            && !self.imprecisely_invoked_alias_effects.contains(effect)
+            && !escaped_instances.contains(instance)
+    }
+
+    fn activate_deferred_callable_aliases(
         &mut self,
         instances: &BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
     ) {
+        let escaped_instances = self
+            .escaped_callable_effect_instances()
+            .into_iter()
+            .map(|(target, span, _)| (target, span))
+            .collect::<BTreeSet<_>>();
         for ((instance_target, span), historical) in instances {
+            let instance = (instance_target.clone(), *span);
             let creators =
                 self.returned_callable_effect_creators(instance_target, *span, *historical);
             let aliases = self
-                .returned_callable_aliases
+                .deferred_callable_aliases
                 .get(span)
                 .cloned()
                 .unwrap_or_default();
             for (target, source) in aliases {
+                let effect = (instance_target.clone(), *span, target.clone());
+                if self.precisely_activated_alias_effect(&effect, &instance, &escaped_instances) {
+                    continue;
+                }
                 let targets = if target.properties.is_empty() && !target.element_wildcard {
                     BTreeSet::from([target])
                 } else {
@@ -40125,11 +40355,15 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             let ambiguous_targets = self
-                .returned_callable_ambiguous_targets
+                .deferred_callable_ambiguous_targets
                 .get(span)
                 .cloned()
                 .unwrap_or_default();
             for target in ambiguous_targets {
+                let effect = (instance_target.clone(), *span, target.clone());
+                if self.precisely_activated_alias_effect(&effect, &instance, &escaped_instances) {
+                    continue;
+                }
                 let targets = if target.properties.is_empty() && !target.element_wildcard {
                     BTreeSet::from([target])
                 } else {
@@ -40205,7 +40439,7 @@ impl StaticHookAliasCollector<'_> {
             }
             self.active_returned_callable_creator_owners
                 .clone_from(&creator_owners);
-            self.activate_returned_callable_aliases(&instances);
+            self.activate_deferred_callable_aliases(&instances);
             if instances.len() == previous_len
                 && creator_owners.values().map(BTreeSet::len).sum::<usize>() == previous_owner_len
             {
@@ -42942,6 +43176,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
+        self.activate_precise_local_alias_invocations(&local_invocations);
         if let Some(mutation) = local_array_mutation {
             self.apply_local_array_mutation(call, mutation);
         }
@@ -43047,6 +43282,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_new_expression(self, expression);
+        self.activate_precise_local_alias_invocations(&local_invocations);
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
         self.local_invocations.extend(local_invocations);
@@ -43132,6 +43368,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
+        self.activate_precise_local_alias_invocations(&local_invocations);
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
         self.local_invocations.extend(local_invocations);

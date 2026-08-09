@@ -4627,6 +4627,148 @@ fn class_field_external_storage_effects_follow_construction_timing() {
 }
 
 #[test]
+fn local_callable_alias_effects_follow_invocation_timing() {
+    for (name, setup, expected_escape) in [
+        (
+            "uninvoked arrow",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; captured = {}; holder.item = container.item;",
+            false,
+        ),
+        (
+            "arrow invoked after capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; captured = {}; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "arrow invoked before capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; assign(); captured = {}; holder.item = container.item;",
+            true,
+        ),
+        (
+            "function expression invoked after capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = function () { container.item = captured; }; captured = {}; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "function declaration invoked after capture rebind",
+            "const container = { item: {} }; let captured = local; function assign() { container.item = captured; } captured = {}; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "Function.call invocation follows capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; captured = {}; assign.call(null); holder.item = container.item;",
+            false,
+        ),
+        (
+            "bound invocation follows capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; const bound = assign.bind(null); captured = {}; bound(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "constructor invocation follows capture rebind",
+            "const container = { item: {} }; let captured = local; function Assign() { container.item = captured; } captured = {}; new Assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "tag invocation follows capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; captured = {}; assign``; holder.item = container.item;",
+            false,
+        ),
+        (
+            "later invocation replaces earlier alias",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; assign(); captured = {}; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "wrapper invocation follows capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; const wrapper = () => assign(); captured = {}; wrapper(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "conditional invocation preserves the previous alias",
+            "const container = { item: local }; const fresh = {}; const assign = () => { container.item = fresh; }; holder.enabled && assign(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "parameterized assignment receives a fresh value",
+            "const container = { item: {} }; let captured = local; const assign = (target, value) => { target.item = value; }; captured = {}; assign(container, captured); holder.item = container.item;",
+            false,
+        ),
+        (
+            "parameterized assignment receives the local value",
+            "const container = { item: {} }; const assign = (target, value) => { target.item = value; }; assign(container, local); holder.item = container.item;",
+            true,
+        ),
+        (
+            "instance field runs after capture rebind",
+            "const container = { item: {} }; let captured = local; class Box { value = (container.item = captured); } captured = {}; new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "instance field runs before capture rebind",
+            "const container = { item: {} }; let captured = local; class Box { value = (container.item = captured); } new Box(); captured = {}; holder.item = container.item;",
+            true,
+        ),
+        (
+            "static field runs before capture rebind",
+            "const container = { item: {} }; let captured = local; class Box { static value = (container.item = captured); } captured = {}; holder.item = container.item;",
+            true,
+        ),
+        (
+            "unconstructed instance field does not invoke an alias helper",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; class Box { value = assign(); } captured = {}; holder.item = container.item;",
+            false,
+        ),
+        (
+            "constructed instance field invokes an alias helper after capture rebind",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; class Box { value = assign(); } captured = {}; new Box(); holder.item = container.item;",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let mut escape_codes = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "run"
+                    })
+            })
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        escape_codes.sort_unstable();
+        let expected = if expected_escape {
+            vec!["FICT-R002", "FICT-R005"]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            escape_codes, expected,
+            "local callable alias timing mismatch for {name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn detached_and_one_way_external_storage_values_do_not_taint_sources() {
     let source = r#"
         import { $state } from 'fict';
