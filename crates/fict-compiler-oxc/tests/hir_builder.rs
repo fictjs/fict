@@ -5105,6 +5105,61 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "constructed instance materializes a local field value",
+            "class Box { item = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "constructed instance preserves a fresh field value",
+            "class Box { item = {}; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "instance data field reads a rebound capture",
+            "let captured = local; class Box { item = captured; } captured = {}; const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "earlier instance keeps its construction-time field value",
+            "let captured = local; class Box { item = captured; } const first = new Box(); captured = {}; const second = new Box(); void second; holder.item = first.item;",
+            true,
+        ),
+        (
+            "later instance reads the current field value",
+            "let captured = local; class Box { item = captured; } const first = new Box(); captured = {}; const second = new Box(); void first; holder.item = second.item;",
+            false,
+        ),
+        (
+            "instance materializes a nested object field value",
+            "class Box { item = { child: local }; } const box = new Box(); holder.item = box.item.child;",
+            true,
+        ),
+        (
+            "instance materializes a nested array field value",
+            "class Box { items = [local]; } const box = new Box(); holder.item = box.items[0];",
+            true,
+        ),
+        (
+            "instance materializes an aliased structured field value",
+            "const source = { child: local }; class Box { item = source; } const box = new Box(); holder.item = box.item.child;",
+            true,
+        ),
+        (
+            "separate instances own independent structured field values",
+            "class Box { item = { child: local }; } const first = new Box(); const second = new Box(); second.item.child = {}; holder.item = first.item.child;",
+            true,
+        ),
+        (
+            "returned class data field maps a factory argument",
+            "function make(value) { return class { item = value; }; } const Box = make(local); const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "returned class data field maps a fresh factory argument",
+            "function make(value) { return class { item = value; }; } const Box = make({}); const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
             "unconstructed instance field preserves an own property",
             "const container = { item: local }; class Box { value = delete container.item; } void Box; holder.item = container.item;",
             true,

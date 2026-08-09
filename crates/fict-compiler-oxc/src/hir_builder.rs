@@ -20653,6 +20653,26 @@ struct DeferredArrayMutationValue {
     definedness: LocalGetterResultDefinedness,
 }
 
+#[derive(Clone)]
+struct DeferredClassInstanceValue {
+    value: DeferredArrayMutationValue,
+    shape: DeferredClassInstanceValueShape,
+}
+
+#[derive(Clone)]
+enum DeferredClassInstanceValueShape {
+    Plain,
+    Object {
+        properties: BTreeSet<String>,
+        open: bool,
+    },
+    Array {
+        length: Option<usize>,
+        properties: BTreeSet<String>,
+        open: bool,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum ExternalStorageShallowCopyProjection {
     Identity,
@@ -21700,6 +21720,7 @@ impl LocalGetterResultDefinedness {
 
 #[derive(Clone)]
 struct LocalClassInstanceCallable {
+    value: Option<DeferredClassInstanceValue>,
     source: Option<StaticAliasPath>,
     parameters: Vec<LocalCallableParameter>,
     dynamic_receiver: Option<StaticAliasPath>,
@@ -24666,6 +24687,7 @@ impl StaticHookAliasCollector<'_> {
         }
         if let Some(alternatives) = self.local_bound_callable_initializer(value) {
             return vec![LocalClassInstanceCallable {
+                value: None,
                 source: None,
                 parameters: Vec::new(),
                 dynamic_receiver: None,
@@ -24722,6 +24744,7 @@ impl StaticHookAliasCollector<'_> {
             _ => Vec::new(),
         };
         vec![LocalClassInstanceCallable {
+            value: None,
             source,
             parameters,
             dynamic_receiver,
@@ -24989,6 +25012,27 @@ impl StaticHookAliasCollector<'_> {
                 value.get_inner_expression(),
                 Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
             ) {
+                if let Some(value) = self.deferred_class_instance_value(value) {
+                    self.local_class_instance_callables
+                        .entry(target.clone())
+                        .or_default()
+                        .insert(
+                            name,
+                            vec![LocalClassInstanceCallable {
+                                value: Some(value),
+                                source: None,
+                                parameters: Vec::new(),
+                                dynamic_receiver: None,
+                                lexical_receiver: false,
+                                generator: false,
+                                unknown: false,
+                                bound_callables: Vec::new(),
+                                bound_historical: false,
+                                exposures: BTreeSet::new(),
+                                effect_instances: Vec::new(),
+                            }],
+                        );
+                }
                 continue;
             }
             let span = match value.get_inner_expression() {
@@ -25187,6 +25231,19 @@ impl StaticHookAliasCollector<'_> {
         if let Some(mut callables) = self.local_class_instance_callables.get(&source).cloned() {
             for alternatives in callables.values_mut() {
                 for callable in alternatives {
+                    if let Some(value) = &mut callable.value {
+                        value.value.sources = value
+                            .value
+                            .sources
+                            .iter()
+                            .flat_map(|argument| {
+                                self.map_returned_callable_invocation_argument(
+                                    argument,
+                                    capture_invocations,
+                                )
+                            })
+                            .collect();
+                    }
                     if let Some(callable_source) = &mut callable.source {
                         *callable_source =
                             Self::rebase_returned_class_path(callable_source, &source, target);
@@ -25635,6 +25692,10 @@ impl StaticHookAliasCollector<'_> {
             .get(class)
             .cloned()
             .unwrap_or_default();
+        self.structured_own_properties
+            .entry(target.clone())
+            .or_default()
+            .extend(fields.iter().cloned());
         for field in &fields {
             self.exclude_dynamic_local_accessor_property(target, field.clone());
         }
@@ -25674,6 +25735,10 @@ impl StaticHookAliasCollector<'_> {
             self.clear_overlapping_aliases(&instance_field);
             let ambiguous = callables.len() > 1;
             for callable in callables {
+                if let Some(value) = callable.value {
+                    self.apply_deferred_class_instance_value(&instance_field, &value);
+                    continue;
+                }
                 for effect in callable.effect_instances.clone() {
                     self.record_local_callable_effect_span(instance_field.clone(), effect.span);
                     if !effect.capture_invocations.is_empty() {
@@ -32878,6 +32943,69 @@ impl StaticHookAliasCollector<'_> {
             opaque: callable.found,
             definedness: self.local_getter_expression_definedness(expression),
         })
+    }
+
+    fn deferred_class_instance_value(
+        &mut self,
+        expression: &Expression<'_>,
+    ) -> Option<DeferredClassInstanceValue> {
+        if matches!(
+            expression.get_inner_expression(),
+            Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
+        ) {
+            return None;
+        }
+        let value = self.deferred_array_mutation_value(expression)?;
+        let shape = match expression.get_inner_expression() {
+            Expression::ObjectExpression(object) => {
+                let mut properties = BTreeSet::new();
+                let mut open = false;
+                for property in &object.properties {
+                    let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                        open = true;
+                        continue;
+                    };
+                    if let Some(name) = property.key.static_name() {
+                        properties.insert(name.into_owned());
+                    } else {
+                        open = true;
+                    }
+                }
+                DeferredClassInstanceValueShape::Object { properties, open }
+            }
+            Expression::ArrayExpression(array) => {
+                let lengths = self.possible_array_initializer_lengths(expression);
+                let length = if lengths.len() == 1 {
+                    lengths.first().copied()
+                } else {
+                    None
+                };
+                let open = array
+                    .elements
+                    .iter()
+                    .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)));
+                let properties = if open {
+                    BTreeSet::new()
+                } else {
+                    array
+                        .elements
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, element)| {
+                            !matches!(element, ArrayExpressionElement::Elision(_))
+                        })
+                        .map(|(index, _)| index.to_string())
+                        .collect()
+                };
+                DeferredClassInstanceValueShape::Array {
+                    length,
+                    properties,
+                    open,
+                }
+            }
+            _ => DeferredClassInstanceValueShape::Plain,
+        };
+        Some(DeferredClassInstanceValue { value, shape })
     }
 
     fn deferred_array_mutation_values(
@@ -41417,6 +41545,88 @@ impl StaticHookAliasCollector<'_> {
             .insert(value.definedness);
         self.local_value_definedness
             .insert(property, value.definedness);
+    }
+
+    fn apply_deferred_class_instance_value(
+        &mut self,
+        target: &StaticAliasPath,
+        value: &DeferredClassInstanceValue,
+    ) {
+        let sources = self.mapped_deferred_array_value_sources(&value.value, &[]);
+        self.clear_overlapping_aliases(target);
+        for (suffix, sources) in sources {
+            let Some(suffix) = suffix else {
+                if !sources.is_empty() {
+                    self.record_external_storage_result_paths(
+                        target.clone(),
+                        sources.iter().cloned().collect(),
+                    );
+                    self.alias_history
+                        .entry(target.clone())
+                        .or_default()
+                        .extend(sources);
+                    self.cross_scope_alias_targets.insert(target.clone());
+                }
+                continue;
+            };
+            let mut nested = target.clone();
+            nested.properties.extend(suffix);
+            if sources.len() == 1 {
+                self.insert_alias(
+                    nested,
+                    sources
+                        .into_iter()
+                        .next()
+                        .expect("single precise class field value source"),
+                );
+            } else if !sources.is_empty() {
+                self.clear_overlapping_aliases(&nested);
+                self.record_external_storage_result_paths(
+                    nested.clone(),
+                    sources.iter().cloned().collect(),
+                );
+                self.alias_history
+                    .entry(nested.clone())
+                    .or_default()
+                    .extend(sources);
+                self.cross_scope_alias_targets.insert(nested);
+            }
+        }
+        if value.value.opaque {
+            self.record_opaque_external_storage_result(target.clone());
+            self.ambiguous_alias_targets.insert(target.clone());
+        }
+        self.record_local_own_property_assignment(target);
+        self.local_value_definedness_history
+            .entry(target.clone())
+            .or_default()
+            .insert(value.value.definedness);
+        self.local_value_definedness
+            .insert(target.clone(), value.value.definedness);
+        match &value.shape {
+            DeferredClassInstanceValueShape::Plain => {}
+            DeferredClassInstanceValueShape::Object { properties, open } => {
+                self.structured_own_properties
+                    .insert(target.clone(), properties.clone());
+                if *open {
+                    self.open_structured_containers.insert(target.clone());
+                }
+            }
+            DeferredClassInstanceValueShape::Array {
+                length,
+                properties,
+                open,
+            } => {
+                self.structured_own_properties
+                    .insert(target.clone(), properties.clone());
+                if let Some(length) = length {
+                    self.array_lengths.insert(target.clone(), *length);
+                }
+                if *open || length.is_none() {
+                    self.open_structured_containers.insert(target.clone());
+                }
+            }
+        }
     }
 
     fn record_deferred_array_snapshot_range(
