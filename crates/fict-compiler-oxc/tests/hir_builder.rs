@@ -2955,6 +2955,76 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "parameterized popped external array element callback slot",
+            "const pop = source => source.pop(); const run = () => count;",
+            "pop([holder.item]).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized shifted external array element callback slot",
+            "const shift = source => source.shift(); const run = () => count;",
+            "shift([holder.item]).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized popped captured external array element callback slot",
+            "const pop = source => source.pop(); const items = [holder.item]; const run = () => count;",
+            "pop(items).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "destructured shifted external array element callback slot",
+            "const shift = ({ source }) => source.shift(); const run = () => count;",
+            "shift({ source: [holder.item] }).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "bound popped external array element callback slot",
+            "const pop = source => source.pop(); const bound = pop.bind(null, [holder.item]); const run = () => count;",
+            "bound().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized popped opaque array element callback slot",
+            "const get = () => holder.item; const pop = source => source.pop(); const run = () => count;",
+            "pop([get()]).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized overridden pop result callback slot",
+            "const pop = source => source.pop(); const items = [{}]; items.pop = () => holder.item; const run = () => count;",
+            "pop(items).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized spread pop result callback slot",
+            "const pop = source => source.pop(); const run = () => count;",
+            "pop([...holder.items]).run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized popped pre-rebind external array element callback slot",
+            "const pop = source => source.pop(); let item = holder.item; const popped = pop([item]); item = {}; const run = () => count;",
+            "popped.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "later-exposed returned parameterized popped array element callback slot",
+            "const local = {}; const pop = source => source.pop(); const later = item => () => pop([item]); const popLocalLater = later(local); const popped = popLocalLater(); holder.item = local; const run = () => count;",
+            "popped.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "wrapped nested external array element callback slot",
             "const local = { child: holder.item }; const make = () => Array.of(local); const run = () => count;",
             "make()[0].child.run = run;",
@@ -4067,10 +4137,32 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             const shiftItems = [local];
             const popCaptured = () => popItems.pop();
             const shiftCaptured = () => shiftItems.shift();
+            const popParameter = source => source.pop();
+            const shiftParameter = source => source.shift();
+            function popDeclared(source) { return source.pop(); }
+            const shiftDestructured = ({ source }) => source.shift();
+            const popBound = popParameter.bind(null, [local]);
+            const popParameterItems = [local];
+            const shiftParameterItems = [local];
+            let popParameterValue = local;
+            const popLater = item => () => popParameter([item]);
+            const popLocalLater = popLater(local);
             const poppedWrapped = popWrapped();
             const shiftedWrapped = shiftWrapped();
             const poppedCaptured = popCaptured();
             const shiftedCaptured = shiftCaptured();
+            const poppedParameter = popParameter([local]);
+            const shiftedParameter = shiftParameter([local]);
+            const poppedParameterItems = popParameter(popParameterItems);
+            const shiftedParameterItems = shiftParameter(shiftParameterItems);
+            const poppedDeclared = popDeclared([local]);
+            const shiftedDestructured = shiftDestructured({ source: [local] });
+            const poppedBound = popBound();
+            const poppedCall = popParameter.call(null, [local]);
+            const shiftedApply = shiftParameter.apply(null, [[local]]);
+            const poppedSnapshot = popParameter([popParameterValue]);
+            popParameterValue = globalThis.external;
+            const poppedLater = popLocalLater();
             reversed[0].run = run;
             sorted[0].run = run;
             copiedWithin[0].run = run;
@@ -4083,10 +4175,23 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             shiftedWrapped.run = run;
             poppedCaptured.run = run;
             shiftedCaptured.run = run;
+            poppedParameter.run = run;
+            shiftedParameter.run = run;
+            poppedParameterItems.run = run;
+            shiftedParameterItems.run = run;
+            poppedDeclared.run = run;
+            shiftedDestructured.run = run;
+            poppedBound.run = run;
+            poppedCall.run = run;
+            shiftedApply.run = run;
+            poppedSnapshot.run = run;
+            poppedLater.run = run;
             [local].reverse()[0].run = run;
             [local].pop().run = run;
             popWrapped().run = run;
             shiftWrapped().run = run;
+            popParameter([local]).run = run;
+            shiftParameter([local]).run = run;
             [].push(local).run = run;
             return count;
         }
