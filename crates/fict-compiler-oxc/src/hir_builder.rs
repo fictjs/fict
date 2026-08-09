@@ -23147,6 +23147,94 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
+    fn local_callable_array_element_results(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<Vec<LocalCallableResult>> {
+        let Expression::CallExpression(call) = expression.get_inner_expression() else {
+            return None;
+        };
+        if call.optional {
+            return None;
+        }
+        let (receiver, method) = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) if !member.optional => {
+                (&member.object, member.property.name.to_string())
+            }
+            Expression::ComputedMemberExpression(member) if !member.optional => {
+                (&member.object, static_member_name(&member.expression)?)
+            }
+            _ => return None,
+        };
+        if !array_mutation_returns_element(&method) {
+            return None;
+        }
+        self.local_callable_array_element_results_for_receiver(receiver, &method)
+    }
+
+    fn local_callable_array_element_results_for_receiver(
+        &self,
+        receiver: &Expression<'_>,
+        method: &str,
+    ) -> Option<Vec<LocalCallableResult>> {
+        if let Expression::ArrayExpression(array) = receiver.get_inner_expression() {
+            if !self.array_copy_global_method_is_intact(method)
+                || array
+                    .elements
+                    .iter()
+                    .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_)))
+            {
+                return Some(vec![LocalCallableResult::Unknown]);
+            }
+            let element = if method == "pop" {
+                array.elements.last()
+            } else {
+                array.elements.first()
+            };
+            let Some(element) = element else {
+                return Some(vec![LocalCallableResult::KnownLocal]);
+            };
+            if matches!(element, ArrayExpressionElement::Elision(_)) {
+                return Some(vec![LocalCallableResult::KnownLocal]);
+            }
+            let element = element.to_expression();
+            return Some(if let Some(source) = self.alias_source_path(element) {
+                vec![LocalCallableResult::Reference(source)]
+            } else if Self::expression_is_inherently_local_array_value(element) {
+                vec![LocalCallableResult::KnownLocal]
+            } else {
+                vec![LocalCallableResult::Unknown]
+            });
+        }
+        let source = self.alias_source_path(receiver)?;
+        if !self.known_array_path(&source) || !self.array_mutation_method_is_intact(&source, method)
+        {
+            return Some(vec![LocalCallableResult::Unknown]);
+        }
+        let Some(length) = self.known_array_length(&source) else {
+            return Some(vec![LocalCallableResult::Unknown]);
+        };
+        if length == 0 {
+            return Some(vec![LocalCallableResult::KnownLocal]);
+        }
+        let index = if method == "pop" { length - 1 } else { 0 };
+        let element = source.clone().with_property(index.to_string());
+        let resolved = resolve_static_alias_path(&self.aliases, &element);
+        let mut candidates = self.external_storage_flow.alias_candidates(&element);
+        candidates.retain(|candidate| candidate != &element && !candidate.starts_with(&source));
+        if resolved != element && !resolved.starts_with(&source) {
+            candidates.insert(resolved);
+        }
+        Some(if candidates.is_empty() {
+            vec![LocalCallableResult::KnownLocal]
+        } else {
+            candidates
+                .into_iter()
+                .map(LocalCallableResult::Reference)
+                .collect()
+        })
+    }
+
     fn expression_returns_known_local_array_result(&self, expression: &Expression<'_>) -> bool {
         match expression.get_inner_expression() {
             Expression::CallExpression(call) => {
@@ -23288,6 +23376,9 @@ impl StaticHookAliasCollector<'_> {
                 || vec![LocalCallableResult::Unknown],
                 |receiver| vec![LocalCallableResult::Reference(receiver.clone())],
             );
+        }
+        if let Some(results) = self.local_callable_array_element_results(expression) {
+            return results;
         }
         if let Some(result) = self.deferred_local_callable_array_result(expression) {
             return vec![result];

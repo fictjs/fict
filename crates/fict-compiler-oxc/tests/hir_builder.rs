@@ -2941,6 +2941,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "wrapped popped external array element callback slot",
+            "const pop = () => [holder.item].pop(); const run = () => count;",
+            "pop().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped shifted external array element callback slot",
+            "const shift = () => [holder.item].shift(); const run = () => count;",
+            "shift().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "wrapped nested external array element callback slot",
             "const local = { child: holder.item }; const make = () => Array.of(local); const run = () => count;",
             "make()[0].child.run = run;",
@@ -4047,6 +4061,16 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             const shifted = [local].shift();
             const pushed = [].push(local);
             const unshifted = [].unshift(local);
+            const popWrapped = () => [local].pop();
+            const shiftWrapped = () => [local].shift();
+            const popItems = [local];
+            const shiftItems = [local];
+            const popCaptured = () => popItems.pop();
+            const shiftCaptured = () => shiftItems.shift();
+            const poppedWrapped = popWrapped();
+            const shiftedWrapped = shiftWrapped();
+            const poppedCaptured = popCaptured();
+            const shiftedCaptured = shiftCaptured();
             reversed[0].run = run;
             sorted[0].run = run;
             copiedWithin[0].run = run;
@@ -4055,8 +4079,14 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             shifted.run = run;
             pushed.run = run;
             unshifted.run = run;
+            poppedWrapped.run = run;
+            shiftedWrapped.run = run;
+            poppedCaptured.run = run;
+            shiftedCaptured.run = run;
             [local].reverse()[0].run = run;
             [local].pop().run = run;
+            popWrapped().run = run;
+            shiftWrapped().run = run;
             [].push(local).run = run;
             return count;
         }
