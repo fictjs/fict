@@ -4819,6 +4819,94 @@ fn local_callable_alias_effects_follow_invocation_timing() {
 }
 
 #[test]
+fn callback_property_captures_follow_assignment_timing() {
+    let mut mismatches = Vec::new();
+    for (name, setup, expected_escape) in [
+        (
+            "callback overwritten before escape",
+            "const container = { item: run }; container.item = () => 0; holder.item = container.item;",
+            false,
+        ),
+        (
+            "callback escapes before overwrite",
+            "const container = { item: run }; holder.item = container.item; container.item = () => 0;",
+            true,
+        ),
+        (
+            "conditional overwrite preserves callback",
+            "const container = { item: run }; holder.enabled && (container.item = () => 0); holder.item = container.item;",
+            true,
+        ),
+        (
+            "uninvoked writer remains inert",
+            "const container = { item: () => 0 }; const assign = () => { container.item = run; }; holder.item = container.item;",
+            false,
+        ),
+        (
+            "invoked writer stores callback",
+            "const container = { item: () => 0 }; const assign = () => { container.item = run; }; assign(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "invoked writer reads rebound capture",
+            "const container = { item: () => 0 }; let captured = run; const assign = () => { container.item = captured; }; captured = () => 0; assign(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "uninvoked object writer remains inert",
+            "const container = { item: {} }; let captured = local; const assign = () => { container.item = captured; }; captured = {}; holder.item = container.item;",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        if output.hir.is_none() != expected_escape {
+            mismatches.push(format!(
+                "{name}: unexpected HIR result: {:?}",
+                output.diagnostics
+            ));
+        }
+        let mut findings = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "container.item"
+                    })
+            })
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        findings.sort_unstable();
+        let expected = if expected_escape {
+            vec!["FICT-R002", "FICT-R005"]
+        } else {
+            Vec::new()
+        };
+        if findings != expected {
+            mismatches.push(format!("{name}: {:?}", output.diagnostics));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
 fn detached_and_one_way_external_storage_values_do_not_taint_sources() {
     let source = r#"
         import { $state } from 'fict';

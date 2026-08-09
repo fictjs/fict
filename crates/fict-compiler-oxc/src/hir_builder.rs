@@ -8720,6 +8720,13 @@ const DYNAMIC_STRUCTURED_MEMBER: &str = "<computed-structured>";
 const LOCAL_OBJECT_PROTOTYPE_LOOKUP: &str = "<object-prototype>";
 
 #[derive(Debug, Default)]
+struct StaticExpressionValueSnapshot {
+    sources: BTreeSet<StaticAliasPath>,
+    local_values: BTreeSet<StaticAliasPath>,
+    callable_spans: BTreeSet<(u32, u32)>,
+}
+
+#[derive(Debug, Default)]
 struct StaticHookAliases {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
@@ -8729,6 +8736,7 @@ struct StaticHookAliases {
     assignment_attached_parameter_roots: BTreeMap<(u32, u32), BTreeSet<SymbolId>>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     unexecuted_class_initializer_spans: BTreeSet<(u32, u32)>,
+    expression_value_snapshots: BTreeMap<(u32, u32), StaticExpressionValueSnapshot>,
     snapshotted_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
     exclusive_json_replacer_arrays: BTreeSet<SymbolId>,
@@ -21129,6 +21137,7 @@ struct StaticHookAliasCollector<'semantic> {
     deferred_accessor_spans: BTreeSet<(u32, u32)>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     unexecuted_read_counts: BTreeMap<SymbolId, usize>,
+    expression_value_snapshots: BTreeMap<(u32, u32), StaticExpressionValueSnapshot>,
     executed_descriptor_callable_spans: BTreeSet<(u32, u32)>,
     executed_setter_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
@@ -22129,6 +22138,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             deferred_accessor_spans: BTreeSet::new(),
             unexecuted_expression_spans: BTreeSet::new(),
             unexecuted_read_counts: BTreeMap::new(),
+            expression_value_snapshots: BTreeMap::new(),
             executed_descriptor_callable_spans: BTreeSet::new(),
             executed_setter_spans: BTreeSet::new(),
             merely_observed_callable_paths: generator.merely_observed_callable_paths.clone(),
@@ -33231,6 +33241,132 @@ impl StaticHookAliasCollector<'_> {
             .or_else(|| self.prototype_derived_path(expression))
     }
 
+    fn current_value_alias_candidates(
+        &self,
+        path: &StaticAliasPath,
+    ) -> (bool, BTreeSet<StaticAliasPath>) {
+        let historical = self.path_requires_historical_aliases(path, self.function_depth);
+        let candidates = if historical {
+            resolve_historical_alias_paths(&self.alias_history, path)
+        } else {
+            BTreeSet::from([resolve_static_alias_path(&self.aliases, path)])
+        };
+        (historical, candidates)
+    }
+
+    fn path_has_modeled_local_value(&self, path: &StaticAliasPath, historical: bool) -> bool {
+        let resolved = resolve_static_alias_path(&self.aliases, path);
+        [path, &resolved].into_iter().any(|candidate| {
+            if self
+                .open_structured_containers
+                .iter()
+                .any(|open| candidate.starts_with(open))
+            {
+                return false;
+            }
+            let current = self.structured_own_properties.contains_key(candidate)
+                || self.array_lengths.contains_key(candidate)
+                || self.local_callable_parameters.contains_key(candidate)
+                || self.local_bound_callables.contains_key(candidate)
+                || self.local_class_instances.contains(candidate)
+                || self
+                    .local_value_definedness
+                    .get(candidate)
+                    .is_some_and(|value| *value != LocalGetterResultDefinedness::Unknown);
+            if current || !historical {
+                return current;
+            }
+            self.local_callable_parameter_history
+                .get(candidate)
+                .is_some_and(|history| !history.is_empty())
+                || self
+                    .local_bound_callable_history
+                    .get(candidate)
+                    .is_some_and(|history| !history.is_empty())
+                || self
+                    .local_callable_effect_span_history
+                    .get(candidate)
+                    .is_some_and(|history| !history.is_empty())
+                || self
+                    .local_value_definedness_history
+                    .get(candidate)
+                    .is_some_and(|history| {
+                        !history.is_empty()
+                            && history
+                                .iter()
+                                .all(|value| *value != LocalGetterResultDefinedness::Unknown)
+                    })
+        })
+    }
+
+    fn value_callable_spans(
+        &self,
+        roots: &BTreeSet<StaticAliasPath>,
+        historical: bool,
+    ) -> BTreeSet<(u32, u32)> {
+        let mut spans = BTreeSet::new();
+        for (target, current) in &self.local_callable_effect_spans {
+            if roots.iter().any(|root| target.starts_with(root)) {
+                spans.extend(current);
+            }
+        }
+        if historical {
+            for (target, history) in &self.local_callable_effect_span_history {
+                if roots.iter().any(|root| target.starts_with(root)) {
+                    spans.extend(history.iter().flatten());
+                }
+            }
+        }
+        spans
+    }
+
+    fn record_expression_value_snapshot(&mut self, expression: &Expression<'_>) {
+        if self.function_depth > 1
+            || self
+                .class_effect_contexts
+                .last()
+                .is_some_and(Option::is_some)
+        {
+            return;
+        }
+        let Some(path) = self.alias_source_path(expression) else {
+            return;
+        };
+        let (historical, candidates) = self.current_value_alias_candidates(&path);
+        if candidates.is_empty()
+            || candidates
+                .iter()
+                .any(|candidate| !self.path_has_modeled_local_value(candidate, historical))
+        {
+            return;
+        }
+        let mut sources = candidates.clone();
+        for candidate in &candidates {
+            sources.extend(self.expand_exposed_paths(BTreeSet::from([candidate.clone()])));
+        }
+        let local_values = sources
+            .iter()
+            .filter(|source| {
+                self.path_has_modeled_local_value(
+                    source,
+                    historical
+                        || self.path_requires_historical_aliases(source, self.function_depth),
+                )
+            })
+            .cloned()
+            .collect();
+        let callable_spans = self.value_callable_spans(&candidates, historical);
+        let span = expression.span();
+        self.expression_value_snapshots.insert(
+            (span.start, span.end),
+            StaticExpressionValueSnapshot {
+                sources,
+                local_values,
+                callable_spans,
+            },
+        );
+    }
+
     fn local_getter_source_path(&self, expression: &Expression<'_>) -> Option<StaticAliasPath> {
         self.local_reflect_get_access(expression)
             .map(|(source, _)| source)
@@ -41176,6 +41312,7 @@ impl StaticHookAliasCollector<'_> {
             assignment_attached_parameter_roots: BTreeMap::new(),
             unexecuted_expression_spans: BTreeSet::new(),
             unexecuted_class_initializer_spans: BTreeSet::new(),
+            expression_value_snapshots: BTreeMap::new(),
             snapshotted_callable_effect_spans: BTreeMap::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
             exclusive_json_replacer_arrays: BTreeSet::new(),
@@ -41280,6 +41417,7 @@ impl StaticHookAliasCollector<'_> {
             assignment_attached_parameter_roots: self.assignment_attached_parameter_roots,
             unexecuted_expression_spans: self.unexecuted_expression_spans,
             unexecuted_class_initializer_spans,
+            expression_value_snapshots: self.expression_value_snapshots,
             snapshotted_callable_effect_spans,
             non_escaping_object_from_entries_calls: self.non_escaping_object_from_entries_calls,
             exclusive_json_replacer_arrays: BTreeSet::new(),
@@ -42827,6 +42965,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .map(|context| context.span);
         if stores_externally {
             if self.function_depth <= 1 && deferred_class_effect.is_none() {
+                self.record_expression_value_snapshot(&assignment.right);
                 self.record_externally_stored_value(&assignment.right);
                 let mut exposed = BTreeSet::new();
                 self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
@@ -43841,6 +43980,52 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
 }
 
 impl ReactiveEscapeCollector<'_, '_, '_> {
+    fn expression_value_snapshot(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<&StaticExpressionValueSnapshot> {
+        let span = expression.span();
+        self.callback_aliases
+            .expression_value_snapshots
+            .get(&(span.start, span.end))
+    }
+
+    fn snapshot_callback_captures(
+        &self,
+        snapshot: &StaticExpressionValueSnapshot,
+    ) -> BTreeSet<SymbolId> {
+        let mut captured = BTreeSet::new();
+        for (span, symbols) in self.capturing_functions {
+            if snapshot
+                .callable_spans
+                .contains(&(span.start(), span.end()))
+            {
+                captured.extend(symbols);
+            }
+        }
+        captured.extend(snapshot.sources.iter().filter_map(|source| {
+            let root = source.binding_root()?;
+            (self.hook_return_shapes.contains_key(&root) && self.reactive_symbols.contains(&root))
+                .then_some(root)
+        }));
+        captured
+    }
+
+    fn snapshot_reactive_references(
+        &self,
+        snapshot: &StaticExpressionValueSnapshot,
+    ) -> BTreeSet<SymbolId> {
+        let mut reactive = snapshot
+            .sources
+            .iter()
+            .filter(|source| !snapshot.local_values.contains(*source))
+            .filter_map(StaticAliasPath::binding_root)
+            .filter(|symbol| self.reactive_symbols.contains(symbol))
+            .collect::<BTreeSet<_>>();
+        reactive.extend(self.snapshot_callback_captures(snapshot));
+        reactive
+    }
+
     fn direct_state_symbol(&self, argument: EscapeArgument<'_, '_>) -> Option<SymbolId> {
         if argument.spread {
             return None;
@@ -43858,6 +44043,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     fn reactive_references(&self, argument: EscapeArgument<'_, '_>) -> BTreeSet<SymbolId> {
         if self.expression_returns_definitely_primitive(argument.expression) {
             return BTreeSet::new();
+        }
+        if let Some(snapshot) = self.expression_value_snapshot(argument.expression) {
+            return self.snapshot_reactive_references(snapshot);
         }
         let root = argument.expression.get_inner_expression();
         let root_function = match root {
@@ -43881,6 +44069,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     }
 
     fn retained_reactive_references(&self, expression: &Expression<'_>) -> BTreeSet<SymbolId> {
+        if let Some(snapshot) = self.expression_value_snapshot(expression) {
+            return self.snapshot_reactive_references(snapshot);
+        }
         let mut collector = RetainedReactiveIdentityCollector {
             scoping: self.scoping,
             reactive_symbols: self.reactive_symbols,
@@ -43894,6 +44085,9 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
     fn callback_captures(&self, argument: EscapeArgument<'_, '_>) -> BTreeSet<SymbolId> {
         if self.expression_returns_definitely_primitive(argument.expression) {
             return BTreeSet::new();
+        }
+        if let Some(snapshot) = self.expression_value_snapshot(argument.expression) {
+            return self.snapshot_callback_captures(snapshot);
         }
         let mut captured = BTreeSet::new();
         for (span, symbols) in self.capturing_functions {
