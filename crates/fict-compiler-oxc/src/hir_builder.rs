@@ -10908,6 +10908,8 @@ struct GeneratorExecutionProof {
     unexecuted_callable_paths: BTreeSet<StaticAliasPath>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     returned_callable_spans: BTreeSet<(u32, u32)>,
+    precisely_advanced_generator_paths: BTreeSet<StaticAliasPath>,
+    precise_generator_advance_spans: BTreeSet<(u32, u32)>,
 }
 
 #[derive(Default)]
@@ -11338,6 +11340,13 @@ struct InitialGeneratorNextArgumentRead {
     iterator_span: (u32, u32),
 }
 
+struct DirectGeneratorAdvance {
+    source: StaticAliasPath,
+    source_span: (u32, u32),
+    call_span: (u32, u32),
+    method_guard: GeneratorMethodGuard,
+}
+
 struct NonConsumingParameterCollector<'semantic> {
     scoping: &'semantic Scoping,
     parameter_indices: BTreeMap<SymbolId, usize>,
@@ -11586,6 +11595,7 @@ struct GeneratorExecutionCollector<'semantic> {
     guarded_local_non_consuming_parameters: Vec<GuardedLocalNonConsumingParameters>,
     pending_callable_argument_reads: Vec<PendingCallableArgumentRead>,
     initial_generator_next_argument_reads: Vec<InitialGeneratorNextArgumentRead>,
+    direct_generator_advances: Vec<DirectGeneratorAdvance>,
     forwarding_targets: BTreeSet<StaticAliasPath>,
     generator_body_targets: Vec<(GeneratorBodySpan, StaticAliasPath)>,
     returned_generator_body_spans: BTreeMap<StaticAliasPath, BTreeSet<GeneratorBodySpan>>,
@@ -11647,6 +11657,7 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             guarded_local_non_consuming_parameters: Vec::new(),
             pending_callable_argument_reads: Vec::new(),
             initial_generator_next_argument_reads: Vec::new(),
+            direct_generator_advances: Vec::new(),
             forwarding_targets: BTreeSet::new(),
             generator_body_targets: Vec::new(),
             returned_generator_body_spans: BTreeMap::new(),
@@ -16509,6 +16520,22 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
         }
     }
 
+    fn record_direct_generator_advance(&mut self, call: &CallExpression<'_>) {
+        let Some((source, source_span)) = self.direct_generator_method_call(call, "next") else {
+            return;
+        };
+        self.direct_generator_advances.push(DirectGeneratorAdvance {
+            method_guard: GeneratorMethodGuard {
+                source: None,
+                owner: source.clone(),
+                method: "next",
+            },
+            source,
+            source_span,
+            call_span: (call.span.start, call.span.end),
+        });
+    }
+
     fn record_indirect_terminal_generator_method_read(&mut self, call: &CallExpression<'_>) {
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
         let completion_reads;
@@ -20060,6 +20087,72 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
                 break;
             }
         }
+        let direct_advances = self
+            .direct_generator_advances
+            .iter()
+            .filter(|advance| self.method_guard_is_intact(&advance.method_guard))
+            .filter(|advance| {
+                !self
+                    .composite_guarded_reads
+                    .iter()
+                    .enumerate()
+                    .any(|(index, read)| {
+                        trusted_composite_guarded_reads[index]
+                            && read.target.is_none()
+                            && read.source == advance.source
+                            && read.source_span == advance.source_span
+                    })
+            })
+            .collect::<Vec<_>>();
+        let mut precisely_advanced_generator_paths = BTreeSet::new();
+        let mut precise_generator_advance_spans = BTreeSet::new();
+        for target in self
+            .generator_result_reads
+            .iter()
+            .map(|read| read.target.clone())
+            .collect::<BTreeSet<_>>()
+        {
+            if !self.is_immutable_local_callable_target(&target) {
+                continue;
+            }
+            let result_reads = self
+                .generator_result_reads
+                .iter()
+                .enumerate()
+                .filter(|(_, read)| read.target == target)
+                .collect::<Vec<_>>();
+            if result_reads.is_empty()
+                || !result_reads.iter().all(|(index, read)| {
+                    trusted_generator_result_reads[*index]
+                        && definite_generator_callables.contains(&read.source)
+                        && !self.non_generator_callable_targets.contains(&read.source)
+                })
+            {
+                continue;
+            }
+            let advances = direct_advances
+                .iter()
+                .filter(|advance| advance.source == target)
+                .collect::<Vec<_>>();
+            if advances.is_empty() {
+                continue;
+            }
+            let Some(root) = target.binding_root() else {
+                continue;
+            };
+            let all_reads_are_direct_advances = self
+                .binding_reads
+                .get(&root)
+                .into_iter()
+                .flatten()
+                .all(|span| advances.iter().any(|advance| advance.source_span == *span));
+            if !all_reads_are_direct_advances {
+                continue;
+            }
+            precisely_advanced_generator_paths.insert(target);
+            precise_generator_advance_spans
+                .extend(advances.into_iter().map(|advance| advance.call_span));
+        }
         for retained in self.retained_invocation_spans {
             if unexecuted.contains(&retained.target) {
                 self.discarded_invocation_spans
@@ -20081,6 +20174,8 @@ impl<'semantic> GeneratorExecutionCollector<'semantic> {
             unexecuted_callable_paths: unexecuted,
             merely_observed_callable_paths: merely_observed,
             returned_callable_spans,
+            precisely_advanced_generator_paths,
+            precise_generator_advance_spans,
         }
     }
 }
@@ -20156,6 +20251,7 @@ impl<'a> Visit<'a> for GeneratorExecutionCollector<'_> {
         self.record_indirect_terminal_method_alias_read(call);
         self.record_immediate_bound_terminal_generator_method_read(call);
         self.record_initial_generator_next_arguments(call);
+        self.record_direct_generator_advance(call);
         self.record_pending_callable_arguments(call);
         walk_call_expression(self, call);
     }
@@ -20995,6 +21091,17 @@ impl<'a> Visit<'a> for EscapedFunctionValueCollector<'_, '_> {
     }
 }
 
+#[derive(Default)]
+struct GeneratorSuspensionCollector {
+    suspended: bool,
+}
+
+impl<'a> Visit<'a> for GeneratorSuspensionCollector {
+    fn visit_yield_expression(&mut self, _expression: &oxc::ast::ast::YieldExpression<'a>) {
+        self.suspended = true;
+    }
+}
+
 struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     known_arrays: &'semantic BTreeSet<SymbolId>,
@@ -21152,9 +21259,15 @@ struct StaticHookAliasCollector<'semantic> {
     function_control_baselines: Vec<usize>,
     function_depth: usize,
     dynamic_this_roots: Vec<Option<StaticAliasPath>>,
+    generator_iterator_invocations: BTreeMap<StaticAliasPath, Vec<LocalInvocationFact>>,
+    precisely_advanced_generator_paths: BTreeSet<StaticAliasPath>,
+    precise_generator_advance_spans: BTreeSet<(u32, u32)>,
+    tracked_generator_invocation_spans: BTreeSet<(u32, u32)>,
+    single_step_generator_callable_spans: BTreeSet<(u32, u32)>,
     discarded_invocation_spans: BTreeSet<(u32, u32)>,
     unexecuted_generator_body_spans: BTreeSet<(u32, u32)>,
     unexecuted_generator_callable_paths: BTreeSet<StaticAliasPath>,
+    deferred_generator_alias_effects: BTreeSet<LocalCallableAliasEffect>,
     precisely_invoked_alias_effects: BTreeSet<LocalCallableAliasEffect>,
     imprecisely_invoked_alias_effects: BTreeSet<LocalCallableAliasEffect>,
 }
@@ -21853,6 +21966,13 @@ enum LocalInvocationGenerator {
     Known(bool),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalAliasInvocationTiming {
+    Eager,
+    DeferredGenerator,
+    GeneratorAdvance,
+}
+
 impl LocalInvocationFact {
     fn arguments_for_parameter(&self, index: usize) -> Vec<LocalInvocationArgument> {
         let Some(target) = index.checked_add(self.argument_offset) else {
@@ -22153,9 +22273,17 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             function_control_baselines: Vec::new(),
             function_depth: 0,
             dynamic_this_roots: Vec::new(),
+            generator_iterator_invocations: BTreeMap::new(),
+            precisely_advanced_generator_paths: generator
+                .precisely_advanced_generator_paths
+                .clone(),
+            precise_generator_advance_spans: generator.precise_generator_advance_spans.clone(),
+            tracked_generator_invocation_spans: BTreeSet::new(),
+            single_step_generator_callable_spans: BTreeSet::new(),
             discarded_invocation_spans: generator.discarded_invocation_spans.clone(),
             unexecuted_generator_body_spans: generator.unexecuted_body_spans.clone(),
             unexecuted_generator_callable_paths: generator.unexecuted_callable_paths.clone(),
+            deferred_generator_alias_effects: BTreeSet::new(),
             precisely_invoked_alias_effects: BTreeSet::new(),
             imprecisely_invoked_alias_effects: BTreeSet::new(),
         }
@@ -29212,6 +29340,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
         self.default_derived_constructors
             .retain(|target, _| !target.overlaps(path));
+        self.generator_iterator_invocations
+            .retain(|target, _| !target.overlaps(path));
     }
 
     fn remove_local_own_property(&mut self, path: &StaticAliasPath) {
@@ -29297,6 +29427,8 @@ impl StaticHookAliasCollector<'_> {
         self.local_bound_callables
             .retain(|target, _| !target.overlaps(&path));
         self.default_derived_constructors
+            .retain(|target, _| !target.overlaps(&path));
+        self.generator_iterator_invocations
             .retain(|target, _| !target.overlaps(&path));
         if let Some(span) = returned_callable_span {
             self.deferred_callable_ambiguous_targets
@@ -32994,6 +33126,45 @@ impl StaticHookAliasCollector<'_> {
             || self.record_instance_array_copy_result(target, call)
     }
 
+    fn local_generator_iterator_invocations(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<Vec<LocalInvocationFact>> {
+        let invocations = self
+            .local_reflect_apply_invocation_facts(&call.callee, &call.arguments)
+            .or_else(|| self.local_invocation_facts(&call.callee, &call.arguments))?;
+        (!invocations.is_empty()
+            && invocations
+                .iter()
+                .all(|invocation| self.invocation_is_definitely_generator(invocation)))
+        .then_some(invocations)
+    }
+
+    fn record_generator_iterator_initializer(
+        &mut self,
+        target: StaticAliasPath,
+        call: &CallExpression<'_>,
+    ) -> bool {
+        if self.function_depth > 1
+            || self
+                .class_effect_contexts
+                .last()
+                .is_some_and(Option::is_some)
+            || (!self.unexecuted_generator_callable_paths.contains(&target)
+                && !self.precisely_advanced_generator_paths.contains(&target))
+        {
+            return false;
+        }
+        let Some(invocations) = self.local_generator_iterator_invocations(call) else {
+            return false;
+        };
+        self.tracked_generator_invocation_spans
+            .insert((call.span.start, call.span.end));
+        self.generator_iterator_invocations
+            .insert(target, invocations);
+        true
+    }
+
     fn collect_initializer(&mut self, target: StaticAliasPath, value: &Expression<'_>) {
         let target = self.canonical_returned_structured_member_path(&target);
         let target = self.canonical_object_value_enumeration_member_path(&target);
@@ -33170,6 +33341,9 @@ impl StaticHookAliasCollector<'_> {
                 self.record_local_json_replacer_property_list(&target, value);
             }
             Expression::CallExpression(call) => {
+                if self.record_generator_iterator_initializer(target.clone(), call) {
+                    return;
+                }
                 if let Some(source) = self.alias_source_path(value) {
                     if !self.snapshot_local_callable_alias(target.clone(), &source) {
                         self.insert_alias(target.clone(), source.clone());
@@ -40266,9 +40440,14 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
-    fn activate_precise_local_alias_invocations(&mut self, invocations: &[LocalInvocationFact]) {
-        // Apply only direct, unconditional, eagerly executed invocations in source order. Any
-        // conditional, deferred, or escaping instance is rejoined by the conservative pass.
+    fn activate_precise_local_alias_invocations(
+        &mut self,
+        invocations: &[LocalInvocationFact],
+        timing: LocalAliasInvocationTiming,
+    ) {
+        // Apply only direct and unconditional invocations in source order. A tracked generator
+        // creation remains deferred until its iterator is advanced; conditional, escaping, and
+        // otherwise unresolved instances are rejoined by the conservative pass.
         let unconditional = self
             .function_control_baselines
             .last()
@@ -40282,6 +40461,7 @@ impl StaticHookAliasCollector<'_> {
             .flat_map(|invocation| self.bound_invocation_variants(invocation))
             .collect::<Vec<_>>();
         for invocation in invocations {
+            let generator = self.invocation_is_definitely_generator(&invocation);
             let instances = self.invocation_callable_effect_instances(&invocation);
             for (instance_target, span, historical) in instances {
                 let precise = unconditional
@@ -40290,7 +40470,7 @@ impl StaticHookAliasCollector<'_> {
                         .external_storage_context
                         .owner_callable_span
                         .is_none()
-                    && !self.invocation_is_definitely_generator(&invocation);
+                    && (!generator || timing == LocalAliasInvocationTiming::GeneratorAdvance);
                 let aliases = self
                     .deferred_callable_aliases
                     .get(&span)
@@ -40302,6 +40482,19 @@ impl StaticHookAliasCollector<'_> {
                     .cloned()
                     .unwrap_or_default();
                 if aliases.is_empty() && ambiguous_targets.is_empty() {
+                    continue;
+                }
+                if generator && timing == LocalAliasInvocationTiming::DeferredGenerator {
+                    self.deferred_generator_alias_effects.extend(
+                        aliases
+                            .iter()
+                            .map(|(target, _)| (instance_target.clone(), span, target.clone()))
+                            .chain(
+                                ambiguous_targets
+                                    .iter()
+                                    .map(|target| (instance_target.clone(), span, target.clone())),
+                            ),
+                    );
                     continue;
                 }
                 if !precise {
@@ -40436,7 +40629,8 @@ impl StaticHookAliasCollector<'_> {
         instance: &(StaticAliasPath, (u32, u32)),
         escaped_instances: &BTreeSet<(StaticAliasPath, (u32, u32))>,
     ) -> bool {
-        self.precisely_invoked_alias_effects.contains(effect)
+        (self.precisely_invoked_alias_effects.contains(effect)
+            || self.deferred_generator_alias_effects.contains(effect))
             && !self.imprecisely_invoked_alias_effects.contains(effect)
             && !escaped_instances.contains(instance)
     }
@@ -40693,6 +40887,69 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         !generators.is_empty() && generators.into_iter().all(|generator| generator)
+    }
+
+    fn direct_generator_advance_path(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
+        if call.optional {
+            return None;
+        }
+        match unwrap_transparent_call_expression(&call.callee) {
+            Expression::StaticMemberExpression(member)
+                if !member.optional && member.property.name == "next" =>
+            {
+                self.alias_source_path(&member.object)
+            }
+            Expression::ComputedMemberExpression(member)
+                if !member.optional
+                    && static_member_name(&member.expression).as_deref() == Some("next") =>
+            {
+                self.alias_source_path(&member.object)
+            }
+            _ => None,
+        }
+    }
+
+    fn precise_generator_advance_invocations(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Vec<LocalInvocationFact> {
+        if !self
+            .precise_generator_advance_spans
+            .contains(&(call.span.start, call.span.end))
+        {
+            return Vec::new();
+        }
+        let Some(raw) = self.direct_generator_advance_path(call) else {
+            return Vec::new();
+        };
+        let resolved = resolve_static_alias_path(&self.aliases, &raw);
+        [raw, resolved]
+            .into_iter()
+            .find_map(|path| {
+                self.precisely_advanced_generator_paths
+                    .contains(&path)
+                    .then(|| self.generator_iterator_invocations.get(&path).cloned())
+                    .flatten()
+            })
+            .unwrap_or_default()
+    }
+
+    fn generator_advance_is_single_step(&self, invocations: &[LocalInvocationFact]) -> bool {
+        let mut spans = BTreeSet::new();
+        for invocation in invocations {
+            if !self.invocation_is_definitely_generator(invocation) {
+                return false;
+            }
+            spans.extend(
+                self.invocation_callable_effect_instances(invocation)
+                    .into_iter()
+                    .map(|(_, span, _)| span),
+            );
+        }
+        !spans.is_empty()
+            && spans
+                .iter()
+                .all(|span| self.single_step_generator_callable_spans.contains(span))
     }
 
     fn materialize_default_derived_alternative(
@@ -42059,6 +42316,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 (function.span.start, function.span.end),
                 (body.span.start, body.span.end),
             );
+            if !function.r#async {
+                let mut suspensions = GeneratorSuspensionCollector::default();
+                suspensions.visit_function_body(body);
+                if !suspensions.suspended {
+                    self.single_step_generator_callable_spans
+                        .insert((function.span.start, function.span.end));
+                }
+            }
         }
         if function.r#type == FunctionType::FunctionDeclaration
             && let Some(symbol) = function
@@ -43212,6 +43477,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.record_local_define_properties_result(call);
         self.record_local_set_prototype_of_result(call);
         let call_span = (call.span.start, call.span.end);
+        let generator_advance_invocations = self.precise_generator_advance_invocations(call);
+        let local_alias_timing = if self.tracked_generator_invocation_spans.contains(&call_span) {
+            LocalAliasInvocationTiming::DeferredGenerator
+        } else {
+            LocalAliasInvocationTiming::Eager
+        };
         let local_reflect_get = if self.handled_local_getter_read_spans.contains(&call_span) {
             self.is_intact_reflect_method_callee(&call.callee, "get")
         } else if self.record_local_reflect_get(call) {
@@ -43350,7 +43621,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
-        self.activate_precise_local_alias_invocations(&local_invocations);
+        self.activate_precise_local_alias_invocations(&local_invocations, local_alias_timing);
+        if !generator_advance_invocations.is_empty() {
+            let timing = if self.generator_advance_is_single_step(&generator_advance_invocations) {
+                LocalAliasInvocationTiming::GeneratorAdvance
+            } else {
+                LocalAliasInvocationTiming::Eager
+            };
+            self.activate_precise_local_alias_invocations(&generator_advance_invocations, timing);
+        }
         if let Some(mutation) = local_array_mutation {
             self.apply_local_array_mutation(call, mutation);
         }
@@ -43456,7 +43735,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_new_expression(self, expression);
-        self.activate_precise_local_alias_invocations(&local_invocations);
+        self.activate_precise_local_alias_invocations(
+            &local_invocations,
+            LocalAliasInvocationTiming::Eager,
+        );
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
         self.local_invocations.extend(local_invocations);
@@ -43542,7 +43824,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             BTreeSet::new()
         };
         oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
-        self.activate_precise_local_alias_invocations(&local_invocations);
+        self.activate_precise_local_alias_invocations(
+            &local_invocations,
+            LocalAliasInvocationTiming::Eager,
+        );
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
         self.local_invocations.extend(local_invocations);

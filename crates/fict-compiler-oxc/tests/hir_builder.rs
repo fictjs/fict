@@ -4735,6 +4735,31 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "unadvanced generator remains inert",
+            "const container = { item: {} }; let captured = local; function* assign() { container.item = captured; } assign(); captured = {}; holder.item = container.item;",
+            false,
+        ),
+        (
+            "generator advances after capture rebind",
+            "const container = { item: {} }; let captured = local; function* assign() { container.item = captured; } const iterator = assign(); captured = {}; iterator.next(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "generator advances before capture rebind",
+            "const container = { item: {} }; let captured = local; function* assign() { container.item = captured; } const iterator = assign(); iterator.next(); captured = {}; holder.item = container.item;",
+            true,
+        ),
+        (
+            "unadvanced sibling generator remains inert",
+            "const container = { item: {} }; function* assign(value) { container.item = value; } const stale = assign(local); const current = assign({}); current.next(); void stale; holder.item = container.item;",
+            false,
+        ),
+        (
+            "generator argument is captured at creation",
+            "const container = { item: {} }; let selected = local; function* assign(value) { container.item = value; } const iterator = assign(selected); selected = {}; iterator.next(); holder.item = container.item;",
+            true,
+        ),
+        (
             "conditional invocation preserves the previous alias",
             "const container = { item: local }; const fresh = {}; const assign = () => { container.item = fresh; }; holder.enabled && assign(); holder.item = container.item;",
             true,
