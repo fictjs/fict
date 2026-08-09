@@ -4945,6 +4945,236 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "Reflect.set stores a known local data property",
+            "const source = {}; Reflect.set(source, 'item', local); holder.item = source.item;",
+            true,
+        ),
+        (
+            "Reflect.set stores a computed local data property",
+            "const key = holder.key; const source = {}; Reflect.set(source, key, local); holder.item = source[key];",
+            true,
+        ),
+        (
+            "Reflect.set known data property remains enumerable",
+            "const source = {}; Reflect.set(source, 'item', local); const values = Object.values(source); holder.item = values[0];",
+            true,
+        ),
+        (
+            "Reflect.set computed data property remains enumerable",
+            "const key = holder.key; const source = {}; Reflect.set(source, key, local); const copy = { ...source }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "Reflect.set replaces a known local data property",
+            "const source = { item: local }; Reflect.set(source, 'item', {}); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Reflect.set replaces a matching computed data property",
+            "const key = holder.key; const source = { [key]: local }; Reflect.set(source, key, {}); holder.item = source[key];",
+            false,
+        ),
+        (
+            "Reflect.set preserves a different computed data property",
+            "const first = holder.first; const second = holder.second; const source = { [first]: local }; Reflect.set(source, second, {}); holder.item = source.item;",
+            true,
+        ),
+        (
+            "conditional Reflect.set preserves the previous value",
+            "const source = { item: local }; if (holder.flag) Reflect.set(source, 'item', {}); holder.item = source.item;",
+            true,
+        ),
+        (
+            "Reflect.set snapshots its target before evaluating the value",
+            "let source = {}; const original = source; Reflect.set(source, 'item', (source = {}, local)); holder.item = original.item;",
+            true,
+        ),
+        (
+            "Reflect.set snapshots its value before evaluating the receiver",
+            "const source = { item: {} }; let captured = local; const receiver = {}; Reflect.set(source, 'item', captured, (captured = {}, receiver)); holder.item = receiver.item;",
+            true,
+        ),
+        (
+            "Reflect.set stores a data property on its receiver",
+            "const source = { item: {} }; const receiver = {}; Reflect.set(source, 'item', local, receiver); holder.item = receiver.item;",
+            true,
+        ),
+        (
+            "Reflect.set receiver write leaves the target value intact",
+            "const source = { item: {} }; const receiver = {}; Reflect.set(source, 'item', local, receiver); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Reflect.set data write does not replace a receiver getter",
+            "const source = { item: {} }; const receiver = { get item() { return {}; } }; Reflect.set(source, 'item', local, receiver); holder.item = receiver.item;",
+            false,
+        ),
+        (
+            "Reflect.set data write does not invoke a receiver setter",
+            "const source = { item: {} }; const receiver = { set item(value) { holder.item = value; } }; Reflect.set(source, 'item', local, receiver);",
+            false,
+        ),
+        (
+            "Reflect.set exposes a value through an external receiver",
+            "const source = { item: {} }; Reflect.set(source, 'item', local, holder);",
+            true,
+        ),
+        (
+            "Reflect.set exposes a value through an attached local target",
+            "const source = {}; holder.source = source; Reflect.set(source, 'item', local);",
+            true,
+        ),
+        (
+            "Reflect.set exposes a value through an external target",
+            "Reflect.set(holder, 'item', local);",
+            true,
+        ),
+        (
+            "Reflect.set primitive target cannot retain its value",
+            "try { Reflect.set(null, 'item', local); } catch {}",
+            false,
+        ),
+        (
+            "Reflect.set primitive receiver cannot retain a data value",
+            "const source = { item: {} }; Reflect.set(source, 'item', local, 0);",
+            false,
+        ),
+        (
+            "uninvoked external Reflect.set helper remains inert",
+            "const assign = () => Reflect.set(holder, 'item', local); void assign;",
+            false,
+        ),
+        (
+            "invoked external Reflect.set helper exposes its value",
+            "const assign = () => Reflect.set(holder, 'item', local); assign();",
+            true,
+        ),
+        (
+            "unconstructed external Reflect.set class initializer remains inert",
+            "class Box { value = Reflect.set(holder, 'item', local); } void Box;",
+            false,
+        ),
+        (
+            "constructed external Reflect.set class initializer exposes its value",
+            "class Box { value = Reflect.set(holder, 'item', local); } new Box();",
+            true,
+        ),
+        (
+            "Reflect.set setter intercepts a data write",
+            "const source = { set item(value) {} }; Reflect.set(source, 'item', local); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Reflect.set setter intercepts an external receiver write",
+            "const source = { set item(value) {} }; Reflect.set(source, 'item', local, holder);",
+            false,
+        ),
+        (
+            "Reflect.set snapshots a setter target before evaluating its value",
+            "let source = { set item(value) { holder.item = value; } }; Reflect.set(source, 'item', (source = {}, local));",
+            true,
+        ),
+        (
+            "Reflect.set snapshots a setter value before evaluating its receiver",
+            "const source = { set item(value) { holder.item = value; } }; let captured = local; const receiver = {}; Reflect.set(source, 'item', captured, (captured = {}, receiver));",
+            true,
+        ),
+        (
+            "Reflect.set getter-only property rejects a data write",
+            "const source = { get item() { return {}; } }; Reflect.set(source, 'item', local); holder.item = source.item;",
+            false,
+        ),
+        (
+            "uninvoked Reflect.set helper remains inert",
+            "const source = {}; const assign = () => Reflect.set(source, 'item', local); void assign; holder.item = source.item;",
+            false,
+        ),
+        (
+            "invoked Reflect.set helper stores its captured value",
+            "const source = {}; const assign = () => Reflect.set(source, 'item', local); assign(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "Reflect.set helper observes a later capture rebind",
+            "const source = {}; let captured = local; const assign = () => Reflect.set(source, 'item', captured); captured = {}; assign(); holder.item = source.item;",
+            false,
+        ),
+        (
+            "unconstructed Reflect.set class initializer remains inert",
+            "const source = {}; class Box { value = Reflect.set(source, 'item', local); } void Box; holder.item = source.item;",
+            false,
+        ),
+        (
+            "constructed Reflect.set class initializer stores its value",
+            "const source = {}; class Box { value = Reflect.set(source, 'item', local); } new Box(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "unconstructed Reflect.set instance write remains inert",
+            "class Box { value = Reflect.set(this, 'item', local); } void Box;",
+            false,
+        ),
+        (
+            "constructed Reflect.set instance write stores its value",
+            "class Box { value = Reflect.set(this, 'item', local); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "unconstructed Reflect.set auto-accessor write remains inert",
+            "class Box { accessor item = {}; value = Reflect.set(this, 'item', local); } void Box;",
+            false,
+        ),
+        (
+            "constructed Reflect.set auto-accessor write updates its storage",
+            "class Box { accessor item = {}; value = Reflect.set(this, 'item', local); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "Reflect.set updates computed instance auto-accessor storage",
+            "const key = holder.key; class Box { accessor [key] = {}; } const box = new Box(); Reflect.set(box, key, local); holder.item = box[key];",
+            true,
+        ),
+        (
+            "Reflect.set updates known instance auto-accessor storage",
+            "class Box { accessor item = {}; } const box = new Box(); Reflect.set(box, 'item', local); holder.item = box.item;",
+            true,
+        ),
+        (
+            "Reflect.set updates known static auto-accessor storage",
+            "class Box { static accessor item = {}; } Reflect.set(Box, 'item', local); holder.item = Box.item;",
+            true,
+        ),
+        (
+            "Reflect.set updates computed static auto-accessor storage",
+            "const key = holder.key; class Box { static accessor [key] = {}; } Reflect.set(Box, key, local); holder.item = Box[key];",
+            true,
+        ),
+        (
+            "Reflect.set replaces computed instance auto-accessor storage",
+            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); Reflect.set(box, key, {}); holder.item = box[key];",
+            false,
+        ),
+        (
+            "Reflect.set keeps computed auto-accessor storage per instance",
+            "const key = holder.key; class Box { accessor [key] = {}; } const first = new Box(); const second = new Box(); Reflect.set(first, key, local); holder.item = second[key];",
+            false,
+        ),
+        (
+            "Reflect.set stores a nested local data property value",
+            "const source = {}; Reflect.set(source, 'item', { nested: local }); holder.item = source.item.nested;",
+            true,
+        ),
+        (
+            "Reflect.set stores a callable local data property value",
+            "const source = {}; Reflect.set(source, 'run', () => { holder.item = local; }); source.run();",
+            true,
+        ),
+        (
+            "aliased Reflect.set stores a local data property",
+            "const set = Reflect.set; const source = {}; set(source, 'item', local); holder.item = source.item;",
+            true,
+        ),
+        (
             "later Object.assign source replaces a computed property",
             "const key = holder.key; const source = { [key]: local }; const copy = Object.assign({}, source, { item: {} }); holder.item = copy.item;",
             false,
@@ -7746,6 +7976,21 @@ fn builtin_escape_exemptions_reject_overridden_methods() {
             "FICT-R005",
         ),
         (
+            "reflectively overridden array callback host",
+            r#"
+                import { $state } from 'fict';
+                function useRun(sink) {
+                    const count = $state(0);
+                    const values = [];
+                    Reflect.set(values, 'forEach', sink);
+                    values.forEach(() => count);
+                    return count;
+                }
+            "#,
+            "() => count",
+            "FICT-R005",
+        ),
+        (
             "overridden array prototype",
             r#"
                 import { $state } from 'fict';
@@ -7867,6 +8112,50 @@ fn builtin_escape_exemptions_reject_overridden_methods() {
             output.diagnostics
         );
     }
+
+    let receiver_source = r#"
+        import { $state } from 'fict';
+        function useRun(sink) {
+            const count = $state(0);
+            const values = [];
+            const receiver = {};
+            Reflect.set(values, 'forEach', sink, receiver);
+            values.forEach(() => count);
+            return count;
+        }
+    "#;
+    let receiver_output = build_hir(
+        receiver_source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        receiver_output.hir.is_some(),
+        "a Reflect.set receiver override must leave the target builtin intact: {:?}",
+        receiver_output.diagnostics
+    );
+
+    let setter_receiver_source = r#"
+        import { $state } from 'fict';
+        function useRun(sink) {
+            const count = $state(0);
+            const source = { set forEach(value) {} };
+            const receiver = [];
+            Reflect.set(source, 'forEach', sink, receiver);
+            receiver.forEach(() => count);
+            return count;
+        }
+    "#;
+    let setter_receiver_output = build_hir(
+        setter_receiver_source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        setter_receiver_output.hir.is_some(),
+        "an intercepted Reflect.set must leave its receiver builtin intact: {:?}",
+        setter_receiver_output.diagnostics
+    );
 }
 
 #[test]
@@ -16537,6 +16826,11 @@ fn reflect_property_access_invokes_local_accessors() {
             "aliased Reflect.set",
             "const source = { set run(value) { values.forEach = value; } }; const set = Reflect.set;",
             "set(source, 'run', null);",
+        ),
+        (
+            "spread Reflect.set receiver",
+            "const source = { set run(value) { values.forEach = value; } }; const receiver = {};",
+            "Reflect.set(source, 'run', null, ...[receiver]);",
         ),
         (
             "dynamic Reflect.get key",

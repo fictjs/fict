@@ -20751,6 +20751,25 @@ struct LocalArrayMutationPlan {
     stable_arguments: bool,
 }
 
+struct LocalReflectSetSnapshots {
+    target: StaticAliasPath,
+    value: StaticAliasPath,
+    receiver: Option<StaticAliasPath>,
+}
+
+struct LocalReflectSetPlan {
+    target: StaticAliasPath,
+    dynamic_data: bool,
+    auto_accessor: bool,
+    definite: bool,
+}
+
+enum LocalReflectSetOutcome {
+    Data(LocalReflectSetPlan),
+    Reflective,
+    NoMutation,
+}
+
 #[derive(Clone)]
 struct DeferredArrayMutation {
     snapshot: StaticAliasPath,
@@ -21530,6 +21549,7 @@ struct StaticHookAliasCollector<'semantic> {
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
     unexecuted_read_counts: BTreeMap<SymbolId, usize>,
     expression_value_snapshots: BTreeMap<(u32, u32), StaticExpressionValueSnapshot>,
+    pending_expression_initializer_snapshots: BTreeMap<(u32, u32), Vec<StaticAliasPath>>,
     executed_descriptor_callable_spans: BTreeSet<(u32, u32)>,
     executed_setter_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
@@ -22720,6 +22740,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             unexecuted_expression_spans: BTreeSet::new(),
             unexecuted_read_counts: BTreeMap::new(),
             expression_value_snapshots: BTreeMap::new(),
+            pending_expression_initializer_snapshots: BTreeMap::new(),
             executed_descriptor_callable_spans: BTreeSet::new(),
             executed_setter_spans: BTreeSet::new(),
             merely_observed_callable_paths: generator.merely_observed_callable_paths.clone(),
@@ -28221,16 +28242,62 @@ impl StaticHookAliasCollector<'_> {
         self.record_possible_local_getter_read_with_receiver(target, property, call.span, receiver)
     }
 
-    fn record_local_reflect_set(&mut self, call: &CallExpression<'_>) -> bool {
+    fn register_expression_initializer_snapshot(
+        &mut self,
+        expression: &Expression<'_>,
+        target: StaticAliasPath,
+    ) {
+        let span = expression.span();
+        self.pending_expression_initializer_snapshots
+            .entry((span.start, span.end))
+            .or_default()
+            .push(target);
+    }
+
+    fn prepare_local_reflect_set_snapshots(
+        &mut self,
+        call: &CallExpression<'_>,
+    ) -> Option<LocalReflectSetSnapshots> {
         if !self.is_intact_reflect_method_callee(&call.callee, "set") {
-            return false;
+            return None;
+        }
+        let target_expression = call.arguments.first()?.as_expression()?;
+        call.arguments.get(1)?.as_expression()?;
+        let value_expression = call.arguments.get(2)?.as_expression()?;
+        let receiver_expression = if let Some(argument) = call.arguments.get(3) {
+            Some(argument.as_expression()?)
+        } else {
+            None
+        };
+        let root = StaticAliasPath::dynamic_this(call.span);
+        self.dynamic_path_owner_depths
+            .insert((call.span.start, call.span.end), self.function_depth);
+        let target = root.clone().with_property("reflect-set-target".to_string());
+        let value = root.clone().with_property("reflect-set-value".to_string());
+        let receiver =
+            receiver_expression.map(|_| root.with_property("reflect-set-receiver".to_string()));
+        self.register_expression_initializer_snapshot(target_expression, target.clone());
+        self.register_expression_initializer_snapshot(value_expression, value.clone());
+        if let (Some(expression), Some(snapshot)) = (receiver_expression, receiver.as_ref()) {
+            self.register_expression_initializer_snapshot(expression, snapshot.clone());
+        }
+        Some(LocalReflectSetSnapshots {
+            target,
+            value,
+            receiver,
+        })
+    }
+
+    fn record_local_reflect_set_fallback(&mut self, call: &CallExpression<'_>) {
+        if !self.is_intact_reflect_method_callee(&call.callee, "set") {
+            return;
         }
         let Some(target) = call
             .arguments
             .first()
             .and_then(|argument| argument.as_expression())
         else {
-            return false;
+            return;
         };
         let property = call
             .arguments
@@ -28250,7 +28317,460 @@ impl StaticHookAliasCollector<'_> {
             .map(|receiver| self.collect_local_invocation_value_arguments(receiver));
         self.record_structured_member_setter_invocations(
             target, property, call.span, arguments, receiver,
+        );
+    }
+
+    fn canonical_local_reflect_set_owner(&self, snapshot: &StaticAliasPath) -> StaticAliasPath {
+        let resolved = resolve_static_alias_path(&self.aliases, snapshot);
+        if self
+            .returned_structured_instances_for_path(&resolved)
+            .is_empty()
+        {
+            resolved
+        } else {
+            self.canonical_returned_structured_value_path(&resolved)
+        }
+    }
+
+    fn is_modeled_local_reflect_set_owner(&self, owner: &StaticAliasPath) -> bool {
+        if matches!(&owner.root, StaticAliasRoot::UnresolvedGlobal(_)) {
+            return false;
+        }
+        let resolved = resolve_static_alias_path(&self.aliases, owner);
+        [owner, &resolved].into_iter().any(|candidate| {
+            self.structured_own_properties.contains_key(candidate)
+                || self.array_lengths.contains_key(candidate)
+                || self.local_object_prototypes.contains_key(candidate)
+                || self.local_callable_parameters.contains_key(candidate)
+                || self.local_bound_callables.contains_key(candidate)
+                || self.local_class_instances.contains(candidate)
+                || !self
+                    .returned_structured_instances_for_path(candidate)
+                    .is_empty()
+        })
+    }
+
+    fn local_reflect_set_owner_is_externally_stored(&self, owner: &StaticAliasPath) -> bool {
+        let mut candidates = self.resolved_current_external_storage_alias_candidates(owner);
+        candidates.insert(owner.clone());
+        candidates.insert(resolve_static_alias_path(&self.aliases, owner));
+        candidates.into_iter().any(|candidate| {
+            self.externally_stored_value_paths.iter().any(|stored| {
+                candidate.starts_with(stored)
+                    || candidate.starts_with(&resolve_static_alias_path(&self.aliases, stored))
+            })
+        })
+    }
+
+    fn local_reflect_set_accessor_candidates(
+        &self,
+        owner: &StaticAliasPath,
+        property: Option<&str>,
+    ) -> Vec<StaticAliasPath> {
+        property.map_or_else(
+            || self.dynamic_structured_member_paths_for_owner(owner),
+            |property| vec![owner.clone().with_property(property.to_string())],
         )
+    }
+
+    fn reflect_set_expression_is_definitely_primitive(expression: &Expression<'_>) -> bool {
+        matches!(
+            expression.get_inner_expression(),
+            Expression::NullLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NumericLiteral(_)
+                | Expression::BigIntLiteral(_)
+                | Expression::StringLiteral(_)
+                | Expression::TemplateLiteral(_)
+                | Expression::BinaryExpression(_)
+                | Expression::UnaryExpression(_)
+                | Expression::UpdateExpression(_)
+        )
+    }
+
+    fn local_reflect_set_receiver_has_own_accessor(
+        &self,
+        owner: &StaticAliasPath,
+        property: Option<&str>,
+    ) -> bool {
+        let resolved_owner = resolve_static_alias_path(&self.aliases, owner);
+        for owner in [owner, &resolved_owner] {
+            if let Some(property) = property {
+                let target = owner.clone().with_property(property.to_string());
+                if self.local_getter_properties.contains(&target)
+                    || self.local_setter_properties.contains_key(&target)
+                    || self
+                        .local_auto_accessor_properties
+                        .get(owner)
+                        .is_some_and(|properties| properties.contains(property))
+                {
+                    return true;
+                }
+                continue;
+            }
+            if self.dynamic_getter_properties.contains_key(owner)
+                || self.dynamic_setter_properties.contains_key(owner)
+                || self.local_getter_properties.iter().any(|target| {
+                    target.starts_with(owner)
+                        && target.properties.len() == owner.properties.len() + 1
+                })
+                || self.local_setter_properties.keys().any(|target| {
+                    target.starts_with(owner)
+                        && target.properties.len() == owner.properties.len() + 1
+                })
+                || self
+                    .local_auto_accessor_properties
+                    .get(owner)
+                    .is_some_and(|properties| !properties.is_empty())
+                || self.aliases.keys().any(|target| {
+                    is_dynamic_auto_accessor_alias(target)
+                        && dynamic_property_alias_owner(target).as_ref() == Some(owner)
+                })
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn record_local_reflect_setter_invocations_from_snapshots(
+        &mut self,
+        candidates: &[StaticAliasPath],
+        snapshots: &LocalReflectSetSnapshots,
+        span: Span,
+    ) -> bool {
+        let arguments = vec![self.collect_local_invocation_path(snapshots.value.clone())];
+        let receiver = snapshots
+            .receiver
+            .as_ref()
+            .map(|receiver| vec![self.collect_local_invocation_path(receiver.clone())]);
+        let mut invoked = false;
+        for (index, candidate) in candidates.iter().enumerate() {
+            let candidate = self.materialize_structured_setter_candidate_owner(
+                candidate.clone(),
+                span,
+                &format!("reflect-setter-owner-result-{index}"),
+            );
+            invoked |= self.record_local_setter_invocations_with_arguments_and_receiver(
+                &candidate,
+                arguments.clone(),
+                receiver.clone(),
+            );
+        }
+        invoked
+    }
+
+    fn record_local_reflect_set_external_storage(
+        &mut self,
+        value: &Expression<'_>,
+        snapshot: &StaticAliasPath,
+    ) {
+        let deferred_class_effect = self
+            .class_effect_contexts
+            .last()
+            .copied()
+            .flatten()
+            .map(|context| context.span);
+        if self.function_depth <= 1 && deferred_class_effect.is_none() {
+            self.record_externally_stored_path(snapshot.clone());
+            for path in self.prepare_exposed_paths(BTreeSet::from([snapshot.clone()])) {
+                let resolved = resolve_static_alias_path(&self.aliases, &path);
+                self.escaped_callable_effect_targets.insert(path);
+                self.escaped_callable_effect_targets.insert(resolved);
+            }
+            return;
+        }
+        let mut exposed = BTreeSet::new();
+        self.collect_exposed_argument_paths(value, &mut exposed);
+        if let Some(span) = deferred_class_effect.or_else(|| self.current_callable_effect_span()) {
+            self.local_callable_external_storage_effects
+                .entry(span)
+                .or_default()
+                .extend(exposed.iter().cloned());
+        }
+        if deferred_class_effect.is_none() {
+            for path in self.prepare_exposed_paths(exposed) {
+                self.invalidate_exposed_path(path);
+            }
+        }
+    }
+
+    fn local_reflect_set_outcome(
+        &mut self,
+        call: &CallExpression<'_>,
+        snapshots: &LocalReflectSetSnapshots,
+    ) -> LocalReflectSetOutcome {
+        self.materialize_ready_returned_structured_values();
+        let target_owner = self.canonical_local_reflect_set_owner(&snapshots.target);
+        let receiver_owner = snapshots.receiver.as_ref().map_or_else(
+            || target_owner.clone(),
+            |receiver| self.canonical_local_reflect_set_owner(receiver),
+        );
+        let Some(key) = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+        else {
+            return LocalReflectSetOutcome::Reflective;
+        };
+        let property = static_member_name(key);
+        let candidates =
+            self.local_reflect_set_accessor_candidates(&target_owner, property.as_deref());
+        let retains_getter = candidates
+            .iter()
+            .any(|candidate| !self.local_getter_resolution(candidate, false).1.is_empty());
+        let invokes_setter = self.record_local_reflect_setter_invocations_from_snapshots(
+            &candidates,
+            snapshots,
+            call.span,
+        );
+        let same_receiver = snapshots.receiver.is_none()
+            || resolve_static_alias_path(&self.aliases, &target_owner)
+                == resolve_static_alias_path(&self.aliases, &receiver_owner);
+        let (auto_accessor, data_target) = if let Some(property) = property.as_deref() {
+            let property = target_owner.clone().with_property(property.to_string());
+            (
+                self.local_auto_accessor_storage_match(&property),
+                Some(
+                    receiver_owner.clone().with_property(
+                        property
+                            .properties
+                            .last()
+                            .expect("known Reflect.set property")
+                            .clone(),
+                    ),
+                ),
+            )
+        } else {
+            let dynamic_target = self.dynamic_data_property_target(&target_owner, key);
+            (
+                self.local_computed_auto_accessor_storage_property(&dynamic_target)
+                    .map(|storage| (storage, true)),
+                Some(self.dynamic_data_property_target(&receiver_owner, key)),
+            )
+        };
+        if let Some((storage, definite)) = auto_accessor {
+            if !same_receiver {
+                // Public auto-accessor setters use per-instance backing storage. A receiver that
+                // is not the original instance cannot turn the operation into a data-property
+                // write on that receiver.
+                return LocalReflectSetOutcome::NoMutation;
+            }
+            return LocalReflectSetOutcome::Data(LocalReflectSetPlan {
+                target: storage,
+                dynamic_data: false,
+                auto_accessor: true,
+                definite,
+            });
+        }
+        if invokes_setter || retains_getter {
+            return LocalReflectSetOutcome::NoMutation;
+        }
+        if property.as_deref() == Some("__proto__")
+            && !self
+                .known_structured_own_properties(&target_owner)
+                .is_some_and(|properties| properties.contains("__proto__"))
+        {
+            // Ordinary objects inherit Object.prototype.__proto__. Keep the reflective mutation
+            // fact so this setter invalidates prototype-based builtin proofs instead of creating
+            // a synthetic own data property.
+            return LocalReflectSetOutcome::Reflective;
+        }
+        if snapshots.receiver.is_some()
+            && !same_receiver
+            && self
+                .local_reflect_set_receiver_has_own_accessor(&receiver_owner, property.as_deref())
+        {
+            return LocalReflectSetOutcome::NoMutation;
+        }
+        let local_target = self.is_modeled_local_reflect_set_owner(&target_owner);
+        let local_receiver = self.is_modeled_local_reflect_set_owner(&receiver_owner);
+        if !local_target || !local_receiver {
+            let target_expression = call
+                .arguments
+                .first()
+                .and_then(|argument| argument.as_expression())
+                .expect("prepared Reflect.set target");
+            let receiver_expression = call
+                .arguments
+                .get(3)
+                .and_then(|argument| argument.as_expression());
+            if Self::reflect_set_expression_is_definitely_primitive(target_expression)
+                || (local_target
+                    && receiver_expression
+                        .is_some_and(Self::reflect_set_expression_is_definitely_primitive))
+            {
+                return LocalReflectSetOutcome::NoMutation;
+            }
+            let value = call
+                .arguments
+                .get(2)
+                .and_then(|argument| argument.as_expression())
+                .expect("prepared Reflect.set value");
+            self.record_local_reflect_set_external_storage(value, &snapshots.value);
+            return LocalReflectSetOutcome::Reflective;
+        }
+        let target = data_target.expect("Reflect.set data target");
+        let storage_target = if property.is_some() {
+            target.clone()
+        } else {
+            receiver_owner.clone().with_element_wildcard()
+        };
+        let raw_receiver = snapshots.receiver.as_ref().unwrap_or(&snapshots.target);
+        let raw_storage_target = property.as_ref().map_or_else(
+            || raw_receiver.clone().with_element_wildcard(),
+            |property| raw_receiver.clone().with_property(property.clone()),
+        );
+        if self.alias_path_targets_external_storage(&storage_target)
+            || self.alias_path_targets_external_storage(&raw_storage_target)
+            || self.local_reflect_set_owner_is_externally_stored(&receiver_owner)
+            || self.local_reflect_set_owner_is_externally_stored(raw_receiver)
+        {
+            let value = call
+                .arguments
+                .get(2)
+                .and_then(|argument| argument.as_expression())
+                .expect("prepared Reflect.set value");
+            self.record_local_reflect_set_external_storage(value, &snapshots.value);
+            return LocalReflectSetOutcome::Reflective;
+        }
+        LocalReflectSetOutcome::Data(LocalReflectSetPlan {
+            target,
+            dynamic_data: property.is_none(),
+            auto_accessor: false,
+            definite: true,
+        })
+    }
+
+    fn apply_local_reflect_set_plan(
+        &mut self,
+        call: &CallExpression<'_>,
+        snapshots: &LocalReflectSetSnapshots,
+        plan: LocalReflectSetPlan,
+        unconditional: bool,
+    ) {
+        let conditional = !unconditional;
+        let value = call
+            .arguments
+            .get(2)
+            .and_then(|argument| argument.as_expression())
+            .expect("prepared Reflect.set value");
+        if !plan.auto_accessor {
+            let operation_target = if plan.dynamic_data {
+                dynamic_property_alias_owner(&plan.target)
+                    .expect("computed Reflect.set owner")
+                    .with_property(format!(
+                        "<reflect-set-computed-value@{}:{}>",
+                        call.span.start, call.span.end
+                    ))
+            } else {
+                plan.target.clone()
+            };
+            if let Some(span) = self.deferred_class_instance_operation_span(&operation_target) {
+                let deferred_value =
+                    self.deferred_class_instance_value(value)
+                        .unwrap_or_else(|| DeferredClassInstanceValue {
+                            value: DeferredArrayMutationValue {
+                                sources: Vec::new(),
+                                opaque: false,
+                                definedness: self.local_getter_expression_definedness(value),
+                            },
+                            shapes: BTreeMap::new(),
+                        });
+                let callables = if matches!(
+                    value.get_inner_expression(),
+                    Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
+                ) {
+                    self.dynamic_this_roots
+                        .last()
+                        .and_then(Option::as_ref)
+                        .and_then(|receiver| match receiver.root {
+                            StaticAliasRoot::DynamicThis { start, end } => {
+                                Some(Span::new(start, end))
+                            }
+                            StaticAliasRoot::Binding(_) | StaticAliasRoot::UnresolvedGlobal(_) => {
+                                None
+                            }
+                        })
+                        .map_or_else(Vec::new, |receiver| {
+                            self.local_class_instance_callables(value, receiver)
+                        })
+                } else {
+                    Vec::new()
+                };
+                self.deferred_class_instance_operations
+                    .entry(span)
+                    .or_default()
+                    .push(DeferredClassInstanceOperation {
+                        span: (call.span.start, call.span.end),
+                        target: operation_target,
+                        kind: DeferredClassInstanceOperationKind::Assignment {
+                            value: deferred_value,
+                            callables,
+                            dynamic_target: plan.dynamic_data.then(|| plan.target.clone()),
+                        },
+                        conditional,
+                    });
+            }
+        }
+        if plan.dynamic_data {
+            let deferred = self
+                .deferred_callable_alias_capture_span(&plan.target)
+                .is_some();
+            if unconditional && !deferred {
+                self.clear_matching_dynamic_data_property(&plan.target);
+            }
+            let ambiguous = conditional || self.has_other_dynamic_data_property(&plan.target);
+            if deferred {
+                let span = self
+                    .deferred_callable_alias_capture_span(&plan.target)
+                    .expect("deferred Reflect.set computed target");
+                self.record_deferred_callable_operation(
+                    span,
+                    plan.target.clone(),
+                    DeferredCallableOperationKind::ComputedDataAlias {
+                        source: snapshots.value.clone(),
+                        strong: unconditional,
+                    },
+                );
+            } else {
+                self.insert_alias(plan.target.clone(), snapshots.value.clone());
+                if ambiguous {
+                    self.mark_alias_target_ambiguous(plan.target.clone());
+                }
+                if let Some(owner) = dynamic_property_alias_owner(&plan.target) {
+                    self.open_structured_containers.insert(owner);
+                }
+            }
+            return;
+        }
+        let deferred = self.deferred_callable_alias_capture_span(&plan.target);
+        if plan.auto_accessor && plan.definite && unconditional && deferred.is_none() {
+            self.clear_alias_target_history(&plan.target);
+        }
+        self.insert_alias(plan.target.clone(), snapshots.value.clone());
+        if plan.auto_accessor
+            && let Some(span) = deferred
+        {
+            self.mark_deferred_auto_accessor_alias(
+                span,
+                &plan.target,
+                plan.definite && unconditional,
+            );
+        }
+        if conditional || (plan.auto_accessor && !plan.definite) {
+            self.mark_alias_target_ambiguous(plan.target.clone());
+        }
+        if !plan.auto_accessor
+            && unconditional
+            && (self
+                .class_effect_contexts
+                .last()
+                .is_some_and(Option::is_some)
+                || deferred.is_none())
+        {
+            self.record_local_own_property_assignment(&plan.target);
+        }
     }
 
     fn local_reflect_get_candidates(
@@ -45567,9 +46087,27 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .unexecuted_expression_spans
             .contains(&(span.start, span.end))
         {
+            self.pending_expression_initializer_snapshots
+                .remove(&(span.start, span.end));
             return;
         }
         walk_expression(self, expression);
+        if let Some(targets) = self
+            .pending_expression_initializer_snapshots
+            .remove(&(span.start, span.end))
+        {
+            for target in targets {
+                self.collect_initializer(target.clone(), expression);
+                if self.deferred_callable_alias_capture_span(&target).is_none()
+                    && let Some(source) = self.alias_source_path(expression)
+                {
+                    let resolved = resolve_static_alias_path(&self.aliases, &source);
+                    if resolved != source {
+                        self.insert_alias(target, resolved);
+                    }
+                }
+            }
+        }
     }
 
     fn visit_if_statement(&mut self, statement: &IfStatement<'a>) {
@@ -47615,7 +48153,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         } else {
             false
         };
-        self.record_local_reflect_set(call);
+        let local_reflect_set_snapshots = self.prepare_local_reflect_set_snapshots(call);
+        if local_reflect_set_snapshots.is_none() {
+            self.record_local_reflect_set_fallback(call);
+        }
         let unconditional = self
             .function_control_baselines
             .last()
@@ -47726,7 +48267,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             exposed.extend(self.record_local_descriptor_field_getter_reads(call));
             exposed_arguments.extend(self.prepare_exposed_paths(exposed));
         }
-        let reflective_mutation = if let Some(callee) =
+        let mut reflective_mutation = if let Some(callee) =
             static_alias_source_path(self.scoping, &call.callee)
             && let Some(target) = call
                 .arguments
@@ -47764,6 +48305,32 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
+        let mut local_reflect_set_mutates = true;
+        if let Some(snapshots) = local_reflect_set_snapshots.as_ref() {
+            match self.local_reflect_set_outcome(call, snapshots) {
+                LocalReflectSetOutcome::Data(plan) => {
+                    self.apply_local_reflect_set_plan(call, snapshots, plan, unconditional);
+                }
+                LocalReflectSetOutcome::Reflective => {}
+                LocalReflectSetOutcome::NoMutation => local_reflect_set_mutates = false,
+            }
+        }
+        if !local_reflect_set_mutates {
+            reflective_mutation = None;
+        }
+        if let (Some(snapshots), Some(mutation)) = (
+            local_reflect_set_snapshots.as_ref(),
+            reflective_mutation.as_mut(),
+        ) {
+            let raw_target = snapshots.receiver.as_ref().unwrap_or(&snapshots.target);
+            let target = self.canonical_local_reflect_set_owner(raw_target);
+            mutation.raw_target = raw_target.clone();
+            mutation.target = target.clone();
+            mutation.parameter_target = self.attached_parameter_path(raw_target, &target);
+            mutation.returned_callable_span = self
+                .returned_callable_capture_span(raw_target)
+                .or_else(|| self.returned_callable_capture_span(&target));
+        }
         if let Some((span, target, callee)) = deferred_class_instance_reflect_delete {
             self.deferred_class_instance_operations
                 .entry(span)
