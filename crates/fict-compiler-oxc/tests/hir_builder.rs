@@ -2920,6 +2920,34 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "wrapped nested external array element callback slot",
+            "const local = { child: holder.item }; const make = () => Array.of(local); const run = () => count;",
+            "make()[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "conditional wrapped external array element callback slot",
+            "const local = {}; const items = [holder.item]; const make = (flag) => flag ? items.slice() : Array.of(local); const run = () => count;",
+            "make(holder.enabled)[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped mutated external array element callback slot",
+            "const items = [holder.item]; const mutate = () => items.reverse(); const run = () => count;",
+            "mutate()[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "conditional wrapped mutated external array element callback slot",
+            "const localItems = [{}]; const externalItems = [holder.item]; const mutate = (flag) => flag ? externalItems.reverse() : localItems.reverse(); const run = () => count;",
+            "mutate(holder.enabled)[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "shifted-result external array element callback slot",
             "const item = [holder.item].shift(); const run = () => count;",
             "item.run = run;",
@@ -3893,6 +3921,73 @@ fn array_mutator_results_preserve_local_storage_shapes() {
             )
         }),
         "array mutator results must retain their receiver, element, or primitive shape: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn wrapped_local_array_results_preserve_local_elements() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const run = () => count;
+            const local = {};
+            const nested = { child: {} };
+            const items = [local];
+            const makeSlice = () => items.slice();
+            const makeConcat = () => items.concat([local]);
+            const makeReversed = () => items.toReversed();
+            const makeSpliced = () => items.toSpliced(0, 0, local);
+            const makeWith = () => items.with(0, local);
+            const makeFrom = () => Array.from(items);
+            const makeOf = () => Array.of(local);
+            const makeNested = () => Array.of(nested);
+            const makeConditional = (flag) => flag ? items.slice() : Array.of(local);
+            const mutate = () => items.reverse();
+            const otherItems = [nested];
+            const mutateConditional = (flag) => flag ? items.reverse() : otherItems.reverse();
+            const sliced = makeSlice();
+            const concatenated = makeConcat();
+            const reversed = makeReversed();
+            const spliced = makeSpliced();
+            const replaced = makeWith();
+            const from = makeFrom();
+            const of = makeOf();
+            const conditional = makeConditional(true);
+            const mutated = mutate();
+            const conditionallyMutated = mutateConditional(true);
+            sliced[0].run = run;
+            concatenated[1].run = run;
+            reversed[0].run = run;
+            spliced[0].run = run;
+            replaced[0].run = run;
+            from[0].run = run;
+            of[0].run = run;
+            conditional[0].run = run;
+            makeNested()[0].child.run = run;
+            mutated[0].run = run;
+            conditionallyMutated[0].run = run;
+            makeSlice()[0].run = run;
+            makeConditional(false)[0].run = run;
+            mutateConditional(false)[0].child.run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code.as_str(),
+                "FICT-S002" | "FICT-R002" | "FICT-R005"
+            )
+        }),
+        "wrapped fresh arrays must not make proven-local elements opaque: {:?}",
         output.diagnostics
     );
 }

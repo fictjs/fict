@@ -21320,8 +21320,24 @@ enum LocalCallableResult {
     },
     Invocation(Vec<LocalInvocationFact>),
     KnownLocal,
-    KnownLocalArray,
+    KnownLocalArray {
+        shape: LocalCallableArrayResult,
+    },
     Unknown,
+}
+
+#[derive(Clone)]
+enum LocalCallableArrayResult {
+    Receiver(BTreeSet<StaticAliasPath>),
+    Fresh {
+        element_sources: Option<BTreeSet<LocalCallableArrayElementSource>>,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum LocalCallableArrayElementSource {
+    Array(StaticAliasPath),
+    Value(StaticAliasPath),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -22273,9 +22289,9 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::KnownLocal => {
                         paths.push(StaticAliasPath::dynamic_this(call.span));
                     }
-                    LocalCallableResult::KnownLocalArray => {
+                    LocalCallableResult::KnownLocalArray { shape } => {
                         let path = StaticAliasPath::dynamic_this(call.span);
-                        self.record_opaque_external_storage_array_elements(path.clone());
+                        self.materialize_local_callable_array_result(&path, shape);
                         paths.push(path);
                     }
                     LocalCallableResult::Invocation(_) => unreachable!(
@@ -22327,7 +22343,7 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Direct { .. }
                     | LocalCallableResult::Bound { .. }
                     | LocalCallableResult::KnownLocal => {}
-                    LocalCallableResult::KnownLocalArray => return None,
+                    LocalCallableResult::KnownLocalArray { .. } => return None,
                     LocalCallableResult::Unknown => return None,
                     LocalCallableResult::Invocation(_) => unreachable!(
                         "constructor result invocations must resolve before assignment analysis"
@@ -22548,6 +22564,241 @@ impl StaticHookAliasCollector<'_> {
             || self.expression_returns_known_local_array_result(expression)
     }
 
+    fn expression_is_inherently_local_array_value(expression: &Expression<'_>) -> bool {
+        matches!(
+            expression.get_inner_expression(),
+            Expression::NullLiteral(_)
+                | Expression::BooleanLiteral(_)
+                | Expression::NumericLiteral(_)
+                | Expression::BigIntLiteral(_)
+                | Expression::StringLiteral(_)
+                | Expression::TemplateLiteral(_)
+                | Expression::BinaryExpression(_)
+                | Expression::UnaryExpression(_)
+                | Expression::UpdateExpression(_)
+        )
+    }
+
+    fn local_callable_array_value_source(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<Option<StaticAliasPath>> {
+        if let Some(source) = self.alias_source_path(expression) {
+            return Some(Some(source));
+        }
+        Self::expression_is_inherently_local_array_value(expression).then_some(None)
+    }
+
+    fn local_callable_array_element_sources(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<BTreeSet<LocalCallableArrayElementSource>> {
+        if let Some(source) = self.alias_source_path(expression) {
+            return self
+                .known_array_path(&source)
+                .then(|| BTreeSet::from([LocalCallableArrayElementSource::Array(source)]));
+        }
+        let Expression::ArrayExpression(array) = expression.get_inner_expression() else {
+            return None;
+        };
+        let mut sources = BTreeSet::new();
+        for element in &array.elements {
+            match element {
+                ArrayExpressionElement::Elision(_) => {}
+                ArrayExpressionElement::SpreadElement(spread) => {
+                    sources.extend(self.local_callable_array_element_sources(&spread.argument)?);
+                }
+                element => {
+                    if let Some(source) =
+                        self.local_callable_array_value_source(element.to_expression())?
+                    {
+                        sources.insert(LocalCallableArrayElementSource::Value(source));
+                    }
+                }
+            }
+        }
+        Some(sources)
+    }
+
+    fn extend_local_callable_array_value_source(
+        &self,
+        sources: &mut BTreeSet<LocalCallableArrayElementSource>,
+        expression: &Expression<'_>,
+    ) -> bool {
+        let Some(source) = self.local_callable_array_value_source(expression) else {
+            return false;
+        };
+        if let Some(source) = source {
+            sources.insert(LocalCallableArrayElementSource::Value(source));
+        }
+        true
+    }
+
+    fn local_callable_concat_argument_sources(
+        &self,
+        expression: &Expression<'_>,
+    ) -> Option<BTreeSet<LocalCallableArrayElementSource>> {
+        if matches!(
+            expression.get_inner_expression(),
+            Expression::ArrayExpression(_)
+        ) {
+            return self.local_callable_array_element_sources(expression);
+        }
+        if let Some(source) = self.alias_source_path(expression) {
+            if self.known_array_path(&source)
+                && self.path_is_currently_intact(
+                    &source.clone().with_property("constructor".to_string()),
+                )
+            {
+                return Some(BTreeSet::from([LocalCallableArrayElementSource::Array(
+                    source,
+                )]));
+            }
+            return self
+                .concat_value_is_definitely_nonspreadable(expression, Some(&source))
+                .then(|| BTreeSet::from([LocalCallableArrayElementSource::Value(source)]));
+        }
+        Self::expression_is_inherently_local_array_value(expression).then(BTreeSet::new)
+    }
+
+    fn local_callable_array_constructor_sources(
+        &self,
+        arguments: &[oxc::ast::ast::Argument<'_>],
+    ) -> Option<BTreeSet<LocalCallableArrayElementSource>> {
+        if let [argument] = arguments
+            && argument
+                .as_expression()
+                .and_then(Self::static_array_numeric_value)
+                .is_some()
+        {
+            return Some(BTreeSet::new());
+        }
+        let mut sources = BTreeSet::new();
+        for argument in arguments {
+            if !self
+                .extend_local_callable_array_value_source(&mut sources, argument.as_expression()?)
+            {
+                return None;
+            }
+        }
+        Some(sources)
+    }
+
+    fn local_callable_array_result(&self, expression: &Expression<'_>) -> LocalCallableArrayResult {
+        let opaque = || LocalCallableArrayResult::Fresh {
+            element_sources: None,
+        };
+        match expression.get_inner_expression() {
+            Expression::NewExpression(expression) => LocalCallableArrayResult::Fresh {
+                element_sources: self
+                    .local_callable_array_constructor_sources(&expression.arguments),
+            },
+            Expression::CallExpression(call) => {
+                if let Some(raw) = static_alias_source_path(self.scoping, &call.callee) {
+                    let resolved = resolve_static_alias_path(&self.aliases, &raw);
+                    if matches!(
+                        (&resolved.root, resolved.properties.as_slice()),
+                        (StaticAliasRoot::UnresolvedGlobal(root), []) if root == "Array"
+                    ) {
+                        return LocalCallableArrayResult::Fresh {
+                            element_sources: self
+                                .local_callable_array_constructor_sources(&call.arguments),
+                        };
+                    }
+                    if matches!(
+                        (&resolved.root, resolved.properties.as_slice()),
+                        (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                            if root == "Array" && method == "of"
+                    ) {
+                        let mut sources = BTreeSet::new();
+                        for argument in &call.arguments {
+                            let Some(argument) = argument.as_expression() else {
+                                return opaque();
+                            };
+                            if !self
+                                .extend_local_callable_array_value_source(&mut sources, argument)
+                            {
+                                return opaque();
+                            }
+                        }
+                        return LocalCallableArrayResult::Fresh {
+                            element_sources: Some(sources),
+                        };
+                    }
+                    if matches!(
+                        (&resolved.root, resolved.properties.as_slice()),
+                        (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                            if root == "Array" && method == "from"
+                    ) {
+                        return LocalCallableArrayResult::Fresh {
+                            element_sources: (call.arguments.len() == 1)
+                                .then(|| {
+                                    call.arguments.first()?.as_expression().and_then(|source| {
+                                        self.local_callable_array_element_sources(source)
+                                    })
+                                })
+                                .flatten(),
+                        };
+                    }
+                }
+                let (receiver, method) = match call.callee.get_inner_expression() {
+                    Expression::StaticMemberExpression(member) => {
+                        (&member.object, member.property.name.to_string())
+                    }
+                    Expression::ComputedMemberExpression(member) => {
+                        let Some(method) = static_member_name(&member.expression) else {
+                            return opaque();
+                        };
+                        (&member.object, method)
+                    }
+                    _ => return opaque(),
+                };
+                if array_mutation_returns_receiver(&method)
+                    && let Some(source) = self.alias_source_path(receiver)
+                {
+                    return LocalCallableArrayResult::Receiver(BTreeSet::from([source]));
+                }
+                let Some(mut sources) = self.local_callable_array_element_sources(receiver) else {
+                    return opaque();
+                };
+                let precise = match method.as_str() {
+                    "concat" => {
+                        for argument in &call.arguments {
+                            let Some(argument) = argument.as_expression() else {
+                                return opaque();
+                            };
+                            let Some(argument_sources) =
+                                self.local_callable_concat_argument_sources(argument)
+                            else {
+                                return opaque();
+                            };
+                            sources.extend(argument_sources);
+                        }
+                        true
+                    }
+                    "toSpliced" => call.arguments.iter().skip(2).all(|argument| {
+                        argument.as_expression().is_some_and(|argument| {
+                            self.extend_local_callable_array_value_source(&mut sources, argument)
+                        })
+                    }),
+                    "with" | "fill" => call
+                        .arguments
+                        .get(if method == "with" { 1 } else { 0 })
+                        .and_then(|argument| argument.as_expression())
+                        .is_none_or(|argument| {
+                            self.extend_local_callable_array_value_source(&mut sources, argument)
+                        }),
+                    "map" | "flatMap" | "flat" => false,
+                    _ => true,
+                };
+                LocalCallableArrayResult::Fresh {
+                    element_sources: precise.then_some(sources),
+                }
+            }
+            _ => opaque(),
+        }
+    }
+
     fn expression_returns_known_local_array_result(&self, expression: &Expression<'_>) -> bool {
         match expression.get_inner_expression() {
             Expression::CallExpression(call) => {
@@ -22691,7 +22942,9 @@ impl StaticHookAliasCollector<'_> {
             );
         }
         if self.expression_returns_known_local_array_result(expression) {
-            return vec![LocalCallableResult::KnownLocalArray];
+            return vec![LocalCallableResult::KnownLocalArray {
+                shape: self.local_callable_array_result(expression),
+            }];
         }
         if self.expression_returns_known_local_result(expression) {
             return vec![LocalCallableResult::KnownLocal];
@@ -22923,7 +23176,7 @@ impl StaticHookAliasCollector<'_> {
                 LocalCallableResult::Reference(_)
                 | LocalCallableResult::Invocation(_)
                 | LocalCallableResult::KnownLocal
-                | LocalCallableResult::KnownLocalArray
+                | LocalCallableResult::KnownLocalArray { .. }
                 | LocalCallableResult::Unknown => {}
             }
         }
@@ -29977,6 +30230,11 @@ impl StaticHookAliasCollector<'_> {
             LocalCallableResult::Reference(source) => self
                 .materialize_local_callable_reference(&source, invocation.function_depth)
                 .unwrap_or(LocalCallableResult::Reference(source)),
+            LocalCallableResult::KnownLocalArray { shape } => {
+                LocalCallableResult::KnownLocalArray {
+                    shape: self.bind_local_callable_array_result(shape, invocation),
+                }
+            }
             result => result,
         };
         if let LocalCallableResult::Direct {
@@ -30014,6 +30272,55 @@ impl StaticHookAliasCollector<'_> {
             capture_invocations.push(invocation.clone());
         }
         result
+    }
+
+    fn bind_local_callable_array_path(
+        &self,
+        source: StaticAliasPath,
+        invocation: &LocalInvocationFact,
+    ) -> BTreeSet<StaticAliasPath> {
+        let mapped = self.mapped_returned_callable_capture_paths(
+            &source,
+            LocalParameterInvalidationKind::Member,
+            &[vec![invocation.clone()]],
+        );
+        mapped.unwrap_or_else(|| BTreeSet::from([source]))
+    }
+
+    fn bind_local_callable_array_result(
+        &self,
+        shape: LocalCallableArrayResult,
+        invocation: &LocalInvocationFact,
+    ) -> LocalCallableArrayResult {
+        match shape {
+            LocalCallableArrayResult::Receiver(sources) => LocalCallableArrayResult::Receiver(
+                sources
+                    .into_iter()
+                    .flat_map(|source| self.bind_local_callable_array_path(source, invocation))
+                    .collect(),
+            ),
+            LocalCallableArrayResult::Fresh { element_sources } => {
+                LocalCallableArrayResult::Fresh {
+                    element_sources: element_sources.map(|sources| {
+                        sources
+                            .into_iter()
+                            .flat_map(|source| match source {
+                                LocalCallableArrayElementSource::Array(source) => self
+                                    .bind_local_callable_array_path(source, invocation)
+                                    .into_iter()
+                                    .map(LocalCallableArrayElementSource::Array)
+                                    .collect::<Vec<_>>(),
+                                LocalCallableArrayElementSource::Value(source) => self
+                                    .bind_local_callable_array_path(source, invocation)
+                                    .into_iter()
+                                    .map(LocalCallableArrayElementSource::Value)
+                                    .collect(),
+                            })
+                            .collect()
+                    }),
+                }
+            }
+        }
     }
 
     fn materialize_local_callable_reference(
@@ -30085,6 +30392,54 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
+    fn materialize_local_callable_array_result(
+        &mut self,
+        target: &StaticAliasPath,
+        shape: LocalCallableArrayResult,
+    ) {
+        match shape {
+            LocalCallableArrayResult::Receiver(sources) => {
+                self.structured_own_properties
+                    .entry(target.clone())
+                    .or_default();
+                self.open_structured_containers.insert(target.clone());
+                if sources.is_empty() {
+                    self.record_opaque_external_storage_result(target.clone());
+                    return;
+                }
+                for source in sources {
+                    self.record_external_storage_shallow_copy(
+                        target.clone(),
+                        &source,
+                        BTreeSet::new(),
+                    );
+                }
+            }
+            LocalCallableArrayResult::Fresh { element_sources } => {
+                self.structured_own_properties
+                    .entry(target.clone())
+                    .or_default();
+                self.open_structured_containers.insert(target.clone());
+                let Some(element_sources) = element_sources else {
+                    self.record_opaque_external_storage_array_elements(target.clone());
+                    return;
+                };
+                let mut sources = Vec::new();
+                for source in element_sources {
+                    match source {
+                        LocalCallableArrayElementSource::Array(source) => {
+                            sources.extend(self.array_element_copy_sources(&source));
+                        }
+                        LocalCallableArrayElementSource::Value(source) => sources.push(source),
+                    }
+                }
+                if !sources.is_empty() {
+                    self.record_external_storage_array_element_copies(target.clone(), sources);
+                }
+            }
+        }
+    }
+
     fn record_callable_result_initializer(
         &mut self,
         target: StaticAliasPath,
@@ -30131,7 +30486,6 @@ impl StaticHookAliasCollector<'_> {
         let mut ambiguous = false;
         let mut materialized_known_result = false;
         let mut opaque_result = false;
-        let mut opaque_array_elements = false;
         for invocation in invocations {
             let (results, historical) = if invocation.callee.is_none() {
                 let lexical_receiver = self
@@ -30263,10 +30617,10 @@ impl StaticHookAliasCollector<'_> {
                         alternatives = alternatives.saturating_add(1);
                         materialized_known_result = true;
                     }
-                    LocalCallableResult::KnownLocalArray => {
+                    LocalCallableResult::KnownLocalArray { shape } => {
                         alternatives = alternatives.saturating_add(1);
                         materialized_known_result = true;
-                        opaque_array_elements = true;
+                        self.materialize_local_callable_array_result(&target, shape);
                     }
                     LocalCallableResult::Unknown => {
                         alternatives = alternatives.saturating_add(1);
@@ -30296,9 +30650,6 @@ impl StaticHookAliasCollector<'_> {
         }
         if opaque_result {
             self.record_opaque_external_storage_result(target.clone());
-        }
-        if opaque_array_elements {
-            self.record_opaque_external_storage_array_elements(target.clone());
         }
         if alternatives > 1 || (ambiguous && !materialized_known_result) {
             self.mark_alias_target_ambiguous(target);
@@ -32133,7 +32484,7 @@ impl StaticHookAliasCollector<'_> {
                     }
                     LocalCallableResult::Structured { .. }
                     | LocalCallableResult::KnownLocal
-                    | LocalCallableResult::KnownLocalArray => {
+                    | LocalCallableResult::KnownLocalArray { .. } => {
                         return None;
                     }
                     LocalCallableResult::Invocation(_) => {
@@ -32198,7 +32549,7 @@ impl StaticHookAliasCollector<'_> {
                     LocalCallableResult::Structured { .. }
                     | LocalCallableResult::Invocation(_)
                     | LocalCallableResult::KnownLocal
-                    | LocalCallableResult::KnownLocalArray
+                    | LocalCallableResult::KnownLocalArray { .. }
                     | LocalCallableResult::Unknown => {
                         return false;
                     }
@@ -32418,9 +32769,13 @@ impl StaticHookAliasCollector<'_> {
                 } else {
                     self.local_callable_results_for_invocation(invocation).0
                 };
-                results
-                    .iter()
-                    .any(|result| matches!(result, LocalCallableResult::Structured { .. }))
+                results.iter().any(|result| {
+                    matches!(
+                        result,
+                        LocalCallableResult::Structured { .. }
+                            | LocalCallableResult::KnownLocalArray { .. }
+                    )
+                })
             });
             if !has_structured_result {
                 return None;
@@ -36656,7 +37011,7 @@ impl StaticHookAliasCollector<'_> {
                             !matches!(
                                 result,
                                 LocalCallableResult::KnownLocal
-                                    | LocalCallableResult::KnownLocalArray
+                                    | LocalCallableResult::KnownLocalArray { .. }
                                     | LocalCallableResult::Unknown
                             )
                         })
