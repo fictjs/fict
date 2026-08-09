@@ -4980,6 +4980,131 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "static auto-accessor materializes its local value",
+            "class Box { static accessor item = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "class expression static auto-accessor materializes its local value",
+            "const Box = class { static accessor item = local; }; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "returned class static auto-accessor materializes its local value",
+            "function makeBox() { return class { static accessor item = local; }; } const Box = makeBox(); holder.item = Box.item;",
+            true,
+        ),
+        (
+            "returned class static auto-accessor maps its factory argument",
+            "function makeBox(value) { return class { static accessor item = value; }; } const Box = makeBox(local); holder.item = Box.item;",
+            true,
+        ),
+        (
+            "returned class static auto-accessor maps a fresh factory argument",
+            "function makeBox(value) { return class { static accessor item = value; }; } const Box = makeBox({}); holder.item = Box.item;",
+            false,
+        ),
+        (
+            "returned static auto-accessors isolate sibling factory arguments",
+            "function makeBox(value) { return class { static accessor item = value; }; } const Box = makeBox(local); const Other = makeBox({}); void Other; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "class alias preserves a static auto-accessor",
+            "class Box { static accessor item = local; } const Alias = Box; holder.item = Alias.item;",
+            true,
+        ),
+        (
+            "detached class alias preserves a static auto-accessor",
+            "let Box = class { static accessor item = local; }; const Alias = Box; Box = class {}; holder.item = Alias.item;",
+            true,
+        ),
+        (
+            "returned class static auto-accessor remains non-enumerable",
+            "function makeBox() { return class { static accessor item = local; }; } const Box = makeBox(); const copy = { ...Box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "detached class static auto-accessor remains non-enumerable",
+            "let Box = class { static accessor item = local; }; const Alias = Box; Box = class {}; const copy = { ...Alias }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "detached class static auto-accessor assignment remains non-enumerable",
+            "let Box = class { static accessor item = {}; }; const Alias = Box; Box = class {}; Alias.item = local; const copy = { ...Alias }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "returned class static auto-accessor deletion removes its value",
+            "function makeBox() { return class { static accessor item = local; }; } const Box = makeBox(); delete Box.item; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "static auto-accessor assignment materializes its local value",
+            "class Box { static accessor item = {}; } Box.item = local; holder.item = Box.item;",
+            true,
+        ),
+        (
+            "static auto-accessor assignment replaces its local value",
+            "class Box { static accessor item = local; } Box.item = {}; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "static auto-accessor is absent from object spread",
+            "class Box { static accessor item = local; } const copy = { ...Box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "static auto-accessor assignment remains non-enumerable",
+            "class Box { static accessor item = {}; } Box.item = local; const copy = { ...Box }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "static auto-accessor deletion removes its value",
+            "class Box { static accessor item = local; } delete Box.item; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "static auto-accessor assignment after deletion creates an enumerable field",
+            "class Box { static accessor item = {}; } delete Box.item; Box.item = local; const copy = { ...Box }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "later static method overrides an auto-accessor",
+            "class Box { static accessor item = local; static item() {} } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "later static auto-accessor overrides a method",
+            "class Box { static item() {} static accessor item = local; } holder.item = Box.item;",
+            true,
+        ),
+        (
+            "later static field overrides an auto-accessor",
+            "class Box { static accessor item = local; static item = {}; } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "earlier static field also overrides an auto-accessor",
+            "class Box { static item = {}; static accessor item = local; } holder.item = Box.item;",
+            false,
+        ),
+        (
+            "static auto-accessor initializer runs when a method wins",
+            "const container = { item: {} }; class Box { static accessor item = (container.item = local); static item() {} } holder.item = container.item;",
+            true,
+        ),
+        (
+            "computed static auto-accessor initializer runs eagerly",
+            "const container = { item: {} }; const key = holder.key; class Box { static accessor [key] = (container.item = local); } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "static field remains enumerable beside an auto-accessor",
+            "class Box { static accessor hidden = {}; static item = local; } const copy = { ...Box }; holder.item = copy.item;",
+            true,
+        ),
+        (
             "static field replaces an earlier alias eagerly",
             "const container = { item: local }; const fresh = {}; class Box { static value = (container.item = fresh); } void Box; holder.item = container.item;",
             false,
@@ -8361,6 +8486,16 @@ fn pure_local_calls_preserve_receiver_methods() {
             "unadvanced static field generator capture",
             "class Helper { static inspect = function* () { values.forEach = null; }; }",
             "Helper.inspect();",
+        ),
+        (
+            "read-only static auto-accessor",
+            "class Helper { static accessor inspect = target => target.length; }",
+            "Helper.inspect(values);",
+        ),
+        (
+            "unadvanced static auto-accessor generator",
+            "class Helper { static accessor inspect = function* (target) { target.forEach = null; }; }",
+            "Helper.inspect(values);",
         ),
         (
             "static field overrides mutating method",
