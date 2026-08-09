@@ -22247,6 +22247,8 @@ struct ExternalStorageInvocationSnapshot {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     detached_aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     flow: ExternalStorageFlowState,
+    structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
 }
 
 struct LocalObjectPrototype {
@@ -22394,6 +22396,84 @@ impl LocalInvocationFact {
     }
 }
 
+fn local_object_prototype_member_paths_from_state(
+    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
+    alias_history: Option<&BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>>,
+    local_object_prototypes: &BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
+    structured_own_properties: &BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    path: &StaticAliasPath,
+    requires_historical: impl Fn(&StaticAliasPath) -> bool,
+) -> BTreeSet<StaticAliasPath> {
+    let original = path.clone().canonicalized();
+    let mut pending = VecDeque::from([(original.clone(), false)]);
+    let mut visited = BTreeSet::from([original]);
+    let mut inherited_paths = BTreeSet::new();
+    while let Some((current, inherited)) = pending.pop_front() {
+        let mut resolution_chain = resolve_static_alias_path_chain(aliases, &current);
+        if requires_historical(&current)
+            && let Some(alias_history) = alias_history
+        {
+            resolution_chain.extend(resolve_historical_alias_paths(alias_history, &current));
+        }
+        let mut mapped_paths = BTreeSet::new();
+        for candidate in &resolution_chain {
+            let mut owner_length = None;
+            let mut candidate_mapped_paths = BTreeSet::new();
+            for (owner, prototypes) in local_object_prototypes {
+                if !candidate.starts_with(owner)
+                    || candidate.properties.len() <= owner.properties.len()
+                {
+                    continue;
+                }
+                let property = &candidate.properties[owner.properties.len()];
+                let prototype_lookup = property == LOCAL_OBJECT_PROTOTYPE_LOOKUP;
+                if !prototype_lookup
+                    && structured_own_properties
+                        .get(owner)
+                        .is_some_and(|properties| properties.contains(property))
+                {
+                    continue;
+                }
+                let length = owner.properties.len();
+                if owner_length.is_some_and(|current| current > length) {
+                    continue;
+                }
+                if owner_length.is_none_or(|current| current < length) {
+                    owner_length = Some(length);
+                    candidate_mapped_paths.clear();
+                }
+                for prototype in prototypes.keys() {
+                    let mut mapped = prototype.clone();
+                    let relative_start = owner
+                        .properties
+                        .len()
+                        .saturating_add(usize::from(prototype_lookup));
+                    mapped
+                        .properties
+                        .extend_from_slice(&candidate.properties[relative_start..]);
+                    mapped.element_wildcard |= candidate.element_wildcard;
+                    candidate_mapped_paths.insert(mapped.canonicalized());
+                }
+            }
+            mapped_paths.extend(candidate_mapped_paths);
+        }
+        if mapped_paths.is_empty() {
+            if inherited {
+                inherited_paths.insert(current);
+            }
+            continue;
+        }
+        for mapped in mapped_paths {
+            if visited.insert(mapped.clone()) {
+                pending.push_back((mapped, true));
+            } else {
+                inherited_paths.insert(mapped);
+            }
+        }
+    }
+    inherited_paths
+}
+
 impl<'semantic> StaticHookAliasCollector<'semantic> {
     fn external_storage_invocation_context(&self) -> ExternalStorageInvocationContext {
         let owner_callable_span = (self.function_depth > 1)
@@ -22406,6 +22486,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
                     aliases: self.aliases.clone(),
                     detached_aliases: BTreeMap::new(),
                     flow: self.external_storage_flow.clone(),
+                    structured_own_properties: self.structured_own_properties.clone(),
+                    local_object_prototypes: self.local_object_prototypes.clone(),
                 })
             }),
             inline_callable_span: None,
@@ -31353,76 +31435,14 @@ impl StaticHookAliasCollector<'_> {
         &self,
         path: &StaticAliasPath,
     ) -> BTreeSet<StaticAliasPath> {
-        let original = path.clone().canonicalized();
-        let mut pending = VecDeque::from([(original.clone(), false)]);
-        let mut visited = BTreeSet::from([original]);
-        let mut inherited_paths = BTreeSet::new();
-        while let Some((current, inherited)) = pending.pop_front() {
-            let mut resolution_chain = resolve_static_alias_path_chain(&self.aliases, &current);
-            if self.path_requires_historical_aliases(&current, self.function_depth) {
-                resolution_chain.extend(resolve_historical_alias_paths(
-                    &self.alias_history,
-                    &current,
-                ));
-            }
-            let mut mapped_paths = BTreeSet::new();
-            for candidate in &resolution_chain {
-                let mut owner_length = None;
-                let mut candidate_mapped_paths = BTreeSet::new();
-                for (owner, prototypes) in &self.local_object_prototypes {
-                    if !candidate.starts_with(owner)
-                        || candidate.properties.len() <= owner.properties.len()
-                    {
-                        continue;
-                    }
-                    let property = &candidate.properties[owner.properties.len()];
-                    let prototype_lookup = property == LOCAL_OBJECT_PROTOTYPE_LOOKUP;
-                    if !prototype_lookup
-                        && self
-                            .structured_own_properties
-                            .get(owner)
-                            .is_some_and(|properties| properties.contains(property))
-                    {
-                        continue;
-                    }
-                    let length = owner.properties.len();
-                    if owner_length.is_some_and(|current| current > length) {
-                        continue;
-                    }
-                    if owner_length.is_none_or(|current| current < length) {
-                        owner_length = Some(length);
-                        candidate_mapped_paths.clear();
-                    }
-                    for prototype in prototypes.keys() {
-                        let mut mapped = prototype.clone();
-                        let relative_start = owner
-                            .properties
-                            .len()
-                            .saturating_add(usize::from(prototype_lookup));
-                        mapped
-                            .properties
-                            .extend_from_slice(&candidate.properties[relative_start..]);
-                        mapped.element_wildcard |= candidate.element_wildcard;
-                        candidate_mapped_paths.insert(mapped.canonicalized());
-                    }
-                }
-                mapped_paths.extend(candidate_mapped_paths);
-            }
-            if mapped_paths.is_empty() {
-                if inherited {
-                    inherited_paths.insert(current);
-                }
-                continue;
-            }
-            for mapped in mapped_paths {
-                if visited.insert(mapped.clone()) {
-                    pending.push_back((mapped, true));
-                } else {
-                    inherited_paths.insert(mapped);
-                }
-            }
-        }
-        inherited_paths
+        local_object_prototype_member_paths_from_state(
+            &self.aliases,
+            Some(&self.alias_history),
+            &self.local_object_prototypes,
+            &self.structured_own_properties,
+            path,
+            |path| self.path_requires_historical_aliases(path, self.function_depth),
+        )
     }
 
     fn local_getter_resolution(
@@ -35523,6 +35543,62 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         (historical, candidates)
+    }
+
+    fn local_value_read_paths(
+        &self,
+        path: &StaticAliasPath,
+        historical: bool,
+    ) -> BTreeSet<StaticAliasPath> {
+        let path = path.clone().canonicalized();
+        let slot = resolve_static_alias_slot_path(&self.aliases, &path);
+        let has_current_dynamic_value = self
+            .aliases
+            .keys()
+            .any(|target| dynamic_property_alias_remainder(target, &path, true).is_some());
+        let has_current_own_value = self.aliases.contains_key(&slot) || has_current_dynamic_value;
+        if has_current_own_value && !historical {
+            return BTreeSet::from([path]);
+        }
+        let has_historical_own_value = has_current_own_value
+            || self.alias_history.contains_key(&slot)
+            || self
+                .alias_history
+                .keys()
+                .any(|target| dynamic_property_alias_remainder(target, &path, true).is_some());
+        let mut prototypes = self.local_object_prototype_member_paths(&path);
+        if prototypes.is_empty() || (historical && has_historical_own_value) {
+            prototypes.insert(path);
+        }
+        prototypes
+    }
+
+    fn invocation_snapshot_value_read_paths(
+        snapshot: &ExternalStorageInvocationSnapshot,
+        path: &StaticAliasPath,
+    ) -> BTreeSet<StaticAliasPath> {
+        let path = path.clone().canonicalized();
+        let slot = resolve_static_alias_slot_path(&snapshot.aliases, &path);
+        let has_own_value = snapshot.aliases.contains_key(&slot)
+            || snapshot
+                .aliases
+                .keys()
+                .any(|target| dynamic_property_alias_remainder(target, &path, true).is_some());
+        if has_own_value {
+            return BTreeSet::from([path]);
+        }
+        let mut prototypes = local_object_prototype_member_paths_from_state(
+            &snapshot.aliases,
+            None,
+            &snapshot.local_object_prototypes,
+            &snapshot.structured_own_properties,
+            &path,
+            |_| false,
+        );
+        if prototypes.is_empty() {
+            prototypes.insert(path);
+        }
+        prototypes
     }
 
     fn path_has_modeled_local_value(&self, path: &StaticAliasPath, historical: bool) -> bool {
@@ -42727,6 +42803,16 @@ impl StaticHookAliasCollector<'_> {
                             &mappers,
                         )
                         .unwrap_or_else(|| BTreeSet::from([source.clone()]));
+                    let sources = sources
+                        .into_iter()
+                        .flat_map(|source| {
+                            let historical = self.path_requires_historical_aliases(
+                                &source,
+                                invocation.function_depth,
+                            );
+                            self.local_value_read_paths(&source, historical)
+                        })
+                        .collect::<BTreeSet<_>>();
                     let ambiguous = targets.len() != 1 || sources.len() != 1;
                     let mut applied = false;
                     for target in targets {
@@ -43451,14 +43537,20 @@ impl StaticHookAliasCollector<'_> {
                     .unwrap_or_else(|| BTreeSet::from([target]))
                 };
                 let sources = match operation.kind {
-                    DeferredCallableOperationKind::Alias(source) => Some(
-                        self.mapped_returned_callable_capture_paths(
-                            &source,
-                            LocalParameterInvalidationKind::Member,
-                            &creators,
-                        )
-                        .unwrap_or_else(|| BTreeSet::from([source])),
-                    ),
+                    DeferredCallableOperationKind::Alias(source) => {
+                        let sources = self
+                            .mapped_returned_callable_capture_paths(
+                                &source,
+                                LocalParameterInvalidationKind::Member,
+                                &creators,
+                            )
+                            .unwrap_or_else(|| BTreeSet::from([source]));
+                        let sources = sources
+                            .into_iter()
+                            .flat_map(|source| self.local_value_read_paths(&source, true))
+                            .collect::<BTreeSet<_>>();
+                        Some(sources)
+                    }
                     DeferredCallableOperationKind::DeleteOwnProperty
                     | DeferredCallableOperationKind::ReflectDeleteOwnProperty { .. }
                     | DeferredCallableOperationKind::ArrayMutation(_) => None,
@@ -44077,14 +44169,16 @@ impl StaticHookAliasCollector<'_> {
         path: StaticAliasPath,
         snapshot: &ExternalStorageInvocationSnapshot,
     ) {
-        let candidates = self.resolved_external_storage_alias_candidates(
-            &snapshot.aliases,
-            &snapshot.flow,
-            &path,
-        );
-        for candidate in candidates {
-            let detached = resolve_static_alias_path(&snapshot.detached_aliases, &candidate);
-            self.record_resolved_externally_stored_path(detached);
+        for path in Self::invocation_snapshot_value_read_paths(snapshot, &path) {
+            let candidates = self.resolved_external_storage_alias_candidates(
+                &snapshot.aliases,
+                &snapshot.flow,
+                &path,
+            );
+            for candidate in candidates {
+                let detached = resolve_static_alias_path(&snapshot.detached_aliases, &candidate);
+                self.record_resolved_externally_stored_path(detached);
+            }
         }
     }
 

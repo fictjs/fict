@@ -5370,6 +5370,11 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "inherited computed static method receives its subclass",
+            "const key = holder.key; class Parent { static own = local; static [key]() { holder.item = this.own; } } class Box extends Parent {} Box[key]();",
+            true,
+        ),
+        (
             "subclass inherits a computed static method",
             "const key = holder.key; class Parent { static [key]() { holder.item = local; } } class Box extends Parent {} Box.item();",
             true,
@@ -5555,9 +5560,29 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "inherited static getter reads an inherited receiver value",
+            "class Parent { static own = local; static get item() { holder.item = this.own; return {}; } } class Box extends Parent {} void Box.item;",
+            true,
+        ),
+        (
             "inherited static method receives the subclass",
             "class Parent { static expose() { holder.item = this.item; } } class Box extends Parent { static item = local; } Box.expose();",
             true,
+        ),
+        (
+            "inherited static method reads an inherited receiver value",
+            "class Parent { static item = local; static expose() { holder.item = this.item; } } class Box extends Parent {} Box.expose();",
+            true,
+        ),
+        (
+            "inherited receiver reads snapshot a later superclass write",
+            "class Parent { static item = {}; static expose() { holder.item = this.item; } } class Box extends Parent {} Box.expose(); Parent.item = local;",
+            false,
+        ),
+        (
+            "inherited receiver reads snapshot a later prototype replacement",
+            "class Parent { static item = {}; static expose() { holder.item = this.item; } } class Other { static item = local; } class Box extends Parent {} Box.expose(); Object.setPrototypeOf(Box, Other);",
+            false,
         ),
         (
             "subclass static field shadows an inherited field",
