@@ -4950,6 +4950,161 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "constructed instance field shifts an array element",
+            "const items = [local, {}]; class Box { value = items.shift(); } new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "constructed instance field reverses array elements",
+            "const items = [local, {}]; class Box { value = items.reverse(); } new Box(); holder.item = items[1];",
+            true,
+        ),
+        (
+            "constructed instance field pushes an array element",
+            "const items = []; class Box { value = items.push(local); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "constructed instance field unshifts an array element",
+            "const items = [{}]; class Box { value = items.unshift(local); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "constructed instance field splices out an array element",
+            "const items = [local, {}]; class Box { value = items.splice(0, 1); } new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "constructed instance field splices in an array element",
+            "const items = [{}]; class Box { value = items.splice(0, 0, local); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "constructed instance field fills array elements",
+            "const items = [{}]; class Box { value = items.fill(local); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "constructed instance field copies array elements within the receiver",
+            "const items = [local, {}]; class Box { value = items.copyWithin(1, 0, 1); } new Box(); holder.item = items[1];",
+            true,
+        ),
+        (
+            "unconstructed instance field does not shift an array element",
+            "const items = [local, {}]; class Box { value = items.shift(); } void Box; holder.item = items[0];",
+            true,
+        ),
+        (
+            "unconstructed instance field does not push an array element",
+            "const items = []; class Box { value = items.push(local); } void Box; holder.item = items[0];",
+            false,
+        ),
+        (
+            "instance field push reads a rebound receiver",
+            "let items = [{}]; const original = items; class Box { value = items.push(local); } items = []; new Box(); holder.item = original[1];",
+            false,
+        ),
+        (
+            "instance field push mutates the rebound receiver",
+            "let items = [{}]; class Box { value = items.push(local); } items = []; new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "instance field push uses the construction-time array length",
+            "const items = [{}]; class Box { value = items.push(local); } items.unshift({}); new Box(); holder.item = items[2];",
+            true,
+        ),
+        (
+            "instance field push reads a rebound argument",
+            "const items = []; let captured = local; class Box { value = items.push(captured); } captured = {}; new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "returned class array mutation maps a factory argument",
+            "const items = []; function make(value) { return class { field = items.push(value); }; } const Box = make(local); new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "returned class array mutation maps a fresh factory argument",
+            "const items = []; function make(value) { return class { field = items.push(value); }; } const Box = make({}); new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "returned class array mutation maps a factory receiver",
+            "function make(items) { return class { field = items.shift(); }; } const items = [local, {}]; const Box = make(items); new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "instance field array mutation follows argument receiver rebinding",
+            "let items = [local]; const select = () => { items = []; return local; }; class Box { value = items.push(select()); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "instance field push preserves a fresh argument",
+            "const items = []; class Box { value = items.push({}); } new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "instance field push preserves a nested local argument",
+            "const items = []; class Box { value = items.push({ child: local }); } new Box(); holder.item = items[0].child;",
+            true,
+        ),
+        (
+            "instance field push preserves a nested array argument",
+            "const items = []; class Box { value = items.push([local]); } new Box(); holder.item = items[0][0];",
+            true,
+        ),
+        (
+            "instance field fill replaces an earlier alias with a fresh value",
+            "const items = [local]; class Box { value = items.fill({}); } new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "instance field splice replaces an earlier alias with a fresh value",
+            "const items = [local]; class Box { value = items.splice(0, 1, {}); } new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "dynamic instance field array bounds stay conservative",
+            "const items = [local, {}]; class Box { value = items.copyWithin(holder.index, 1); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "instance field shift rechecks the builtin method",
+            "const items = [local, {}]; class Box { value = items.shift(); } Array.prototype.shift = () => {}; new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "each construction repeats an array shift",
+            "const items = [{}, local, {}]; class Box { value = items.shift(); } new Box(); new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "each construction repeats an array reverse",
+            "const items = [local, {}]; class Box { value = items.reverse(); } new Box(); new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "repeated array reverse does not retain an intermediate alias",
+            "const items = [local, {}]; class Box { value = items.reverse(); } new Box(); new Box(); holder.item = items[1];",
+            false,
+        ),
+        (
+            "later instance field shift removes a pushed alias",
+            "const items = []; class Box { first = items.push(local); second = items.shift(); } new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "later instance field push restores a shifted alias",
+            "const items = [local]; class Box { first = items.shift(); second = items.push(local); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "instance field copyWithin normalizes negative bounds at construction",
+            "const items = [{}, local, {}]; class Box { value = items.copyWithin(0, -2, -1); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
             "unconstructed instance field preserves an own property",
             "const container = { item: local }; class Box { value = delete container.item; } void Box; holder.item = container.item;",
             true,
