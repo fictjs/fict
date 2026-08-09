@@ -20679,6 +20679,8 @@ struct DeferredClassInstanceOperation {
 enum DeferredClassInstanceOperationKind {
     Assignment(DeferredClassInstanceValue),
     ArrayMutation(DeferredArrayMutation),
+    DeleteOwnProperty,
+    ReflectDeleteOwnProperty { callee: StaticAliasPath },
 }
 
 #[derive(Clone)]
@@ -25995,8 +25997,39 @@ impl StaticHookAliasCollector<'_> {
                             .insert(rebased_target.with_element_wildcard());
                     }
                 }
+                DeferredClassInstanceOperationKind::DeleteOwnProperty => {
+                    let applied = self.apply_deferred_own_property_deletion(&rebased_target);
+                    if operation.conditional && applied {
+                        self.ambiguous_alias_targets.insert(rebased_target);
+                    }
+                }
+                DeferredClassInstanceOperationKind::ReflectDeleteOwnProperty { callee } => {
+                    let builtin = StaticAliasPath::unresolved_global("Reflect".to_string())
+                        .with_property("deleteProperty".to_string());
+                    let applied = resolve_static_alias_path(&self.aliases, &callee) == builtin
+                        && self.path_is_currently_intact(&callee)
+                        && self.path_is_currently_intact(&builtin)
+                        && self.apply_deferred_own_property_deletion(&rebased_target);
+                    if operation.conditional && applied {
+                        self.ambiguous_alias_targets.insert(rebased_target);
+                    }
+                }
             }
         }
+    }
+
+    fn deferred_class_instance_operation_span(
+        &self,
+        target: &StaticAliasPath,
+    ) -> Option<(u32, u32)> {
+        let context = self
+            .class_effect_contexts
+            .last()
+            .copied()
+            .flatten()
+            .filter(|context| context.captures_same_depth)?;
+        let receiver = self.dynamic_this_roots.last().and_then(Option::as_ref)?;
+        (target.root == receiver.root).then_some(context.span)
     }
 
     fn materialize_class_instance_field_callables(
@@ -40558,7 +40591,12 @@ impl StaticHookAliasCollector<'_> {
             .arguments
             .first()
             .and_then(|argument| argument.as_expression())
-            .filter(|target| matches!(target.get_inner_expression(), Expression::Identifier(_)))
+            .filter(|target| {
+                matches!(
+                    target.get_inner_expression(),
+                    Expression::Identifier(_) | Expression::ThisExpression(_)
+                )
+            })
             .and_then(|target| self.alias_source_path(target))?;
         let property = call
             .arguments
@@ -45299,14 +45337,22 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .map_or(self.control_depth > 0, |baseline| {
                     self.control_depth > *baseline
                 });
-            if !conditional && let Some(path) = self.alias_source_path(&expression.argument) {
-                if let Some(span) = self
-                    .class_effect_contexts
-                    .last()
-                    .copied()
-                    .flatten()
-                    .map(|context| context.span)
-                    .filter(|span| self.deferred_callable_alias_capture_span(&path) == Some(*span))
+            let path = self.alias_source_path(&expression.argument);
+            let deferred_class_instance_delete = path.as_ref().and_then(|path| {
+                self.deferred_class_instance_operation_span(path)
+                    .map(|span| (span, path.clone()))
+            });
+            if !conditional && let Some(path) = &path {
+                if deferred_class_instance_delete.is_none()
+                    && let Some(span) = self
+                        .class_effect_contexts
+                        .last()
+                        .copied()
+                        .flatten()
+                        .map(|context| context.span)
+                        .filter(|span| {
+                            self.deferred_callable_alias_capture_span(path) == Some(*span)
+                        })
                 {
                     self.record_deferred_callable_operation(
                         span,
@@ -45314,12 +45360,28 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                         DeferredCallableOperationKind::DeleteOwnProperty,
                     );
                 }
-                self.remove_local_own_property(&path);
+                self.remove_local_own_property(path);
             }
             self.invalidate_place(planned_expression_place(
                 self.scoping,
                 expression.argument.get_inner_expression(),
             ));
+            oxc::ast_visit::walk::walk_unary_expression(self, expression);
+            if let Some((span, target)) = deferred_class_instance_delete {
+                self.deferred_class_instance_operations
+                    .entry(span)
+                    .or_default()
+                    .push(DeferredClassInstanceOperation {
+                        span: (expression.span.start, expression.span.end),
+                        target,
+                        kind: DeferredClassInstanceOperationKind::DeleteOwnProperty,
+                        conditional,
+                    });
+            }
+            if let Some(span) = suppressed_getter_read {
+                self.handled_local_getter_read_spans.remove(&span);
+            }
+            return;
         }
         oxc::ast_visit::walk::walk_unary_expression(self, expression);
         if let Some(span) = suppressed_getter_read {
@@ -45387,18 +45449,27 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 self.prepare_local_property_descriptor(descriptor, property);
             }
         }
-        if unconditional && let Some((property, callee)) = self.local_reflect_delete_property(call)
-        {
-            if let Some(context) = self.class_effect_contexts.last().copied().flatten()
-                && self.deferred_callable_alias_capture_span(&property) == Some(context.span)
+        let local_reflect_delete_property = self.local_reflect_delete_property(call);
+        let deferred_class_instance_reflect_delete = local_reflect_delete_property
+            .as_ref()
+            .and_then(|(property, callee)| {
+                self.deferred_class_instance_operation_span(property)
+                    .map(|span| (span, property.clone(), callee.clone()))
+            });
+        if unconditional && let Some((property, callee)) = &local_reflect_delete_property {
+            if deferred_class_instance_reflect_delete.is_none()
+                && let Some(context) = self.class_effect_contexts.last().copied().flatten()
+                && self.deferred_callable_alias_capture_span(property) == Some(context.span)
             {
                 self.record_deferred_callable_operation(
                     context.span,
                     property.clone(),
-                    DeferredCallableOperationKind::ReflectDeleteOwnProperty { callee },
+                    DeferredCallableOperationKind::ReflectDeleteOwnProperty {
+                        callee: callee.clone(),
+                    },
                 );
             }
-            self.remove_local_own_property(&property);
+            self.remove_local_own_property(property);
         }
         let synchronous_callback_effect_targets = self.synchronous_callback_effect_targets(call);
         let mut local_invocations = self
@@ -45504,6 +45575,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
+        if let Some((span, target, callee)) = deferred_class_instance_reflect_delete {
+            self.deferred_class_instance_operations
+                .entry(span)
+                .or_default()
+                .push(DeferredClassInstanceOperation {
+                    span: (call.span.start, call.span.end),
+                    target,
+                    kind: DeferredClassInstanceOperationKind::ReflectDeleteOwnProperty { callee },
+                    conditional: !unconditional,
+                });
+        }
         if let Some((span, target, mutation)) = deferred_array_mutation {
             if matches!(&target.root, StaticAliasRoot::DynamicThis { .. })
                 && self

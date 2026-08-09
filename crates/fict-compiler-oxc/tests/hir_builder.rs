@@ -5350,6 +5350,76 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "instance field deletes an earlier own property",
+            "class Box { item = local; removed = delete this.item; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "instance field deletes a nested own property",
+            "class Box { state = { item: local }; removed = delete this.state.item; } const box = new Box(); holder.item = box.state.item;",
+            false,
+        ),
+        (
+            "instance field reflects deletion of an earlier own property",
+            "class Box { item = local; removed = Reflect.deleteProperty(this, 'item'); } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "conditional instance field deletion preserves the prior value",
+            "class Box { item = local; removed = holder.enabled && delete this.item; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "conditional reflected instance field deletion preserves the prior value",
+            "class Box { item = local; removed = holder.enabled && Reflect.deleteProperty(this, 'item'); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "instance field deletion follows an earlier assignment",
+            "class Box { item = {}; assigned = (this.item = local); removed = delete this.item; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "instance field assignment follows an earlier deletion",
+            "class Box { item = local; removed = delete this.item; restored = (this.item = local); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "later data field follows an earlier deletion",
+            "class Box { item = local; removed = delete this.item; item = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "subclass field deletes an inherited own field",
+            "class Base { item = local; } class Box extends Base { removed = delete this.item; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "instance field deletion preserves an inherited method",
+            "class Base { expose() { holder.item = local; } } class Box extends Base { removed = delete this.expose; } const box = new Box(); box.expose();",
+            true,
+        ),
+        (
+            "instance field deletes an earlier array element",
+            "class Box { items = [local]; removed = delete this.items[0]; } const box = new Box(); holder.item = box.items[0];",
+            false,
+        ),
+        (
+            "reflected instance field deletion rechecks the builtin method",
+            "class Box { item = local; removed = Reflect.deleteProperty(this, 'item'); } Reflect.deleteProperty = () => false; const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "reflected instance field deletion reads a rebound callee",
+            "let remove = Reflect.deleteProperty; class Box { item = local; removed = remove(this, 'item'); } remove = () => false; const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "separate instances replay deletion independently",
+            "class Box { item = local; removed = delete this.item; } const first = new Box(); first.item = local; const second = new Box(); void second; holder.item = first.item;",
+            true,
+        ),
+        (
             "unconstructed instance field preserves an own property",
             "const container = { item: local }; class Box { value = delete container.item; } void Box; holder.item = container.item;",
             true,
