@@ -20605,6 +20605,7 @@ struct ExternalStorageShallowCopy {
 }
 
 struct LocalArrayMutationPlan {
+    raw_source: StaticAliasPath,
     source: StaticAliasPath,
     snapshot: StaticAliasPath,
     method: String,
@@ -21232,9 +21233,9 @@ struct StaticHookAliasCollector<'semantic> {
     returned_callable_spans: BTreeSet<(u32, u32)>,
     returned_callable_effects: BTreeMap<(u32, u32), BTreeSet<LocalCallableCapturedEffect>>,
     local_callable_external_storage_effects: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
-    // Alias writes are ordered because a later write in the same invocation replaces an earlier
-    // one. The conservative activation path still consumes them as a set of possible histories.
-    deferred_callable_aliases: BTreeMap<(u32, u32), Vec<DeferredCallableAlias>>,
+    // Callable state changes are ordered because later writes or removals in the same invocation
+    // replace earlier ones. The conservative activation path still joins them as possible history.
+    deferred_callable_operations: BTreeMap<(u32, u32), Vec<DeferredCallableOperation>>,
     deferred_callable_ambiguous_targets: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     generator_callable_body_spans: BTreeMap<(u32, u32), (u32, u32)>,
     active_returned_callable_instances: BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
@@ -21341,8 +21342,52 @@ struct ClassEffectContext {
     captures_same_depth: bool,
 }
 
-struct DeferredClassAliasSnapshot {
+struct DeferredClassStateSnapshot {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    array_lengths: BTreeMap<StaticAliasPath, usize>,
+    structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    open_structured_containers: BTreeSet<StaticAliasPath>,
+    local_getter_properties: BTreeSet<StaticAliasPath>,
+    enumerable_getter_properties: BTreeSet<StaticAliasPath>,
+    dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    enumerable_dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    local_getter_result_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
+    local_setter_properties: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    dynamic_setter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    dynamic_accessor_excluded_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    descriptor_defined_properties: BTreeSet<StaticAliasPath>,
+    enumerable_descriptor_properties: BTreeSet<StaticAliasPath>,
+    local_value_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
+    local_static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
+    local_json_replacer_property_lists: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
+    local_descriptor_value_captures: BTreeSet<(StaticAliasPath, StaticAliasPath, StaticAliasPath)>,
+    callable_exposures: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    local_callable_parameters: BTreeMap<StaticAliasPath, Vec<LocalCallableParameter>>,
+    local_callable_receivers: BTreeMap<StaticAliasPath, StaticAliasPath>,
+    local_generator_callables: BTreeSet<StaticAliasPath>,
+    local_callable_results: BTreeMap<StaticAliasPath, Vec<LocalCallableResult>>,
+    local_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
+    local_callable_effect_creators: LocalCallableEffectCreatorMap,
+    returned_structured_value_instances:
+        BTreeMap<StaticAliasPath, Vec<ReturnedStructuredValueInstance>>,
+    returned_structured_value_exclusions: BTreeSet<(StaticAliasPath, StaticAliasPath)>,
+    pending_returned_structured_dynamic_invocations:
+        Vec<PendingReturnedStructuredDynamicInvocation>,
+    pending_returned_structured_bound_materializations:
+        Vec<PendingReturnedStructuredBoundMaterialization>,
+    transient_callable_alias_targets: BTreeSet<StaticAliasPath>,
+    local_class_instances: BTreeSet<StaticAliasPath>,
+    local_class_instance_fields: BTreeMap<StaticAliasPath, BTreeSet<String>>,
+    local_class_instance_callables:
+        BTreeMap<StaticAliasPath, BTreeMap<String, Vec<LocalClassInstanceCallable>>>,
+    open_local_class_instance_fields: BTreeSet<StaticAliasPath>,
+    closed_replacement_class_instances: BTreeSet<StaticAliasPath>,
+    local_bound_callables: BTreeMap<StaticAliasPath, LocalBoundCallable>,
+    default_derived_constructors:
+        BTreeMap<StaticAliasPath, Vec<DefaultDerivedConstructorAlternative>>,
+    generator_iterator_invocations: BTreeMap<StaticAliasPath, Vec<LocalInvocationFact>>,
+    external_storage_flow: ExternalStorageFlowState,
     dynamic_roots: BTreeSet<(u32, u32)>,
 }
 
@@ -21474,10 +21519,18 @@ struct LocalCallableCapturedEffect {
 }
 
 #[derive(Clone)]
-struct DeferredCallableAlias {
+struct DeferredCallableOperation {
     target: StaticAliasPath,
-    source: StaticAliasPath,
+    kind: DeferredCallableOperationKind,
     generator_segment: Option<usize>,
+}
+
+#[derive(Clone)]
+enum DeferredCallableOperationKind {
+    Alias(StaticAliasPath),
+    DeleteOwnProperty,
+    ReflectDeleteOwnProperty { callee: StaticAliasPath },
+    ArrayPop,
 }
 
 #[derive(Clone)]
@@ -22268,7 +22321,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             returned_callable_spans: generator.returned_callable_spans.clone(),
             returned_callable_effects: BTreeMap::new(),
             local_callable_external_storage_effects: BTreeMap::new(),
-            deferred_callable_aliases: BTreeMap::new(),
+            deferred_callable_operations: BTreeMap::new(),
             deferred_callable_ambiguous_targets: BTreeMap::new(),
             generator_callable_body_spans: BTreeMap::new(),
             active_returned_callable_instances: BTreeMap::new(),
@@ -24168,21 +24221,154 @@ impl StaticHookAliasCollector<'_> {
             .or_else(|| self.current_callable_spans.last().copied())
     }
 
-    fn deferred_class_alias_snapshot(&self) -> DeferredClassAliasSnapshot {
-        DeferredClassAliasSnapshot {
+    fn deferred_class_state_snapshot(&self) -> DeferredClassStateSnapshot {
+        DeferredClassStateSnapshot {
             aliases: self.aliases.clone(),
+            array_lengths: self.array_lengths.clone(),
+            structured_own_properties: self.structured_own_properties.clone(),
+            open_structured_containers: self.open_structured_containers.clone(),
+            local_getter_properties: self.local_getter_properties.clone(),
+            enumerable_getter_properties: self.enumerable_getter_properties.clone(),
+            dynamic_getter_properties: self.dynamic_getter_properties.clone(),
+            enumerable_dynamic_getter_properties: self.enumerable_dynamic_getter_properties.clone(),
+            local_getter_result_definedness: self.local_getter_result_definedness.clone(),
+            local_setter_properties: self.local_setter_properties.clone(),
+            dynamic_setter_properties: self.dynamic_setter_properties.clone(),
+            dynamic_accessor_excluded_properties: self.dynamic_accessor_excluded_properties.clone(),
+            descriptor_defined_properties: self.descriptor_defined_properties.clone(),
+            enumerable_descriptor_properties: self.enumerable_descriptor_properties.clone(),
+            local_value_definedness: self.local_value_definedness.clone(),
+            local_static_from_entries_sources: self.local_static_from_entries_sources.clone(),
+            local_json_replacer_property_lists: self.local_json_replacer_property_lists.clone(),
+            local_object_prototypes: self.local_object_prototypes.clone(),
+            local_descriptor_value_captures: self.local_descriptor_value_captures.clone(),
+            callable_exposures: self.callable_exposures.clone(),
+            local_callable_parameters: self.local_callable_parameters.clone(),
+            local_callable_receivers: self.local_callable_receivers.clone(),
+            local_generator_callables: self.local_generator_callables.clone(),
+            local_callable_results: self.local_callable_results.clone(),
+            local_callable_effect_spans: self.local_callable_effect_spans.clone(),
+            local_callable_effect_creators: self.local_callable_effect_creators.clone(),
+            returned_structured_value_instances: self.returned_structured_value_instances.clone(),
+            returned_structured_value_exclusions: self.returned_structured_value_exclusions.clone(),
+            pending_returned_structured_dynamic_invocations: self
+                .pending_returned_structured_dynamic_invocations
+                .clone(),
+            pending_returned_structured_bound_materializations: self
+                .pending_returned_structured_bound_materializations
+                .clone(),
+            transient_callable_alias_targets: self.transient_callable_alias_targets.clone(),
+            local_class_instances: self.local_class_instances.clone(),
+            local_class_instance_fields: self.local_class_instance_fields.clone(),
+            local_class_instance_callables: self.local_class_instance_callables.clone(),
+            open_local_class_instance_fields: self.open_local_class_instance_fields.clone(),
+            closed_replacement_class_instances: self.closed_replacement_class_instances.clone(),
+            local_bound_callables: self.local_bound_callables.clone(),
+            default_derived_constructors: self.default_derived_constructors.clone(),
+            generator_iterator_invocations: self.generator_iterator_invocations.clone(),
+            external_storage_flow: self.external_storage_flow.clone(),
             dynamic_roots: self.dynamic_path_owner_depths.keys().copied().collect(),
         }
     }
 
-    fn restore_deferred_class_aliases(&mut self, snapshot: DeferredClassAliasSnapshot) {
-        self.aliases.retain(|target, _| {
-            let StaticAliasRoot::DynamicThis { start, end } = &target.root else {
-                return false;
-            };
-            !snapshot.dynamic_roots.contains(&(*start, *end))
-        });
-        self.aliases.extend(snapshot.aliases);
+    fn path_has_new_dynamic_root(path: &StaticAliasPath, existing: &BTreeSet<(u32, u32)>) -> bool {
+        matches!(
+            &path.root,
+            StaticAliasRoot::DynamicThis { start, end }
+                if !existing.contains(&(*start, *end))
+        )
+    }
+
+    fn restore_deferred_class_state(&mut self, snapshot: DeferredClassStateSnapshot) {
+        let dynamic_roots = snapshot.dynamic_roots;
+        macro_rules! restore_path_map {
+            ($field:ident) => {{
+                self.$field
+                    .retain(|target, _| Self::path_has_new_dynamic_root(target, &dynamic_roots));
+                self.$field.extend(snapshot.$field);
+            }};
+        }
+        macro_rules! restore_path_set {
+            ($field:ident) => {{
+                self.$field
+                    .retain(|target| Self::path_has_new_dynamic_root(target, &dynamic_roots));
+                self.$field.extend(snapshot.$field);
+            }};
+        }
+        restore_path_map!(aliases);
+        restore_path_map!(array_lengths);
+        restore_path_map!(structured_own_properties);
+        restore_path_set!(open_structured_containers);
+        restore_path_set!(local_getter_properties);
+        restore_path_set!(enumerable_getter_properties);
+        restore_path_map!(dynamic_getter_properties);
+        restore_path_map!(enumerable_dynamic_getter_properties);
+        restore_path_map!(local_getter_result_definedness);
+        restore_path_map!(local_setter_properties);
+        restore_path_map!(dynamic_setter_properties);
+        restore_path_map!(dynamic_accessor_excluded_properties);
+        restore_path_set!(descriptor_defined_properties);
+        restore_path_set!(enumerable_descriptor_properties);
+        restore_path_map!(local_value_definedness);
+        restore_path_map!(local_static_from_entries_sources);
+        restore_path_map!(local_json_replacer_property_lists);
+        restore_path_map!(local_object_prototypes);
+        self.local_descriptor_value_captures
+            .retain(|(_, _, target)| Self::path_has_new_dynamic_root(target, &dynamic_roots));
+        self.local_descriptor_value_captures
+            .extend(snapshot.local_descriptor_value_captures);
+        restore_path_map!(callable_exposures);
+        restore_path_map!(local_callable_parameters);
+        restore_path_map!(local_callable_receivers);
+        restore_path_set!(local_generator_callables);
+        restore_path_map!(local_callable_results);
+        restore_path_map!(local_callable_effect_spans);
+        self.local_callable_effect_creators
+            .retain(|(target, _), _| Self::path_has_new_dynamic_root(target, &dynamic_roots));
+        self.local_callable_effect_creators
+            .extend(snapshot.local_callable_effect_creators);
+        restore_path_map!(returned_structured_value_instances);
+        self.returned_structured_value_exclusions
+            .retain(|(root, _)| Self::path_has_new_dynamic_root(root, &dynamic_roots));
+        self.returned_structured_value_exclusions
+            .extend(snapshot.returned_structured_value_exclusions);
+        self.pending_returned_structured_dynamic_invocations
+            .retain(|pending| Self::path_has_new_dynamic_root(&pending.owner, &dynamic_roots));
+        self.pending_returned_structured_dynamic_invocations
+            .extend(snapshot.pending_returned_structured_dynamic_invocations);
+        self.pending_returned_structured_bound_materializations
+            .retain(|pending| Self::path_has_new_dynamic_root(&pending.target, &dynamic_roots));
+        self.pending_returned_structured_bound_materializations
+            .extend(snapshot.pending_returned_structured_bound_materializations);
+        restore_path_set!(transient_callable_alias_targets);
+        restore_path_set!(local_class_instances);
+        restore_path_map!(local_class_instance_fields);
+        restore_path_map!(local_class_instance_callables);
+        restore_path_set!(open_local_class_instance_fields);
+        restore_path_set!(closed_replacement_class_instances);
+        restore_path_map!(local_bound_callables);
+        restore_path_map!(default_derived_constructors);
+        restore_path_map!(generator_iterator_invocations);
+        self.external_storage_flow
+            .aliases
+            .retain(|target, _| Self::path_has_new_dynamic_root(target, &dynamic_roots));
+        self.external_storage_flow
+            .attached_alias_roots
+            .retain(|target, _| Self::path_has_new_dynamic_root(target, &dynamic_roots));
+        self.external_storage_flow
+            .shallow_copies
+            .retain(|target, _| Self::path_has_new_dynamic_root(target, &dynamic_roots));
+        self.external_storage_flow
+            .aliases
+            .extend(snapshot.external_storage_flow.aliases);
+        self.external_storage_flow
+            .attached_alias_roots
+            .extend(snapshot.external_storage_flow.attached_alias_roots);
+        self.external_storage_flow
+            .shallow_copies
+            .extend(snapshot.external_storage_flow.shallow_copies);
+        self.external_storage_flow.attached_parameters =
+            snapshot.external_storage_flow.attached_parameters;
     }
 
     fn record_unreferenced_callable_span(&mut self, target: &StaticAliasPath, span: Span) {
@@ -29407,6 +29593,28 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.overlaps(path));
     }
 
+    fn record_local_own_property_assignment(&mut self, path: &StaticAliasPath) {
+        let target = resolve_static_alias_slot_path(&self.aliases, path);
+        if target.element_wildcard || target.properties.is_empty() {
+            return;
+        }
+        if !self.local_getter_resolution(&target, false).1.is_empty() {
+            return;
+        }
+        let mut owner = target;
+        let Some(property) = owner.properties.pop() else {
+            return;
+        };
+        owner.element_wildcard = false;
+        let Some((owner, properties)) = self.tracked_structured_own_properties(&owner) else {
+            return;
+        };
+        self.structured_own_properties
+            .entry(owner)
+            .or_insert(properties)
+            .insert(property);
+    }
+
     fn remove_local_own_property(&mut self, path: &StaticAliasPath) {
         let canonical_path = self.canonical_returned_structured_member_path(path);
         let path = &canonical_path;
@@ -29567,18 +29775,31 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         source: StaticAliasPath,
     ) {
+        self.record_deferred_callable_operation(
+            span,
+            target,
+            DeferredCallableOperationKind::Alias(source),
+        );
+    }
+
+    fn record_deferred_callable_operation(
+        &mut self,
+        span: (u32, u32),
+        target: StaticAliasPath,
+        kind: DeferredCallableOperationKind,
+    ) {
         let generator_segment = self
             .current_callable_spans
             .last()
             .is_some_and(|callable| *callable == span)
             .then(|| self.generator_alias_segments.last().copied().flatten())
             .flatten();
-        self.deferred_callable_aliases
+        self.deferred_callable_operations
             .entry(span)
             .or_default()
-            .push(DeferredCallableAlias {
+            .push(DeferredCallableOperation {
                 target,
-                source,
+                kind,
                 generator_segment,
             });
     }
@@ -29616,6 +29837,30 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         None
+    }
+
+    fn tracked_structured_own_properties(
+        &self,
+        path: &StaticAliasPath,
+    ) -> Option<(StaticAliasPath, BTreeSet<String>)> {
+        let resolved = resolve_static_alias_path(&self.aliases, path);
+        if self
+            .ambiguous_alias_targets
+            .iter()
+            .any(|target| target.overlaps(path) || target.overlaps(&resolved))
+        {
+            return None;
+        }
+        [path, &resolved].into_iter().find_map(|candidate| {
+            (!self.open_structured_containers.contains(candidate))
+                .then(|| {
+                    self.structured_own_properties
+                        .get(candidate)
+                        .cloned()
+                        .map(|properties| (candidate.clone(), properties))
+                })
+                .flatten()
+        })
     }
 
     fn local_own_property_may_be_enumerable(
@@ -32528,6 +32773,7 @@ impl StaticHookAliasCollector<'_> {
         self.external_storage_flow
             .snapshot_subtree(&snapshot, &source);
         Some(LocalArrayMutationPlan {
+            raw_source,
             source_length: self.known_array_length(&source),
             stable_arguments: call.arguments.iter().all(|argument| {
                 argument.as_expression().is_some_and(|argument| {
@@ -39487,7 +39733,10 @@ impl StaticHookAliasCollector<'_> {
         self.apply_local_property_descriptor(&descriptor, property)
     }
 
-    fn local_reflect_delete_property(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
+    fn local_reflect_delete_property(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(StaticAliasPath, StaticAliasPath)> {
         if call.arguments.len() != 2
             || !matches!(
                 call.callee.get_inner_expression(),
@@ -39531,7 +39780,7 @@ impl StaticHookAliasCollector<'_> {
         self.descriptor_defined_properties
             .iter()
             .all(|defined| !defined.overlaps(&property))
-            .then_some(property)
+            .then_some((property, raw_callee))
     }
 
     fn constructor_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
@@ -40575,27 +40824,29 @@ impl StaticHookAliasCollector<'_> {
                         .is_none()
                     && (!generator
                         || matches!(timing, LocalAliasInvocationTiming::GeneratorAdvance(_)));
-                let mut aliases = self
-                    .deferred_callable_aliases
+                let mut operations = self
+                    .deferred_callable_operations
                     .get(&span)
                     .cloned()
                     .unwrap_or_default();
                 if let LocalAliasInvocationTiming::GeneratorAdvance(segment) = timing {
-                    aliases.retain(|alias| alias.generator_segment == Some(segment));
+                    operations.retain(|operation| operation.generator_segment == Some(segment));
                 }
                 let ambiguous_targets = self
                     .deferred_callable_ambiguous_targets
                     .get(&span)
                     .cloned()
                     .unwrap_or_default();
-                if aliases.is_empty() && ambiguous_targets.is_empty() {
+                if operations.is_empty() && ambiguous_targets.is_empty() {
                     continue;
                 }
                 if generator && timing == LocalAliasInvocationTiming::DeferredGenerator {
                     self.deferred_generator_alias_effects.extend(
-                        aliases
+                        operations
                             .iter()
-                            .map(|alias| (instance_target.clone(), span, alias.target.clone()))
+                            .map(|operation| {
+                                (instance_target.clone(), span, operation.target.clone())
+                            })
                             .chain(
                                 ambiguous_targets
                                     .iter()
@@ -40606,9 +40857,11 @@ impl StaticHookAliasCollector<'_> {
                 }
                 if !precise {
                     self.imprecisely_invoked_alias_effects.extend(
-                        aliases
+                        operations
                             .iter()
-                            .map(|alias| (instance_target.clone(), span, alias.target.clone()))
+                            .map(|operation| {
+                                (instance_target.clone(), span, operation.target.clone())
+                            })
                             .chain(
                                 ambiguous_targets
                                     .iter()
@@ -40630,9 +40883,8 @@ impl StaticHookAliasCollector<'_> {
                         })
                         .collect()
                 };
-                for alias in aliases {
-                    let target = alias.target;
-                    let source = alias.source;
+                for operation in operations {
+                    let target = operation.target;
                     let effect = (instance_target.clone(), span, target.clone());
                     let targets = if target.properties.is_empty() && !target.element_wildcard {
                         BTreeSet::from([target])
@@ -40644,13 +40896,6 @@ impl StaticHookAliasCollector<'_> {
                         )
                         .unwrap_or_else(|| BTreeSet::from([target]))
                     };
-                    let sources = self
-                        .mapped_returned_callable_capture_paths(
-                            &source,
-                            LocalParameterInvalidationKind::Member,
-                            &mappers,
-                        )
-                        .unwrap_or_else(|| BTreeSet::from([source]));
                     if !self.alias_effect_targets_are_materializable(
                         &targets,
                         invocation.function_depth,
@@ -40658,6 +40903,25 @@ impl StaticHookAliasCollector<'_> {
                         self.imprecisely_invoked_alias_effects.insert(effect);
                         continue;
                     }
+                    let DeferredCallableOperationKind::Alias(source) = &operation.kind else {
+                        let applied = targets.len() == 1
+                            && targets.into_iter().all(|target| {
+                                self.apply_deferred_callable_operation(&target, &operation.kind)
+                            });
+                        if applied {
+                            self.precisely_invoked_alias_effects.insert(effect);
+                        } else {
+                            self.imprecisely_invoked_alias_effects.insert(effect);
+                        }
+                        continue;
+                    };
+                    let sources = self
+                        .mapped_returned_callable_capture_paths(
+                            source,
+                            LocalParameterInvalidationKind::Member,
+                            &mappers,
+                        )
+                        .unwrap_or_else(|| BTreeSet::from([source.clone()]));
                     let ambiguous = targets.len() != 1 || sources.len() != 1;
                     let mut applied = false;
                     for target in targets {
@@ -40669,6 +40933,7 @@ impl StaticHookAliasCollector<'_> {
                             applied = true;
                             continue;
                         }
+                        self.record_local_own_property_assignment(&target);
                         for source in &sources {
                             let source = resolve_static_alias_path(&self.aliases, source);
                             self.insert_alias(target.clone(), source);
@@ -40732,6 +40997,76 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
+    fn apply_deferred_callable_operation(
+        &mut self,
+        raw_target: &StaticAliasPath,
+        operation: &DeferredCallableOperationKind,
+    ) -> bool {
+        match operation {
+            DeferredCallableOperationKind::Alias(_) => false,
+            DeferredCallableOperationKind::DeleteOwnProperty => {
+                self.apply_deferred_own_property_deletion(raw_target)
+            }
+            DeferredCallableOperationKind::ReflectDeleteOwnProperty { callee } => {
+                let builtin = StaticAliasPath::unresolved_global("Reflect".to_string())
+                    .with_property("deleteProperty".to_string());
+                if resolve_static_alias_path(&self.aliases, callee) != builtin
+                    || !self.path_is_currently_intact(callee)
+                    || !self.path_is_currently_intact(&builtin)
+                {
+                    return false;
+                }
+                self.apply_deferred_own_property_deletion(raw_target)
+            }
+            DeferredCallableOperationKind::ArrayPop => {
+                let target = resolve_static_alias_path(&self.aliases, raw_target);
+                if !self.known_array_path(&target)
+                    || !self.path_is_currently_intact(&target)
+                    || !self.array_mutation_method_is_intact(&target, "pop")
+                {
+                    return false;
+                }
+                let Some(length) = self.known_array_length(&target) else {
+                    return false;
+                };
+                let new_length = length.saturating_sub(1);
+                if length > 0 {
+                    self.remove_local_own_property(
+                        &target.clone().with_property(new_length.to_string()),
+                    );
+                }
+                self.array_lengths.insert(target, new_length);
+                true
+            }
+        }
+    }
+
+    fn apply_deferred_own_property_deletion(&mut self, raw_target: &StaticAliasPath) -> bool {
+        let target = resolve_static_alias_slot_path(&self.aliases, raw_target);
+        if target.element_wildcard || target.properties.is_empty() {
+            return false;
+        }
+        let mut owner = target.clone();
+        let Some(property) = owner.properties.pop() else {
+            return false;
+        };
+        owner.element_wildcard = false;
+        let Some((owner, properties)) = self.tracked_structured_own_properties(&owner) else {
+            return false;
+        };
+        if !properties.contains(&property) {
+            return true;
+        }
+        let target = owner.clone().with_property(property.clone());
+        self.descriptor_defined_properties.remove(&target);
+        self.enumerable_descriptor_properties.remove(&target);
+        self.clear_overlapping_aliases(&target);
+        if let Some(properties) = self.structured_own_properties.get_mut(&owner) {
+            properties.remove(&property);
+        }
+        true
+    }
+
     fn precisely_activated_alias_effect(
         &self,
         effect: &LocalCallableAliasEffect,
@@ -40744,7 +41079,7 @@ impl StaticHookAliasCollector<'_> {
             && !escaped_instances.contains(instance)
     }
 
-    fn activate_deferred_callable_aliases(
+    fn activate_deferred_callable_operations(
         &mut self,
         instances: &BTreeMap<(StaticAliasPath, (u32, u32)), bool>,
     ) {
@@ -40757,14 +41092,13 @@ impl StaticHookAliasCollector<'_> {
             let instance = (instance_target.clone(), *span);
             let creators =
                 self.returned_callable_effect_creators(instance_target, *span, *historical);
-            let aliases = self
-                .deferred_callable_aliases
+            let operations = self
+                .deferred_callable_operations
                 .get(span)
                 .cloned()
                 .unwrap_or_default();
-            for alias in aliases {
-                let target = alias.target;
-                let source = alias.source;
+            for operation in operations {
+                let target = operation.target;
                 let effect = (instance_target.clone(), *span, target.clone());
                 if self.precisely_activated_alias_effect(&effect, &instance, &escaped_instances) {
                     continue;
@@ -40779,14 +41113,24 @@ impl StaticHookAliasCollector<'_> {
                     )
                     .unwrap_or_else(|| BTreeSet::from([target]))
                 };
-                let sources = self
-                    .mapped_returned_callable_capture_paths(
-                        &source,
-                        LocalParameterInvalidationKind::Member,
-                        &creators,
-                    )
-                    .unwrap_or_else(|| BTreeSet::from([source]));
+                let sources = match operation.kind {
+                    DeferredCallableOperationKind::Alias(source) => Some(
+                        self.mapped_returned_callable_capture_paths(
+                            &source,
+                            LocalParameterInvalidationKind::Member,
+                            &creators,
+                        )
+                        .unwrap_or_else(|| BTreeSet::from([source])),
+                    ),
+                    DeferredCallableOperationKind::DeleteOwnProperty
+                    | DeferredCallableOperationKind::ReflectDeleteOwnProperty { .. }
+                    | DeferredCallableOperationKind::ArrayPop => None,
+                };
                 for target in targets {
+                    let Some(sources) = &sources else {
+                        self.ambiguous_alias_targets.insert(target);
+                        continue;
+                    };
                     if sources.is_empty() {
                         self.ambiguous_alias_targets.insert(target);
                         continue;
@@ -40883,7 +41227,7 @@ impl StaticHookAliasCollector<'_> {
             }
             self.active_returned_callable_creator_owners
                 .clone_from(&creator_owners);
-            self.activate_deferred_callable_aliases(&instances);
+            self.activate_deferred_callable_operations(&instances);
             if instances.len() == previous_len
                 && creator_owners.values().map(BTreeSet::len).sum::<usize>() == previous_owner_len
             {
@@ -42343,7 +42687,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
-            let alias_snapshot = (!property.r#static).then(|| self.deferred_class_alias_snapshot());
+            let state_snapshot = (!property.r#static).then(|| self.deferred_class_state_snapshot());
             if !property.r#static
                 && let Some(class_span) = self.current_class_spans.last().copied()
             {
@@ -42366,8 +42710,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
             self.class_effect_contexts.pop();
-            if let Some(snapshot) = alias_snapshot {
-                self.restore_deferred_class_aliases(snapshot);
+            if let Some(snapshot) = state_snapshot {
+                self.restore_deferred_class_state(snapshot);
             }
         }
         self.leave_node(kind);
@@ -42383,7 +42727,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
-            let alias_snapshot = (!property.r#static).then(|| self.deferred_class_alias_snapshot());
+            let state_snapshot = (!property.r#static).then(|| self.deferred_class_state_snapshot());
             if !property.r#static
                 && let Some(class_span) = self.current_class_spans.last().copied()
             {
@@ -42405,8 +42749,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_expression(value);
             self.dynamic_this_roots.pop();
             self.class_effect_contexts.pop();
-            if let Some(snapshot) = alias_snapshot {
-                self.restore_deferred_class_aliases(snapshot);
+            if let Some(snapshot) = state_snapshot {
+                self.restore_deferred_class_state(snapshot);
             }
         }
         self.leave_node(kind);
@@ -43543,6 +43887,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         {
             self.collect_assignment_target_initializer(&assignment.left, &source);
         }
+        if assignment.operator == OxcAssignmentOperator::Assign
+            && !accessor_write
+            && !conditional
+            && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
+            && (deferred_class_effect.is_some()
+                || self.deferred_callable_alias_capture_span(&path).is_none())
+        {
+            self.record_local_own_property_assignment(&path);
+        }
     }
 
     fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
@@ -43575,6 +43928,20 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     self.control_depth > *baseline
                 });
             if !conditional && let Some(path) = self.alias_source_path(&expression.argument) {
+                if let Some(span) = self
+                    .class_effect_contexts
+                    .last()
+                    .copied()
+                    .flatten()
+                    .map(|context| context.span)
+                    .filter(|span| self.deferred_callable_alias_capture_span(&path) == Some(*span))
+                {
+                    self.record_deferred_callable_operation(
+                        span,
+                        path.clone(),
+                        DeferredCallableOperationKind::DeleteOwnProperty,
+                    );
+                }
                 self.remove_local_own_property(&path);
             }
             self.invalidate_place(planned_expression_place(
@@ -43591,6 +43958,22 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         self.record_local_json_replacer_array_mutation(call);
         let local_array_mutation = self.prepare_local_array_mutation(call);
+        let deferred_array_pop = if let Some(plan) = &local_array_mutation
+            && plan.method == "pop"
+            && let Some(context) = self.class_effect_contexts.last().copied().flatten()
+            && self.deferred_callable_alias_capture_span(&plan.raw_source) == Some(context.span)
+        {
+            Some((context.span, plan.raw_source.clone()))
+        } else {
+            None
+        };
+        if let Some((span, target)) = deferred_array_pop {
+            self.record_deferred_callable_operation(
+                span,
+                target,
+                DeferredCallableOperationKind::ArrayPop,
+            );
+        }
         self.record_local_object_assign(call);
         let _ = self.record_local_object_value_enumeration(call);
         let local_object_from_entries = self.record_local_object_from_entries_result(call);
@@ -43638,7 +44021,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 self.prepare_local_property_descriptor(descriptor, property);
             }
         }
-        if unconditional && let Some(property) = self.local_reflect_delete_property(call) {
+        if unconditional && let Some((property, callee)) = self.local_reflect_delete_property(call)
+        {
+            if let Some(context) = self.class_effect_contexts.last().copied().flatten()
+                && self.deferred_callable_alias_capture_span(&property) == Some(context.span)
+            {
+                self.record_deferred_callable_operation(
+                    context.span,
+                    property.clone(),
+                    DeferredCallableOperationKind::ReflectDeleteOwnProperty { callee },
+                );
+            }
             self.remove_local_own_property(&property);
         }
         let synchronous_callback_effect_targets = self.synchronous_callback_effect_targets(call);

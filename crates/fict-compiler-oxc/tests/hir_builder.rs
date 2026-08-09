@@ -4925,8 +4925,98 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "constructed instance field removes an array element",
+            "const items = [local]; class Box { value = items.pop(); } new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "constructed instance field retains earlier array elements",
+            "const items = [local, {}]; class Box { value = items.pop(); } new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "instance field array mutation reads a rebound receiver",
+            "let items = [local]; class Box { value = items.pop(); } items = []; new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
+            "instance field array mutation rechecks the builtin method",
+            "const items = [local]; class Box { value = items.pop(); } Array.prototype.pop = () => {}; new Box(); holder.item = items[0];",
+            true,
+        ),
+        (
+            "each construction repeats the array mutation",
+            "const items = [local, {}]; class Box { value = items.pop(); } new Box(); new Box(); holder.item = items[0];",
+            false,
+        ),
+        (
             "unconstructed instance field preserves an own property",
             "const container = { item: local }; class Box { value = delete container.item; } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "unconstructed instance field preserves an own data descriptor",
+            "const container = {}; Object.defineProperty(container, 'item', { value: local }); class Box { value = delete container.item; } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "unconstructed instance field preserves an own method",
+            "const container = { expose() { holder.item = local; } }; class Box { value = delete container.expose; } void Box; container.expose();",
+            true,
+        ),
+        (
+            "unconstructed instance field preserves an own setter",
+            "const container = { set item(value) { holder.item = value; } }; class Box { value = delete container.item; } void Box; container.item = local;",
+            true,
+        ),
+        (
+            "unconstructed instance field preserves a reflected own property",
+            "const container = { item: local }; class Box { value = Reflect.deleteProperty(container, 'item'); } void Box; holder.item = container.item;",
+            true,
+        ),
+        (
+            "unconstructed instance field preserves an inherited method",
+            "const prototype = { expose() { holder.item = local; } }; const container = Object.create(prototype); class Box { value = delete container.expose; } void Box; container.expose();",
+            true,
+        ),
+        (
+            "constructed instance field deletes an own property",
+            "const container = { item: local }; class Box { value = delete container.item; } new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "constructed instance field preserves an inherited method",
+            "const prototype = { expose() { holder.item = local; } }; const container = Object.create(prototype); class Box { value = delete container.expose; } new Box(); container.expose();",
+            true,
+        ),
+        (
+            "constructed instance field reflects an own property deletion",
+            "const container = { item: local }; class Box { value = Reflect.deleteProperty(container, 'item'); } new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "reflected instance field deletion rechecks the builtin method",
+            "const container = { item: local }; class Box { value = Reflect.deleteProperty(container, 'item'); } Reflect.deleteProperty = () => false; new Box(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "reflected instance field deletion reads a rebound callee",
+            "const container = { item: local }; let remove = Reflect.deleteProperty; class Box { value = remove(container, 'item'); } remove = () => false; new Box(); holder.item = container.item;",
+            true,
+        ),
+        (
+            "each construction repeats the own property deletion",
+            "const container = { item: local }; class Box { value = delete container.item; } new Box(); container.item = local; new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "later field deletion removes an earlier field alias",
+            "const container = { item: {} }; class Box { first = (container.item = local); second = delete container.item; } new Box(); holder.item = container.item;",
+            false,
+        ),
+        (
+            "later field alias replaces an earlier field deletion",
+            "const container = { item: local }; class Box { first = delete container.item; second = (container.item = local); } new Box(); holder.item = container.item;",
             true,
         ),
         (
