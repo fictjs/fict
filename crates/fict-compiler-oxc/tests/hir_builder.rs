@@ -2738,6 +2738,27 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "parameterized sliced external array element callback slot",
+            "const makeCopy = items => items.slice(); const copy = makeCopy(holder.items); const run = () => count;",
+            "copy[0].run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized overridden array copy method callback slot",
+            "const items = [{}]; items.slice = holder.copy; const makeCopy = source => source.slice(); const copy = makeCopy(items); const run = () => count;",
+            "copy.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "parameterized reversed external array element callback slot",
+            "const items = [{}, holder.item]; const reverse = source => source.reverse(); reverse(items); const run = () => count;",
+            "items[0].run = run;",
+            "items",
+            "FICT-R005",
+        ),
+        (
             "chained sliced external array element callback slot",
             "const items = [holder.item]; const first = items.slice(); const copy = first.slice(); const run = () => count;",
             "copy[0].run = run;",
@@ -4077,7 +4098,12 @@ fn wrapped_local_array_results_preserve_local_elements() {
             const makeOf = () => Array.of(local);
             const makeNested = () => Array.of(nested);
             const makeConditional = (flag) => flag ? items.slice() : Array.of(local);
+            const copyParameter = source => source.slice();
+            function copyDeclared(source) { return source.slice(); }
+            const copyDestructured = ({ source }) => source.slice();
+            const copyBound = copyParameter.bind(null, items);
             const mutate = () => items.reverse();
+            const mutateParameter = source => source.reverse();
             const otherItems = [nested];
             const mutateConditional = (flag) => flag ? items.reverse() : otherItems.reverse();
             const sliced = makeSlice();
@@ -4088,7 +4114,12 @@ fn wrapped_local_array_results_preserve_local_elements() {
             const from = makeFrom();
             const of = makeOf();
             const conditional = makeConditional(true);
+            const parameterized = copyParameter(items);
+            const declared = copyDeclared(items);
+            const destructured = copyDestructured({ source: items });
+            const bound = copyBound();
             const mutated = mutate();
+            const parameterMutated = mutateParameter(items);
             const conditionallyMutated = mutateConditional(true);
             sliced[0].run = run;
             concatenated[1].run = run;
@@ -4098,11 +4129,18 @@ fn wrapped_local_array_results_preserve_local_elements() {
             from[0].run = run;
             of[0].run = run;
             conditional[0].run = run;
+            parameterized[0].run = run;
+            declared[0].run = run;
+            destructured[0].run = run;
+            bound[0].run = run;
             makeNested()[0].child.run = run;
             mutated[0].run = run;
+            parameterMutated[0].run = run;
             conditionallyMutated[0].run = run;
             makeSlice()[0].run = run;
             makeConditional(false)[0].run = run;
+            copyParameter(items)[0].run = run;
+            copyParameter([local])[0].run = run;
             mutateConditional(false)[0].child.run = run;
             return count;
         }
