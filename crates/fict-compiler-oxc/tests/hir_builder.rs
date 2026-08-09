@@ -4627,6 +4627,56 @@ fn class_field_external_storage_effects_follow_construction_timing() {
 }
 
 #[test]
+fn unconstructed_class_initializers_do_not_emit_escape_diagnostics() {
+    for (name, setup) in [
+        (
+            "class declaration",
+            "class Box { value = (holder.item = local); }",
+        ),
+        (
+            "class expression",
+            "const Box = class { value = (holder.item = local); };",
+        ),
+        (
+            "auto-accessor",
+            "class Box { accessor value = (holder.item = local); }",
+        ),
+        (
+            "storage helper",
+            "const expose = value => { holder.item = value; }; class Box { value = expose(local); }",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_some(), "{name}: {:?}", output.diagnostics);
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")),
+            "an unconstructed class initializer must remain unexecuted for {name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn local_callable_alias_effects_follow_invocation_timing() {
     for (name, setup, expected_escape) in [
         (

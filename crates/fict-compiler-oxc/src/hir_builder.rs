@@ -8728,6 +8728,7 @@ struct StaticHookAliases {
     assignment_target_aliases: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
     assignment_attached_parameter_roots: BTreeMap<(u32, u32), BTreeSet<SymbolId>>,
     unexecuted_expression_spans: BTreeSet<(u32, u32)>,
+    unexecuted_class_initializer_spans: BTreeSet<(u32, u32)>,
     snapshotted_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
     exclusive_json_replacer_arrays: BTreeSet<SymbolId>,
@@ -21095,6 +21096,7 @@ struct StaticHookAliasCollector<'semantic> {
     current_callable_spans: Vec<(u32, u32)>,
     class_constructor_effect_spans: BTreeMap<(u32, u32), (u32, u32)>,
     returned_class_blueprint_targets: BTreeMap<(u32, u32), StaticAliasPath>,
+    class_instance_initializer_spans: BTreeMap<(u32, u32), BTreeSet<(u32, u32)>>,
     pending_returned_class_materializations: PendingReturnedClassMaterializationMap,
     returned_structured_value_spans: BTreeSet<(u32, u32)>,
     returned_structured_blueprint_targets: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -22100,6 +22102,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             current_callable_spans: Vec::new(),
             class_constructor_effect_spans: BTreeMap::new(),
             returned_class_blueprint_targets: BTreeMap::new(),
+            class_instance_initializer_spans: BTreeMap::new(),
             pending_returned_class_materializations: BTreeMap::new(),
             returned_structured_value_spans: BTreeSet::new(),
             returned_structured_blueprint_targets: BTreeMap::new(),
@@ -40491,6 +40494,19 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn unexecuted_class_initializer_spans(&self) -> BTreeSet<(u32, u32)> {
+        let active_class_spans = self
+            .active_returned_callable_instances
+            .keys()
+            .map(|(_, span)| *span)
+            .collect::<BTreeSet<_>>();
+        self.class_instance_initializer_spans
+            .iter()
+            .filter(|(class_span, _)| !active_class_spans.contains(class_span))
+            .flat_map(|(_, initializer_spans)| initializer_spans.iter().copied())
+            .collect()
+    }
+
     fn invocation_dynamic_receivers(
         &self,
         invocation: &LocalInvocationFact,
@@ -41103,6 +41119,7 @@ impl StaticHookAliasCollector<'_> {
 
     fn finish(mut self, mutable_symbols: &BTreeSet<SymbolId>) -> StaticHookAliases {
         self.activate_invoked_returned_callable_effects();
+        let unexecuted_class_initializer_spans = self.unexecuted_class_initializer_spans();
         self.propagate_local_external_storage_effects();
         for path in self.deferred_exposed_paths.clone() {
             for path in resolve_historical_exposed_paths(
@@ -41158,6 +41175,7 @@ impl StaticHookAliasCollector<'_> {
             assignment_target_aliases: BTreeMap::new(),
             assignment_attached_parameter_roots: BTreeMap::new(),
             unexecuted_expression_spans: BTreeSet::new(),
+            unexecuted_class_initializer_spans: BTreeSet::new(),
             snapshotted_callable_effect_spans: BTreeMap::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
             exclusive_json_replacer_arrays: BTreeSet::new(),
@@ -41261,6 +41279,7 @@ impl StaticHookAliasCollector<'_> {
             assignment_target_aliases,
             assignment_attached_parameter_roots: self.assignment_attached_parameter_roots,
             unexecuted_expression_spans: self.unexecuted_expression_spans,
+            unexecuted_class_initializer_spans,
             snapshotted_callable_effect_spans,
             non_escaping_object_from_entries_calls: self.non_escaping_object_from_entries_calls,
             exclusive_json_replacer_arrays: BTreeSet::new(),
@@ -41821,6 +41840,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
+            if !property.r#static
+                && let Some(class_span) = self.current_class_spans.last().copied()
+            {
+                self.class_instance_initializer_spans
+                    .entry(class_span)
+                    .or_default()
+                    .insert((value.span().start, value.span().end));
+            }
             self.class_effect_contexts.push(
                 (!property.r#static)
                     .then(|| self.current_class_spans.last().copied())
@@ -41849,6 +41876,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(value) = &property.value {
+            if !property.r#static
+                && let Some(class_span) = self.current_class_spans.last().copied()
+            {
+                self.class_instance_initializer_spans
+                    .entry(class_span)
+                    .or_default()
+                    .insert((value.span().start, value.span().end));
+            }
             self.class_effect_contexts.push(
                 (!property.r#static)
                     .then(|| self.current_class_spans.last().copied())
@@ -45433,16 +45468,22 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
             _ => false,
         }
     }
+
+    fn expression_is_unexecuted(&self, expression: &Expression<'_>) -> bool {
+        let span = expression.span();
+        self.callback_aliases
+            .unexecuted_expression_spans
+            .contains(&(span.start, span.end))
+            || self
+                .callback_aliases
+                .unexecuted_class_initializer_spans
+                .contains(&(span.start, span.end))
+    }
 }
 
 impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
     fn visit_expression(&mut self, expression: &Expression<'a>) {
-        let span = expression.span();
-        if self
-            .callback_aliases
-            .unexecuted_expression_spans
-            .contains(&(span.start, span.end))
-        {
+        if self.expression_is_unexecuted(expression) {
             return;
         }
         walk_expression(self, expression);
@@ -45460,7 +45501,9 @@ impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
                 | ClassElement::MethodDefinition(_)
                 | ClassElement::TSIndexSignature(_) => None,
             };
-            if let Some(initializer) = initializer {
+            if let Some(initializer) = initializer
+                && !self.expression_is_unexecuted(initializer)
+            {
                 self.analyze_class_retained_expression(initializer);
             }
         }
