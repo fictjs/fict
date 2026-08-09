@@ -39527,6 +39527,40 @@ impl StaticHookAliasCollector<'_> {
         instances
     }
 
+    fn escaped_callable_effect_instances(&self) -> BTreeSet<(StaticAliasPath, (u32, u32), bool)> {
+        let mut instances = BTreeSet::new();
+        for target in &self.escaped_callable_effect_targets {
+            let historical = self.path_requires_historical_aliases(target, self.function_depth);
+            let targets = if historical {
+                resolve_historical_alias_paths(&self.alias_history, target)
+            } else {
+                BTreeSet::from([resolve_static_alias_path(&self.aliases, target)])
+            };
+            for target in targets {
+                let spans = if historical {
+                    self.local_callable_effect_span_history
+                        .get(&target)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .copied()
+                        .collect::<BTreeSet<_>>()
+                } else {
+                    self.local_callable_effect_spans
+                        .get(&target)
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                instances.extend(
+                    spans
+                        .into_iter()
+                        .map(|span| (target.clone(), span, historical)),
+                );
+            }
+        }
+        instances
+    }
+
     fn returned_callable_effect_creators(
         &self,
         target: &StaticAliasPath,
@@ -40118,32 +40152,8 @@ impl StaticHookAliasCollector<'_> {
             (StaticAliasPath, (u32, u32)),
             BTreeSet<ActiveReturnedCallableInstance>,
         >::new();
-        for target in &self.escaped_callable_effect_targets {
-            let historical = self.path_requires_historical_aliases(target, self.function_depth);
-            let targets = if historical {
-                resolve_historical_alias_paths(&self.alias_history, target)
-            } else {
-                BTreeSet::from([resolve_static_alias_path(&self.aliases, target)])
-            };
-            for target in targets {
-                let spans = if historical {
-                    self.local_callable_effect_span_history
-                        .get(&target)
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .copied()
-                        .collect::<BTreeSet<_>>()
-                } else {
-                    self.local_callable_effect_spans
-                        .get(&target)
-                        .cloned()
-                        .unwrap_or_default()
-                };
-                for span in spans {
-                    instances.insert((target.clone(), span), historical);
-                }
-            }
+        for (target, span, historical) in self.escaped_callable_effect_instances() {
+            instances.insert((target, span), historical);
         }
         for _ in 0..=invocations.len() {
             let previous_len = instances.len();
@@ -40711,6 +40721,24 @@ impl StaticHookAliasCollector<'_> {
             }
             if effects.values().map(BTreeSet::len).sum::<usize>() == previous_len {
                 break;
+            }
+        }
+        for (target, span, historical) in self.escaped_callable_effect_instances() {
+            let creators = self.returned_callable_effect_creators(&target, span, historical);
+            let Some(callee_effects) = effects.get(&span).cloned() else {
+                continue;
+            };
+            for effect in callee_effects {
+                let captures = self
+                    .mapped_returned_callable_capture_paths(
+                        &effect,
+                        LocalParameterInvalidationKind::Exposure,
+                        &creators,
+                    )
+                    .unwrap_or_else(|| BTreeSet::from([effect]));
+                for capture in captures {
+                    self.record_externally_stored_path(capture);
+                }
             }
         }
     }
@@ -42522,23 +42550,40 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .as_ref()
                 .and_then(static_alias_invalidation_path)
                 .is_some_and(|path| self.alias_path_targets_external_storage(&path));
+        let deferred_class_effect = self
+            .class_effect_contexts
+            .last()
+            .copied()
+            .flatten()
+            .map(|context| context.span);
         if stores_externally {
-            if self.function_depth <= 1 {
+            if self.function_depth <= 1 && deferred_class_effect.is_none() {
                 self.record_externally_stored_value(&assignment.right);
-            } else {
-                // Nested callable bodies bind captures and parameters when invoked. Reuse the
-                // invocation effect machinery so an uncalled helper (or one called only after a
-                // reassignment) cannot taint an older local value.
                 let mut exposed = BTreeSet::new();
                 self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
-                if let Some(span) = self.current_callable_effect_span() {
+                for path in exposed {
+                    let resolved = resolve_static_alias_path(&self.aliases, &path);
+                    self.escaped_callable_effect_targets.insert(path);
+                    self.escaped_callable_effect_targets.insert(resolved);
+                }
+            } else {
+                // Nested callable bodies bind captures and parameters when invoked. Reuse the
+                // invocation effect machinery for those bodies and delayed class initializers so
+                // unexecuted code cannot taint an older local value.
+                let mut exposed = BTreeSet::new();
+                self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
+                if let Some(span) =
+                    deferred_class_effect.or_else(|| self.current_callable_effect_span())
+                {
                     self.local_callable_external_storage_effects
                         .entry(span)
                         .or_default()
                         .extend(exposed.iter().cloned());
                 }
-                for path in self.prepare_exposed_paths(exposed) {
-                    self.invalidate_exposed_path(path);
+                if deferred_class_effect.is_none() {
+                    for path in self.prepare_exposed_paths(exposed) {
+                        self.invalidate_exposed_path(path);
+                    }
                 }
             }
         }
@@ -42657,6 +42702,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.collect_assignment_target_initializer(&assignment.left, &source);
         } else if assignment.operator == OxcAssignmentOperator::Assign
             && !accessor_write
+            && !(stores_externally && deferred_class_effect.is_some())
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
         {
             self.record_unreferenced_callable_initializer(&path, &assignment.right);
@@ -42688,6 +42734,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         if assignment.operator == OxcAssignmentOperator::Assign
             && !accessor_write
+            && !(stores_externally && deferred_class_effect.is_some())
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
         {
             self.collect_initializer(path.clone(), &assignment.right);

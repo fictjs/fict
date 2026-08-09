@@ -4520,6 +4520,113 @@ fn fresh_array_mapper_results_preserve_local_storage() {
 }
 
 #[test]
+fn class_field_external_storage_effects_follow_construction_timing() {
+    for (name, setup, expected_escape) in [
+        (
+            "unconstructed class declaration",
+            "class Box { value = (holder.item = local); }",
+            false,
+        ),
+        (
+            "unconstructed class expression",
+            "const Box = class { value = (holder.item = local); };",
+            false,
+        ),
+        (
+            "unconstructed auto-accessor",
+            "class Box { accessor value = (holder.item = local); }",
+            false,
+        ),
+        (
+            "constructed class declaration",
+            "class Box { value = (holder.item = local); } new Box();",
+            true,
+        ),
+        (
+            "constructed class expression",
+            "const Box = class { value = (holder.item = local); }; new Box();",
+            true,
+        ),
+        (
+            "constructed auto-accessor",
+            "class Box { accessor value = (holder.item = local); } new Box();",
+            true,
+        ),
+        (
+            "static class field",
+            "class Box { static value = (holder.item = local); }",
+            true,
+        ),
+        (
+            "construction after capture rebind",
+            "let captured = local; class Box { value = (holder.item = captured); } captured = {}; new Box();",
+            false,
+        ),
+        (
+            "construction before capture rebind",
+            "let captured = local; class Box { value = (holder.item = captured); } new Box(); captured = {};",
+            true,
+        ),
+        (
+            "externally stored class",
+            "class Box { value = (holder.item = local); } holder.Box = Box;",
+            true,
+        ),
+        (
+            "unconstructed class calling storage helper",
+            "const expose = value => { holder.item = value; }; class Box { value = expose(local); }",
+            false,
+        ),
+        (
+            "constructed class calling storage helper",
+            "const expose = value => { holder.item = value; }; class Box { value = expose(local); } new Box();",
+            true,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let mut escape_codes = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "run"
+                    })
+            })
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        escape_codes.sort_unstable();
+        let expected = if expected_escape {
+            vec!["FICT-R002", "FICT-R005"]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            escape_codes, expected,
+            "class field storage timing mismatch for {name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn detached_and_one_way_external_storage_values_do_not_taint_sources() {
     let source = r#"
         import { $state } from 'fict';
