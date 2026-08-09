@@ -3333,6 +3333,27 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "fresh mapped object with external nested callback slot",
+            "const items = [{}]; const copy = items.map(() => ({ child: holder.item })); const run = () => count;",
+            "copy[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "named fresh mapped object with external nested callback slot",
+            "const items = [{}]; const make = () => ({ child: holder.item }); const copy = items.map(make); const run = () => count;",
+            "copy[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "wrapped fresh mapped object with external nested callback slot",
+            "const items = [{}]; const copy = items.map(() => Object({ child: holder.item })); const run = () => count;",
+            "copy[0].child.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "flat-mapped external array element callback slot",
             "const items = [holder.item]; const copy = items.flatMap(item => [item]); const run = () => count;",
             "copy[0].run = run;",
@@ -4454,6 +4475,46 @@ fn wrapped_local_array_results_preserve_local_elements() {
             )
         }),
         "wrapped fresh arrays must not make proven-local elements opaque: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn fresh_array_mapper_results_preserve_local_storage() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const run = () => count;
+            const items = [holder.item];
+            const makeObject = () => ({ child: {} });
+            const mapped = items.map(() => ({}));
+            const mappedNested = items.map(() => ({ child: {} }));
+            const mappedNamed = items.map(makeObject);
+            const mappedArray = items.map(() => [{ child: {} }]);
+            const flatMapped = items.flatMap(() => [{ child: {} }]);
+            const from = Array.from(items, () => ({ child: {} }));
+            mapped[0].run = run;
+            mappedNested[0].child.run = run;
+            mappedNamed[0].child.run = run;
+            mappedArray[0][0].child.run = run;
+            flatMapped[0].child.run = run;
+            from[0].child.run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")),
+        "fresh mapper results must remain local storage: {:?}",
         output.diagnostics
     );
 }

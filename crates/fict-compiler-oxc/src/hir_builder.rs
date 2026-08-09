@@ -31896,6 +31896,247 @@ impl StaticHookAliasCollector<'_> {
         self.array_lengths.insert(target.clone(), arguments.len());
     }
 
+    fn local_array_mapper_results(
+        &self,
+        mapper: &Expression<'_>,
+    ) -> Option<Vec<LocalCallableResult>> {
+        let lexical_receiver = self.dynamic_this_roots.last().and_then(Option::as_ref);
+        let results = if let Some(results) = self.callable_definition_results(
+            mapper,
+            lexical_receiver,
+            self.function_depth.saturating_add(1),
+        ) {
+            results
+        } else {
+            let raw = self.alias_source_path(mapper)?;
+            let resolved = resolve_static_alias_path(&self.aliases, &raw);
+            if self.path_requires_historical_aliases(&raw, self.function_depth) {
+                [raw, resolved]
+                    .into_iter()
+                    .flat_map(|path| {
+                        self.local_callable_result_history
+                            .get(&path)
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .cloned()
+                    })
+                    .collect()
+            } else {
+                self.local_callable_results
+                    .get(&resolved)
+                    .or_else(|| self.local_callable_results.get(&raw))?
+                    .clone()
+            }
+        };
+        Some(
+            self.resolve_local_callable_result_invocations(results, &mut BTreeSet::new(), None)
+                .0,
+        )
+    }
+
+    fn expression_is_deeply_local_literal(expression: &Expression<'_>) -> bool {
+        match expression.get_inner_expression() {
+            Expression::ObjectExpression(object) => object.properties.iter().all(|property| {
+                let OxcObjectPropertyKind::ObjectProperty(property) = property else {
+                    return false;
+                };
+                property.kind == PropertyKind::Init
+                    && !property.method
+                    && !property.computed
+                    && Self::expression_is_deeply_local_literal(&property.value)
+            }),
+            Expression::ArrayExpression(array) => {
+                array.elements.iter().all(|element| match element {
+                    ArrayExpressionElement::Elision(_) => true,
+                    ArrayExpressionElement::SpreadElement(_) => false,
+                    element => Self::expression_is_deeply_local_literal(element.to_expression()),
+                })
+            }
+            Expression::NullLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BigIntLiteral(_)
+            | Expression::StringLiteral(_)
+            | Expression::TemplateLiteral(_)
+            | Expression::RegExpLiteral(_)
+            | Expression::BinaryExpression(_)
+            | Expression::UnaryExpression(_)
+            | Expression::UpdateExpression(_) => true,
+            _ => false,
+        }
+    }
+
+    fn record_inline_array_mapper_result(
+        &mut self,
+        target: &StaticAliasPath,
+        mapper: &Expression<'_>,
+        flatten: bool,
+    ) -> bool {
+        let Expression::ArrowFunctionExpression(mapper) = mapper.get_inner_expression() else {
+            return false;
+        };
+        let Some(value) = mapper.get_expression() else {
+            return false;
+        };
+        if !Self::expression_is_deeply_local_literal(value) {
+            return false;
+        }
+        let source = target.clone().with_property(format!(
+            "<inline-array-mapper-result-{}-{}>",
+            mapper.span.start, mapper.span.end
+        ));
+        self.collect_initializer(source.clone(), value);
+        let sources =
+            if flatten && matches!(value.get_inner_expression(), Expression::ArrayExpression(_)) {
+                self.array_element_copy_sources(&source)
+            } else {
+                vec![source]
+            };
+        self.record_external_storage_array_element_copies(target.clone(), sources);
+        true
+    }
+
+    fn returned_structured_blueprint_is_deeply_local(&self, span: (u32, u32)) -> bool {
+        let Some(source) = self.returned_structured_blueprint_targets.get(&span) else {
+            return false;
+        };
+        !self
+            .open_structured_containers
+            .iter()
+            .any(|path| path.starts_with(source))
+            && !self
+                .ambiguous_alias_targets
+                .iter()
+                .any(|path| path.overlaps(source))
+            && !self
+                .local_getter_properties
+                .iter()
+                .any(|path| path.starts_with(source))
+            && !self
+                .dynamic_getter_properties
+                .keys()
+                .any(|path| path.starts_with(source))
+            && self.aliases.iter().all(|(target, _)| {
+                !target.starts_with(source)
+                    || resolve_static_alias_path(&self.aliases, target).starts_with(source)
+            })
+            && self
+                .external_storage_flow
+                .aliases
+                .iter()
+                .all(|(target, candidates)| {
+                    !target.starts_with(source)
+                        || candidates
+                            .iter()
+                            .all(|candidate| candidate.starts_with(source))
+                })
+            && self
+                .external_storage_flow
+                .attached_alias_roots
+                .keys()
+                .all(|target| !target.starts_with(source))
+            && self
+                .external_storage_flow
+                .shallow_copies
+                .iter()
+                .all(|(target, copies)| {
+                    !target.starts_with(source)
+                        || copies.iter().all(|copy| copy.source.starts_with(source))
+                })
+    }
+
+    fn local_callable_array_shape_is_deeply_local(&self, shape: &LocalCallableArrayResult) -> bool {
+        match shape {
+            LocalCallableArrayResult::Receiver(_) => false,
+            LocalCallableArrayResult::Fresh {
+                element_sources: Some(element_sources),
+                structured_elements,
+            } => {
+                element_sources.is_empty()
+                    && structured_elements.iter().all(|element| {
+                        self.returned_structured_blueprint_is_deeply_local(element.span)
+                    })
+            }
+            LocalCallableArrayResult::Fresh {
+                element_sources: None,
+                ..
+            } => false,
+        }
+    }
+
+    fn record_precise_array_mapper_results(
+        &mut self,
+        target: &StaticAliasPath,
+        mapper: &Expression<'_>,
+        flatten: bool,
+    ) -> bool {
+        if self.record_inline_array_mapper_result(target, mapper, flatten) {
+            return true;
+        }
+        let Some(results) = self.local_array_mapper_results(mapper) else {
+            return false;
+        };
+        if !results.iter().all(|result| match result {
+            LocalCallableResult::Structured { span, .. } => {
+                self.returned_structured_blueprint_is_deeply_local(*span)
+            }
+            LocalCallableResult::KnownLocalArray { shape } => {
+                self.local_callable_array_shape_is_deeply_local(shape)
+            }
+            LocalCallableResult::Direct { .. }
+            | LocalCallableResult::Bound { .. }
+            | LocalCallableResult::Reference(_)
+            | LocalCallableResult::Invocation(_)
+            | LocalCallableResult::KnownLocal
+            | LocalCallableResult::DeferredLocalArray { .. }
+            | LocalCallableResult::DeferredLocalArrayElement { .. }
+            | LocalCallableResult::Unknown => false,
+        }) {
+            return false;
+        }
+        let mut sources = Vec::new();
+        for (index, result) in results.into_iter().enumerate() {
+            match result {
+                LocalCallableResult::Structured {
+                    span,
+                    capture_invocations,
+                } => {
+                    let source = target
+                        .clone()
+                        .with_property(format!("<array-mapper-result-{index}>"));
+                    self.materialize_returned_structured_value(&source, span, &capture_invocations);
+                    sources.push(source);
+                }
+                LocalCallableResult::KnownLocalArray { shape } => {
+                    let source = target
+                        .clone()
+                        .with_property(format!("<array-mapper-array-result-{index}>"));
+                    self.materialize_local_callable_array_result(&source, shape);
+                    if flatten {
+                        sources.extend(self.array_element_copy_sources(&source));
+                    } else {
+                        sources.push(source);
+                    }
+                }
+                LocalCallableResult::Direct { .. }
+                | LocalCallableResult::Bound { .. }
+                | LocalCallableResult::Reference(_)
+                | LocalCallableResult::Invocation(_)
+                | LocalCallableResult::KnownLocal
+                | LocalCallableResult::DeferredLocalArray { .. }
+                | LocalCallableResult::DeferredLocalArrayElement { .. }
+                | LocalCallableResult::Unknown => {
+                    unreachable!("array mapper results were validated before materialization")
+                }
+            }
+        }
+        if !sources.is_empty() {
+            self.record_external_storage_array_element_copies(target.clone(), sources);
+        }
+        true
+    }
+
     fn record_static_array_result(
         &mut self,
         target: &StaticAliasPath,
@@ -31955,6 +32196,16 @@ impl StaticHookAliasCollector<'_> {
                 );
             if call.arguments.len() == 1 && iteration_is_intact {
                 self.record_array_container_source(target, &source, false);
+                if let Some(length) = self.known_array_length(&source) {
+                    self.array_lengths.insert(target.clone(), length);
+                }
+            } else if iteration_is_intact
+                && let Some(mapper) = call
+                    .arguments
+                    .get(1)
+                    .and_then(|argument| argument.as_expression())
+                && self.record_precise_array_mapper_results(target, mapper, false)
+            {
                 if let Some(length) = self.known_array_length(&source) {
                     self.array_lengths.insert(target.clone(), length);
                 }
@@ -32577,7 +32828,21 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             "map" | "flatMap" | "flat" => {
-                self.record_opaque_external_storage_array_elements(target.clone());
+                let precise_mapper = method != "flat"
+                    && call
+                        .arguments
+                        .first()
+                        .and_then(|argument| argument.as_expression())
+                        .is_some_and(|mapper| {
+                            self.record_precise_array_mapper_results(
+                                target,
+                                mapper,
+                                method == "flatMap",
+                            )
+                        });
+                if !precise_mapper {
+                    self.record_opaque_external_storage_array_elements(target.clone());
+                }
                 if method == "map"
                     && let Some(length) = source_length
                 {
