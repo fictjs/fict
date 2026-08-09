@@ -4895,6 +4895,106 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "computed instance field materializes its local value",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "computed instance field supports a computed read",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); holder.item = box[key];",
+            true,
+        ),
+        (
+            "computed instance field remains enumerable",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); const copy = { ...box }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "computed instance field spread snapshots its value",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); const copy = { ...box }; box.item = {}; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "computed instance field preserves a nested local value",
+            "const key = holder.key; class Box { [key] = { nested: local }; } const box = new Box(); holder.item = box.item.nested;",
+            true,
+        ),
+        (
+            "computed instance field follows construction-time capture values",
+            "const key = holder.key; let captured = local; class Box { [key] = captured; } captured = {}; const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "computed instance field snapshots an earlier construction",
+            "const key = holder.key; let captured = local; class Box { [key] = captured; } const box = new Box(); captured = {}; holder.item = box.item;",
+            true,
+        ),
+        (
+            "subclass inherits a computed instance field",
+            "const key = holder.key; class Parent { [key] = local; } class Box extends Parent {} const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "subclass field shadows an inherited computed instance field",
+            "const key = holder.key; class Parent { [key] = local; } class Box extends Parent { item = {}; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later known instance field shadows a computed instance field",
+            "const key = holder.key; class Box { [key] = local; item = {}; } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "later computed instance field may shadow a known instance field",
+            "const key = holder.key; class Box { item = {}; [key] = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "multiple computed instance fields preserve possible values",
+            "const first = holder.first; const second = holder.second; class Box { [first] = {}; [second] = local; } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "known assignment replaces a computed instance field value",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); box.item = {}; holder.item = box.item;",
+            false,
+        ),
+        (
+            "known deletion removes a possible computed instance field value",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); delete box.item; holder.item = box.item;",
+            false,
+        ),
+        (
+            "conditional assignment preserves a computed instance field candidate",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); if (holder.flag) box.item = {}; holder.item = box.item;",
+            true,
+        ),
+        (
+            "matching computed assignment replaces a computed instance field value",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); box[key] = {}; holder.item = box[key];",
+            false,
+        ),
+        (
+            "computed instance callable field remains invokable",
+            "const key = holder.key; class Box { [key] = () => { holder.item = local; }; } const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "computed instance field preserves a possible prototype method",
+            "const key = holder.key; class Box { item() { holder.item = local; } [key] = () => {}; } const box = new Box(); box.item();",
+            true,
+        ),
+        (
+            "detached class preserves a computed instance field",
+            "const key = holder.key; let Box = class { [key] = local; }; const Alias = Box; Box = class {}; const box = new Alias(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "returned class maps a computed instance field value",
+            "const key = holder.key; function makeBox(value) { return class { [key] = value; }; } const Box = makeBox(local); const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
             "unconstructed auto-accessor preserves an earlier alias",
             "const container = { item: local }; const fresh = {}; class Box { accessor value = (container.item = fresh); } void Box; holder.item = container.item;",
             true,

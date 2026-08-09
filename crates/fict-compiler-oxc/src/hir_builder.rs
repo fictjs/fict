@@ -8728,6 +8728,7 @@ fn is_non_enumerable_internal_class_property(property: &str) -> bool {
         property,
         DYNAMIC_METHOD_PROPERTY | DYNAMIC_AUTO_ACCESSOR_PROPERTY
     ) || property.starts_with("<computed-static-field-value@")
+        || property.starts_with("<computed-instance-field-value@")
         || property.starts_with("<computed-instance-method-value@")
         || property.starts_with("<computed-static-method-value@")
         || property.starts_with("<computed-static-auto-accessor@")
@@ -21882,6 +21883,7 @@ impl LocalGetterResultDefinedness {
 #[derive(Clone)]
 struct LocalClassInstanceCallable {
     initializer: Option<LocalClassInstanceInitializer>,
+    dynamic_property: Option<LocalClassInstanceDynamicProperty>,
     value: Option<DeferredClassInstanceValue>,
     source: Option<StaticAliasPath>,
     parameters: Vec<LocalCallableParameter>,
@@ -21893,6 +21895,11 @@ struct LocalClassInstanceCallable {
     bound_historical: bool,
     exposures: BTreeSet<StaticAliasPath>,
     effect_instances: Vec<LocalCallableEffectResult>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalClassInstanceDynamicProperty {
+    Data,
 }
 
 #[derive(Clone)]
@@ -24979,6 +24986,7 @@ impl StaticHookAliasCollector<'_> {
         if let Some(alternatives) = self.local_bound_callable_initializer(value) {
             return vec![LocalClassInstanceCallable {
                 initializer: None,
+                dynamic_property: None,
                 value: None,
                 source: None,
                 parameters: Vec::new(),
@@ -25034,6 +25042,7 @@ impl StaticHookAliasCollector<'_> {
         };
         vec![LocalClassInstanceCallable {
             initializer: None,
+            dynamic_property: None,
             value: None,
             source,
             parameters,
@@ -25556,7 +25565,17 @@ impl StaticHookAliasCollector<'_> {
                     remaining_static_data_properties.remove(name);
                 }
             }
-            let Some(name) = static_name else {
+            let dynamic_property = (!is_static && !auto_accessor && static_name.is_none())
+                .then_some(LocalClassInstanceDynamicProperty::Data);
+            let name = if let Some(name) = static_name {
+                name
+            } else if dynamic_property.is_some() {
+                self.open_local_class_instance_fields.insert(target.clone());
+                format!(
+                    "<computed-instance-field-value@{}:{}>",
+                    span.start, span.end
+                )
+            } else {
                 if is_static && !auto_accessor {
                     if let Some(value) = value {
                         let hidden_target = target.clone().with_property(format!(
@@ -25647,7 +25666,7 @@ impl StaticHookAliasCollector<'_> {
                 order: order.expect("an instance field always has an initializer order"),
                 auto_accessor,
             };
-            if !auto_accessor {
+            if !auto_accessor && dynamic_property.is_none() {
                 self.local_class_instance_fields
                     .entry(target.clone())
                     .or_default()
@@ -25675,6 +25694,7 @@ impl StaticHookAliasCollector<'_> {
                     .or_default()
                     .push(LocalClassInstanceCallable {
                         initializer: Some(initializer),
+                        dynamic_property,
                         value: Some(DeferredClassInstanceValue {
                             value: DeferredArrayMutationValue {
                                 sources: Vec::new(),
@@ -25721,6 +25741,7 @@ impl StaticHookAliasCollector<'_> {
                     .or_default()
                     .push(LocalClassInstanceCallable {
                         initializer: Some(initializer),
+                        dynamic_property,
                         value: Some(value),
                         source: None,
                         parameters: Vec::new(),
@@ -25756,6 +25777,7 @@ impl StaticHookAliasCollector<'_> {
             let mut callable = self.local_class_instance_callables(value, span);
             for callable in &mut callable {
                 callable.initializer = Some(initializer);
+                callable.dynamic_property = dynamic_property;
             }
             self.local_class_instance_callables
                 .entry(target.clone())
@@ -26810,6 +26832,9 @@ impl StaticHookAliasCollector<'_> {
         callables: Vec<LocalClassInstanceCallable>,
         initializer: Option<LocalClassInstanceInitializer>,
     ) {
+        let dynamic_property = callables
+            .iter()
+            .find_map(|callable| callable.dynamic_property);
         let instance_field = target.clone().with_property(name);
         let own_property = !callables.iter().any(|callable| {
             callable
@@ -26824,6 +26849,20 @@ impl StaticHookAliasCollector<'_> {
             &[],
             Some(own_property),
         );
+        if dynamic_property == Some(LocalClassInstanceDynamicProperty::Data) {
+            let dynamic_target = target
+                .clone()
+                .with_property(DYNAMIC_DATA_PROPERTY.to_string());
+            let has_previous_value = self.aliases.contains_key(&dynamic_target)
+                || self
+                    .alias_history
+                    .get(&dynamic_target)
+                    .is_some_and(|sources| !sources.is_empty());
+            self.insert_alias(dynamic_target.clone(), instance_field);
+            if has_previous_value {
+                self.ambiguous_alias_targets.insert(dynamic_target);
+            }
+        }
     }
 
     fn materialize_class_instance_callables_at(
