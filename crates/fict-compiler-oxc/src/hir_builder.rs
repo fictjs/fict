@@ -20677,10 +20677,15 @@ struct DeferredClassInstanceOperation {
 
 #[derive(Clone)]
 enum DeferredClassInstanceOperationKind {
-    Assignment(DeferredClassInstanceValue),
+    Assignment {
+        value: DeferredClassInstanceValue,
+        callables: Vec<LocalClassInstanceCallable>,
+    },
     ArrayMutation(DeferredArrayMutation),
     DeleteOwnProperty,
-    ReflectDeleteOwnProperty { callee: StaticAliasPath },
+    ReflectDeleteOwnProperty {
+        callee: StaticAliasPath,
+    },
 }
 
 #[derive(Clone)]
@@ -25964,14 +25969,24 @@ impl StaticHookAliasCollector<'_> {
                 continue;
             }
             match operation.kind {
-                DeferredClassInstanceOperationKind::Assignment(value) => {
-                    self.apply_deferred_class_instance_value(
-                        &rebased_target,
-                        &value,
-                        Some(initializer),
-                        Some(target),
-                        &mappers,
-                    );
+                DeferredClassInstanceOperationKind::Assignment { value, callables } => {
+                    if callables.is_empty() {
+                        self.apply_deferred_class_instance_value(
+                            &rebased_target,
+                            &value,
+                            Some(initializer),
+                            Some(target),
+                            &mappers,
+                        );
+                    } else {
+                        self.materialize_class_instance_callables_at(
+                            &rebased_target,
+                            target,
+                            callables,
+                            Some(initializer),
+                            &mappers,
+                        );
+                    }
                     let mut owner = rebased_target.clone();
                     let method = owner.properties.pop();
                     owner.element_wildcard = false;
@@ -26040,63 +26055,77 @@ impl StaticHookAliasCollector<'_> {
         initializer: Option<LocalClassInstanceInitializer>,
     ) {
         let instance_field = target.clone().with_property(name);
-        self.clear_overlapping_aliases(&instance_field);
-        self.record_local_own_property_assignment(&instance_field);
+        self.materialize_class_instance_callables_at(
+            &instance_field,
+            target,
+            callables,
+            initializer,
+            &[],
+        );
+    }
+
+    fn materialize_class_instance_callables_at(
+        &mut self,
+        value_target: &StaticAliasPath,
+        instance: &StaticAliasPath,
+        callables: Vec<LocalClassInstanceCallable>,
+        initializer: Option<LocalClassInstanceInitializer>,
+        mappers: &[Vec<LocalInvocationFact>],
+    ) {
+        self.clear_overlapping_aliases(value_target);
+        self.record_local_own_property_assignment(value_target);
         let ambiguous = callables.len() > 1;
         for callable in callables {
             if let Some(value) = callable.value {
                 self.apply_deferred_class_instance_value(
-                    &instance_field,
+                    value_target,
                     &value,
                     initializer,
-                    initializer.map(|_| target),
-                    &[],
+                    initializer.map(|_| instance),
+                    mappers,
                 );
                 continue;
             }
             for effect in callable.effect_instances.clone() {
-                self.record_local_callable_effect_span(instance_field.clone(), effect.span);
+                self.record_local_callable_effect_span(value_target.clone(), effect.span);
                 if !effect.capture_invocations.is_empty() {
                     self.record_local_callable_effect_creator(
-                        instance_field.clone(),
+                        value_target.clone(),
                         effect.span,
                         effect.capture_invocations,
                     );
                 }
             }
             if let Some(source) = callable.source.clone() {
-                self.insert_alias(instance_field.clone(), source);
+                self.insert_alias(value_target.clone(), source);
                 self.transient_callable_alias_targets
-                    .insert(instance_field.clone());
+                    .insert(value_target.clone());
                 continue;
             }
             if !callable.bound_callables.is_empty() {
                 for bound in callable.bound_callables {
-                    self.record_local_bound_callable(instance_field.clone(), bound);
+                    self.record_local_bound_callable(value_target.clone(), bound);
                 }
                 if callable.bound_historical {
-                    self.mark_alias_target_ambiguous(instance_field.clone());
+                    self.mark_alias_target_ambiguous(value_target.clone());
                 }
-                self.record_callable_exposures(instance_field.clone(), callable.exposures);
+                self.record_callable_exposures(value_target.clone(), callable.exposures);
                 continue;
             }
-            self.record_local_callable_signature(
-                instance_field.clone(),
-                callable.parameters.clone(),
-            );
+            self.record_local_callable_signature(value_target.clone(), callable.parameters.clone());
             if let Some(receiver) = callable.dynamic_receiver {
-                self.record_local_callable_receiver(instance_field.clone(), receiver.clone());
+                self.record_local_callable_receiver(value_target.clone(), receiver.clone());
                 if callable.lexical_receiver {
                     self.record_local_bound_callable(
-                        instance_field.clone(),
+                        value_target.clone(),
                         LocalBoundCallable {
                             parameters: self
                                 .local_callable_parameters
-                                .get(&instance_field)
+                                .get(value_target)
                                 .cloned()
                                 .unwrap_or_default(),
                             arguments: Vec::new(),
-                            receiver: vec![self.collect_local_invocation_path(target.clone())],
+                            receiver: vec![self.collect_local_invocation_path(instance.clone())],
                             dynamic_receiver: Some(receiver),
                             generator: callable.generator,
                             unknown: false,
@@ -26105,11 +26134,11 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             if callable.generator {
-                self.record_local_generator(instance_field.clone());
+                self.record_local_generator(value_target.clone());
             }
             if callable.unknown {
                 self.record_local_bound_callable(
-                    instance_field.clone(),
+                    value_target.clone(),
                     LocalBoundCallable {
                         parameters: callable.parameters,
                         arguments: Vec::new(),
@@ -26120,10 +26149,10 @@ impl StaticHookAliasCollector<'_> {
                     },
                 );
             }
-            self.record_callable_exposures(instance_field.clone(), callable.exposures);
+            self.record_callable_exposures(value_target.clone(), callable.exposures);
         }
         if ambiguous {
-            self.mark_alias_target_ambiguous(instance_field);
+            self.mark_alias_target_ambiguous(value_target.clone());
         }
     }
 
@@ -45205,37 +45234,46 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .function_control_baselines
             .last()
             .is_some_and(|baseline| self.control_depth > *baseline);
-        let deferred_class_instance_assignment =
-            if assignment.operator == OxcAssignmentOperator::Assign {
-                self.class_effect_contexts
-                    .last()
-                    .copied()
-                    .flatten()
-                    .filter(|context| context.captures_same_depth)
-                    .and_then(|context| {
-                        let receiver = self.dynamic_this_roots.last().and_then(Option::as_ref)?;
-                        let target = place.as_ref().and_then(|place| {
-                            static_alias_invalidation_path_with_context(place, Some(&receiver.root))
-                        })?;
-                        if !matches!(&target.root, StaticAliasRoot::DynamicThis { .. }) {
-                            return None;
-                        }
-                        let value = self
-                            .deferred_class_instance_value(&assignment.right)
-                            .unwrap_or_else(|| DeferredClassInstanceValue {
-                                value: DeferredArrayMutationValue {
-                                    sources: Vec::new(),
-                                    opaque: false,
-                                    definedness: self
-                                        .local_getter_expression_definedness(&assignment.right),
-                                },
-                                shapes: BTreeMap::new(),
-                            });
-                        Some((context.span, target, value))
-                    })
-            } else {
-                None
-            };
+        let deferred_class_instance_assignment = if assignment.operator
+            == OxcAssignmentOperator::Assign
+        {
+            let receiver = self
+                .dynamic_this_roots
+                .last()
+                .and_then(Option::as_ref)
+                .cloned();
+            receiver.and_then(|receiver| {
+                let target = place.as_ref().and_then(|place| {
+                    static_alias_invalidation_path_with_context(place, Some(&receiver.root))
+                })?;
+                let span = self.deferred_class_instance_operation_span(&target)?;
+                let value = self
+                    .deferred_class_instance_value(&assignment.right)
+                    .unwrap_or_else(|| DeferredClassInstanceValue {
+                        value: DeferredArrayMutationValue {
+                            sources: Vec::new(),
+                            opaque: false,
+                            definedness: self
+                                .local_getter_expression_definedness(&assignment.right),
+                        },
+                        shapes: BTreeMap::new(),
+                    });
+                let callables = if matches!(
+                    assignment.right.get_inner_expression(),
+                    Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_)
+                ) {
+                    let StaticAliasRoot::DynamicThis { start, end } = receiver.root else {
+                        return None;
+                    };
+                    self.local_class_instance_callables(&assignment.right, Span::new(start, end))
+                } else {
+                    Vec::new()
+                };
+                Some((span, target, value, callables))
+            })
+        } else {
+            None
+        };
         if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(source) = destructuring_source
         {
@@ -45257,14 +45295,16 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         for span in suppressed_getter_reads {
             self.handled_local_getter_read_spans.remove(&span);
         }
-        if !accessor_write && let Some((span, target, value)) = deferred_class_instance_assignment {
+        if !accessor_write
+            && let Some((span, target, value, callables)) = deferred_class_instance_assignment
+        {
             self.deferred_class_instance_operations
                 .entry(span)
                 .or_default()
                 .push(DeferredClassInstanceOperation {
                     span: (assignment.span.start, assignment.span.end),
                     target,
-                    kind: DeferredClassInstanceOperationKind::Assignment(value),
+                    kind: DeferredClassInstanceOperationKind::Assignment { value, callables },
                     conditional,
                 });
         }

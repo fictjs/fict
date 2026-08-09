@@ -5549,6 +5549,90 @@ fn local_callable_alias_effects_follow_invocation_timing() {
 }
 
 #[test]
+fn class_instance_field_callable_assignments_follow_construction_timing() {
+    for (name, setup, expected_escape) in [
+        (
+            "capturing arrow assignment",
+            "class Box { item = () => 0; reset = (this.item = () => count); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "capturing function assignment",
+            "class Box { item = () => 0; reset = (this.item = function () { return count; }); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "capturing async arrow assignment",
+            "class Box { item = () => 0; reset = (this.item = async () => count); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "capturing async function assignment",
+            "class Box { item = () => 0; reset = (this.item = async function () { return count; }); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "nested capturing arrow assignment",
+            "class Box { state = { item: () => 0 }; reset = (this.state.item = () => count); } const box = new Box(); holder.item = box.state.item;",
+            true,
+        ),
+        (
+            "later safe assignment replaces a capturing arrow",
+            "class Box { item = () => 0; first = (this.item = () => count); second = (this.item = () => 0); } const box = new Box(); holder.item = box.item;",
+            false,
+        ),
+        (
+            "conditional capturing arrow assignment remains possible",
+            "class Box { item = () => 0; reset = holder.enabled && (this.item = () => count); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "conditional safe replacement preserves a capturing arrow",
+            "class Box { item = () => count; reset = holder.enabled && (this.item = () => 0); } const box = new Box(); holder.item = box.item;",
+            true,
+        ),
+        (
+            "unconstructed capturing arrow assignment remains inert",
+            "class Box { item = () => 0; reset = (this.item = () => count); } void Box;",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    {setup}
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let mut escape_codes = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+            .map(|diagnostic| diagnostic.code.as_str().to_string())
+            .collect::<Vec<_>>();
+        escape_codes.sort();
+        if expected_escape {
+            assert!(
+                escape_codes.iter().any(|code| code == "FICT-R002")
+                    && escape_codes.iter().any(|code| code == "FICT-R005"),
+                "{name}: {:?}",
+                output.diagnostics
+            );
+        } else {
+            assert!(escape_codes.is_empty(), "{name}: {:?}", output.diagnostics);
+        }
+    }
+}
+
+#[test]
 fn callback_property_captures_follow_assignment_timing() {
     let mut mismatches = Vec::new();
     for (name, setup, expected_escape) in [
