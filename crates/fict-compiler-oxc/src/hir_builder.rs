@@ -8731,6 +8731,7 @@ fn is_non_enumerable_internal_class_property(property: &str) -> bool {
         || property.starts_with("<computed-object-property-value@")
         || property.starts_with("<computed-property-assignment-value@")
         || property.starts_with("<computed-key-")
+        || property.starts_with("<object-assign-computed-data@")
         || property.starts_with("<computed-instance-field-value@")
         || property.starts_with("<computed-instance-method-value@")
         || property.starts_with("<computed-static-method-value@")
@@ -28311,6 +28312,8 @@ impl StaticHookAliasCollector<'_> {
         source: &StaticAliasPath,
         call_span: Span,
         source_index: usize,
+        source_alternative_index: usize,
+        conditional_source: bool,
     ) {
         let getter_names = self.enumerable_local_getter_names(source);
         let known_properties = self.known_structured_own_properties(source);
@@ -28345,7 +28348,11 @@ impl StaticHookAliasCollector<'_> {
                 .1
                 .is_empty();
             if !invokes_setter && !retains_getter {
+                self.exclude_dynamic_property_value(&property_target);
                 self.insert_alias(property_target.clone(), value);
+                if conditional_source {
+                    self.mark_alias_target_ambiguous(property_target.clone());
+                }
                 self.structured_own_properties
                     .entry(target.clone())
                     .or_default()
@@ -28356,6 +28363,35 @@ impl StaticHookAliasCollector<'_> {
                         .remove(&property_target);
                 }
             }
+        }
+        for (dynamic_index, (source_target, values)) in self
+            .enumerable_dynamic_data_properties(source)
+            .into_iter()
+            .enumerate()
+        {
+            let Some(source_owner) = dynamic_property_alias_owner(&source_target) else {
+                continue;
+            };
+            let dynamic_target =
+                Self::rebase_returned_class_path(&source_target, &source_owner, target);
+            if !conditional_source {
+                self.clear_matching_dynamic_data_property(&dynamic_target);
+            }
+            let ambiguous = conditional_source
+                || values.len() > 1
+                || self.has_other_dynamic_data_property(&dynamic_target);
+            for (value_index, value) in values.into_iter().enumerate() {
+                let snapshot = target.with_property(format!(
+                    "<object-assign-computed-data@{}:{}-{source_index}-{source_alternative_index}-{dynamic_index}-{value_index}>",
+                    call_span.start, call_span.end
+                ));
+                self.insert_alias(snapshot.clone(), value.clone());
+                self.insert_alias(dynamic_target.clone(), snapshot);
+            }
+            if ambiguous {
+                self.mark_alias_target_ambiguous(dynamic_target);
+            }
+            self.open_structured_containers.insert(target.clone());
         }
         if !self.enumerable_dynamic_local_getters(source).is_empty() {
             let value = StaticAliasPath::dynamic_this(call_span)
@@ -28410,13 +28446,17 @@ impl StaticHookAliasCollector<'_> {
             let Some(source_expression) = argument.as_expression() else {
                 continue;
             };
-            for source in self.local_object_assign_value_paths(source_expression) {
+            let sources = self.local_object_assign_value_paths(source_expression);
+            let conditional_source = sources.len() > 1;
+            for (source_alternative_index, source) in sources.into_iter().enumerate() {
                 for target in &targets {
                     self.record_local_object_assign_source(
                         target,
                         &source,
                         call.span,
                         source_index,
+                        source_alternative_index,
+                        conditional_source,
                     );
                 }
             }
@@ -28600,6 +28640,16 @@ impl StaticHookAliasCollector<'_> {
         &self,
         owner: &StaticAliasPath,
     ) -> BTreeSet<StaticAliasPath> {
+        self.enumerable_dynamic_data_properties(owner)
+            .into_values()
+            .flatten()
+            .collect()
+    }
+
+    fn enumerable_dynamic_data_properties(
+        &self,
+        owner: &StaticAliasPath,
+    ) -> BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>> {
         let resolved_owner = resolve_static_alias_path(&self.aliases, owner);
         let owners = BTreeSet::from([owner.clone(), resolved_owner]);
         let targets = self
@@ -28615,7 +28665,7 @@ impl StaticHookAliasCollector<'_> {
             })
             .cloned()
             .collect::<BTreeSet<_>>();
-        let mut sources = BTreeSet::new();
+        let mut properties = BTreeMap::new();
         for target in targets {
             let Some(target_owner) = dynamic_property_alias_owner(&target) else {
                 continue;
@@ -28628,16 +28678,18 @@ impl StaticHookAliasCollector<'_> {
                     .into_iter()
                     .flatten(),
             );
-            sources.extend(
-                candidates
-                    .filter(|source| {
-                        source.starts_with(&target_owner)
-                            && source.properties.len() > target_owner.properties.len()
-                    })
-                    .cloned(),
-            );
+            let sources = candidates
+                .filter(|source| {
+                    source.starts_with(&target_owner)
+                        && source.properties.len() > target_owner.properties.len()
+                })
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            if !sources.is_empty() {
+                properties.insert(target, sources);
+            }
         }
-        sources
+        properties
     }
 
     fn record_inline_object_from_entries_hooks(
@@ -35690,7 +35742,18 @@ impl StaticHookAliasCollector<'_> {
             && let Some(source) = self.record_local_object_assign(call)
         {
             self.record_local_value_definedness(target.clone(), value);
-            self.insert_alias(target, source);
+            let ambiguous = self
+                .ambiguous_alias_targets
+                .iter()
+                .filter(|candidate| candidate.starts_with(&source))
+                .cloned()
+                .collect::<Vec<_>>();
+            self.insert_alias(target.clone(), source.clone());
+            for candidate in ambiguous {
+                self.mark_alias_target_ambiguous(Self::rebase_returned_class_path(
+                    &candidate, &source, &target,
+                ));
+            }
             return;
         }
         if let Expression::CallExpression(call) = value.get_inner_expression()

@@ -4920,6 +4920,51 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "Object.assign copies a computed object property",
+            "const key = holder.key; const source = { [key]: local }; const copy = Object.assign({}, source); holder.item = copy.item;",
+            true,
+        ),
+        (
+            "Object.assign copies a nested computed object property",
+            "const key = holder.key; const source = { [key]: { nested: local } }; const copy = Object.assign({}, source); holder.item = copy.item.nested;",
+            true,
+        ),
+        (
+            "Object.assign copies a callable computed object property",
+            "const key = holder.key; const source = { [key]: () => { holder.item = local; } }; const copy = Object.assign({}, source); copy.item();",
+            true,
+        ),
+        (
+            "Object.assign snapshots a computed object property",
+            "const key = holder.key; const source = { [key]: local }; const copy = Object.assign({}, source); source[key] = {}; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "Object.assign mutates its target with a computed object property",
+            "const key = holder.key; const source = { [key]: local }; const target = {}; Object.assign(target, source); holder.item = target.item;",
+            true,
+        ),
+        (
+            "later Object.assign source replaces a computed property",
+            "const key = holder.key; const source = { [key]: local }; const copy = Object.assign({}, source, { item: {} }); holder.item = copy.item;",
+            false,
+        ),
+        (
+            "later same-key computed Object.assign source replaces an earlier value",
+            "const key = holder.key; const first = { [key]: local }; const second = { [key]: {} }; const copy = Object.assign({}, first, second); holder.item = copy[key];",
+            false,
+        ),
+        (
+            "different computed Object.assign keys preserve possible values",
+            "const firstKey = holder.first; const secondKey = holder.second; const first = { [firstKey]: local }; const second = { [secondKey]: {} }; const copy = Object.assign({}, first, second); holder.item = copy.item;",
+            true,
+        ),
+        (
+            "conditional Object.assign source preserves computed property alternatives",
+            "const key = holder.key; const first = { [key]: local }; const second = { [key]: {} }; const copy = Object.assign({}, holder.flag ? first : second); holder.item = copy[key];",
+            true,
+        ),
+        (
             "computed object property preserves a nested local value",
             "const key = holder.key; const source = { [key]: { nested: local } }; holder.item = source.item.nested;",
             true,
@@ -5137,6 +5182,11 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         (
             "computed instance field appears in Object.entries",
             "const key = holder.key; class Box { [key] = local; } const box = new Box(); const entries = Object.entries(box); holder.item = entries[0][1];",
+            true,
+        ),
+        (
+            "Object.assign copies a computed instance field",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); const copy = Object.assign({}, box); holder.item = copy.item;",
             true,
         ),
         (
@@ -5978,6 +6028,16 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             "computed static field appears in Object.entries",
             "const key = holder.key; class Box { static [key] = local; } const entries = Object.entries(Box); holder.item = entries[0][1];",
             true,
+        ),
+        (
+            "Object.assign copies a computed static field",
+            "const key = holder.key; class Box { static [key] = local; } const copy = Object.assign({}, Box); holder.item = copy.item;",
+            true,
+        ),
+        (
+            "Object.assign excludes an inherited computed static field",
+            "const key = holder.key; class Parent { static [key] = local; } class Box extends Parent {} const copy = Object.assign({}, Box); holder.item = copy.item;",
+            false,
         ),
         (
             "computed static field Object.entries snapshots its value",
