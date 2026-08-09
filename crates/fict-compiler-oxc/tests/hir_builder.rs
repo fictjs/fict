@@ -4965,6 +4965,116 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "computed assignment materializes a local object property value",
+            "const key = holder.key; const source = {}; source[key] = local; holder.item = source[key];",
+            true,
+        ),
+        (
+            "computed assignment preserves a nested local object property value",
+            "const key = holder.key; const source = {}; source[key] = { nested: local }; holder.item = source.item.nested;",
+            true,
+        ),
+        (
+            "computed assignment preserves a callable object property value",
+            "const key = holder.key; const source = {}; source[key] = () => { holder.item = local; }; source.item();",
+            true,
+        ),
+        (
+            "computed assignment remains enumerable in object spread",
+            "const key = holder.key; const source = {}; source[key] = local; const copy = { ...source }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "computed assignment appears in Object.values",
+            "const key = holder.key; const source = {}; source[key] = local; const values = Object.values(source); holder.item = values[0];",
+            true,
+        ),
+        (
+            "computed assignment Object.values snapshots its value",
+            "const key = holder.key; const source = {}; source[key] = local; const values = Object.values(source); source[key] = {}; holder.item = values[0];",
+            true,
+        ),
+        (
+            "computed deletion removes the value from Object.values",
+            "const key = holder.key; const source = { [key]: local }; delete source[key]; const values = Object.values(source); holder.item = values[0];",
+            false,
+        ),
+        (
+            "different computed assignment key preserves an object property candidate",
+            "const first = holder.first; const second = holder.second; const source = { [first]: local }; source[second] = {}; holder.item = source[first];",
+            true,
+        ),
+        (
+            "opaque computed assignment key preserves an object property candidate",
+            "const source = { [holder.first]: local }; source[holder.second] = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "reassigned computed key preserves an object property candidate",
+            "let key = holder.first; const source = { [key]: local }; key = holder.second; source[key] = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "later same-key computed object property replaces an earlier value",
+            "const key = holder.key; const source = { [key]: local, [key]: {} }; holder.item = source[key];",
+            false,
+        ),
+        (
+            "matching computed deletion removes a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; delete source[key]; holder.item = source[key];",
+            false,
+        ),
+        (
+            "conditional computed assignment preserves an object property candidate",
+            "const key = holder.key; const source = { [key]: local }; if (holder.flag) source[key] = {}; holder.item = source[key];",
+            true,
+        ),
+        (
+            "invoked helper materializes a computed object property value",
+            "const key = holder.key; const source = {}; const assign = () => { source[key] = local; }; assign(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "uninvoked helper preserves a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; const clear = () => { source[key] = {}; }; void clear; holder.item = source[key];",
+            true,
+        ),
+        (
+            "invoked helper replaces a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; const clear = () => { source[key] = {}; }; clear(); holder.item = source[key];",
+            false,
+        ),
+        (
+            "invoked helper with a different computed key preserves an object property candidate",
+            "const first = holder.first; const second = holder.second; const source = { [first]: local }; const clear = () => { source[second] = {}; }; clear(); holder.item = source[first];",
+            true,
+        ),
+        (
+            "invoked helper removes a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; const remove = () => { delete source[key]; }; remove(); holder.item = source[key];",
+            false,
+        ),
+        (
+            "constructed instance initializer materializes a computed object property value",
+            "const key = holder.key; const source = {}; class Runner { value = (source[key] = local); } new Runner(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "unconstructed instance initializer preserves a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; class Runner { value = (source[key] = {}); } void Runner; holder.item = source[key];",
+            true,
+        ),
+        (
+            "constructed instance initializer replaces a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; class Runner { value = (source[key] = {}); } new Runner(); holder.item = source[key];",
+            false,
+        ),
+        (
+            "constructed instance initializer removes a computed object property value",
+            "const key = holder.key; const source = { [key]: local }; class Runner { value = delete source[key]; } new Runner(); holder.item = source[key];",
+            false,
+        ),
+        (
             "computed object callable property remains invokable",
             "const key = holder.key; const source = { [key]: () => { holder.item = local; } }; source.item();",
             true,
@@ -5080,6 +5190,11 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "later same-key computed instance field replaces an earlier value",
+            "const key = holder.key; class Box { [key] = local; [key] = {}; } const box = new Box(); holder.item = box[key];",
+            false,
+        ),
+        (
             "known assignment replaces a computed instance field value",
             "const key = holder.key; class Box { [key] = local; } const box = new Box(); box.item = {}; holder.item = box.item;",
             false,
@@ -5097,6 +5212,21 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         (
             "matching computed assignment replaces a computed instance field value",
             "const key = holder.key; class Box { [key] = local; } const box = new Box(); box[key] = {}; holder.item = box[key];",
+            false,
+        ),
+        (
+            "computed assignment materializes a local instance field value",
+            "const key = holder.key; class Box {} const box = new Box(); box[key] = local; holder.item = box[key];",
+            true,
+        ),
+        (
+            "computed assignment remains enumerable on an instance",
+            "const key = holder.key; class Box {} const box = new Box(); box[key] = local; const values = Object.values(box); holder.item = values[0];",
+            true,
+        ),
+        (
+            "matching computed deletion removes a computed instance field value",
+            "const key = holder.key; class Box { [key] = local; } const box = new Box(); delete box[key]; holder.item = box[key];",
             false,
         ),
         (
@@ -5760,6 +5890,11 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "later same-key computed static field replaces an earlier value",
+            "const key = holder.key; class Box { static [key] = local; static [key] = {}; } holder.item = Box[key];",
+            false,
+        ),
+        (
             "later known static field excludes an earlier computed value",
             "const key = holder.key; class Box { static [key] = local; static item = {}; } holder.item = Box.item;",
             false,
@@ -5777,6 +5912,26 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         (
             "known deletion removes a possible computed static field value",
             "const key = holder.key; class Box { static [key] = local; } delete Box.item; holder.item = Box.item;",
+            false,
+        ),
+        (
+            "computed assignment materializes a local static field value",
+            "const key = holder.key; class Box {} Box[key] = local; holder.item = Box[key];",
+            true,
+        ),
+        (
+            "computed assignment remains enumerable on a class",
+            "const key = holder.key; class Box {} Box[key] = local; const values = Object.values(Box); holder.item = values[0];",
+            true,
+        ),
+        (
+            "matching computed assignment replaces a computed static field value",
+            "const key = holder.key; class Box { static [key] = local; } Box[key] = {}; holder.item = Box[key];",
+            false,
+        ),
+        (
+            "matching computed deletion removes a computed static field value",
+            "const key = holder.key; class Box { static [key] = local; } delete Box[key]; holder.item = Box[key];",
             false,
         ),
         (
