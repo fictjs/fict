@@ -34,22 +34,22 @@ use oxc::{
     allocator::{Allocator, Vec as ArenaVec},
     ast::{
         ast::{
-            AccessorProperty, ArrayAssignmentTarget, ArrayExpression, ArrayExpressionElement,
-            ArrayPattern, ArrowFunctionExpression, AssignmentExpression, AssignmentPattern,
-            AssignmentTarget, AssignmentTargetMaybeDefault, AssignmentTargetProperty,
-            AssignmentTargetRest, AssignmentTargetWithDefault, BindingIdentifier, BindingPattern,
-            BindingRestElement, BreakStatement, CallExpression, ChainElement, ChainExpression,
-            Class, ClassElement, ClassType, ComputedMemberExpression, ConditionalExpression,
-            ContinueStatement, Decorator, DoWhileStatement, Expression, ExpressionStatement,
-            ForInStatement, ForOfStatement, ForStatement, FormalParameter, FormalParameterRest,
-            FormalParameters, Function, FunctionBody, FunctionType, IdentifierReference,
-            IfStatement, ImportExpression, ImportOrExportKind, ImportPhase as OxcImportPhase,
-            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
-            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
-            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            LabeledStatement, LogicalExpression, MemberExpression, MetaProperty,
-            MethodDefinitionKind, NewExpression, ObjectAssignmentTarget, ObjectExpression,
-            ObjectPattern, ObjectPropertyKind as OxcObjectPropertyKind, Program,
+            AccessorProperty, Argument, ArrayAssignmentTarget, ArrayExpression,
+            ArrayExpressionElement, ArrayPattern, ArrowFunctionExpression, AssignmentExpression,
+            AssignmentPattern, AssignmentTarget, AssignmentTargetMaybeDefault,
+            AssignmentTargetProperty, AssignmentTargetRest, AssignmentTargetWithDefault,
+            BindingIdentifier, BindingPattern, BindingRestElement, BreakStatement, CallExpression,
+            ChainElement, ChainExpression, Class, ClassElement, ClassType,
+            ComputedMemberExpression, ConditionalExpression, ContinueStatement, Decorator,
+            DoWhileStatement, Expression, ExpressionStatement, ForInStatement, ForOfStatement,
+            ForStatement, FormalParameter, FormalParameterRest, FormalParameters, Function,
+            FunctionBody, FunctionType, IdentifierReference, IfStatement, ImportExpression,
+            ImportOrExportKind, ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
+            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
+            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, LabeledStatement, LogicalExpression, MemberExpression,
+            MetaProperty, MethodDefinitionKind, NewExpression, ObjectAssignmentTarget,
+            ObjectExpression, ObjectPattern, ObjectPropertyKind as OxcObjectPropertyKind, Program,
             PropertyDefinition, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
             SimpleAssignmentTarget, Statement, StaticBlock, Super, SwitchStatement,
             TSImportEqualsDeclaration, TSLiteral, TSModuleReference, TSType, TSTypeName,
@@ -8741,7 +8741,7 @@ fn is_non_enumerable_internal_class_property(property: &str) -> bool {
         || property.starts_with("<static-auto-accessor:")
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct StaticExpressionValueSnapshot {
     sources: BTreeSet<StaticAliasPath>,
     local_values: BTreeSet<StaticAliasPath>,
@@ -20819,6 +20819,12 @@ struct DeferredArrayMutation {
 }
 
 #[derive(Clone)]
+struct DeferredArrayLengthAssignment {
+    snapshot: StaticAliasPath,
+    length: usize,
+}
+
+#[derive(Clone)]
 enum DeferredArrayMutationKind {
     Reverse,
     Sort,
@@ -20882,6 +20888,7 @@ enum DeferredClassInstanceOperationKind {
         dynamic_target: Option<StaticAliasPath>,
     },
     ArrayMutation(DeferredArrayMutation),
+    ArrayLengthAssignment(DeferredArrayLengthAssignment),
     DeleteOwnProperty,
     DeleteComputedOwnProperty,
     ReflectDeleteProperty {
@@ -21231,6 +21238,12 @@ impl ExternalStorageFlowState {
                 .collect();
             !copies.is_empty()
         });
+    }
+
+    fn forget_deleted_path(&mut self, path: &StaticAliasPath) {
+        self.clear_aliases(path);
+        self.attached_alias_roots
+            .retain(|target, _| !target.overlaps(path));
     }
 
     fn insert_alias(
@@ -21907,6 +21920,10 @@ enum DeferredCallableOperationKind {
     },
     ArrayMutation {
         mutation: DeferredArrayMutation,
+        conditional: bool,
+    },
+    ArrayLengthAssignment {
+        assignment: DeferredArrayLengthAssignment,
         conditional: bool,
     },
 }
@@ -27342,6 +27359,13 @@ impl StaticHookAliasCollector<'_> {
                         &rebased_target,
                         &mutation,
                         &mappers,
+                        operation.conditional,
+                    );
+                }
+                DeferredClassInstanceOperationKind::ArrayLengthAssignment(assignment) => {
+                    self.apply_local_array_length_assignment(
+                        &rebased_target,
+                        &assignment,
                         operation.conditional,
                     );
                 }
@@ -35527,6 +35551,251 @@ impl StaticHookAliasCollector<'_> {
         Some(value.trunc() as i64)
     }
 
+    fn static_array_length(expression: &Expression<'_>) -> Option<usize> {
+        let value = Self::static_array_numeric_value(expression)?;
+        (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= f64::from(u32::MAX))
+            .then_some(value as usize)
+    }
+
+    fn static_array_length_assignment(
+        target: &StaticAliasPath,
+        value: &Expression<'_>,
+    ) -> Option<(StaticAliasPath, usize)> {
+        if target.element_wildcard {
+            return None;
+        }
+        let mut owner = target.clone();
+        (owner.properties.pop().as_deref() == Some("length")).then_some(())?;
+        Some((owner, Self::static_array_length(value)?))
+    }
+
+    fn local_array_length_assignment(
+        &self,
+        target: &StaticAliasPath,
+        value: &Expression<'_>,
+    ) -> Option<(StaticAliasPath, usize)> {
+        let (owner, length) = Self::static_array_length_assignment(target, value)?;
+        let resolved = resolve_static_alias_path(&self.aliases, &owner);
+        if !self.known_array_path(&resolved)
+            || !self.path_is_currently_intact(&owner)
+            || !self.path_is_currently_intact(&resolved)
+            || self.known_array_length(&resolved).is_none()
+            || self.tracked_structured_own_properties(&resolved).is_none()
+        {
+            return None;
+        }
+        Some((owner, length))
+    }
+
+    fn deferred_class_instance_array_path(&self, target: &StaticAliasPath, before: u32) -> bool {
+        let Some(class_span) = self.deferred_class_instance_operation_span(target) else {
+            return false;
+        };
+        let StaticAliasRoot::DynamicThis { start, end } = &target.root else {
+            return false;
+        };
+        let Some(class) = self.returned_class_blueprint_targets.get(&class_span) else {
+            return false;
+        };
+        let Some(fields) = self.local_class_instance_callables.get(class) else {
+            return false;
+        };
+        let current_receiver_span = (*start, *end);
+        let Some(current_order) = fields
+            .values()
+            .flatten()
+            .filter_map(|callable| callable.initializer)
+            .find(|initializer| initializer.receiver_span == current_receiver_span)
+            .map(|initializer| initializer.order)
+        else {
+            return false;
+        };
+        let Some((field, nested)) = target.properties.split_first() else {
+            return false;
+        };
+        let Some(callables) = fields.get(field) else {
+            return false;
+        };
+        let Some(latest_order) = callables
+            .iter()
+            .filter_map(|callable| callable.initializer)
+            .filter(|initializer| initializer.order < current_order)
+            .map(|initializer| initializer.order)
+            .max()
+        else {
+            return false;
+        };
+        let alternatives = callables
+            .iter()
+            .filter(|callable| {
+                callable
+                    .initializer
+                    .is_some_and(|initializer| initializer.order == latest_order)
+            })
+            .collect::<Vec<_>>();
+        let latest_initializer_end = alternatives
+            .iter()
+            .filter_map(|callable| callable.initializer)
+            .map(|initializer| initializer.value_span.1)
+            .max()
+            .unwrap_or_default();
+        let replaced_after_initializer = self
+            .deferred_class_instance_operations
+            .get(&class_span)
+            .into_iter()
+            .flatten()
+            .filter(|operation| {
+                operation.span.0 >= latest_initializer_end && operation.span.0 < before
+            })
+            .filter(|operation| {
+                matches!(
+                    operation.kind,
+                    DeferredClassInstanceOperationKind::Assignment { .. }
+                        | DeferredClassInstanceOperationKind::DeleteOwnProperty
+                        | DeferredClassInstanceOperationKind::DeleteComputedOwnProperty
+                        | DeferredClassInstanceOperationKind::ReflectDeleteProperty { .. }
+                )
+            })
+            .any(|operation| {
+                operation.target.element_wildcard
+                    || (operation.target.properties.len() <= target.properties.len()
+                        && target.properties.starts_with(&operation.target.properties))
+            });
+        !replaced_after_initializer
+            && !alternatives.is_empty()
+            && alternatives.iter().all(|callable| {
+                callable.dynamic_property.is_none()
+                    && callable
+                        .initializer
+                        .is_some_and(|initializer| !initializer.auto_accessor)
+                    && callable.value.as_ref().is_some_and(|value| {
+                        matches!(
+                            value.shapes.get(nested),
+                            Some(DeferredClassInstanceValueShape::Array {
+                                length: Some(_),
+                                open: false,
+                                ..
+                            })
+                        )
+                    })
+            })
+    }
+
+    fn update_known_array_length(&mut self, target: &StaticAliasPath, length: Option<usize>) {
+        let resolved = resolve_static_alias_path(&self.aliases, target);
+        let mut targets = self
+            .array_lengths
+            .keys()
+            .filter(|candidate| resolve_static_alias_path(&self.aliases, candidate) == resolved)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        targets.insert(resolved);
+        for target in targets {
+            if let Some(length) = length {
+                self.array_lengths.insert(target, length);
+            } else {
+                self.array_lengths.remove(&target);
+            }
+        }
+    }
+
+    fn apply_local_array_length_assignment(
+        &mut self,
+        raw_target: &StaticAliasPath,
+        assignment: &DeferredArrayLengthAssignment,
+        conditional: bool,
+    ) -> bool {
+        let requested_length = assignment.length;
+        let target = resolve_static_alias_path(&self.aliases, raw_target);
+        if !self.known_array_path(&target) || !self.path_is_currently_intact(&target) {
+            return false;
+        }
+        let Some(old_length) = self.known_array_length(&target) else {
+            return false;
+        };
+        let Some((owner, properties)) = self.tracked_structured_own_properties(&target) else {
+            return false;
+        };
+        let length_property = owner.clone().with_property("length".to_string());
+        if !self.local_property_is_writable(&length_property) {
+            return true;
+        }
+        let numeric_properties = properties
+            .iter()
+            .filter_map(|property| {
+                let index = property.parse::<usize>().ok()?;
+                (index.to_string() == *property && index < old_length).then_some(index)
+            })
+            .collect::<BTreeSet<_>>();
+        let blocking_index = numeric_properties
+            .iter()
+            .copied()
+            .filter(|index| *index >= requested_length)
+            .filter(|index| {
+                !self.local_reflect_delete_property_is_configurable(
+                    &owner.clone().with_property(index.to_string()),
+                )
+            })
+            .max();
+        let effective_length = blocking_index
+            .and_then(|index| index.checked_add(1))
+            .unwrap_or(requested_length);
+        self.array_length_history
+            .entry(owner.clone())
+            .or_default()
+            .extend([old_length, effective_length]);
+        if conditional {
+            self.update_known_array_length(&owner, None);
+            self.open_structured_containers.insert(owner.clone());
+            self.ambiguous_alias_targets
+                .insert(owner.with_element_wildcard());
+            return true;
+        }
+        let snapshot = assignment
+            .snapshot
+            .clone()
+            .with_property(self.deferred_array_snapshot_index.to_string());
+        self.deferred_array_snapshot_index = self.deferred_array_snapshot_index.saturating_add(1);
+        self.external_storage_flow
+            .snapshot_subtree(&snapshot, &owner);
+        self.external_storage_flow
+            .detach_shallow_copy_sources(&owner, &snapshot);
+        self.external_storage_flow
+            .clear_array_element_copies(&owner, Some(old_length.max(effective_length)));
+        let deleted = numeric_properties
+            .range(effective_length..)
+            .copied()
+            .collect::<Vec<_>>();
+        for index in deleted {
+            let property = owner.clone().with_property(index.to_string());
+            self.exclude_dynamic_property_value(&property);
+            self.clear_local_descriptor_metadata(&property);
+            self.clear_alias_target_history(&property);
+            self.clear_overlapping_aliases(&property);
+            self.external_storage_flow.forget_deleted_path(&property);
+            self.remove_local_auto_accessor_property(&owner, &index.to_string());
+        }
+        if let Some(properties) = self.structured_own_properties.get_mut(&owner) {
+            properties.retain(|property| {
+                property.parse::<usize>().map_or(true, |index| {
+                    index.to_string() != *property || index < effective_length
+                })
+            });
+        }
+        let retained_length = old_length.min(effective_length);
+        if retained_length > 0 {
+            self.record_external_storage_array_range_copy(
+                owner.clone(),
+                &snapshot,
+                0,
+                0,
+                retained_length,
+            );
+        }
+        self.update_known_array_length(&owner, Some(effective_length));
+        true
+    }
+
     fn normalized_array_start(value: i64, length: usize) -> usize {
         if value < 0 {
             length.saturating_sub(usize::try_from(value.unsigned_abs()).unwrap_or(usize::MAX))
@@ -38190,6 +38459,84 @@ impl StaticHookAliasCollector<'_> {
         spans
     }
 
+    fn local_array_slot_is_definitely_absent(
+        &self,
+        path: &StaticAliasPath,
+        historical: bool,
+    ) -> bool {
+        if historical || path.element_wildcard || path.properties.is_empty() {
+            return false;
+        }
+        let mut owner = path.clone();
+        let Some(property) = owner.properties.pop() else {
+            return false;
+        };
+        let Ok(index) = property.parse::<usize>() else {
+            return false;
+        };
+        if index.to_string() != property
+            || !self.path_is_currently_intact(&owner)
+            || !self.path_is_currently_intact(path)
+        {
+            return false;
+        }
+        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+        let Some((_, properties)) = self.tracked_structured_own_properties(&resolved_owner) else {
+            return false;
+        };
+        if !self.known_array_path(&resolved_owner)
+            || self.known_array_length(&resolved_owner).is_none()
+            || properties.contains(&property)
+            || !self.local_object_prototype_member_paths(path).is_empty()
+            || !self.local_getter_resolution(path, false).1.is_empty()
+        {
+            return false;
+        }
+        ["Array", "Object"].into_iter().all(|constructor| {
+            self.path_is_currently_intact(
+                &StaticAliasPath::unresolved_global(constructor.to_string())
+                    .with_property("prototype".to_string())
+                    .with_property(property.clone()),
+            )
+        })
+    }
+
+    fn insert_expression_value_snapshot(
+        &mut self,
+        expression: &Expression<'_>,
+        snapshot: StaticExpressionValueSnapshot,
+    ) {
+        let span = expression.span();
+        let inner_span = expression.get_inner_expression().span();
+        if inner_span != span {
+            self.expression_value_snapshots
+                .insert((inner_span.start, inner_span.end), snapshot.clone());
+        }
+        self.expression_value_snapshots
+            .insert((span.start, span.end), snapshot);
+    }
+
+    fn record_absent_array_slot_snapshot(&mut self, expression: &Expression<'_>) {
+        if self.function_depth > 1
+            || self
+                .class_effect_contexts
+                .last()
+                .is_some_and(Option::is_some)
+        {
+            return;
+        }
+        let Some(path) = self.alias_source_path(expression) else {
+            return;
+        };
+        let historical = self.current_value_alias_candidates(&path).0;
+        if self.local_array_slot_is_definitely_absent(&path, historical) {
+            self.insert_expression_value_snapshot(
+                expression,
+                StaticExpressionValueSnapshot::default(),
+            );
+        }
+    }
+
     fn record_expression_value_snapshot(&mut self, expression: &Expression<'_>) {
         if self.function_depth > 1
             || self
@@ -38208,6 +38555,12 @@ impl StaticHookAliasCollector<'_> {
                 .iter()
                 .any(|candidate| !self.path_has_modeled_local_value(candidate, historical))
         {
+            if self.local_array_slot_is_definitely_absent(&path, historical) {
+                self.insert_expression_value_snapshot(
+                    expression,
+                    StaticExpressionValueSnapshot::default(),
+                );
+            }
             return;
         }
         let mut sources = candidates.clone();
@@ -38226,9 +38579,8 @@ impl StaticHookAliasCollector<'_> {
             .cloned()
             .collect();
         let callable_spans = self.value_callable_spans(&candidates, historical);
-        let span = expression.span();
-        self.expression_value_snapshots.insert(
-            (span.start, span.end),
+        self.insert_expression_value_snapshot(
+            expression,
             StaticExpressionValueSnapshot {
                 sources,
                 local_values,
@@ -45818,6 +46170,7 @@ impl StaticHookAliasCollector<'_> {
                     let targets = if matches!(
                         &operation.kind,
                         DeferredCallableOperationKind::ArrayMutation { .. }
+                            | DeferredCallableOperationKind::ArrayLengthAssignment { .. }
                     ) {
                         self.mapped_returned_callable_capture_paths(
                             &target,
@@ -45854,7 +46207,8 @@ impl StaticHookAliasCollector<'_> {
                         | DeferredCallableOperationKind::DeleteComputedOwnProperty
                         | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                         | DeferredCallableOperationKind::DescriptorProtection { .. }
-                        | DeferredCallableOperationKind::ArrayMutation { .. } => {
+                        | DeferredCallableOperationKind::ArrayMutation { .. }
+                        | DeferredCallableOperationKind::ArrayLengthAssignment { .. } => {
                             let applied = targets.len() == 1
                                 && targets.into_iter().all(|target| {
                                     self.apply_deferred_callable_operation(
@@ -46085,6 +46439,10 @@ impl StaticHookAliasCollector<'_> {
                 mutation,
                 conditional,
             } => self.apply_deferred_array_mutation(raw_target, mutation, mappers, *conditional),
+            DeferredCallableOperationKind::ArrayLengthAssignment {
+                assignment,
+                conditional,
+            } => self.apply_local_array_length_assignment(raw_target, assignment, *conditional),
         }
     }
 
@@ -46767,6 +47125,7 @@ impl StaticHookAliasCollector<'_> {
                 let targets = if matches!(
                     &operation.kind,
                     DeferredCallableOperationKind::ArrayMutation { .. }
+                        | DeferredCallableOperationKind::ArrayLengthAssignment { .. }
                 ) {
                     self.mapped_returned_callable_capture_paths(
                         &target,
@@ -46805,7 +47164,8 @@ impl StaticHookAliasCollector<'_> {
                     | DeferredCallableOperationKind::DeleteComputedOwnProperty
                     | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                     | DeferredCallableOperationKind::DescriptorProtection { .. }
-                    | DeferredCallableOperationKind::ArrayMutation { .. } => None,
+                    | DeferredCallableOperationKind::ArrayMutation { .. }
+                    | DeferredCallableOperationKind::ArrayLengthAssignment { .. } => None,
                 };
                 for target in targets {
                     let Some(sources) = &sources else {
@@ -49428,6 +49788,41 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
         let computed_data_target = self.dynamic_computed_assignment_data_target(&assignment.left);
+        let local_array_length_assignment = (assignment.operator == OxcAssignmentOperator::Assign)
+            .then(|| {
+                let target = place.as_ref().and_then(|place| {
+                    static_alias_invalidation_path(place).or_else(|| {
+                        let receiver = self.dynamic_this_roots.last().and_then(Option::as_ref)?;
+                        static_alias_invalidation_path_with_context(place, Some(&receiver.root))
+                    })
+                })?;
+                self.local_array_length_assignment(&target, &assignment.right)
+                    .or_else(|| {
+                        let (target, length) =
+                            Self::static_array_length_assignment(&target, &assignment.right)?;
+                        self.deferred_class_instance_array_path(&target, assignment.span.start)
+                            .then_some((target, length))
+                    })
+                    .map(|(target, length)| {
+                        (
+                            target,
+                            DeferredArrayLengthAssignment {
+                                snapshot: StaticAliasPath::dynamic_this(assignment.span)
+                                    .with_property(
+                                        "<array-length-assignment-snapshot>".to_string(),
+                                    ),
+                                length,
+                            },
+                        )
+                    })
+            })
+            .flatten();
+        if local_array_length_assignment.is_some() {
+            self.dynamic_path_owner_depths.insert(
+                (assignment.span.start, assignment.span.end),
+                self.function_depth,
+            );
+        }
         let static_descriptor_protected = computed_data_target.is_none()
             && place
                 .as_ref()
@@ -49461,38 +49856,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .copied()
             .flatten()
             .map(|context| context.span);
-        if stores_externally {
-            if self.function_depth <= 1 && deferred_class_effect.is_none() {
-                self.record_expression_value_snapshot(&assignment.right);
-                self.record_externally_stored_value(&assignment.right);
-                let mut exposed = BTreeSet::new();
-                self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
-                for path in exposed {
-                    let resolved = resolve_static_alias_path(&self.aliases, &path);
-                    self.escaped_callable_effect_targets.insert(path);
-                    self.escaped_callable_effect_targets.insert(resolved);
-                }
-            } else {
-                // Nested callable bodies bind captures and parameters when invoked. Reuse the
-                // invocation effect machinery for those bodies and delayed class initializers so
-                // unexecuted code cannot taint an older local value.
-                let mut exposed = BTreeSet::new();
-                self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
-                if let Some(span) =
-                    deferred_class_effect.or_else(|| self.current_callable_effect_span())
-                {
-                    self.local_callable_external_storage_effects
-                        .entry(span)
-                        .or_default()
-                        .extend(exposed.iter().cloned());
-                }
-                if deferred_class_effect.is_none() {
-                    for path in self.prepare_exposed_paths(exposed) {
-                        self.invalidate_exposed_path(path);
-                    }
-                }
-            }
-        }
         let prototype_path = self.prototype_assignment_target_path(&assignment.left);
         let setter_value = matches!(
             assignment.operator,
@@ -49632,6 +49995,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .is_some_and(|baseline| self.control_depth > *baseline);
         let deferred_class_instance_assignment = if assignment.operator
             == OxcAssignmentOperator::Assign
+            && local_array_length_assignment.is_none()
             && !accessor_write
             && !auto_accessor_write
             && !descriptor_rejects_assignment
@@ -49691,6 +50055,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         {
             self.collect_assignment_target_initializer(&assignment.left, &source);
         } else if assignment.operator == OxcAssignmentOperator::Assign
+            && local_array_length_assignment.is_none()
             && !accessor_write
             && !descriptor_rejects_assignment
             && !(stores_externally && deferred_class_effect.is_some())
@@ -49699,6 +50064,38 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.record_unreferenced_callable_initializer(&path, &assignment.right);
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+        if stores_externally {
+            if self.function_depth <= 1 && deferred_class_effect.is_none() {
+                self.record_expression_value_snapshot(&assignment.right);
+                self.record_externally_stored_value(&assignment.right);
+                let mut exposed = BTreeSet::new();
+                self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
+                for path in exposed {
+                    let resolved = resolve_static_alias_path(&self.aliases, &path);
+                    self.escaped_callable_effect_targets.insert(path);
+                    self.escaped_callable_effect_targets.insert(resolved);
+                }
+            } else {
+                // Nested callable bodies bind captures and parameters when invoked. Reuse the
+                // invocation effect machinery for those bodies and delayed class initializers so
+                // unexecuted code cannot taint an older local value.
+                let mut exposed = BTreeSet::new();
+                self.collect_exposed_argument_paths(&assignment.right, &mut exposed);
+                if let Some(span) =
+                    deferred_class_effect.or_else(|| self.current_callable_effect_span())
+                {
+                    self.local_callable_external_storage_effects
+                        .entry(span)
+                        .or_default()
+                        .extend(exposed.iter().cloned());
+                }
+                if deferred_class_effect.is_none() {
+                    for path in self.prepare_exposed_paths(exposed) {
+                        self.invalidate_exposed_path(path);
+                    }
+                }
+            }
+        }
         if assignment.operator == OxcAssignmentOperator::Assign && !accessor_write {
             accessor_write = self.record_structured_assignment_target_setter_invocations(
                 &assignment.left,
@@ -49726,7 +50123,36 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     conditional,
                 });
         }
-        if !auto_accessor_write && !descriptor_rejects_assignment {
+        if let Some((target, length_assignment)) = &local_array_length_assignment {
+            if let Some(span) = self.deferred_class_instance_operation_span(target) {
+                self.deferred_class_instance_operations
+                    .entry(span)
+                    .or_default()
+                    .push(DeferredClassInstanceOperation {
+                        span: (assignment.span.start, assignment.span.end),
+                        target: target.clone(),
+                        kind: DeferredClassInstanceOperationKind::ArrayLengthAssignment(
+                            length_assignment.clone(),
+                        ),
+                        conditional,
+                    });
+            } else if let Some(span) = self.deferred_callable_alias_capture_span(target) {
+                self.record_deferred_callable_operation(
+                    span,
+                    target.clone(),
+                    DeferredCallableOperationKind::ArrayLengthAssignment {
+                        assignment: length_assignment.clone(),
+                        conditional,
+                    },
+                );
+            } else {
+                self.apply_local_array_length_assignment(target, length_assignment, conditional);
+            }
+        }
+        if local_array_length_assignment.is_none()
+            && !auto_accessor_write
+            && !descriptor_rejects_assignment
+        {
             self.invalidate_place(place.clone());
         }
         if !descriptor_rejects_assignment && let Some(path) = prototype_path {
@@ -49745,6 +50171,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             }
         }
         if assignment.operator == OxcAssignmentOperator::Assign
+            && local_array_length_assignment.is_none()
             && !accessor_write
             && !descriptor_rejects_assignment
             && !(stores_externally && deferred_class_effect.is_some())
@@ -49805,12 +50232,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 }
             }
         } else if assignment.operator == OxcAssignmentOperator::Assign
+            && local_array_length_assignment.is_none()
             && !descriptor_rejects_assignment
             && let Some(source) = self.alias_source_path(&assignment.right)
         {
             self.collect_assignment_target_initializer(&assignment.left, &source);
         }
         if assignment.operator == OxcAssignmentOperator::Assign
+            && local_array_length_assignment.is_none()
             && !accessor_write
             && !descriptor_rejects_assignment
             && !conditional
@@ -50260,6 +50689,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         if let Some(mutation) = reflective_mutation {
             self.reflective_mutations.push(mutation);
+        }
+    }
+
+    fn visit_arguments(&mut self, arguments: &ArenaVec<'a, Argument<'a>>) {
+        for argument in arguments {
+            if let Some(expression) = argument.as_expression() {
+                self.visit_expression(expression);
+                self.record_absent_array_slot_snapshot(expression);
+            } else if let Argument::SpreadElement(spread) = argument {
+                self.visit_spread_element(spread);
+                self.record_absent_array_slot_snapshot(&spread.argument);
+            }
         }
     }
 

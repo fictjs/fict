@@ -4512,6 +4512,160 @@ fn array_mutations_respect_descriptors_and_extensibility() {
 }
 
 #[test]
+fn array_length_assignments_update_local_storage_shapes() {
+    let mut mismatches = Vec::new();
+    for (name, setup, expected_escape) in [
+        (
+            "shrinking an array deletes the truncated slot",
+            "const source = [{}, local]; source.length = 1; holder.item = source[1];",
+            false,
+        ),
+        (
+            "a truncated slot passed to an unknown call is undefined",
+            "const source = [{}, local]; source.length = 1; holder.consume(source[1]);",
+            false,
+        ),
+        (
+            "a later argument can truncate an array only after an earlier read",
+            "const source = [{}, local]; local.run = run; holder.consume(source[1], source.length = 1);",
+            true,
+        ),
+        (
+            "an earlier argument truncates an array before a later read",
+            "const source = [{}, local]; local.run = run; holder.consume(source.length = 1, source[1]);",
+            false,
+        ),
+        (
+            "a computed length assignment deletes the truncated slot",
+            "const source = [{}, local]; source['length'] = 1; holder.item = source[1];",
+            false,
+        ),
+        (
+            "an inline length assignment truncates before its stored tail value",
+            "const source = [{}, local]; holder.item = (source.length = 1, source[1]);",
+            false,
+        ),
+        (
+            "a length assignment through an alias updates the source shape",
+            "const source = [{}, local]; const alias = source; alias.length = 1; holder.item = source[1];",
+            false,
+        ),
+        (
+            "a source length assignment updates aliased reads",
+            "const source = [{}, local]; const alias = source; source.length = 1; holder.item = alias[1];",
+            false,
+        ),
+        (
+            "growing an array creates holes rather than own properties",
+            "const source = []; source.length = 1; source[0] = local; holder.item = source[0];",
+            true,
+        ),
+        (
+            "growing a non-extensible array keeps its new slots absent",
+            "const source = []; Object.preventExtensions(source); source.length = 1; source[0] = local; holder.item = source[0];",
+            false,
+        ),
+        (
+            "a frozen length rejects truncation",
+            "const source = [{}, local]; Object.freeze(source); source.length = 1; holder.item = source[1];",
+            true,
+        ),
+        (
+            "sealed elements reject truncation",
+            "const source = [{}, local]; Object.seal(source); source.length = 1; holder.item = source[1];",
+            true,
+        ),
+        (
+            "an uninvoked length helper remains inert",
+            "const source = [{}, local]; const shrink = () => { source.length = 1; }; void shrink; holder.item = source[1];",
+            true,
+        ),
+        (
+            "an invoked length helper truncates the captured array",
+            "const source = [{}, local]; const shrink = () => { source.length = 1; }; shrink(); holder.item = source[1];",
+            false,
+        ),
+        (
+            "a constructed length initializer truncates the captured array",
+            "const source = [{}, local]; class Box { value = (source.length = 1); } new Box(); holder.item = source[1];",
+            false,
+        ),
+        (
+            "an unconstructed length initializer remains inert",
+            "const source = [{}, local]; class Box { value = (source.length = 1); } void Box; holder.item = source[1];",
+            true,
+        ),
+        (
+            "an instance length initializer updates its own array",
+            "class Box { items = [{}, local]; value = (this.items.length = 1); } const box = new Box(); holder.item = box.items[1];",
+            false,
+        ),
+        (
+            "a conditional length assignment preserves the untouched branch",
+            "const source = [{}, local]; if (holder.flag) source.length = 1; holder.item = source[1];",
+            true,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        if name == "an instance length initializer updates its own array" {
+            let field_start = source.find("[{}, local]").expect("instance array field") as u32;
+            let field_end = field_start + "[{}, local]".len() as u32;
+            let relevant = output
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+                .collect::<Vec<_>>();
+            let expected_class_retention = relevant.len() == 1
+                && relevant[0].code.as_str() == "FICT-R002"
+                && relevant[0]
+                    .primary_span
+                    .is_some_and(|span| span.start() == field_start && span.end() == field_end);
+            if !expected_class_retention {
+                mismatches.push(format!("{name}: {:?}", output.diagnostics));
+            }
+            continue;
+        }
+        let mut findings = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        findings.sort_unstable();
+        findings.dedup();
+        let expected =
+            if name == "a later argument can truncate an array only after an earlier read" {
+                vec!["FICT-R002"]
+            } else if expected_escape {
+                vec!["FICT-R002", "FICT-R005"]
+            } else {
+                Vec::new()
+            };
+        if findings != expected {
+            mismatches.push(format!("{name}: {:?}", output.diagnostics));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
 fn array_mutator_results_preserve_local_storage_shapes() {
     let source = r#"
         import { $state } from 'fict';
