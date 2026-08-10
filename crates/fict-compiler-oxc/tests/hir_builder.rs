@@ -5540,6 +5540,121 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "Object.seal blocks a new data property assignment",
+            "const source = {}; Object.seal(source); source.item = local; holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.seal blocks a new computed data property assignment",
+            "const key = 'item'; const source = {}; Object.seal(source); source[key] = local; holder.item = source[key];",
+            false,
+        ),
+        (
+            "Reflect.set cannot add a property to a sealed object",
+            "const source = {}; Object.seal(source); Reflect.set(source, 'item', local); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.assign cannot add a property to a sealed object",
+            "const source = {}; Object.seal(source); Object.assign(source, { item: local }); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.preventExtensions blocks a new data property assignment",
+            "const source = {}; Object.preventExtensions(source); source.item = local; holder.item = source.item;",
+            false,
+        ),
+        (
+            "conditional preventExtensions preserves a possible new property assignment",
+            "const source = {}; if (holder.flag) Object.preventExtensions(source); source.item = local; holder.item = source.item;",
+            true,
+        ),
+        (
+            "Object.preventExtensions preserves an existing writable assignment",
+            "const source = { item: local }; Object.preventExtensions(source); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.preventExtensions allows an existing property deletion",
+            "const source = { item: local }; Object.preventExtensions(source); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.preventExtensions remains shallow",
+            "const source = { nested: {} }; Object.preventExtensions(source); source.nested.item = local; holder.item = source.nested.item;",
+            true,
+        ),
+        (
+            "Object.defineProperty cannot add to a non-extensible object",
+            "const source = {}; Object.preventExtensions(source); Object.defineProperty(source, 'item', { value: local }); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Reflect.defineProperty cannot add to a non-extensible object",
+            "const source = {}; Object.preventExtensions(source); Reflect.defineProperty(source, 'item', { value: local }); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.defineProperty can update an existing non-extensible property",
+            "const source = { item: {} }; Object.preventExtensions(source); Object.defineProperty(source, 'item', { value: local }); holder.item = source.item;",
+            true,
+        ),
+        (
+            "Reflect.set cannot add a property to a non-extensible object",
+            "const source = {}; Object.preventExtensions(source); Reflect.set(source, 'item', local); holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.assign cannot add a property to a non-extensible object",
+            "const source = {}; Object.preventExtensions(source); Object.assign(source, { item: local }); holder.item = source.item;",
+            false,
+        ),
+        (
+            "uninvoked preventExtensions helper remains inert",
+            "const source = {}; const prevent = () => Object.preventExtensions(source); void prevent; source.item = local; holder.item = source.item;",
+            true,
+        ),
+        (
+            "invoked preventExtensions helper blocks a new property",
+            "const source = {}; const prevent = () => Object.preventExtensions(source); prevent(); source.item = local; holder.item = source.item;",
+            false,
+        ),
+        (
+            "unconstructed preventExtensions initializer remains inert",
+            "const source = {}; class Box { value = Object.preventExtensions(source); } void Box; source.item = local; holder.item = source.item;",
+            true,
+        ),
+        (
+            "constructed preventExtensions initializer blocks a new property",
+            "const source = {}; class Box { value = Object.preventExtensions(source); } new Box(); source.item = local; holder.item = source.item;",
+            false,
+        ),
+        (
+            "preventExtensions result aliases the protected object",
+            "const source = {}; const protectedSource = Object.preventExtensions(source); protectedSource.item = local; holder.item = source.item;",
+            false,
+        ),
+        (
+            "aliased preventExtensions blocks a new property",
+            "const prevent = Object.preventExtensions; const source = {}; prevent(source); source.item = local; holder.item = source.item;",
+            false,
+        ),
+        (
+            "overridden preventExtensions remains an external call",
+            "Object.preventExtensions = value => { holder.item = value; }; Object.preventExtensions(run);",
+            true,
+        ),
+        (
+            "replacing a non-extensible owner preserves its detached alias",
+            "let source = {}; const alias = source; Object.preventExtensions(source); source = {}; alias.item = local; holder.item = alias.item;",
+            false,
+        ),
+        (
+            "replacing a non-extensible owner clears the new binding protection",
+            "let source = {}; Object.preventExtensions(source); source = {}; source.item = local; holder.item = source.item;",
+            true,
+        ),
+        (
             "Object.freeze blocks data property assignment",
             "const source = { item: local }; Object.freeze(source); source.item = {}; holder.item = source.item;",
             true,
