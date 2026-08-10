@@ -13645,6 +13645,134 @@ fn writable_only_descriptor_creates_an_assignable_undefined_property() {
 }
 
 #[test]
+fn stored_descriptor_attributes_preserve_static_truthiness() {
+    for (name, setup, expected_escape) in [
+        (
+            "stored writable true",
+            "const descriptor = { value: local, writable: true }; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "stored writable false",
+            "const descriptor = { value: local, writable: false }; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "stored truthy writable",
+            "const descriptor = { value: local, writable: 'yes' }; Reflect.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "stored falsy writable",
+            "const descriptor = { value: local, writable: 0 }; Reflect.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "stored configurable true",
+            "const descriptor = { value: local, configurable: true }; Object.defineProperty(source, 'item', descriptor); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "stored configurable false",
+            "const descriptor = { value: local, configurable: false }; Object.defineProperty(source, 'item', descriptor); delete source.item; holder.item = source.item;",
+            true,
+        ),
+        (
+            "stored enumerable true",
+            "const descriptor = { value: local, enumerable: true }; Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "stored enumerable false",
+            "const descriptor = { value: local, enumerable: false }; Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "stored falsy enumerable",
+            "const descriptor = { value: local, enumerable: '' }; Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "stored writable snapshots its source binding",
+            "let writable = true; const descriptor = { value: local, writable }; writable = false; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "stored writable field getter returns true",
+            "const descriptor = { value: local, get writable() { return true; } }; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "stored configurable field getter returns true",
+            "const descriptor = { value: local, get configurable() { return true; } }; Object.defineProperty(source, 'item', descriptor); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "stored enumerable field getter returns false",
+            "const descriptor = { value: local, get enumerable() { return false; } }; Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "plain property descriptor result stays writable",
+            "const original = { item: local }; const descriptor = Object.getOwnPropertyDescriptor(original, 'item'); Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "non-writable property descriptor result stays non-writable",
+            "const original = {}; Object.defineProperty(original, 'item', { value: local }); const descriptor = Object.getOwnPropertyDescriptor(original, 'item'); Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "plain property descriptor result stays configurable",
+            "const original = { item: local }; const descriptor = Object.getOwnPropertyDescriptor(original, 'item'); Object.defineProperty(source, 'item', descriptor); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "non-enumerable property descriptor result stays non-enumerable",
+            "const original = {}; Object.defineProperty(original, 'item', { value: local }); const descriptor = Object.getOwnPropertyDescriptor(original, 'item'); Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    const source = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let mut escape_codes = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        escape_codes.sort_unstable();
+        let expected = if expected_escape {
+            vec!["FICT-R002", "FICT-R005"]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            escape_codes, expected,
+            "stored descriptor attribute mismatch for {name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn precisely_modeled_local_descriptor_calls_do_not_escape_arguments() {
     for (name, setup, expected_escape) in [
         (

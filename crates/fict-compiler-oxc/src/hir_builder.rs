@@ -21580,6 +21580,9 @@ struct StaticHookAliasCollector<'semantic> {
     local_getter_result_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
     local_getter_result_definedness_history:
         BTreeMap<StaticAliasPath, BTreeSet<LocalGetterResultDefinedness>>,
+    local_getter_result_truthiness: BTreeMap<StaticAliasPath, LocalValueTruthiness>,
+    local_getter_result_truthiness_history:
+        BTreeMap<StaticAliasPath, BTreeSet<LocalValueTruthiness>>,
     local_setter_properties: BTreeMap<StaticAliasPath, StaticAliasPath>,
     local_setter_property_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     dynamic_setter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
@@ -21595,6 +21598,8 @@ struct StaticHookAliasCollector<'semantic> {
     local_value_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
     local_value_definedness_history:
         BTreeMap<StaticAliasPath, BTreeSet<LocalGetterResultDefinedness>>,
+    local_value_truthiness: BTreeMap<StaticAliasPath, LocalValueTruthiness>,
+    local_value_truthiness_history: BTreeMap<StaticAliasPath, BTreeSet<LocalValueTruthiness>>,
     local_getter_call_invocations: BTreeMap<(u32, u32), Vec<LocalInvocationFact>>,
     handled_local_getter_read_spans: BTreeSet<(u32, u32)>,
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
@@ -21776,6 +21781,7 @@ struct DeferredClassStateSnapshot {
     dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     enumerable_dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     local_getter_result_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
+    local_getter_result_truthiness: BTreeMap<StaticAliasPath, LocalValueTruthiness>,
     local_setter_properties: BTreeMap<StaticAliasPath, StaticAliasPath>,
     dynamic_setter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     dynamic_accessor_excluded_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
@@ -21787,6 +21793,7 @@ struct DeferredClassStateSnapshot {
     non_configurable_descriptor_containers: BTreeSet<StaticAliasPath>,
     non_extensible_descriptor_containers: BTreeSet<StaticAliasPath>,
     local_value_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
+    local_value_truthiness: BTreeMap<StaticAliasPath, LocalValueTruthiness>,
     local_static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     local_json_replacer_property_lists: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     local_object_prototypes: BTreeMap<StaticAliasPath, BTreeMap<StaticAliasPath, StaticAliasPath>>,
@@ -22096,6 +22103,27 @@ enum LocalGetterResultDefinedness {
 impl LocalGetterResultDefinedness {
     fn merge(self, other: Self) -> Self {
         if self == other { self } else { Self::Unknown }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LocalValueTruthiness {
+    Truthy,
+    Falsy,
+    Unknown,
+}
+
+impl LocalValueTruthiness {
+    fn merge(self, other: Self) -> Self {
+        if self == other { self } else { Self::Unknown }
+    }
+
+    fn invert(self) -> Self {
+        match self {
+            Self::Truthy => Self::Falsy,
+            Self::Falsy => Self::Truthy,
+            Self::Unknown => Self::Unknown,
+        }
     }
 }
 
@@ -22814,6 +22842,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             enumerable_dynamic_getter_property_history: BTreeMap::new(),
             local_getter_result_definedness: BTreeMap::new(),
             local_getter_result_definedness_history: BTreeMap::new(),
+            local_getter_result_truthiness: BTreeMap::new(),
+            local_getter_result_truthiness_history: BTreeMap::new(),
             local_setter_properties: BTreeMap::new(),
             local_setter_property_history: BTreeMap::new(),
             dynamic_setter_properties: BTreeMap::new(),
@@ -22828,6 +22858,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             non_extensible_descriptor_containers: BTreeSet::new(),
             local_value_definedness: BTreeMap::new(),
             local_value_definedness_history: BTreeMap::new(),
+            local_value_truthiness: BTreeMap::new(),
+            local_value_truthiness_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
             handled_local_getter_read_spans: BTreeSet::new(),
             handled_object_spread_getter_spans: BTreeSet::new(),
@@ -25005,6 +25037,7 @@ impl StaticHookAliasCollector<'_> {
             dynamic_getter_properties: self.dynamic_getter_properties.clone(),
             enumerable_dynamic_getter_properties: self.enumerable_dynamic_getter_properties.clone(),
             local_getter_result_definedness: self.local_getter_result_definedness.clone(),
+            local_getter_result_truthiness: self.local_getter_result_truthiness.clone(),
             local_setter_properties: self.local_setter_properties.clone(),
             dynamic_setter_properties: self.dynamic_setter_properties.clone(),
             dynamic_accessor_excluded_properties: self.dynamic_accessor_excluded_properties.clone(),
@@ -25020,6 +25053,7 @@ impl StaticHookAliasCollector<'_> {
                 .clone(),
             non_extensible_descriptor_containers: self.non_extensible_descriptor_containers.clone(),
             local_value_definedness: self.local_value_definedness.clone(),
+            local_value_truthiness: self.local_value_truthiness.clone(),
             local_static_from_entries_sources: self.local_static_from_entries_sources.clone(),
             local_json_replacer_property_lists: self.local_json_replacer_property_lists.clone(),
             local_object_prototypes: self.local_object_prototypes.clone(),
@@ -25087,6 +25121,7 @@ impl StaticHookAliasCollector<'_> {
         restore_path_map!(dynamic_getter_properties);
         restore_path_map!(enumerable_dynamic_getter_properties);
         restore_path_map!(local_getter_result_definedness);
+        restore_path_map!(local_getter_result_truthiness);
         restore_path_map!(local_setter_properties);
         restore_path_map!(dynamic_setter_properties);
         restore_path_map!(dynamic_accessor_excluded_properties);
@@ -25098,6 +25133,7 @@ impl StaticHookAliasCollector<'_> {
         restore_path_set!(non_configurable_descriptor_containers);
         restore_path_set!(non_extensible_descriptor_containers);
         restore_path_map!(local_value_definedness);
+        restore_path_map!(local_value_truthiness);
         restore_path_map!(local_static_from_entries_sources);
         restore_path_map!(local_json_replacer_property_lists);
         restore_path_map!(local_object_prototypes);
@@ -29978,7 +30014,23 @@ impl StaticHookAliasCollector<'_> {
             .entry(target.clone())
             .or_default()
             .insert(definedness);
-        self.local_value_definedness.insert(target, definedness);
+        self.local_value_definedness
+            .insert(target.clone(), definedness);
+        if definedness == LocalGetterResultDefinedness::Undefined {
+            self.record_descriptor_result_truthiness(target, LocalValueTruthiness::Falsy);
+        }
+    }
+
+    fn record_descriptor_result_truthiness(
+        &mut self,
+        target: StaticAliasPath,
+        truthiness: LocalValueTruthiness,
+    ) {
+        self.local_value_truthiness_history
+            .entry(target.clone())
+            .or_default()
+            .insert(truthiness);
+        self.local_value_truthiness.insert(target, truthiness);
     }
 
     fn local_own_property_descriptor_paths(
@@ -30029,6 +30081,18 @@ impl StaticHookAliasCollector<'_> {
             return false;
         };
         let accessor = getter.is_some() || setter.is_some();
+        let configurable = !self.local_property_has_descriptor_metadata(
+            &property,
+            &self.non_configurable_descriptor_properties,
+            &self.non_configurable_descriptor_containers,
+        );
+        let enumerable = self.local_own_property_may_be_enumerable(source, name);
+        let writable = !accessor
+            && !self.local_property_has_descriptor_metadata(
+                &property,
+                &self.non_writable_descriptor_properties,
+                &self.non_writable_descriptor_containers,
+            );
         let mut fields = BTreeSet::from(["configurable".to_string(), "enumerable".to_string()]);
         if accessor {
             let get = target.clone().with_property("get".to_string());
@@ -30039,9 +30103,10 @@ impl StaticHookAliasCollector<'_> {
                 }
                 self.record_local_callable_snapshot(&getter, &get);
                 self.record_descriptor_result_definedness(
-                    get,
+                    get.clone(),
                     LocalGetterResultDefinedness::Defined,
                 );
+                self.record_descriptor_result_truthiness(get, LocalValueTruthiness::Truthy);
             } else {
                 self.record_descriptor_result_definedness(
                     get,
@@ -30054,9 +30119,10 @@ impl StaticHookAliasCollector<'_> {
                 }
                 self.record_local_callable_snapshot(&setter, &set);
                 self.record_descriptor_result_definedness(
-                    set,
+                    set.clone(),
                     LocalGetterResultDefinedness::Defined,
                 );
+                self.record_descriptor_result_truthiness(set, LocalValueTruthiness::Truthy);
             } else {
                 self.record_descriptor_result_definedness(
                     set,
@@ -30089,10 +30155,28 @@ impl StaticHookAliasCollector<'_> {
                 LocalGetterResultDefinedness::Defined,
             );
         }
+        for (field, truthy) in [("configurable", configurable), ("enumerable", enumerable)] {
+            self.record_descriptor_result_truthiness(
+                target.clone().with_property(field.to_string()),
+                if truthy {
+                    LocalValueTruthiness::Truthy
+                } else {
+                    LocalValueTruthiness::Falsy
+                },
+            );
+        }
         if !accessor {
             self.record_descriptor_result_definedness(
                 target.clone().with_property("writable".to_string()),
                 LocalGetterResultDefinedness::Defined,
+            );
+            self.record_descriptor_result_truthiness(
+                target.clone().with_property("writable".to_string()),
+                if writable {
+                    LocalValueTruthiness::Truthy
+                } else {
+                    LocalValueTruthiness::Falsy
+                },
             );
         }
         self.structured_own_properties
@@ -32172,6 +32256,8 @@ impl StaticHookAliasCollector<'_> {
             .retain(|owner, _| !owner.starts_with(path));
         self.local_getter_result_definedness
             .retain(|getter, _| !getter.overlaps(path));
+        self.local_getter_result_truthiness
+            .retain(|getter, _| !getter.overlaps(path));
         self.local_setter_properties
             .retain(|property, _| !property.overlaps(path));
         self.dynamic_setter_properties
@@ -32179,6 +32265,8 @@ impl StaticHookAliasCollector<'_> {
         self.dynamic_accessor_excluded_properties
             .retain(|owner, _| !owner.starts_with(path));
         self.local_value_definedness
+            .retain(|value, _| !value.overlaps(path));
+        self.local_value_truthiness
             .retain(|value, _| !value.overlaps(path));
         self.callable_exposures
             .retain(|target, _| !target.overlaps(path));
@@ -33246,6 +33334,97 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn local_expression_truthiness(&self, expression: &Expression<'_>) -> LocalValueTruthiness {
+        let expression = expression.get_inner_expression();
+        if static_alias_source_path(self.scoping, expression)
+            .is_some_and(|path| path == StaticAliasPath::unresolved_global("undefined".to_string()))
+        {
+            return LocalValueTruthiness::Falsy;
+        }
+        match expression {
+            Expression::BooleanLiteral(value) => {
+                if value.value {
+                    LocalValueTruthiness::Truthy
+                } else {
+                    LocalValueTruthiness::Falsy
+                }
+            }
+            Expression::NullLiteral(_) => LocalValueTruthiness::Falsy,
+            Expression::NumericLiteral(value) => {
+                if value.value == 0.0 || value.value.is_nan() {
+                    LocalValueTruthiness::Falsy
+                } else {
+                    LocalValueTruthiness::Truthy
+                }
+            }
+            Expression::BigIntLiteral(value) => {
+                if value.value == "0" {
+                    LocalValueTruthiness::Falsy
+                } else {
+                    LocalValueTruthiness::Truthy
+                }
+            }
+            Expression::StringLiteral(value) => {
+                if value.value.is_empty() {
+                    LocalValueTruthiness::Falsy
+                } else {
+                    LocalValueTruthiness::Truthy
+                }
+            }
+            Expression::RegExpLiteral(_)
+            | Expression::ArrayExpression(_)
+            | Expression::ObjectExpression(_)
+            | Expression::FunctionExpression(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::ClassExpression(_)
+            | Expression::NewExpression(_) => LocalValueTruthiness::Truthy,
+            Expression::UnaryExpression(value) => match value.operator {
+                OxcUnaryOperator::Void => LocalValueTruthiness::Falsy,
+                OxcUnaryOperator::Typeof => LocalValueTruthiness::Truthy,
+                OxcUnaryOperator::LogicalNot => {
+                    self.local_expression_truthiness(&value.argument).invert()
+                }
+                _ => LocalValueTruthiness::Unknown,
+            },
+            Expression::ConditionalExpression(value) => self
+                .local_expression_truthiness(&value.consequent)
+                .merge(self.local_expression_truthiness(&value.alternate)),
+            Expression::LogicalExpression(value) => {
+                let left = self.local_expression_truthiness(&value.left);
+                let right = self.local_expression_truthiness(&value.right);
+                match (value.operator, left) {
+                    (OxcLogicalOperator::And, LocalValueTruthiness::Falsy) => {
+                        LocalValueTruthiness::Falsy
+                    }
+                    (OxcLogicalOperator::And, LocalValueTruthiness::Truthy)
+                    | (OxcLogicalOperator::Or, LocalValueTruthiness::Falsy) => right,
+                    (OxcLogicalOperator::And, LocalValueTruthiness::Unknown) => {
+                        LocalValueTruthiness::Falsy.merge(right)
+                    }
+                    (OxcLogicalOperator::Or, LocalValueTruthiness::Truthy) => {
+                        LocalValueTruthiness::Truthy
+                    }
+                    (OxcLogicalOperator::Or, LocalValueTruthiness::Unknown) => {
+                        LocalValueTruthiness::Truthy.merge(right)
+                    }
+                    (OxcLogicalOperator::Coalesce, _) => LocalValueTruthiness::Unknown,
+                }
+            }
+            Expression::SequenceExpression(value) => value
+                .expressions
+                .last()
+                .map_or(LocalValueTruthiness::Falsy, |value| {
+                    self.local_expression_truthiness(value)
+                }),
+            Expression::AssignmentExpression(value)
+                if value.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.local_expression_truthiness(&value.right)
+            }
+            _ => LocalValueTruthiness::Unknown,
+        }
+    }
+
     fn local_getter_function_definedness(
         &self,
         function: &Function<'_>,
@@ -33270,18 +33449,46 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn local_getter_function_truthiness(&self, function: &Function<'_>) -> LocalValueTruthiness {
+        let Some(body) = &function.body else {
+            return LocalValueTruthiness::Unknown;
+        };
+        if let [Statement::ReturnStatement(statement)] = body.statements.as_slice() {
+            return statement
+                .argument
+                .as_ref()
+                .map_or(LocalValueTruthiness::Falsy, |expression| {
+                    self.local_expression_truthiness(expression)
+                });
+        }
+        let mut returns = ReturnStatementPresenceCollector::default();
+        returns.visit_function_body(body);
+        if returns.found {
+            LocalValueTruthiness::Unknown
+        } else {
+            LocalValueTruthiness::Falsy
+        }
+    }
+
     fn record_local_getter_result_definedness(
         &mut self,
         getter: StaticAliasPath,
         function: &Function<'_>,
     ) {
         let definedness = self.local_getter_function_definedness(function);
+        let truthiness = self.local_getter_function_truthiness(function);
         self.local_getter_result_definedness_history
             .entry(getter.clone())
             .or_default()
             .insert(definedness);
         self.local_getter_result_definedness
-            .insert(getter, definedness);
+            .insert(getter.clone(), definedness);
+        self.local_getter_result_truthiness_history
+            .entry(getter.clone())
+            .or_default()
+            .insert(truthiness);
+        self.local_getter_result_truthiness
+            .insert(getter, truthiness);
     }
 
     fn record_local_value_definedness(
@@ -33290,11 +33497,18 @@ impl StaticHookAliasCollector<'_> {
         expression: &Expression<'_>,
     ) {
         let definedness = self.local_getter_expression_definedness(expression);
+        let truthiness = self.local_expression_truthiness(expression);
         self.local_value_definedness_history
             .entry(value.clone())
             .or_default()
             .insert(definedness);
-        self.local_value_definedness.insert(value, definedness);
+        self.local_value_definedness
+            .insert(value.clone(), definedness);
+        self.local_value_truthiness_history
+            .entry(value.clone())
+            .or_default()
+            .insert(truthiness);
+        self.local_value_truthiness.insert(value, truthiness);
     }
 
     fn resolved_local_value_definedness(
@@ -33342,6 +33556,56 @@ impl StaticHookAliasCollector<'_> {
             .then(|| *definedness.first().expect("single local value definedness"))
     }
 
+    fn resolved_local_value_truthiness(
+        &self,
+        value: &StaticAliasPath,
+    ) -> Option<LocalValueTruthiness> {
+        if !self.path_is_currently_intact(value) {
+            return None;
+        }
+        let resolved = resolve_static_alias_path(&self.aliases, value);
+        if resolved != *value
+            && self
+                .invalidated
+                .iter()
+                .any(|invalidated| invalidated.overlaps(&resolved))
+        {
+            return None;
+        }
+        let historical = [value, &resolved]
+            .into_iter()
+            .any(|value| self.path_requires_historical_aliases(value, self.function_depth));
+        let candidates = if historical {
+            resolve_historical_alias_paths(&self.alias_history, value)
+        } else {
+            BTreeSet::from([value.clone(), resolved])
+        };
+        let mut truthiness = BTreeSet::new();
+        for candidate in candidates {
+            if candidate == StaticAliasPath::unresolved_global("undefined".to_string()) {
+                truthiness.insert(LocalValueTruthiness::Falsy);
+            }
+            if historical {
+                truthiness.extend(
+                    self.local_value_truthiness_history
+                        .get(&candidate)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+            } else if let Some(value) = self.local_value_truthiness.get(&candidate) {
+                truthiness.insert(*value);
+            }
+        }
+        if truthiness.is_empty() {
+            None
+        } else if truthiness.len() == 1 {
+            truthiness.first().copied()
+        } else {
+            Some(LocalValueTruthiness::Unknown)
+        }
+    }
+
     fn resolved_local_getter_result_definedness(
         &self,
         property: &StaticAliasPath,
@@ -33371,6 +33635,39 @@ impl StaticHookAliasCollector<'_> {
         } else {
             LocalGetterResultDefinedness::Unknown
         })
+    }
+
+    fn resolved_local_getter_result_truthiness(
+        &self,
+        property: &StaticAliasPath,
+    ) -> Option<LocalValueTruthiness> {
+        let (historical, getters) = self.local_getter_resolution(property, false);
+        if getters.is_empty() {
+            return None;
+        }
+        let mut values = BTreeSet::new();
+        for getter in getters {
+            if historical {
+                values.extend(
+                    self.local_getter_result_truthiness_history
+                        .get(&getter)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+            } else if let Some(truthiness) =
+                self.local_getter_result_truthiness.get(&getter).copied()
+            {
+                values.insert(truthiness);
+            }
+        }
+        if values.is_empty() {
+            None
+        } else if values.len() == 1 {
+            values.first().copied()
+        } else {
+            Some(LocalValueTruthiness::Unknown)
+        }
     }
 
     fn resolved_local_default_definedness(
@@ -34227,12 +34524,21 @@ impl StaticHookAliasCollector<'_> {
         let Some(definedness) = self.local_value_definedness.get(&source).copied() else {
             return false;
         };
+        let truthiness = self.local_value_truthiness.get(&source).copied();
         self.clear_overlapping_aliases(&target);
         self.local_value_definedness_history
             .entry(target.clone())
             .or_default()
             .insert(definedness);
-        self.local_value_definedness.insert(target, definedness);
+        self.local_value_definedness
+            .insert(target.clone(), definedness);
+        if let Some(truthiness) = truthiness {
+            self.local_value_truthiness_history
+                .entry(target.clone())
+                .or_default()
+                .insert(truthiness);
+            self.local_value_truthiness.insert(target, truthiness);
+        }
         true
     }
 
@@ -44010,6 +44316,7 @@ impl StaticHookAliasCollector<'_> {
                     path.clone(),
                     self.enumerable_getter_properties.contains(path),
                     self.local_getter_result_definedness.get(path).copied(),
+                    self.local_getter_result_truthiness.get(path).copied(),
                 )
             })
             .collect::<Vec<_>>();
@@ -44033,6 +44340,12 @@ impl StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         let definedness = self
             .local_value_definedness
+            .iter()
+            .filter(|(path, _)| path.starts_with(&source))
+            .map(|(path, value)| (path.clone(), *value))
+            .collect::<Vec<_>>();
+        let truthiness = self
+            .local_value_truthiness
             .iter()
             .filter(|(path, _)| path.starts_with(&source))
             .map(|(path, value)| (path.clone(), *value))
@@ -44085,7 +44398,7 @@ impl StaticHookAliasCollector<'_> {
             self.non_extensible_descriptor_containers
                 .insert(target.clone());
         }
-        for (path, enumerable, definedness) in getters {
+        for (path, enumerable, definedness, truthiness) in getters {
             let path = Self::rebase_returned_class_path(&path, &source, target);
             self.local_getter_properties.insert(path.clone());
             self.local_getter_property_history.insert(path.clone());
@@ -44099,7 +44412,14 @@ impl StaticHookAliasCollector<'_> {
                     .or_default()
                     .insert(definedness);
                 self.local_getter_result_definedness
-                    .insert(path, definedness);
+                    .insert(path.clone(), definedness);
+            }
+            if let Some(truthiness) = truthiness {
+                self.local_getter_result_truthiness_history
+                    .entry(path.clone())
+                    .or_default()
+                    .insert(truthiness);
+                self.local_getter_result_truthiness.insert(path, truthiness);
             }
         }
         for (path, setter) in setters {
@@ -44131,6 +44451,14 @@ impl StaticHookAliasCollector<'_> {
                 .or_default()
                 .insert(value);
             self.local_value_definedness.insert(path, value);
+        }
+        for (path, value) in truthiness {
+            let path = Self::rebase_returned_class_path(&path, &source, target);
+            self.local_value_truthiness_history
+                .entry(path.clone())
+                .or_default()
+                .insert(value);
+            self.local_value_truthiness.insert(path, value);
         }
         for (path, properties) in exclusions {
             self.dynamic_accessor_excluded_properties.insert(
@@ -44398,6 +44726,21 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn local_descriptor_value_truthiness(
+        &self,
+        value: &LocalDescriptorValue<'_, '_>,
+    ) -> LocalValueTruthiness {
+        match value {
+            LocalDescriptorValue::Expression(value) => self.local_expression_truthiness(value),
+            LocalDescriptorValue::Path(value) => self
+                .resolved_local_value_truthiness(value)
+                .unwrap_or(LocalValueTruthiness::Unknown),
+            LocalDescriptorValue::GetterResult { property, .. } => self
+                .resolved_local_getter_result_truthiness(property)
+                .unwrap_or(LocalValueTruthiness::Unknown),
+        }
+    }
+
     fn descriptor_accessor_supported(&self, value: &LocalDescriptorValue<'_, '_>) -> bool {
         if self.local_descriptor_value_definedness(value) == LocalGetterResultDefinedness::Undefined
         {
@@ -44518,39 +44861,14 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn descriptor_enumerable_may_be_true(&self, value: &LocalDescriptorValue<'_, '_>) -> bool {
-        let LocalDescriptorValue::Expression(value) = value else {
-            return self.local_descriptor_value_definedness(value)
-                != LocalGetterResultDefinedness::Undefined;
-        };
-        match value.get_inner_expression() {
-            Expression::BooleanLiteral(value) => value.value,
-            Expression::NullLiteral(_) => false,
-            Expression::NumericLiteral(value) => value.value != 0.0 && !value.value.is_nan(),
-            Expression::BigIntLiteral(_) => true,
-            Expression::StringLiteral(value) => !value.value.is_empty(),
-            Expression::UnaryExpression(value) if value.operator == OxcUnaryOperator::Void => false,
-            _ => {
-                self.local_getter_expression_definedness(value)
-                    != LocalGetterResultDefinedness::Undefined
-            }
-        }
+        self.local_descriptor_value_truthiness(value) != LocalValueTruthiness::Falsy
     }
 
     fn descriptor_attribute_is_definitely_true(
         &self,
         value: &LocalDescriptorValue<'_, '_>,
     ) -> bool {
-        let LocalDescriptorValue::Expression(value) = value else {
-            return false;
-        };
-        match value.get_inner_expression() {
-            Expression::BooleanLiteral(value) => value.value,
-            Expression::NumericLiteral(value) => value.value != 0.0 && !value.value.is_nan(),
-            Expression::BigIntLiteral(value) => value.value != "0",
-            Expression::StringLiteral(value) => !value.value.is_empty(),
-            Expression::NullLiteral(_) => false,
-            _ => false,
-        }
+        self.local_descriptor_value_truthiness(value) == LocalValueTruthiness::Truthy
     }
 
     fn apply_local_property_descriptor(
@@ -44673,12 +44991,10 @@ impl StaticHookAliasCollector<'_> {
             } else if let Some(value) = retained_value {
                 self.insert_alias(property.clone(), value);
             } else if replaces_value {
-                self.local_value_definedness_history
-                    .entry(property.clone())
-                    .or_default()
-                    .insert(LocalGetterResultDefinedness::Undefined);
-                self.local_value_definedness
-                    .insert(property.clone(), LocalGetterResultDefinedness::Undefined);
+                self.record_descriptor_result_definedness(
+                    property.clone(),
+                    LocalGetterResultDefinedness::Undefined,
+                );
             }
             self.descriptor_defined_properties.insert(property.clone());
             if descriptor_writable {
@@ -44705,12 +45021,10 @@ impl StaticHookAliasCollector<'_> {
         if !accessor {
             if !existing_own {
                 self.clear_overlapping_aliases(property);
-                self.local_value_definedness_history
-                    .entry(property.clone())
-                    .or_default()
-                    .insert(LocalGetterResultDefinedness::Undefined);
-                self.local_value_definedness
-                    .insert(property.clone(), LocalGetterResultDefinedness::Undefined);
+                self.record_descriptor_result_definedness(
+                    property.clone(),
+                    LocalGetterResultDefinedness::Undefined,
+                );
                 self.structured_own_properties
                     .entry(owner.clone())
                     .or_default()
@@ -49166,11 +49480,23 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(getter, _)| self.path_owner_depth(getter) < depth)
             .map(|(getter, definedness)| (getter.clone(), *definedness))
             .collect::<BTreeMap<_, _>>();
+        let outer_local_getter_result_truthiness = self
+            .local_getter_result_truthiness
+            .iter()
+            .filter(|(getter, _)| self.path_owner_depth(getter) < depth)
+            .map(|(getter, truthiness)| (getter.clone(), *truthiness))
+            .collect::<BTreeMap<_, _>>();
         let outer_local_value_definedness = self
             .local_value_definedness
             .iter()
             .filter(|(value, _)| self.path_owner_depth(value) < depth)
             .map(|(value, definedness)| (value.clone(), *definedness))
+            .collect::<BTreeMap<_, _>>();
+        let outer_local_value_truthiness = self
+            .local_value_truthiness
+            .iter()
+            .filter(|(value, _)| self.path_owner_depth(value) < depth)
+            .map(|(value, truthiness)| (value.clone(), *truthiness))
             .collect::<BTreeMap<_, _>>();
         let outer_callable_exposures = self
             .callable_exposures
@@ -49364,8 +49690,22 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             depth,
         );
         Self::restore_outer_path_map(
+            &mut self.local_getter_result_truthiness,
+            outer_local_getter_result_truthiness,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
             &mut self.local_value_definedness,
             outer_local_value_definedness,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.local_value_truthiness,
+            outer_local_value_truthiness,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
@@ -49622,11 +49962,23 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .filter(|(getter, _)| self.path_owner_depth(getter) < depth)
             .map(|(getter, definedness)| (getter.clone(), *definedness))
             .collect::<BTreeMap<_, _>>();
+        let outer_local_getter_result_truthiness = self
+            .local_getter_result_truthiness
+            .iter()
+            .filter(|(getter, _)| self.path_owner_depth(getter) < depth)
+            .map(|(getter, truthiness)| (getter.clone(), *truthiness))
+            .collect::<BTreeMap<_, _>>();
         let outer_local_value_definedness = self
             .local_value_definedness
             .iter()
             .filter(|(value, _)| self.path_owner_depth(value) < depth)
             .map(|(value, definedness)| (value.clone(), *definedness))
+            .collect::<BTreeMap<_, _>>();
+        let outer_local_value_truthiness = self
+            .local_value_truthiness
+            .iter()
+            .filter(|(value, _)| self.path_owner_depth(value) < depth)
+            .map(|(value, truthiness)| (value.clone(), *truthiness))
             .collect::<BTreeMap<_, _>>();
         let outer_callable_exposures = self
             .callable_exposures
@@ -49808,8 +50160,22 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             depth,
         );
         Self::restore_outer_path_map(
+            &mut self.local_getter_result_truthiness,
+            outer_local_getter_result_truthiness,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
             &mut self.local_value_definedness,
             outer_local_value_definedness,
+            &self.binding_owner_depths,
+            &self.dynamic_path_owner_depths,
+            depth,
+        );
+        Self::restore_outer_path_map(
+            &mut self.local_value_truthiness,
+            outer_local_value_truthiness,
             &self.binding_owner_depths,
             &self.dynamic_path_owner_depths,
             depth,
