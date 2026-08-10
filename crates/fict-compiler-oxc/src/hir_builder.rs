@@ -48280,7 +48280,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     self.control_depth > *baseline
                 });
             let path = self.direct_alias_source_path(&expression.argument);
-            let dynamic_target = self.dynamic_computed_expression_data_target(&expression.argument);
+            let dynamic_target = match expression.argument.get_inner_expression() {
+                Expression::ComputedMemberExpression(member)
+                    if self.computed_property_key_is_non_coercive(&member.expression) =>
+                {
+                    self.dynamic_computed_expression_data_target(&expression.argument)
+                }
+                _ => None,
+            };
             let operation_target = dynamic_target.as_ref().or(path.as_ref());
             let deferred_class_instance_delete = operation_target.and_then(|target| {
                 self.deferred_class_instance_operation_span(target)

@@ -5190,6 +5190,16 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "delete preserves a property when key coercion changes",
+            "let name = 'item'; const key = { toString() { return name; } }; const source = { [key]: local }; name = 'other'; delete source[key]; holder.item = source.item;",
+            true,
+        ),
+        (
+            "delete preserves a computed property for an unproven key",
+            "const key = holder.key; const source = { [key]: local }; delete source[key]; holder.item = source[key];",
+            true,
+        ),
+        (
             "Reflect.deleteProperty removes a matching computed data property",
             "const key = 'item'; const source = { [key]: local }; Reflect.deleteProperty(source, key); holder.item = source[key];",
             false,
@@ -5396,7 +5406,7 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         ),
         (
             "computed deletion removes the value from Object.values",
-            "const key = holder.key; const source = { [key]: local }; delete source[key]; const values = Object.values(source); holder.item = values[0];",
+            "const key = 'item'; const source = { [key]: local }; delete source[key]; const values = Object.values(source); holder.item = values[0];",
             false,
         ),
         (
@@ -5421,7 +5431,7 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         ),
         (
             "matching computed deletion removes a computed object property value",
-            "const key = holder.key; const source = { [key]: local }; delete source[key]; holder.item = source[key];",
+            "const key = 'item'; const source = { [key]: local }; delete source[key]; holder.item = source[key];",
             false,
         ),
         (
@@ -5451,7 +5461,7 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         ),
         (
             "invoked helper removes a computed object property value",
-            "const key = holder.key; const source = { [key]: local }; const remove = () => { delete source[key]; }; remove(); holder.item = source[key];",
+            "const key = 'item'; const source = { [key]: local }; const remove = () => { delete source[key]; }; remove(); holder.item = source[key];",
             false,
         ),
         (
@@ -5471,7 +5481,7 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         ),
         (
             "constructed instance initializer removes a computed object property value",
-            "const key = holder.key; const source = { [key]: local }; class Runner { value = delete source[key]; } new Runner(); holder.item = source[key];",
+            "const key = 'item'; const source = { [key]: local }; class Runner { value = delete source[key]; } new Runner(); holder.item = source[key];",
             false,
         ),
         (
@@ -5631,7 +5641,7 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         ),
         (
             "matching computed deletion removes a computed instance field value",
-            "const key = holder.key; class Box { [key] = local; } const box = new Box(); delete box[key]; holder.item = box[key];",
+            "const key = 'item'; class Box { [key] = local; } const box = new Box(); delete box[key]; holder.item = box[key];",
             false,
         ),
         (
@@ -5786,7 +5796,7 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         ),
         (
             "deleting an instance property preserves a computed prototype auto-accessor",
-            "const key = holder.key; class Box { accessor [key] = local; } const box = new Box(); delete box[key]; holder.item = box[key];",
+            "const key = 'item'; class Box { accessor [key] = local; } const box = new Box(); delete box[key]; holder.item = box[key];",
             true,
         ),
         (
@@ -6586,7 +6596,7 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         ),
         (
             "matching computed deletion removes a computed static field value",
-            "const key = holder.key; class Box { static [key] = local; } delete Box[key]; holder.item = Box[key];",
+            "const key = 'item'; class Box { static [key] = local; } delete Box[key]; holder.item = Box[key];",
             false,
         ),
         (
