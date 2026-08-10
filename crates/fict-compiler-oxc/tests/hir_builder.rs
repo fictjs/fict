@@ -5275,6 +5275,36 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             false,
         ),
         (
+            "computed defineProperty preserves existing data writability",
+            "const key = 'item'; const source = { [key]: local }; Object.defineProperty(source, key, { value: local }); source[key] = {}; holder.item = source[key];",
+            false,
+        ),
+        (
+            "computed defineProperty preserves existing data configurability",
+            "const key = 'item'; const source = { [key]: local }; Object.defineProperty(source, key, { value: local }); delete source[key]; holder.item = source[key];",
+            false,
+        ),
+        (
+            "computed defineProperty preserves existing data enumerability",
+            "const key = 'item'; const source = { [key]: {} }; Object.defineProperty(source, key, { value: local }); const copy = { ...source }; holder.item = copy[key];",
+            true,
+        ),
+        (
+            "static defineProperty preserves existing data writability",
+            "const source = { item: local }; Object.defineProperty(source, 'item', { value: local }); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "static defineProperty preserves existing data configurability",
+            "const source = { item: local }; Object.defineProperty(source, 'item', { value: local }); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "static defineProperty preserves existing data enumerability",
+            "const source = { item: {} }; Object.defineProperty(source, 'item', { value: local }); const copy = { ...source }; holder.item = copy.item;",
+            true,
+        ),
+        (
             "computed defineProperty preserves a different computed data value",
             "const first = 'first'; const second = 'second'; const source = { [first]: local }; Object.defineProperty(source, second, { value: {} }); holder.item = source[first];",
             true,
@@ -5290,6 +5320,101 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "assignment preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "compound assignment preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); source.item += 1; holder.item = source.item;",
+            true,
+        ),
+        (
+            "update preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); source.item++; holder.item = source.item;",
+            true,
+        ),
+        (
+            "compound assignment preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); source[key] += 1; holder.item = source[key];",
+            true,
+        ),
+        (
+            "update preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); source[key]++; holder.item = source[key];",
+            true,
+        ),
+        (
+            "replacing an object clears stale non-writable descriptor metadata",
+            "let source = {}; Object.defineProperty(source, 'item', { value: local }); source = { item: {} }; source.item = local; holder.item = source.item;",
+            true,
+        ),
+        (
+            "replacing an object clears stale non-configurable descriptor metadata",
+            "let source = {}; Object.defineProperty(source, 'item', { value: {} }); source = { item: local }; delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "replacing an owner preserves a detached descriptor alias",
+            "let source = {}; const alias = source; Object.defineProperty(source, 'item', { value: local }); source = {}; alias.item = {}; holder.item = alias.item;",
+            true,
+        ),
+        (
+            "replacing a frozen owner preserves its detached alias",
+            "let source = { item: local }; const alias = source; Object.freeze(source); source = {}; alias.item = {}; holder.item = alias.item;",
+            true,
+        ),
+        (
+            "uninvoked replacement preserves descriptor metadata",
+            "let source = {}; Object.defineProperty(source, 'item', { value: local }); const replace = () => { source = { item: {} }; }; void replace; source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "non-writable descriptor does not protect a sibling aliasing the same value",
+            "const source = { sibling: local }; Object.defineProperty(source, 'item', { value: local }); source.sibling = {}; holder.item = source.sibling;",
+            false,
+        ),
+        (
+            "non-writable descriptor is respected through an owner alias",
+            "const source = {}; const alias = source; Object.defineProperty(source, 'item', { value: local }); alias.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "inherited non-writable descriptor blocks assignment",
+            "const prototype = {}; Object.defineProperty(prototype, 'item', { value: local }); const source = Object.create(prototype); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "inherited writable descriptor accepts assignment",
+            "const prototype = {}; Object.defineProperty(prototype, 'item', { value: local, writable: true }); const source = Object.create(prototype); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "Reflect.set preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); Reflect.set(source, 'item', {}); holder.item = source.item;",
+            true,
+        ),
+        (
+            "Reflect.set preserves a non-writable receiver descriptor value",
+            "const target = { item: {} }; const receiver = {}; Object.defineProperty(receiver, 'item', { value: local }); Reflect.set(target, 'item', {}, receiver); holder.item = receiver.item;",
+            true,
+        ),
+        (
+            "Reflect.set accepts a writable receiver descriptor",
+            "const target = { item: {} }; const receiver = {}; Object.defineProperty(receiver, 'item', { value: local, writable: true }); Reflect.set(target, 'item', {}, receiver); holder.item = receiver.item;",
+            false,
+        ),
+        (
+            "computed Reflect.set preserves a non-writable receiver descriptor value",
+            "const key = 'item'; const target = { [key]: {} }; const receiver = {}; Object.defineProperty(receiver, key, { value: local }); Reflect.set(target, key, {}, receiver); holder.item = receiver[key];",
+            true,
+        ),
+        (
+            "Object.assign preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); Object.assign(source, { item: {} }); holder.item = source.item;",
+            true,
+        ),
+        (
             "Reflect.set preserves a computed non-writable descriptor value",
             "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); Reflect.set(source, key, {}); holder.item = source[key];",
             true,
@@ -5302,6 +5427,21 @@ fn local_callable_alias_effects_follow_invocation_timing() {
         (
             "delete preserves a computed non-configurable descriptor value",
             "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); delete source[key]; holder.item = source[key];",
+            true,
+        ),
+        (
+            "delete preserves a static non-configurable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); delete source.item; holder.item = source.item;",
+            true,
+        ),
+        (
+            "non-configurable descriptor does not protect a sibling aliasing the same value",
+            "const source = { sibling: local }; Object.defineProperty(source, 'item', { value: local }); delete source.sibling; holder.item = source.sibling;",
+            false,
+        ),
+        (
+            "Reflect.deleteProperty preserves a static non-configurable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); Reflect.deleteProperty(source, 'item'); holder.item = source.item;",
             true,
         ),
         (
@@ -5340,8 +5480,108 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "deferred assignment preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); const replace = () => { source.item = {}; }; replace(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "deferred Reflect.set preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); const replace = () => Reflect.set(source, 'item', {}); replace(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "deferred Object.assign preserves a static non-writable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); const replace = () => Object.assign(source, { item: {} }); replace(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "deferred delete preserves a static non-configurable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); const remove = () => delete source.item; remove(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "deferred Reflect.deleteProperty preserves a static non-configurable descriptor value",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local }); const remove = () => Reflect.deleteProperty(source, 'item'); remove(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "writable static descriptor accepts assignment",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local, writable: true }); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "writable computed descriptor accepts assignment",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local, writable: true }); source[key] = {}; holder.item = source[key];",
+            false,
+        ),
+        (
+            "configurable static descriptor accepts deletion",
+            "const source = {}; Object.defineProperty(source, 'item', { value: local, configurable: true }); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "configurable computed descriptor accepts deletion",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local, configurable: true }); delete source[key]; holder.item = source[key];",
+            false,
+        ),
+        (
+            "writable computed descriptor stays non-enumerable after assignment",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: {}, writable: true }); source[key] = local; const values = Object.values(source); holder.item = values[0];",
+            false,
+        ),
+        (
+            "Object.seal preserves writable data assignment",
+            "const source = { item: local }; Object.seal(source); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.seal blocks data property deletion",
+            "const source = { item: local }; Object.seal(source); delete source.item; holder.item = source.item;",
+            true,
+        ),
+        (
+            "Object.freeze blocks data property assignment",
+            "const source = { item: local }; Object.freeze(source); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "Object.freeze does not freeze nested values",
+            "const source = { item: { nested: local } }; Object.freeze(source); source.item.nested = {}; holder.item = source.item.nested;",
+            false,
+        ),
+        (
+            "Object.freeze protects direct properties of a nested object",
+            "const source = { item: { nested: local } }; Object.freeze(source.item); source.item.nested = {}; holder.item = source.item.nested;",
+            true,
+        ),
+        (
+            "Object.freeze protection follows an owner alias",
+            "const source = { item: local }; const alias = source; Object.freeze(source); alias.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "computed static field makes the class name writable",
+            "const key = 'name'; class Box { static [key] = local; } Box.name = {}; holder.item = Box.name;",
+            false,
+        ),
+        (
+            "uninvoked Object.freeze helper does not block assignment",
+            "const source = { item: local }; const freeze = () => Object.freeze(source); void freeze; source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "invoked Object.freeze helper blocks later assignment",
+            "const source = { item: local }; const freeze = () => Object.freeze(source); freeze(); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
             "uninvoked computed defineProperty helper remains inert",
             "const key = 'item'; const source = {}; const put = () => Object.defineProperty(source, key, { value: local }); void put;",
+            false,
+        ),
+        (
+            "uninvoked static defineProperty helper does not protect a property",
+            "const source = { item: local }; const protect = () => Object.defineProperty(source, 'item', { value: local, writable: false }); void protect; source.item = {}; holder.item = source.item;",
             false,
         ),
         (

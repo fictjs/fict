@@ -21450,6 +21450,10 @@ struct StaticHookAliasCollector<'semantic> {
     dynamic_accessor_excluded_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     descriptor_defined_properties: BTreeSet<StaticAliasPath>,
     enumerable_descriptor_properties: BTreeSet<StaticAliasPath>,
+    non_writable_descriptor_properties: BTreeSet<StaticAliasPath>,
+    non_configurable_descriptor_properties: BTreeSet<StaticAliasPath>,
+    non_writable_descriptor_containers: BTreeSet<StaticAliasPath>,
+    non_configurable_descriptor_containers: BTreeSet<StaticAliasPath>,
     local_value_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
     local_value_definedness_history:
         BTreeMap<StaticAliasPath, BTreeSet<LocalGetterResultDefinedness>>,
@@ -21638,6 +21642,10 @@ struct DeferredClassStateSnapshot {
     dynamic_accessor_excluded_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     descriptor_defined_properties: BTreeSet<StaticAliasPath>,
     enumerable_descriptor_properties: BTreeSet<StaticAliasPath>,
+    non_writable_descriptor_properties: BTreeSet<StaticAliasPath>,
+    non_configurable_descriptor_properties: BTreeSet<StaticAliasPath>,
+    non_writable_descriptor_containers: BTreeSet<StaticAliasPath>,
+    non_configurable_descriptor_containers: BTreeSet<StaticAliasPath>,
     local_value_definedness: BTreeMap<StaticAliasPath, LocalGetterResultDefinedness>,
     local_static_from_entries_sources: BTreeMap<StaticAliasPath, BTreeMap<String, StaticAliasPath>>,
     local_json_replacer_property_lists: BTreeMap<StaticAliasPath, BTreeSet<String>>,
@@ -21823,6 +21831,11 @@ enum DeferredCallableOperationKind {
     ReflectDeleteProperty {
         callee: StaticAliasPath,
         computed: bool,
+    },
+    DescriptorProtection {
+        non_writable: bool,
+        non_configurable: bool,
+        container: bool,
     },
     ArrayMutation(DeferredArrayMutation),
 }
@@ -22653,6 +22666,10 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             dynamic_accessor_excluded_properties: BTreeMap::new(),
             descriptor_defined_properties: BTreeSet::new(),
             enumerable_descriptor_properties: BTreeSet::new(),
+            non_writable_descriptor_properties: BTreeSet::new(),
+            non_configurable_descriptor_properties: BTreeSet::new(),
+            non_writable_descriptor_containers: BTreeSet::new(),
+            non_configurable_descriptor_containers: BTreeSet::new(),
             local_value_definedness: BTreeMap::new(),
             local_value_definedness_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
@@ -23359,6 +23376,37 @@ impl StaticHookAliasCollector<'_> {
             | AssignmentTarget::ObjectAssignmentTarget(_)
             | AssignmentTarget::StaticMemberExpression(_)
             | AssignmentTarget::ComputedMemberExpression(_) => return None,
+        };
+        let owner = self.alias_source_path(object)?;
+        Some(self.dynamic_data_property_target(&owner, key))
+    }
+
+    fn dynamic_computed_simple_assignment_data_target(
+        &self,
+        target: &SimpleAssignmentTarget<'_>,
+    ) -> Option<StaticAliasPath> {
+        let (object, key) = match target {
+            SimpleAssignmentTarget::ComputedMemberExpression(member)
+                if !member.optional && static_member_name(&member.expression).is_none() =>
+            {
+                (&member.object, &member.expression)
+            }
+            SimpleAssignmentTarget::TSAsExpression(expression) => {
+                return self.dynamic_computed_expression_data_target(&expression.expression);
+            }
+            SimpleAssignmentTarget::TSSatisfiesExpression(expression) => {
+                return self.dynamic_computed_expression_data_target(&expression.expression);
+            }
+            SimpleAssignmentTarget::TSNonNullExpression(expression) => {
+                return self.dynamic_computed_expression_data_target(&expression.expression);
+            }
+            SimpleAssignmentTarget::TSTypeAssertion(expression) => {
+                return self.dynamic_computed_expression_data_target(&expression.expression);
+            }
+            SimpleAssignmentTarget::AssignmentTargetIdentifier(_)
+            | SimpleAssignmentTarget::PrivateFieldExpression(_)
+            | SimpleAssignmentTarget::StaticMemberExpression(_)
+            | SimpleAssignmentTarget::ComputedMemberExpression(_) => return None,
         };
         let owner = self.alias_source_path(object)?;
         Some(self.dynamic_data_property_target(&owner, key))
@@ -24800,6 +24848,14 @@ impl StaticHookAliasCollector<'_> {
             dynamic_accessor_excluded_properties: self.dynamic_accessor_excluded_properties.clone(),
             descriptor_defined_properties: self.descriptor_defined_properties.clone(),
             enumerable_descriptor_properties: self.enumerable_descriptor_properties.clone(),
+            non_writable_descriptor_properties: self.non_writable_descriptor_properties.clone(),
+            non_configurable_descriptor_properties: self
+                .non_configurable_descriptor_properties
+                .clone(),
+            non_writable_descriptor_containers: self.non_writable_descriptor_containers.clone(),
+            non_configurable_descriptor_containers: self
+                .non_configurable_descriptor_containers
+                .clone(),
             local_value_definedness: self.local_value_definedness.clone(),
             local_static_from_entries_sources: self.local_static_from_entries_sources.clone(),
             local_json_replacer_property_lists: self.local_json_replacer_property_lists.clone(),
@@ -24873,6 +24929,10 @@ impl StaticHookAliasCollector<'_> {
         restore_path_map!(dynamic_accessor_excluded_properties);
         restore_path_set!(descriptor_defined_properties);
         restore_path_set!(enumerable_descriptor_properties);
+        restore_path_set!(non_writable_descriptor_properties);
+        restore_path_set!(non_configurable_descriptor_properties);
+        restore_path_set!(non_writable_descriptor_containers);
+        restore_path_set!(non_configurable_descriptor_containers);
         restore_path_map!(local_value_definedness);
         restore_path_map!(local_static_from_entries_sources);
         restore_path_map!(local_json_replacer_property_lists);
@@ -25766,6 +25826,10 @@ impl StaticHookAliasCollector<'_> {
                 self.descriptor_defined_properties
                     .insert(method_target.clone());
                 self.enumerable_descriptor_properties.remove(&method_target);
+                self.non_writable_descriptor_properties
+                    .remove(&method_target);
+                self.non_configurable_descriptor_properties
+                    .remove(&method_target);
             }
             if method.kind == MethodDefinitionKind::Set {
                 if !self.local_getter_properties.contains(&method_target) {
@@ -25955,10 +26019,12 @@ impl StaticHookAliasCollector<'_> {
                     self.enumerable_descriptor_properties
                         .remove(&property_target);
                 } else {
-                    self.descriptor_defined_properties.remove(&property_target);
-                    self.enumerable_descriptor_properties
-                        .remove(&property_target);
+                    self.clear_local_descriptor_metadata(&property_target);
                 }
+                self.non_writable_descriptor_properties
+                    .remove(&property_target);
+                self.non_configurable_descriptor_properties
+                    .remove(&property_target);
                 if let Some(value) = value {
                     self.collect_initializer(property_target.clone(), value);
                 }
@@ -26373,9 +26439,34 @@ impl StaticHookAliasCollector<'_> {
                     .contains(&source_property)
                 {
                     self.enumerable_descriptor_properties
+                        .insert(target_property.clone());
+                }
+                if self
+                    .non_writable_descriptor_properties
+                    .contains(&source_property)
+                {
+                    self.non_writable_descriptor_properties
+                        .insert(target_property.clone());
+                }
+                if self
+                    .non_configurable_descriptor_properties
+                    .contains(&source_property)
+                {
+                    self.non_configurable_descriptor_properties
                         .insert(target_property);
                 }
             }
+        }
+        if self.non_writable_descriptor_containers.contains(&source) {
+            self.non_writable_descriptor_containers
+                .insert(target.clone());
+        }
+        if self
+            .non_configurable_descriptor_containers
+            .contains(&source)
+        {
+            self.non_configurable_descriptor_containers
+                .insert(target.clone());
         }
         if self.open_structured_containers.contains(&source) {
             self.open_structured_containers.insert(target.clone());
@@ -27099,6 +27190,24 @@ impl StaticHookAliasCollector<'_> {
                         .as_ref()
                         .unwrap_or(&rebased_target)
                         .clone();
+                    if auto_accessor_storage.is_none() {
+                        let invokes_setter =
+                            self.record_local_setter_invocations(&value_target, None);
+                        let retains_getter = !self
+                            .local_getter_resolution(&value_target, false)
+                            .1
+                            .is_empty();
+                        if invokes_setter || retains_getter {
+                            continue;
+                        }
+                        let descriptor_protected = dynamic_target.as_ref().map_or_else(
+                            || !self.local_property_is_writable(&value_target),
+                            |target| !self.local_property_is_writable(target),
+                        );
+                        if descriptor_protected {
+                            continue;
+                        }
+                    }
                     if auto_accessor_storage.is_some() && !operation.conditional {
                         self.clear_alias_target_history(&value_target);
                     }
@@ -28630,6 +28739,23 @@ impl StaticHookAliasCollector<'_> {
         if invokes_setter || retains_getter {
             return LocalReflectSetOutcome::NoMutation;
         }
+        let target_descriptor_protected = property.as_ref().map_or_else(
+            || {
+                let target = self.dynamic_data_property_target(&target_owner, key);
+                !self.local_property_is_writable(&target)
+            },
+            |property| {
+                let target = target_owner.clone().with_property(property.clone());
+                !self.local_property_is_writable(&target)
+            },
+        );
+        let receiver_descriptor_protected = !same_receiver
+            && data_target
+                .as_ref()
+                .is_some_and(|target| !self.local_property_is_writable(target));
+        if target_descriptor_protected || receiver_descriptor_protected {
+            return LocalReflectSetOutcome::NoMutation;
+        }
         if property.as_deref() == Some("__proto__")
             && !self
                 .known_structured_own_properties(&target_owner)
@@ -28781,14 +28907,10 @@ impl StaticHookAliasCollector<'_> {
             let deferred = self
                 .deferred_callable_alias_capture_span(&plan.target)
                 .is_some();
-            let descriptor_defined =
-                self.matching_dynamic_data_property_is_descriptor_defined(&plan.target);
-            if unconditional && !deferred && !descriptor_defined {
+            if unconditional && !deferred {
                 self.clear_matching_dynamic_data_property(&plan.target);
             }
-            let ambiguous = conditional
-                || descriptor_defined
-                || self.has_other_dynamic_data_property(&plan.target);
+            let ambiguous = conditional || self.has_other_dynamic_data_property(&plan.target);
             if deferred {
                 let span = self
                     .deferred_callable_alias_capture_span(&plan.target)
@@ -29123,7 +29245,8 @@ impl StaticHookAliasCollector<'_> {
                 .local_getter_resolution(&property_target, false)
                 .1
                 .is_empty();
-            if !invokes_setter && !retains_getter {
+            let descriptor_protected = !self.local_property_is_writable(&property_target);
+            if !invokes_setter && !retains_getter && !descriptor_protected {
                 self.exclude_dynamic_property_value(&property_target);
                 self.insert_alias(property_target.clone(), value);
                 if conditional_source {
@@ -29134,9 +29257,7 @@ impl StaticHookAliasCollector<'_> {
                     .or_default()
                     .insert(property);
                 if !target_had_property {
-                    self.descriptor_defined_properties.remove(&property_target);
-                    self.enumerable_descriptor_properties
-                        .remove(&property_target);
+                    self.clear_local_descriptor_metadata(&property_target);
                 }
             }
         }
@@ -29150,6 +29271,10 @@ impl StaticHookAliasCollector<'_> {
             };
             let dynamic_target =
                 Self::rebase_returned_class_path(&source_target, &source_owner, target);
+            let descriptor_protected = !self.local_property_is_writable(&dynamic_target);
+            if descriptor_protected {
+                continue;
+            }
             if !conditional_source {
                 self.clear_matching_dynamic_data_property(&dynamic_target);
             }
@@ -30418,8 +30543,7 @@ impl StaticHookAliasCollector<'_> {
         if !applied {
             for (property, descriptor) in &definitions {
                 self.cancel_local_property_descriptor(descriptor);
-                self.descriptor_defined_properties.remove(property);
-                self.enumerable_descriptor_properties.remove(property);
+                self.clear_local_descriptor_metadata(property);
             }
             self.clear_overlapping_aliases(&target);
             return None;
@@ -31820,6 +31944,7 @@ impl StaticHookAliasCollector<'_> {
             self.detach_overwritten_local_descriptor_values(&resolved_path);
         }
         self.detach_overwritten_local_object_prototypes(path);
+        self.clear_replaced_local_value_descriptor_metadata(path);
         self.record_cross_scope_target(path);
         self.external_storage_flow.clear_aliases(path);
         self.record_external_storage_exception_flow();
@@ -32021,6 +32146,7 @@ impl StaticHookAliasCollector<'_> {
             DYNAMIC_METHOD_PROPERTY,
         );
         let mut cleared = self.clear_matching_dynamic_data_property(target);
+        self.clear_matching_dynamic_data_property_metadata(target);
         if let Some(target) = auto_accessor {
             cleared |= self.clear_matching_dynamic_own_static_auto_accessor_property(&target);
         }
@@ -32223,6 +32349,57 @@ impl StaticHookAliasCollector<'_> {
                     resolve_static_alias_path(&self.aliases, &property_owner) == owner
                 })
             })
+    }
+
+    fn clear_local_descriptor_metadata(&mut self, property: &StaticAliasPath) {
+        self.descriptor_defined_properties.remove(property);
+        self.enumerable_descriptor_properties.remove(property);
+        self.non_writable_descriptor_properties.remove(property);
+        self.non_configurable_descriptor_properties.remove(property);
+    }
+
+    fn clear_replaced_local_value_descriptor_metadata(&mut self, target: &StaticAliasPath) {
+        let target = self
+            .local_descriptor_property_slot(target)
+            .unwrap_or_else(|| target.clone());
+        let retain_property = |property: &StaticAliasPath| {
+            !property.starts_with(&target) || (!target.properties.is_empty() && property == &target)
+        };
+        self.descriptor_defined_properties.retain(&retain_property);
+        self.enumerable_descriptor_properties
+            .retain(&retain_property);
+        self.non_writable_descriptor_properties
+            .retain(&retain_property);
+        self.non_configurable_descriptor_properties
+            .retain(retain_property);
+        self.non_writable_descriptor_containers
+            .retain(|container| !container.starts_with(&target));
+        self.non_configurable_descriptor_containers
+            .retain(|container| !container.starts_with(&target));
+    }
+
+    fn clear_matching_dynamic_data_property_metadata(&mut self, target: &StaticAliasPath) {
+        let Some(owner) = dynamic_property_alias_owner(target) else {
+            return;
+        };
+        let owner = resolve_static_alias_path(&self.aliases, &owner);
+        let Some(key) = Self::dynamic_data_property_key(target) else {
+            return;
+        };
+        let aliases = &self.aliases;
+        let retains_property = |property: &StaticAliasPath| {
+            Self::dynamic_data_property_key(property) != Some(key)
+                || dynamic_property_alias_owner(property).is_none_or(|property_owner| {
+                    resolve_static_alias_path(aliases, &property_owner) != owner
+                })
+        };
+        self.descriptor_defined_properties.retain(&retains_property);
+        self.enumerable_descriptor_properties
+            .retain(&retains_property);
+        self.non_writable_descriptor_properties
+            .retain(&retains_property);
+        self.non_configurable_descriptor_properties
+            .retain(retains_property);
     }
 
     fn exclude_dynamic_property_value(&mut self, path: &StaticAliasPath) {
@@ -32569,8 +32746,7 @@ impl StaticHookAliasCollector<'_> {
             });
             if known_own_property {
                 let property_path = owner.clone().with_property(property.clone());
-                self.descriptor_defined_properties.remove(&property_path);
-                self.enumerable_descriptor_properties.remove(&property_path);
+                self.clear_local_descriptor_metadata(&property_path);
                 self.clear_overlapping_aliases(&property_path);
                 if let Some(properties) = self.structured_own_properties.get_mut(&owner) {
                     properties.remove(&property);
@@ -32594,8 +32770,7 @@ impl StaticHookAliasCollector<'_> {
         if !known_own_property {
             return;
         }
-        self.descriptor_defined_properties.remove(&property_path);
-        self.enumerable_descriptor_properties.remove(&property_path);
+        self.clear_local_descriptor_metadata(&property_path);
         self.clear_overlapping_aliases(&property_path);
         if let Some(properties) = self.structured_own_properties.get_mut(&owner) {
             properties.remove(&property);
@@ -33592,6 +33767,9 @@ impl StaticHookAliasCollector<'_> {
                     name.clone(),
                     self.descriptor_defined_properties.contains(&property),
                     self.enumerable_descriptor_properties.contains(&property),
+                    self.non_writable_descriptor_properties.contains(&property),
+                    self.non_configurable_descriptor_properties
+                        .contains(&property),
                 )
             })
             .collect::<Vec<_>>();
@@ -33753,17 +33931,37 @@ impl StaticHookAliasCollector<'_> {
         if static_class_open {
             self.open_structured_containers.insert(target.clone());
         }
+        if self.non_writable_descriptor_containers.contains(&source) {
+            self.non_writable_descriptor_containers
+                .insert(target.clone());
+        }
+        if self
+            .non_configurable_descriptor_containers
+            .contains(&source)
+        {
+            self.non_configurable_descriptor_containers
+                .insert(target.clone());
+        }
         if let Some(prototypes) = static_class_prototypes {
             self.local_object_prototypes
                 .insert(target.clone(), prototypes);
         }
-        for (name, defined, enumerable) in static_class_descriptors {
+        for (name, defined, enumerable, non_writable, non_configurable) in static_class_descriptors
+        {
             let property = target.clone().with_property(name);
             if defined {
                 self.descriptor_defined_properties.insert(property.clone());
             }
             if enumerable {
-                self.enumerable_descriptor_properties.insert(property);
+                self.enumerable_descriptor_properties
+                    .insert(property.clone());
+            }
+            if non_writable {
+                self.non_writable_descriptor_properties
+                    .insert(property.clone());
+            }
+            if non_configurable {
+                self.non_configurable_descriptor_properties.insert(property);
             }
         }
         if let Some(callables) = class_callables {
@@ -42335,23 +42533,30 @@ impl StaticHookAliasCollector<'_> {
         exposed_results
     }
 
-    fn local_descriptor_mutation_path(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
+    fn local_descriptor_mutation_path(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(StaticAliasPath, bool, bool, bool)> {
         let raw_callee = static_alias_source_path(self.scoping, &call.callee)?;
         let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
         if !self.path_is_currently_intact(&raw_callee) {
             return None;
         }
-        let keyed = match (&callee.root, callee.properties.as_slice()) {
+        let (keyed, non_writable) = match (&callee.root, callee.properties.as_slice()) {
             (StaticAliasRoot::UnresolvedGlobal(root), [method])
                 if matches!(root.as_str(), "Object" | "Reflect") && method == "defineProperty" =>
             {
-                true
+                (true, true)
             }
             (StaticAliasRoot::UnresolvedGlobal(root), [method])
-                if root == "Object"
-                    && matches!(method.as_str(), "defineProperties" | "freeze" | "seal") =>
+                if root == "Object" && matches!(method.as_str(), "defineProperties" | "freeze") =>
             {
-                false
+                (false, true)
+            }
+            (StaticAliasRoot::UnresolvedGlobal(root), [method])
+                if root == "Object" && method == "seal" =>
+            {
+                (false, false)
             }
             _ => return None,
         };
@@ -42369,15 +42574,20 @@ impl StaticHookAliasCollector<'_> {
             self.canonical_returned_structured_value_path(&raw_target)
         };
         if !keyed {
-            return Some(target);
+            return Some((target, non_writable, true, true));
         }
-        Some(
-            call.arguments
-                .get(1)
-                .and_then(|argument| argument.as_expression())
-                .and_then(static_member_name)
-                .map_or_else(|| target.clone(), |property| target.with_property(property)),
-        )
+        let property = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_member_name);
+        let container = property.is_none();
+        Some((
+            property.map_or_else(|| target.clone(), |property| target.with_property(property)),
+            non_writable,
+            true,
+            container,
+        ))
     }
 
     fn inline_callable_span(value: &Expression<'_>) -> Option<Span> {
@@ -43145,6 +43355,23 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn descriptor_attribute_is_definitely_true(
+        &self,
+        value: &LocalDescriptorValue<'_, '_>,
+    ) -> bool {
+        let LocalDescriptorValue::Expression(value) = value else {
+            return false;
+        };
+        match value.get_inner_expression() {
+            Expression::BooleanLiteral(value) => value.value,
+            Expression::NumericLiteral(value) => value.value != 0.0 && !value.value.is_nan(),
+            Expression::BigIntLiteral(value) => value.value != "0",
+            Expression::StringLiteral(value) => !value.value.is_empty(),
+            Expression::NullLiteral(_) => false,
+            _ => false,
+        }
+    }
+
     fn apply_local_property_descriptor(
         &mut self,
         descriptor: &LocalPropertyDescriptor<'_, '_>,
@@ -43166,6 +43393,36 @@ impl StaticHookAliasCollector<'_> {
             .get(&owner)
             .is_some_and(|properties| properties.contains(&name));
         let existing_getter = existing_own && self.local_getter_properties.contains(property);
+        let existing_setter = existing_own
+            .then(|| self.local_setter_properties.get(property).cloned())
+            .flatten();
+        let existing_accessor = existing_getter || existing_setter.is_some();
+        let existing_descriptor = self.descriptor_defined_properties.contains(property);
+        let descriptor_configurable = descriptor
+            .configurable
+            .as_ref()
+            .map(|value| self.descriptor_attribute_is_definitely_true(value))
+            .unwrap_or_else(|| {
+                if existing_descriptor {
+                    !self
+                        .non_configurable_descriptor_properties
+                        .contains(property)
+                } else {
+                    existing_own
+                }
+            });
+        let descriptor_writable = descriptor
+            .writable
+            .as_ref()
+            .map(|value| self.descriptor_attribute_is_definitely_true(value))
+            .unwrap_or_else(|| {
+                if existing_descriptor {
+                    !existing_accessor
+                        && !self.non_writable_descriptor_properties.contains(property)
+                } else {
+                    existing_own
+                }
+            });
         let descriptor_enumerable = descriptor
             .enumerable
             .as_ref()
@@ -43220,6 +43477,18 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             self.descriptor_defined_properties.insert(property.clone());
+            if descriptor_writable {
+                self.non_writable_descriptor_properties.remove(property);
+            } else {
+                self.non_writable_descriptor_properties
+                    .insert(property.clone());
+            }
+            if descriptor_configurable {
+                self.non_configurable_descriptor_properties.remove(property);
+            } else {
+                self.non_configurable_descriptor_properties
+                    .insert(property.clone());
+            }
             if descriptor_enumerable {
                 self.enumerable_descriptor_properties
                     .insert(property.clone());
@@ -43259,12 +43528,18 @@ impl StaticHookAliasCollector<'_> {
                 self.enumerable_descriptor_properties.remove(property);
             }
             self.descriptor_defined_properties.insert(property.clone());
+            if !existing_own {
+                self.non_writable_descriptor_properties
+                    .insert(property.clone());
+            }
+            if descriptor_configurable {
+                self.non_configurable_descriptor_properties.remove(property);
+            } else {
+                self.non_configurable_descriptor_properties
+                    .insert(property.clone());
+            }
             return true;
         }
-        let existing_setter = existing_own
-            .then(|| self.local_setter_properties.get(property).cloned())
-            .flatten();
-        let existing_accessor = existing_getter || existing_setter.is_some();
         if descriptor.getter.is_some() || !existing_accessor {
             let retained_setter = (descriptor.setter.is_none())
                 .then_some(existing_setter)
@@ -43304,6 +43579,13 @@ impl StaticHookAliasCollector<'_> {
             self.enumerable_getter_properties.remove(property);
         }
         self.descriptor_defined_properties.insert(property.clone());
+        self.non_writable_descriptor_properties.remove(property);
+        if descriptor_configurable {
+            self.non_configurable_descriptor_properties.remove(property);
+        } else {
+            self.non_configurable_descriptor_properties
+                .insert(property.clone());
+        }
         if enumerable {
             self.enumerable_descriptor_properties
                 .insert(property.clone());
@@ -43347,6 +43629,52 @@ impl StaticHookAliasCollector<'_> {
         {
             return false;
         }
+        let existing_own = !self
+            .matching_dynamic_property_targets(property, DYNAMIC_DATA_PROPERTY)
+            .is_empty();
+        let existing_descriptor =
+            self.matching_dynamic_data_property_is_descriptor_defined(property);
+        let descriptor_writable = descriptor
+            .writable
+            .as_ref()
+            .map(|value| self.descriptor_attribute_is_definitely_true(value))
+            .unwrap_or_else(|| {
+                if existing_descriptor {
+                    !self.local_property_has_descriptor_metadata(
+                        property,
+                        &self.non_writable_descriptor_properties,
+                        &self.non_writable_descriptor_containers,
+                    )
+                } else {
+                    existing_own
+                }
+            });
+        let descriptor_configurable = descriptor
+            .configurable
+            .as_ref()
+            .map(|value| self.descriptor_attribute_is_definitely_true(value))
+            .unwrap_or_else(|| {
+                if existing_descriptor {
+                    !self.local_property_has_descriptor_metadata(
+                        property,
+                        &self.non_configurable_descriptor_properties,
+                        &self.non_configurable_descriptor_containers,
+                    )
+                } else {
+                    existing_own
+                }
+            });
+        let descriptor_enumerable = descriptor
+            .enumerable
+            .as_ref()
+            .map(|value| self.descriptor_enumerable_may_be_true(value))
+            .unwrap_or_else(|| {
+                if existing_descriptor {
+                    self.matching_dynamic_data_property_is_enumerable(property)
+                } else {
+                    existing_own
+                }
+            });
         self.clear_matching_dynamic_own_property(property);
         let ambiguous = self.has_other_dynamic_data_property(property);
         let value_target = owner.clone().with_property(format!(
@@ -43374,11 +43702,19 @@ impl StaticHookAliasCollector<'_> {
             self.mark_alias_target_ambiguous(property.clone());
         }
         self.descriptor_defined_properties.insert(property.clone());
-        if descriptor
-            .enumerable
-            .as_ref()
-            .is_some_and(|value| self.descriptor_enumerable_may_be_true(value))
-        {
+        if descriptor_writable {
+            self.non_writable_descriptor_properties.remove(property);
+        } else {
+            self.non_writable_descriptor_properties
+                .insert(property.clone());
+        }
+        if descriptor_configurable {
+            self.non_configurable_descriptor_properties.remove(property);
+        } else {
+            self.non_configurable_descriptor_properties
+                .insert(property.clone());
+        }
+        if descriptor_enumerable {
             self.enumerable_descriptor_properties
                 .insert(property.clone());
         } else {
@@ -43450,14 +43786,79 @@ impl StaticHookAliasCollector<'_> {
         })
     }
 
+    fn local_property_has_descriptor_metadata(
+        &self,
+        target: &StaticAliasPath,
+        properties: &BTreeSet<StaticAliasPath>,
+        containers: &BTreeSet<StaticAliasPath>,
+    ) -> bool {
+        let canonical_target = self.local_descriptor_property_slot(target);
+        properties.iter().any(|property| {
+            property == target
+                || canonical_target.as_ref().is_some_and(|target| {
+                    self.local_descriptor_property_slot(property).as_ref() == Some(target)
+                })
+        }) || self.matching_dynamic_data_property_has_metadata(target, properties)
+            || self
+                .local_descriptor_property_owner(target)
+                .is_some_and(|owner| {
+                    let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+                    containers.iter().any(|container| {
+                        let resolved_container =
+                            resolve_static_alias_path(&self.aliases, container);
+                        [container, &resolved_container]
+                            .into_iter()
+                            .any(|container| container == &owner || container == &resolved_owner)
+                    })
+                })
+    }
+
+    fn local_descriptor_property_slot(&self, target: &StaticAliasPath) -> Option<StaticAliasPath> {
+        if target.element_wildcard || dynamic_property_alias_marker(target).is_some() {
+            return None;
+        }
+        let mut owner = target.clone();
+        let property = owner.properties.pop()?;
+        let owner = resolve_static_alias_path(&self.aliases, &owner);
+        Some(owner.with_property(property))
+    }
+
+    fn local_descriptor_property_owner(&self, target: &StaticAliasPath) -> Option<StaticAliasPath> {
+        if let Some(owner) = dynamic_property_alias_owner(target) {
+            return Some(owner);
+        }
+        let mut owner = target.clone();
+        if owner.element_wildcard {
+            owner.element_wildcard = false;
+            return Some(owner);
+        }
+        owner.properties.pop()?;
+        Some(owner)
+    }
+
+    fn local_property_is_writable(&self, target: &StaticAliasPath) -> bool {
+        !self.local_property_has_descriptor_metadata(
+            target,
+            &self.non_writable_descriptor_properties,
+            &self.non_writable_descriptor_containers,
+        ) && self
+            .local_object_prototype_member_paths(target)
+            .iter()
+            .all(|prototype| {
+                !self.local_property_has_descriptor_metadata(
+                    prototype,
+                    &self.non_writable_descriptor_properties,
+                    &self.non_writable_descriptor_containers,
+                )
+            })
+    }
+
     fn local_reflect_delete_property_is_configurable(&self, target: &StaticAliasPath) -> bool {
-        let resolved = resolve_static_alias_slot_path(&self.aliases, target);
-        self.descriptor_defined_properties.iter().all(|defined| {
-            let resolved_defined = resolve_static_alias_slot_path(&self.aliases, defined);
-            [defined, &resolved_defined]
-                .into_iter()
-                .all(|defined| !defined.overlaps(target) && !defined.overlaps(&resolved))
-        })
+        !self.local_property_has_descriptor_metadata(
+            target,
+            &self.non_configurable_descriptor_properties,
+            &self.non_configurable_descriptor_containers,
+        )
     }
 
     fn apply_local_reflect_delete_plan(
@@ -44651,6 +45052,7 @@ impl StaticHookAliasCollector<'_> {
                         DeferredCallableOperationKind::DeleteOwnProperty
                         | DeferredCallableOperationKind::DeleteComputedOwnProperty
                         | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
+                        | DeferredCallableOperationKind::DescriptorProtection { .. }
                         | DeferredCallableOperationKind::ArrayMutation(_) => {
                             let applied = targets.len() == 1
                                 && targets.into_iter().all(|target| {
@@ -44688,6 +45090,7 @@ impl StaticHookAliasCollector<'_> {
                     let ambiguous = targets.len() != 1 || sources.len() != 1;
                     let mut applied = false;
                     for target in targets {
+                        let descriptor_target = target.clone();
                         let own_target = if computed_strong.is_some() {
                             target
                         } else {
@@ -44699,14 +45102,37 @@ impl StaticHookAliasCollector<'_> {
                             self.local_auto_accessor_storage_property(&own_target)
                                 .unwrap_or_else(|| own_target.clone())
                         };
-                        let descriptor_defined = computed_strong.is_some()
-                            && self.matching_dynamic_data_property_is_descriptor_defined(&target);
-                        if computed_strong == Some(true) && !descriptor_defined {
+                        if auto_accessor_strong.is_none() {
+                            let arguments = sources
+                                .iter()
+                                .cloned()
+                                .map(|source| self.collect_local_invocation_path(source))
+                                .collect();
+                            let invokes_setter = self
+                                .record_local_setter_invocations_with_arguments(
+                                    &own_target,
+                                    arguments,
+                                );
+                            let retains_getter = !self
+                                .local_getter_resolution(&own_target, false)
+                                .1
+                                .is_empty();
+                            if invokes_setter || retains_getter {
+                                applied = true;
+                                continue;
+                            }
+                            let descriptor_protected =
+                                !self.local_property_is_writable(&descriptor_target);
+                            if descriptor_protected {
+                                applied = true;
+                                continue;
+                            }
+                        }
+                        if computed_strong == Some(true) {
                             self.clear_matching_dynamic_data_property(&target);
                         }
                         let dynamic_ambiguous = computed_strong.is_some()
-                            && (descriptor_defined
-                                || self.has_other_dynamic_data_property(&target));
+                            && self.has_other_dynamic_data_property(&target);
                         if auto_accessor_strong == Some(true) && !ambiguous {
                             self.clear_alias_target_history(&target);
                         }
@@ -44823,6 +45249,29 @@ impl StaticHookAliasCollector<'_> {
                 } else {
                     self.apply_deferred_own_property_deletion(raw_target)
                 }
+            }
+            DeferredCallableOperationKind::DescriptorProtection {
+                non_writable,
+                non_configurable,
+                container,
+            } => {
+                self.descriptor_defined_properties
+                    .insert(raw_target.clone());
+                if *non_writable && *container {
+                    self.non_writable_descriptor_containers
+                        .insert(raw_target.clone());
+                } else if *non_writable {
+                    self.non_writable_descriptor_properties
+                        .insert(raw_target.clone());
+                }
+                if *non_configurable && *container {
+                    self.non_configurable_descriptor_containers
+                        .insert(raw_target.clone());
+                } else if *non_configurable {
+                    self.non_configurable_descriptor_properties
+                        .insert(raw_target.clone());
+                }
+                true
             }
             DeferredCallableOperationKind::ArrayMutation(mutation) => {
                 self.apply_deferred_array_mutation(raw_target, mutation, mappers)
@@ -45364,6 +45813,9 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn apply_deferred_own_property_deletion(&mut self, raw_target: &StaticAliasPath) -> bool {
+        if !self.local_reflect_delete_property_is_configurable(raw_target) {
+            return true;
+        }
         let target = resolve_static_alias_slot_path(&self.aliases, raw_target);
         if target.element_wildcard || target.properties.is_empty() {
             return false;
@@ -45381,8 +45833,7 @@ impl StaticHookAliasCollector<'_> {
             return true;
         }
         let target = owner.clone().with_property(property.clone());
-        self.descriptor_defined_properties.remove(&target);
-        self.enumerable_descriptor_properties.remove(&target);
+        self.clear_local_descriptor_metadata(&target);
         self.clear_overlapping_aliases(&target);
         if let Some(properties) = self.structured_own_properties.get_mut(&owner) {
             properties.remove(&property);
@@ -45467,6 +45918,7 @@ impl StaticHookAliasCollector<'_> {
                     DeferredCallableOperationKind::DeleteOwnProperty
                     | DeferredCallableOperationKind::DeleteComputedOwnProperty
                     | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
+                    | DeferredCallableOperationKind::DescriptorProtection { .. }
                     | DeferredCallableOperationKind::ArrayMutation(_) => None,
                 };
                 for target in targets {
@@ -48086,7 +48538,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.record_assignment_target_alias_snapshot(assignment.span, path);
         }
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
+        let computed_data_target = self.dynamic_computed_assignment_data_target(&assignment.left);
+        let static_descriptor_protected = computed_data_target.is_none()
+            && place
+                .as_ref()
+                .and_then(static_alias_invalidation_path)
+                .is_some_and(|path| {
+                    Self::dynamic_data_property_key(&path).is_none()
+                        && !self.local_property_is_writable(&path)
+                });
         let stores_externally = assignment.operator == OxcAssignmentOperator::Assign
+            && !static_descriptor_protected
             && place
                 .as_ref()
                 .and_then(static_alias_invalidation_path)
@@ -48094,15 +48556,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         let dynamic_data_assignment = (assignment.operator == OxcAssignmentOperator::Assign
             && !stores_externally)
             .then(|| {
-                self.dynamic_computed_assignment_data_target(&assignment.left)
-                    .and_then(|dynamic_target| {
-                        let owner = dynamic_property_alias_owner(&dynamic_target)?;
-                        let hidden_target = owner.with_property(format!(
-                            "<computed-property-assignment-value@{}:{}>",
-                            assignment.span.start, assignment.span.end
-                        ));
-                        Some((dynamic_target, hidden_target))
-                    })
+                computed_data_target.clone().and_then(|dynamic_target| {
+                    let owner = dynamic_property_alias_owner(&dynamic_target)?;
+                    let hidden_target = owner.with_property(format!(
+                        "<computed-property-assignment-value@{}:{}>",
+                        assignment.span.start, assignment.span.end
+                    ));
+                    Some((dynamic_target, hidden_target))
+                })
             })
             .flatten();
         let deferred_class_effect = self
@@ -48186,6 +48647,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 );
                 assignment.operator == OxcAssignmentOperator::Assign && invokes_setter
             };
+        let dynamic_descriptor_protected = computed_data_target
+            .as_ref()
+            .is_some_and(|target| !self.local_property_is_writable(target));
+        let descriptor_rejects_assignment = (static_descriptor_protected
+            || dynamic_descriptor_protected)
+            && !accessor_write
+            && !auto_accessor_write;
         if place
             .as_ref()
             .and_then(static_alias_invalidation_path)
@@ -48277,6 +48745,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             == OxcAssignmentOperator::Assign
             && !accessor_write
             && !auto_accessor_write
+            && !descriptor_rejects_assignment
         {
             let receiver = self
                 .dynamic_this_roots
@@ -48334,6 +48803,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.collect_assignment_target_initializer(&assignment.left, &source);
         } else if assignment.operator == OxcAssignmentOperator::Assign
             && !accessor_write
+            && !descriptor_rejects_assignment
             && !(stores_externally && deferred_class_effect.is_some())
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
         {
@@ -48367,14 +48837,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     conditional,
                 });
         }
-        if !auto_accessor_write {
+        if !auto_accessor_write && !descriptor_rejects_assignment {
             self.invalidate_place(place.clone());
         }
-        if let Some(path) = prototype_path {
+        if !descriptor_rejects_assignment && let Some(path) = prototype_path {
             self.invalidate_path(path, true);
         }
         if assignment.operator == OxcAssignmentOperator::Assign
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
+            && !descriptor_rejects_assignment
             && self.assignment_replaces_parameter_with_local_value(&path, &assignment.right)
             && let Some(root) = path.binding_root()
         {
@@ -48386,6 +48857,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         }
         if assignment.operator == OxcAssignmentOperator::Assign
             && !accessor_write
+            && !descriptor_rejects_assignment
             && !(stores_externally && deferred_class_effect.is_some())
         {
             if let Some((dynamic_target, hidden_target)) = &dynamic_data_assignment
@@ -48394,15 +48866,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 let deferred = self
                     .deferred_callable_alias_capture_span(dynamic_target)
                     .is_some();
-                let descriptor_defined =
-                    self.matching_dynamic_data_property_is_descriptor_defined(dynamic_target);
-                if !conditional && !deferred && !descriptor_defined {
+                if !conditional && !deferred {
                     self.clear_matching_dynamic_data_property(dynamic_target);
                 }
                 self.collect_initializer(hidden_target.clone(), &assignment.right);
-                let ambiguous = conditional
-                    || descriptor_defined
-                    || self.has_other_dynamic_data_property(dynamic_target);
+                let ambiguous = conditional || self.has_other_dynamic_data_property(dynamic_target);
                 if deferred {
                     let span = self
                         .deferred_callable_alias_capture_span(dynamic_target)
@@ -48448,12 +48916,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 }
             }
         } else if assignment.operator == OxcAssignmentOperator::Assign
+            && !descriptor_rejects_assignment
             && let Some(source) = self.alias_source_path(&assignment.right)
         {
             self.collect_assignment_target_initializer(&assignment.left, &source);
         }
         if assignment.operator == OxcAssignmentOperator::Assign
             && !accessor_write
+            && !descriptor_rejects_assignment
             && !conditional
             && dynamic_data_assignment.is_none()
             && let Some(path) = place.as_ref().and_then(static_alias_invalidation_path)
@@ -48466,12 +48936,20 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
 
     fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
         let place = planned_simple_assignment_target_place(self.scoping, &update.argument);
-        if let Some(path) = place.as_ref().and_then(static_alias_invalidation_path) {
-            self.record_local_setter_invocations(&path, None);
+        let path = place.as_ref().and_then(static_alias_invalidation_path);
+        if let Some(path) = &path {
+            self.record_local_setter_invocations(path, None);
         } else {
             self.record_structured_simple_assignment_target_setter_invocations(&update.argument);
         }
-        self.invalidate_place(place);
+        let dynamic_target = self.dynamic_computed_simple_assignment_data_target(&update.argument);
+        let descriptor_rejects_update = dynamic_target.as_ref().map_or_else(
+            || path.is_some_and(|path| !self.local_property_is_writable(&path)),
+            |target| !self.local_property_is_writable(target),
+        );
+        if !descriptor_rejects_update {
+            self.invalidate_place(place);
+        }
         oxc::ast_visit::walk::walk_update_expression(self, update);
     }
 
@@ -48503,8 +48981,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 _ => None,
             };
             let operation_target = dynamic_target.as_ref().or(path.as_ref());
-            let configurable = dynamic_target
-                .as_ref()
+            let configurable = operation_target
                 .is_none_or(|target| self.local_reflect_delete_property_is_configurable(target));
             let deferred_class_instance_delete = operation_target.and_then(|target| {
                 self.deferred_class_instance_operation_span(target)
@@ -48534,10 +49011,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     }
                 }
             }
-            self.invalidate_place(planned_expression_place(
-                self.scoping,
-                expression.argument.get_inner_expression(),
-            ));
+            if configurable {
+                self.invalidate_place(planned_expression_place(
+                    self.scoping,
+                    expression.argument.get_inner_expression(),
+                ));
+            }
             oxc::ast_visit::walk::walk_unary_expression(self, expression);
             if let Some((span, target, dynamic)) = deferred_class_instance_delete {
                 self.deferred_class_instance_operations
@@ -48834,11 +49313,36 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     }
                     applied
                 });
-        if let Some(property) = local_descriptor_mutation
+        if let Some((property, non_writable, non_configurable, container)) =
+            local_descriptor_mutation
             && !local_define_property_applied
             && !local_define_properties_applied
         {
-            self.descriptor_defined_properties.insert(property);
+            self.descriptor_defined_properties.insert(property.clone());
+            if non_writable {
+                if let Some(span) = self.deferred_callable_alias_capture_span(&property) {
+                    self.record_deferred_callable_operation(
+                        span,
+                        property.clone(),
+                        DeferredCallableOperationKind::DescriptorProtection {
+                            non_writable: true,
+                            non_configurable: false,
+                            container,
+                        },
+                    );
+                } else if container {
+                    self.non_writable_descriptor_containers
+                        .insert(property.clone());
+                } else {
+                    self.non_writable_descriptor_properties
+                        .insert(property.clone());
+                }
+            }
+            if non_configurable && container {
+                self.non_configurable_descriptor_containers.insert(property);
+            } else if non_configurable {
+                self.non_configurable_descriptor_properties.insert(property);
+            }
         }
         self.local_invocations.extend(local_invocations);
         self.escaped_callable_effect_targets
