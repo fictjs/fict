@@ -5175,6 +5175,116 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "Reflect.deleteProperty removes a matching computed data property",
+            "const key = 'item'; const source = { [key]: local }; Reflect.deleteProperty(source, key); holder.item = source[key];",
+            false,
+        ),
+        (
+            "Reflect.deleteProperty preserves a different computed data property",
+            "const first = 'first'; const second = 'second'; const source = { [first]: local }; Reflect.deleteProperty(source, second); holder.item = source[first];",
+            true,
+        ),
+        (
+            "conditional Reflect.deleteProperty preserves a computed data property",
+            "const key = 'item'; const source = { [key]: local }; if (holder.flag) Reflect.deleteProperty(source, key); holder.item = source[key];",
+            true,
+        ),
+        (
+            "Reflect.deleteProperty preserves a computed property on a frozen target",
+            "const key = 'item'; const source = { [key]: local }; Object.freeze(source); Reflect.deleteProperty(source, key); holder.item = source[key];",
+            true,
+        ),
+        (
+            "coercive Reflect.deleteProperty key preserves a possibly frozen computed property",
+            "const source = {}; let freeze = false; const key = { toString() { if (freeze) Object.freeze(source); return 'item'; } }; source[key] = local; freeze = true; Reflect.deleteProperty(source, key); holder.item = source[key];",
+            true,
+        ),
+        (
+            "unproven Reflect.deleteProperty key preserves a computed data property",
+            "const key = holder.key; const source = { [key]: local }; Reflect.deleteProperty(source, key); holder.item = source[key];",
+            true,
+        ),
+        (
+            "uninvoked Reflect.deleteProperty helper preserves a known data property",
+            "const source = { item: local }; const remove = () => Reflect.deleteProperty(source, 'item'); void remove; holder.item = source.item;",
+            true,
+        ),
+        (
+            "invoked Reflect.deleteProperty helper removes a known data property",
+            "const source = { item: local }; const remove = () => Reflect.deleteProperty(source, 'item'); remove(); holder.item = source.item;",
+            false,
+        ),
+        (
+            "invoked Reflect.deleteProperty helper removes a computed data property",
+            "const key = 'item'; const source = { [key]: local }; const remove = () => Reflect.deleteProperty(source, key); remove(); holder.item = source[key];",
+            false,
+        ),
+        (
+            "Reflect.deleteProperty helper observes a later target rebind",
+            "const key = 'item'; let source = { [key]: local }; const original = source; const remove = () => Reflect.deleteProperty(source, key); source = {}; remove(); holder.item = original[key];",
+            true,
+        ),
+        (
+            "Reflect.deleteProperty helper observes a later frozen target",
+            "const key = 'item'; const source = { [key]: local }; const remove = () => Reflect.deleteProperty(source, key); Object.freeze(source); remove(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "Reflect.deleteProperty helper observes a later callee rebind",
+            "const source = { item: local }; let remove = Reflect.deleteProperty; const apply = () => remove(source, 'item'); remove = () => false; apply(); holder.item = source.item;",
+            true,
+        ),
+        (
+            "unconstructed computed Reflect.deleteProperty class initializer remains inert",
+            "const key = 'item'; const source = { [key]: local }; class Box { value = Reflect.deleteProperty(source, key); } void Box; holder.item = source[key];",
+            true,
+        ),
+        (
+            "constructed computed Reflect.deleteProperty class initializer removes its property",
+            "const key = 'item'; const source = { [key]: local }; class Box { value = Reflect.deleteProperty(source, key); } new Box(); holder.item = source[key];",
+            false,
+        ),
+        (
+            "computed Reflect.deleteProperty class initializer observes a later target rebind",
+            "const key = 'item'; let source = { [key]: local }; const original = source; class Box { value = Reflect.deleteProperty(source, key); } source = {}; new Box(); holder.item = original[key];",
+            true,
+        ),
+        (
+            "computed Reflect.deleteProperty class initializer observes a later frozen target",
+            "const key = 'item'; const source = { [key]: local }; class Box { value = Reflect.deleteProperty(source, key); } Object.freeze(source); new Box(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "computed instance Reflect.deleteProperty removes an earlier field",
+            "const key = 'item'; class Box { [key] = local; removed = Reflect.deleteProperty(this, key); } const box = new Box(); holder.item = box[key];",
+            false,
+        ),
+        (
+            "Reflect.deleteProperty preserves a computed instance prototype auto-accessor",
+            "const key = 'item'; class Box { accessor [key] = local; } const box = new Box(); Reflect.deleteProperty(box, key); holder.item = box[key];",
+            true,
+        ),
+        (
+            "Reflect.deleteProperty removes a computed static field",
+            "const key = 'item'; class Box { static [key] = local; } Reflect.deleteProperty(Box, key); holder.item = Box[key];",
+            false,
+        ),
+        (
+            "Reflect.deleteProperty removes a computed static auto-accessor",
+            "const key = 'item'; class Box { static accessor [key] = local; } Reflect.deleteProperty(Box, key); holder.item = Box[key];",
+            false,
+        ),
+        (
+            "Reflect.deleteProperty removes a computed static method",
+            "const key = 'item'; class Box { static [key]() { return local; } } Reflect.deleteProperty(Box, key); holder.item = Box[key];",
+            false,
+        ),
+        (
+            "aliased Reflect.deleteProperty removes a computed data property",
+            "const remove = Reflect.deleteProperty; const key = 'item'; const source = { [key]: local }; remove(source, key); holder.item = source[key];",
+            false,
+        ),
+        (
             "later Object.assign source replaces a computed property",
             "const key = holder.key; const source = { [key]: local }; const copy = Object.assign({}, source, { item: {} }); holder.item = copy.item;",
             false,

@@ -20764,6 +20764,12 @@ struct LocalReflectSetPlan {
     definite: bool,
 }
 
+struct LocalReflectDeletePlan {
+    target: StaticAliasPath,
+    callee: StaticAliasPath,
+    computed: bool,
+}
+
 enum LocalReflectSetOutcome {
     Data(LocalReflectSetPlan),
     Reflective,
@@ -20843,8 +20849,9 @@ enum DeferredClassInstanceOperationKind {
     ArrayMutation(DeferredArrayMutation),
     DeleteOwnProperty,
     DeleteComputedDataProperty,
-    ReflectDeleteOwnProperty {
+    ReflectDeleteProperty {
         callee: StaticAliasPath,
+        computed: bool,
     },
 }
 
@@ -21406,6 +21413,7 @@ struct StaticHookAliasCollector<'semantic> {
     scoping: &'semantic Scoping,
     known_arrays: &'semantic BTreeSet<SymbolId>,
     mutable_symbols: BTreeSet<SymbolId>,
+    primitive_property_key_symbols: BTreeSet<SymbolId>,
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     alias_history: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     externally_stored_value_paths: BTreeSet<StaticAliasPath>,
@@ -21811,8 +21819,9 @@ enum DeferredCallableOperationKind {
     },
     DeleteOwnProperty,
     DeleteComputedDataProperty,
-    ReflectDeleteOwnProperty {
+    ReflectDeleteProperty {
         callee: StaticAliasPath,
+        computed: bool,
     },
     ArrayMutation(DeferredArrayMutation),
 }
@@ -22609,6 +22618,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             scoping,
             known_arrays,
             mutable_symbols: mutable_symbols.clone(),
+            primitive_property_key_symbols: BTreeSet::new(),
             aliases: BTreeMap::new(),
             alias_history: BTreeMap::new(),
             externally_stored_value_paths: BTreeSet::new(),
@@ -23253,6 +23263,49 @@ impl StaticHookAliasCollector<'_> {
         }
         let span = key.span();
         format!("<computed-key-expression@{}:{}>", span.start, span.end)
+    }
+
+    fn expression_is_definitely_primitive_property_key(&self, expression: &Expression<'_>) -> bool {
+        match expression.get_inner_expression() {
+            Expression::NullLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BigIntLiteral(_)
+            | Expression::StringLiteral(_)
+            | Expression::TemplateLiteral(_)
+            | Expression::BinaryExpression(_)
+            | Expression::UnaryExpression(_)
+            | Expression::UpdateExpression(_) => true,
+            Expression::Identifier(identifier) => identifier_symbol(self.scoping, identifier)
+                .is_some_and(|symbol| self.primitive_property_key_symbols.contains(&symbol)),
+            Expression::ConditionalExpression(expression) => {
+                self.expression_is_definitely_primitive_property_key(&expression.consequent)
+                    && self.expression_is_definitely_primitive_property_key(&expression.alternate)
+            }
+            Expression::LogicalExpression(expression) => {
+                self.expression_is_definitely_primitive_property_key(&expression.left)
+                    && self.expression_is_definitely_primitive_property_key(&expression.right)
+            }
+            Expression::SequenceExpression(expression) => {
+                expression.expressions.last().is_some_and(|expression| {
+                    self.expression_is_definitely_primitive_property_key(expression)
+                })
+            }
+            Expression::AssignmentExpression(expression)
+                if expression.operator == OxcAssignmentOperator::Assign =>
+            {
+                self.expression_is_definitely_primitive_property_key(&expression.right)
+            }
+            _ => false,
+        }
+    }
+
+    fn computed_property_key_is_non_coercive(&self, key: &Expression<'_>) -> bool {
+        let Expression::Identifier(identifier) = key.get_inner_expression() else {
+            return false;
+        };
+        identifier_symbol(self.scoping, identifier)
+            .is_some_and(|symbol| self.primitive_property_key_symbols.contains(&symbol))
     }
 
     fn dynamic_data_property_target(
@@ -27118,15 +27171,23 @@ impl StaticHookAliasCollector<'_> {
                         self.clear_matching_dynamic_data_property(&rebased_target);
                     }
                 }
-                DeferredClassInstanceOperationKind::ReflectDeleteOwnProperty { callee } => {
+                DeferredClassInstanceOperationKind::ReflectDeleteProperty { callee, computed } => {
                     let builtin = StaticAliasPath::unresolved_global("Reflect".to_string())
                         .with_property("deleteProperty".to_string());
-                    let applied = resolve_static_alias_path(&self.aliases, &callee) == builtin
+                    let intact = resolve_static_alias_path(&self.aliases, &callee) == builtin
                         && self.path_is_currently_intact(&callee)
-                        && self.path_is_currently_intact(&builtin)
-                        && self.apply_deferred_own_property_deletion(&rebased_target);
-                    if operation.conditional && applied {
-                        self.ambiguous_alias_targets.insert(rebased_target);
+                        && self.path_is_currently_intact(&builtin);
+                    if !self.local_reflect_delete_property_is_configurable(&rebased_target) {
+                        continue;
+                    } else if intact && computed {
+                        if !operation.conditional {
+                            self.clear_matching_dynamic_reflect_delete_property(&rebased_target);
+                        }
+                    } else if intact {
+                        let applied = self.apply_deferred_own_property_deletion(&rebased_target);
+                        if operation.conditional && applied {
+                            self.ambiguous_alias_targets.insert(rebased_target);
+                        }
                     }
                 }
             }
@@ -31876,6 +31937,88 @@ impl StaticHookAliasCollector<'_> {
     fn clear_matching_dynamic_data_property(&mut self, target: &StaticAliasPath) -> bool {
         let targets = self.matching_dynamic_property_targets(target, DYNAMIC_DATA_PROPERTY);
         self.clear_matching_dynamic_property_targets(targets)
+    }
+
+    fn dynamic_method_target_is_own(&self, target: &StaticAliasPath) -> bool {
+        let Some(owner) = dynamic_property_alias_owner(target) else {
+            return false;
+        };
+        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+        self.aliases
+            .get(target)
+            .into_iter()
+            .chain(self.alias_history.get(target).into_iter().flatten())
+            .any(|source| {
+                let resolved_source = resolve_static_alias_path(&self.aliases, source);
+                [source, &resolved_source]
+                    .into_iter()
+                    .any(|source| source.starts_with(&owner) || source.starts_with(&resolved_owner))
+            })
+    }
+
+    fn clear_matching_dynamic_own_method_property(&mut self, target: &StaticAliasPath) -> bool {
+        let targets = self
+            .matching_dynamic_property_targets(target, DYNAMIC_METHOD_PROPERTY)
+            .into_iter()
+            .filter(|target| self.dynamic_method_target_is_own(target))
+            .collect();
+        self.clear_matching_dynamic_property_targets(targets)
+    }
+
+    fn dynamic_auto_accessor_target_is_own_static(&self, target: &StaticAliasPath) -> bool {
+        let Some(owner) = dynamic_property_alias_owner(target) else {
+            return false;
+        };
+        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+        self.aliases
+            .get(target)
+            .into_iter()
+            .chain(self.alias_history.get(target).into_iter().flatten())
+            .map(|source| dynamic_auto_accessor_storage_alias(&self.aliases, source))
+            .any(|storage| {
+                [&owner, &resolved_owner].into_iter().any(|owner| {
+                    storage.starts_with(owner)
+                        && storage
+                            .properties
+                            .get(owner.properties.len())
+                            .is_some_and(|property| {
+                                property.starts_with("<computed-static-auto-accessor@")
+                            })
+                })
+            })
+    }
+
+    fn clear_matching_dynamic_own_static_auto_accessor_property(
+        &mut self,
+        target: &StaticAliasPath,
+    ) -> bool {
+        let targets = self
+            .matching_dynamic_property_targets(target, DYNAMIC_AUTO_ACCESSOR_PROPERTY)
+            .into_iter()
+            .filter(|target| self.dynamic_auto_accessor_target_is_own_static(target))
+            .collect();
+        self.clear_matching_dynamic_property_targets(targets)
+    }
+
+    fn clear_matching_dynamic_reflect_delete_property(&mut self, target: &StaticAliasPath) -> bool {
+        let auto_accessor = Self::dynamic_property_target_with_marker(
+            target,
+            DYNAMIC_DATA_PROPERTY,
+            DYNAMIC_AUTO_ACCESSOR_PROPERTY,
+        );
+        let method = Self::dynamic_property_target_with_marker(
+            target,
+            DYNAMIC_DATA_PROPERTY,
+            DYNAMIC_METHOD_PROPERTY,
+        );
+        let mut cleared = self.clear_matching_dynamic_data_property(target);
+        if let Some(target) = auto_accessor {
+            cleared |= self.clear_matching_dynamic_own_static_auto_accessor_property(&target);
+        }
+        if let Some(target) = method {
+            cleared |= self.clear_matching_dynamic_own_method_property(&target);
+        }
+        cleared
     }
 
     fn clear_matching_dynamic_auto_accessor_property(&mut self, target: &StaticAliasPath) -> bool {
@@ -43039,10 +43182,10 @@ impl StaticHookAliasCollector<'_> {
         self.apply_local_property_descriptor(&descriptor, property)
     }
 
-    fn local_reflect_delete_property(
+    fn prepare_local_reflect_delete_property(
         &self,
         call: &CallExpression<'_>,
-    ) -> Option<(StaticAliasPath, StaticAliasPath)> {
+    ) -> Option<LocalReflectDeletePlan> {
         if call.arguments.len() != 2
             || !matches!(
                 call.callee.get_inner_expression(),
@@ -43071,7 +43214,7 @@ impl StaticHookAliasCollector<'_> {
         {
             return None;
         }
-        let target = call
+        let target_expression = call
             .arguments
             .first()
             .and_then(|argument| argument.as_expression())
@@ -43080,18 +43223,85 @@ impl StaticHookAliasCollector<'_> {
                     target.get_inner_expression(),
                     Expression::Identifier(_) | Expression::ThisExpression(_)
                 )
-            })
-            .and_then(|target| self.alias_source_path(target))?;
-        let property = call
+            })?;
+        let key = call
             .arguments
             .get(1)
-            .and_then(|argument| argument.as_expression())
-            .and_then(static_member_name)?;
-        let property = target.with_property(property);
-        self.descriptor_defined_properties
-            .iter()
-            .all(|defined| !defined.overlaps(&property))
-            .then_some((property, raw_callee))
+            .and_then(|argument| argument.as_expression())?;
+        let owner = self.alias_source_path(target_expression)?;
+        let (target, computed) = if let Some(property) = static_member_name(key) {
+            (owner.with_property(property), false)
+        } else {
+            if !self.computed_property_key_is_non_coercive(key) {
+                return None;
+            }
+            (self.dynamic_data_property_target(&owner, key), true)
+        };
+        Some(LocalReflectDeletePlan {
+            target,
+            callee: raw_callee,
+            computed,
+        })
+    }
+
+    fn local_reflect_delete_property_is_configurable(&self, target: &StaticAliasPath) -> bool {
+        let resolved = resolve_static_alias_slot_path(&self.aliases, target);
+        self.descriptor_defined_properties.iter().all(|defined| {
+            let resolved_defined = resolve_static_alias_slot_path(&self.aliases, defined);
+            [defined, &resolved_defined]
+                .into_iter()
+                .all(|defined| !defined.overlaps(target) && !defined.overlaps(&resolved))
+        })
+    }
+
+    fn apply_local_reflect_delete_plan(
+        &mut self,
+        call: &CallExpression<'_>,
+        plan: LocalReflectDeletePlan,
+        unconditional: bool,
+    ) {
+        let target = plan.target.clone();
+        if !self.local_reflect_delete_property_is_configurable(&target) {
+            return;
+        }
+        let deferred_class_instance = self
+            .deferred_class_instance_operation_span(&target)
+            .map(|span| (span, target.clone()));
+        if unconditional && deferred_class_instance.is_none() {
+            if let Some(span) = self.deferred_callable_alias_capture_span(&target) {
+                let mutable_capture = target
+                    .binding_root()
+                    .is_some_and(|root| self.mutable_symbols.contains(&root));
+                if !mutable_capture {
+                    self.record_deferred_callable_operation(
+                        span,
+                        target.clone(),
+                        DeferredCallableOperationKind::ReflectDeleteProperty {
+                            callee: plan.callee.clone(),
+                            computed: plan.computed,
+                        },
+                    );
+                }
+            } else if plan.computed {
+                self.clear_matching_dynamic_reflect_delete_property(&target);
+            } else {
+                self.remove_local_own_property(&target);
+            }
+        }
+        if let Some((span, target)) = deferred_class_instance {
+            self.deferred_class_instance_operations
+                .entry(span)
+                .or_default()
+                .push(DeferredClassInstanceOperation {
+                    span: (call.span.start, call.span.end),
+                    target,
+                    kind: DeferredClassInstanceOperationKind::ReflectDeleteProperty {
+                        callee: plan.callee,
+                        computed: plan.computed,
+                    },
+                    conditional: !unconditional,
+                });
+        }
     }
 
     fn constructor_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
@@ -44234,7 +44444,7 @@ impl StaticHookAliasCollector<'_> {
                         }
                         DeferredCallableOperationKind::DeleteOwnProperty
                         | DeferredCallableOperationKind::DeleteComputedDataProperty
-                        | DeferredCallableOperationKind::ReflectDeleteOwnProperty { .. }
+                        | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                         | DeferredCallableOperationKind::ArrayMutation(_) => {
                             let applied = targets.len() == 1
                                 && targets.into_iter().all(|target| {
@@ -44388,16 +44598,21 @@ impl StaticHookAliasCollector<'_> {
             DeferredCallableOperationKind::DeleteComputedDataProperty => {
                 self.clear_matching_dynamic_data_property(raw_target)
             }
-            DeferredCallableOperationKind::ReflectDeleteOwnProperty { callee } => {
+            DeferredCallableOperationKind::ReflectDeleteProperty { callee, computed } => {
                 let builtin = StaticAliasPath::unresolved_global("Reflect".to_string())
                     .with_property("deleteProperty".to_string());
                 if resolve_static_alias_path(&self.aliases, callee) != builtin
                     || !self.path_is_currently_intact(callee)
                     || !self.path_is_currently_intact(&builtin)
+                    || !self.local_reflect_delete_property_is_configurable(raw_target)
                 {
                     return false;
                 }
-                self.apply_deferred_own_property_deletion(raw_target)
+                if *computed {
+                    self.clear_matching_dynamic_reflect_delete_property(raw_target)
+                } else {
+                    self.apply_deferred_own_property_deletion(raw_target)
+                }
             }
             DeferredCallableOperationKind::ArrayMutation(mutation) => {
                 self.apply_deferred_array_mutation(raw_target, mutation, mappers)
@@ -45041,7 +45256,7 @@ impl StaticHookAliasCollector<'_> {
                     }
                     DeferredCallableOperationKind::DeleteOwnProperty
                     | DeferredCallableOperationKind::DeleteComputedDataProperty
-                    | DeferredCallableOperationKind::ReflectDeleteOwnProperty { .. }
+                    | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                     | DeferredCallableOperationKind::ArrayMutation(_) => None,
                 };
                 for target in targets {
@@ -46348,6 +46563,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
         self.record_pattern_owner(&declarator.id);
         if let Some(initializer) = &declarator.init {
+            if let BindingPattern::BindingIdentifier(binding) = &declarator.id
+                && let Some(root) = binding.symbol_id.get()
+                && !self.mutable_symbols.contains(&root)
+                && self.expression_is_definitely_primitive_property_key(initializer)
+            {
+                self.primitive_property_key_symbols.insert(root);
+            }
             if let BindingPattern::BindingIdentifier(binding) = &declarator.id
                 && binding.symbol_id.get().is_some_and(|symbol| {
                     !self
@@ -48179,28 +48401,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 self.prepare_local_property_descriptor(descriptor, property);
             }
         }
-        let local_reflect_delete_property = self.local_reflect_delete_property(call);
-        let deferred_class_instance_reflect_delete = local_reflect_delete_property
-            .as_ref()
-            .and_then(|(property, callee)| {
-                self.deferred_class_instance_operation_span(property)
-                    .map(|span| (span, property.clone(), callee.clone()))
-            });
-        if unconditional && let Some((property, callee)) = &local_reflect_delete_property {
-            if deferred_class_instance_reflect_delete.is_none()
-                && let Some(context) = self.class_effect_contexts.last().copied().flatten()
-                && self.deferred_callable_alias_capture_span(property) == Some(context.span)
-            {
-                self.record_deferred_callable_operation(
-                    context.span,
-                    property.clone(),
-                    DeferredCallableOperationKind::ReflectDeleteOwnProperty {
-                        callee: callee.clone(),
-                    },
-                );
-            }
-            self.remove_local_own_property(property);
-        }
+        let local_reflect_delete_property = self.prepare_local_reflect_delete_property(call);
         let synchronous_callback_effect_targets = self.synchronous_callback_effect_targets(call);
         let mut local_invocations = self
             .immediate_callable_result_invocation_facts(call)
@@ -48331,16 +48532,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 .returned_callable_capture_span(raw_target)
                 .or_else(|| self.returned_callable_capture_span(&target));
         }
-        if let Some((span, target, callee)) = deferred_class_instance_reflect_delete {
-            self.deferred_class_instance_operations
-                .entry(span)
-                .or_default()
-                .push(DeferredClassInstanceOperation {
-                    span: (call.span.start, call.span.end),
-                    target,
-                    kind: DeferredClassInstanceOperationKind::ReflectDeleteOwnProperty { callee },
-                    conditional: !unconditional,
-                });
+        if let Some(plan) = local_reflect_delete_property {
+            self.apply_local_reflect_delete_plan(call, plan, unconditional);
         }
         if let Some((span, target, mutation)) = deferred_array_mutation {
             if matches!(&target.root, StaticAliasRoot::DynamicThis { .. })
