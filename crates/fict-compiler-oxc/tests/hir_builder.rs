@@ -13517,6 +13517,134 @@ fn reflect_delete_property_preserves_accessors_when_deletion_is_uncertain() {
 }
 
 #[test]
+fn define_property_attribute_only_data_descriptors_preserve_values_and_flags() {
+    for (name, setup, expected_hir) in [
+        (
+            "writable update accepts a replacement for an existing value",
+            "const source = { item: 1 }; Object.defineProperty(source, 'item', { writable: true }); source.item = undefined;",
+            false,
+        ),
+        (
+            "Reflect writable update accepts a replacement for an existing value",
+            "const source = { item: 1 }; Reflect.defineProperty(source, 'item', { writable: true }); source.item = undefined;",
+            false,
+        ),
+        (
+            "non-writable update preserves an existing value",
+            "const source = { item: undefined }; Object.defineProperty(source, 'item', { writable: false }); source.item = 1;",
+            false,
+        ),
+        (
+            "configurable update preserves the value until deletion",
+            "const source = { item: 1 }; Object.defineProperty(source, 'item', { configurable: true }); delete source.item;",
+            false,
+        ),
+        (
+            "writable update retains an existing defined value",
+            "const source = { item: 1 }; Object.defineProperty(source, 'item', { writable: true });",
+            true,
+        ),
+        (
+            "writable update converts an accessor to undefined data",
+            "const source = { get item() { return 1; } }; Object.defineProperty(source, 'item', { writable: true });",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const fallback = () => {{
+                        values.forEach = null;
+                        return 0;
+                    }};
+                    {setup}
+                    const {{ item = fallback() }} = source;
+                    void item;
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert_eq!(
+            output.hir.is_some(),
+            expected_hir,
+            "{name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn writable_only_descriptor_creates_an_assignable_undefined_property() {
+    for (name, setup, expected_escape) in [
+        (
+            "writable property",
+            "const source = {}; Object.defineProperty(source, 'item', { writable: true }); source.item = local;",
+            true,
+        ),
+        (
+            "Reflect writable property",
+            "const source = {}; Reflect.defineProperty(source, 'item', { writable: true }); source.item = local;",
+            true,
+        ),
+        (
+            "non-writable property",
+            "const source = {}; Object.defineProperty(source, 'item', { writable: false }); source.item = local;",
+            false,
+        ),
+        (
+            "generic property",
+            "const source = {}; Object.defineProperty(source, 'item', {}); source.item = local;",
+            false,
+        ),
+        (
+            "existing value",
+            "const source = { item: local }; Object.defineProperty(source, 'item', { writable: true });",
+            true,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    holder.item = source.item;
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let has_escape = output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
+                && diagnostic.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize] == "run"
+                })
+        });
+        assert_eq!(
+            has_escape, expected_escape,
+            "{name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn define_property_replaces_accessors_with_data_properties() {
     for (name, declaration, definition, observation) in [
         (

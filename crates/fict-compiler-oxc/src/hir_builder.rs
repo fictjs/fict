@@ -44629,37 +44629,53 @@ impl StaticHookAliasCollector<'_> {
             return false;
         }
         if data {
-            let Some(value) = descriptor.value.as_ref() else {
-                return false;
-            };
-            if let LocalDescriptorValue::Expression(value) = value
+            if let Some(LocalDescriptorValue::Expression(value)) = descriptor.value.as_ref()
                 && self.local_getter_source_path(value).is_some_and(|source| {
                     !self.local_getter_resolution(&source, false).1.is_empty()
                 })
             {
                 return false;
             }
-            self.clear_overlapping_aliases(property);
+            let replaces_value = descriptor.value.is_some() || !existing_own || existing_accessor;
+            let retained_value = (!replaces_value)
+                .then(|| resolve_static_alias_path(&self.aliases, property))
+                .filter(|value| value != property);
+            if replaces_value || retained_value.is_some() {
+                self.clear_overlapping_aliases(property);
+            }
             self.structured_own_properties
                 .entry(owner.clone())
                 .or_default()
                 .insert(name.clone());
             self.exclude_dynamic_local_accessor_property(&owner, name.clone());
-            match value {
-                LocalDescriptorValue::Expression(value) => {
-                    if let Some(source) = Self::local_descriptor_structured_expression_path(value) {
-                        self.insert_alias(property.clone(), source);
-                    } else {
-                        self.collect_initializer(property.clone(), value);
+            if let Some(value) = descriptor.value.as_ref() {
+                match value {
+                    LocalDescriptorValue::Expression(value) => {
+                        if let Some(source) =
+                            Self::local_descriptor_structured_expression_path(value)
+                        {
+                            self.insert_alias(property.clone(), source);
+                        } else {
+                            self.collect_initializer(property.clone(), value);
+                        }
+                    }
+                    LocalDescriptorValue::Path(value) => {
+                        self.insert_alias(property.clone(), value.clone());
+                        self.record_local_descriptor_value_capture(value, property);
+                    }
+                    LocalDescriptorValue::GetterResult { target, .. } => {
+                        self.insert_alias(property.clone(), target.clone());
                     }
                 }
-                LocalDescriptorValue::Path(value) => {
-                    self.insert_alias(property.clone(), value.clone());
-                    self.record_local_descriptor_value_capture(value, property);
-                }
-                LocalDescriptorValue::GetterResult { target, .. } => {
-                    self.insert_alias(property.clone(), target.clone());
-                }
+            } else if let Some(value) = retained_value {
+                self.insert_alias(property.clone(), value);
+            } else if replaces_value {
+                self.local_value_definedness_history
+                    .entry(property.clone())
+                    .or_default()
+                    .insert(LocalGetterResultDefinedness::Undefined);
+                self.local_value_definedness
+                    .insert(property.clone(), LocalGetterResultDefinedness::Undefined);
             }
             self.descriptor_defined_properties.insert(property.clone());
             if descriptor_writable {
