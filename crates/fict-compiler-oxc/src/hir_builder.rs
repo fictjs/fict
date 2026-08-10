@@ -20848,7 +20848,7 @@ enum DeferredClassInstanceOperationKind {
     },
     ArrayMutation(DeferredArrayMutation),
     DeleteOwnProperty,
-    DeleteComputedDataProperty,
+    DeleteComputedOwnProperty,
     ReflectDeleteProperty {
         callee: StaticAliasPath,
         computed: bool,
@@ -21818,7 +21818,7 @@ enum DeferredCallableOperationKind {
         strong: bool,
     },
     DeleteOwnProperty,
-    DeleteComputedDataProperty,
+    DeleteComputedOwnProperty,
     ReflectDeleteProperty {
         callee: StaticAliasPath,
         computed: bool,
@@ -27166,9 +27166,9 @@ impl StaticHookAliasCollector<'_> {
                         self.ambiguous_alias_targets.insert(rebased_target);
                     }
                 }
-                DeferredClassInstanceOperationKind::DeleteComputedDataProperty => {
+                DeferredClassInstanceOperationKind::DeleteComputedOwnProperty => {
                     if !operation.conditional {
-                        self.clear_matching_dynamic_data_property(&rebased_target);
+                        self.clear_matching_dynamic_own_property(&rebased_target);
                     }
                 }
                 DeferredClassInstanceOperationKind::ReflectDeleteProperty { callee, computed } => {
@@ -27181,7 +27181,7 @@ impl StaticHookAliasCollector<'_> {
                         continue;
                     } else if intact && computed {
                         if !operation.conditional {
-                            self.clear_matching_dynamic_reflect_delete_property(&rebased_target);
+                            self.clear_matching_dynamic_own_property(&rebased_target);
                         }
                     } else if intact {
                         let applied = self.apply_deferred_own_property_deletion(&rebased_target);
@@ -32000,7 +32000,7 @@ impl StaticHookAliasCollector<'_> {
         self.clear_matching_dynamic_property_targets(targets)
     }
 
-    fn clear_matching_dynamic_reflect_delete_property(&mut self, target: &StaticAliasPath) -> bool {
+    fn clear_matching_dynamic_own_property(&mut self, target: &StaticAliasPath) -> bool {
         let auto_accessor = Self::dynamic_property_target_with_marker(
             target,
             DYNAMIC_DATA_PROPERTY,
@@ -43283,7 +43283,7 @@ impl StaticHookAliasCollector<'_> {
                     );
                 }
             } else if plan.computed {
-                self.clear_matching_dynamic_reflect_delete_property(&target);
+                self.clear_matching_dynamic_own_property(&target);
             } else {
                 self.remove_local_own_property(&target);
             }
@@ -44443,7 +44443,7 @@ impl StaticHookAliasCollector<'_> {
                             (source, Some(*strong), None)
                         }
                         DeferredCallableOperationKind::DeleteOwnProperty
-                        | DeferredCallableOperationKind::DeleteComputedDataProperty
+                        | DeferredCallableOperationKind::DeleteComputedOwnProperty
                         | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                         | DeferredCallableOperationKind::ArrayMutation(_) => {
                             let applied = targets.len() == 1
@@ -44595,8 +44595,8 @@ impl StaticHookAliasCollector<'_> {
             DeferredCallableOperationKind::DeleteOwnProperty => {
                 self.apply_deferred_own_property_deletion(raw_target)
             }
-            DeferredCallableOperationKind::DeleteComputedDataProperty => {
-                self.clear_matching_dynamic_data_property(raw_target)
+            DeferredCallableOperationKind::DeleteComputedOwnProperty => {
+                self.clear_matching_dynamic_own_property(raw_target)
             }
             DeferredCallableOperationKind::ReflectDeleteProperty { callee, computed } => {
                 let builtin = StaticAliasPath::unresolved_global("Reflect".to_string())
@@ -44609,7 +44609,7 @@ impl StaticHookAliasCollector<'_> {
                     return false;
                 }
                 if *computed {
-                    self.clear_matching_dynamic_reflect_delete_property(raw_target)
+                    self.clear_matching_dynamic_own_property(raw_target)
                 } else {
                     self.apply_deferred_own_property_deletion(raw_target)
                 }
@@ -45255,7 +45255,7 @@ impl StaticHookAliasCollector<'_> {
                         Some(sources)
                     }
                     DeferredCallableOperationKind::DeleteOwnProperty
-                    | DeferredCallableOperationKind::DeleteComputedDataProperty
+                    | DeferredCallableOperationKind::DeleteComputedOwnProperty
                     | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                     | DeferredCallableOperationKind::ArrayMutation(_) => None,
                 };
@@ -48294,14 +48294,14 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                         span,
                         target.clone(),
                         if dynamic_target.is_some() {
-                            DeferredCallableOperationKind::DeleteComputedDataProperty
+                            DeferredCallableOperationKind::DeleteComputedOwnProperty
                         } else {
                             DeferredCallableOperationKind::DeleteOwnProperty
                         },
                     );
                 } else if deferred_class_instance_delete.is_none() {
                     if dynamic_target.is_some() {
-                        self.clear_matching_dynamic_data_property(target);
+                        self.clear_matching_dynamic_own_property(target);
                     } else {
                         self.remove_local_own_property(target);
                     }
@@ -48320,7 +48320,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                         span: (expression.span.start, expression.span.end),
                         target,
                         kind: if dynamic {
-                            DeferredClassInstanceOperationKind::DeleteComputedDataProperty
+                            DeferredClassInstanceOperationKind::DeleteComputedOwnProperty
                         } else {
                             DeferredClassInstanceOperationKind::DeleteOwnProperty
                         },

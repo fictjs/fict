@@ -5175,6 +5175,21 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "delete removes a computed static auto-accessor",
+            "const key = 'item'; class Box { static accessor [key] = local; } delete Box[key]; holder.item = Box[key];",
+            false,
+        ),
+        (
+            "delete removes a computed static method",
+            "const key = 'item'; class Box { static [key]() { return local; } } delete Box[key]; holder.item = Box[key];",
+            false,
+        ),
+        (
+            "delete removes a computed object method",
+            "const key = 'item'; const source = { [key]() { return local; } }; delete source[key]; holder.item = source[key];",
+            false,
+        ),
+        (
             "Reflect.deleteProperty removes a matching computed data property",
             "const key = 'item'; const source = { [key]: local }; Reflect.deleteProperty(source, key); holder.item = source[key];",
             false,
