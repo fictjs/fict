@@ -4576,6 +4576,82 @@ fn array_mutations_respect_descriptors_and_extensibility() {
 }
 
 #[test]
+fn conditional_deferred_mutations_preserve_source_order_and_throw_boundaries() {
+    for (name, setup, expected_escape) in [
+        (
+            "an invoked helper evaluates a push argument before the push throws",
+            "const source = [{}]; const append = () => source.push(source[0] = local); Object.preventExtensions(source); try { append(); } catch {} holder.item = source[0];",
+            true,
+        ),
+        (
+            "a direct push evaluates its argument before the push throws",
+            "const source = [{}]; Object.preventExtensions(source); try { source.push(source[0] = local); } catch {} holder.item = source[0];",
+            true,
+        ),
+        (
+            "an uninvoked helper leaves its argument effect unexecuted",
+            "const source = [{}]; const append = () => source.push(source[0] = local); Object.preventExtensions(source); void append; holder.item = source[0];",
+            false,
+        ),
+        (
+            "a rejected push value does not replace an existing element",
+            "const source = [{}]; Object.preventExtensions(source); try { source.push(local); } catch {} holder.item = source[0];",
+            false,
+        ),
+        (
+            "a conditionally invoked helper preserves a possible assignment",
+            "const source = [{}]; const assign = () => source[0] = local; if (holder.flag) assign(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a conditionally invoked helper preserves a possible push",
+            "const source = []; const append = () => source.push(local); if (holder.flag) append(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a rejected mutator stops later helper operations",
+            "const source = [{}]; const append = () => { source.push({}); source[0] = local; }; Object.preventExtensions(source); try { append(); } catch {} holder.item = source[0];",
+            false,
+        ),
+        (
+            "a conditional helper preserves protection before its mutation",
+            "const source = []; const append = () => { Object.preventExtensions(source); source.push(local); }; if (holder.flag) append(); holder.item = source[0];",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let has_escape = output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
+                && diagnostic.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize] == "run"
+                })
+        });
+        assert_eq!(
+            has_escape, expected_escape,
+            "{name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn array_length_assignments_update_local_storage_shapes() {
     let mut mismatches = Vec::new();
     for (name, setup, expected_escape) in [

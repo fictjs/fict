@@ -21986,6 +21986,13 @@ enum DeferredCallableOperationKind {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeferredCallableOperationOutcome {
+    Applied,
+    Rejected,
+    Unresolved,
+}
+
 #[derive(Clone)]
 enum LocalCallableResult {
     Reference(StaticAliasPath),
@@ -27418,12 +27425,17 @@ impl StaticHookAliasCollector<'_> {
                 DeferredClassInstanceOperationKind::ArrayMutation(mutation) => {
                     let mutation =
                         Self::rebase_class_instance_array_mutation(&mutation, initializer, target);
-                    self.apply_deferred_array_mutation(
+                    let outcome = self.apply_deferred_array_mutation(
                         &rebased_target,
                         &mutation,
                         &mappers,
                         operation.conditional,
                     );
+                    if outcome == DeferredCallableOperationOutcome::Rejected
+                        && !operation.conditional
+                    {
+                        break;
+                    }
                 }
                 DeferredClassInstanceOperationKind::ArrayLengthAssignment(assignment) => {
                     self.apply_local_array_length_assignment(
@@ -46146,8 +46158,9 @@ impl StaticHookAliasCollector<'_> {
         invocations: &[LocalInvocationFact],
         timing: LocalAliasInvocationTiming,
     ) {
-        // Apply only direct and unconditional invocations in source order. A tracked generator
-        // creation remains deferred until its iterator is advanced; conditional, escaping, and
+        // Materialize direct invocations in source order. Conditional calls keep both the old and
+        // new value through alias ambiguity and the surrounding external-storage flow merge. A
+        // tracked generator creation remains deferred until its iterator is advanced; escaping and
         // otherwise unresolved instances are rejoined by the conservative pass.
         let unconditional = self
             .function_control_baselines
@@ -46165,14 +46178,14 @@ impl StaticHookAliasCollector<'_> {
             let generator = self.invocation_is_definitely_generator(&invocation);
             let instances = self.invocation_callable_effect_instances(&invocation);
             for (instance_target, span, historical) in instances {
-                let precise = unconditional
-                    && invocation.owner_returned_callable_span.is_none()
+                let source_order_materializable = invocation.owner_returned_callable_span.is_none()
                     && invocation
                         .external_storage_context
                         .owner_callable_span
                         .is_none()
                     && (!generator
                         || matches!(timing, LocalAliasInvocationTiming::GeneratorAdvance(_)));
+                let conditional_invocation = !unconditional;
                 let mut operations = self
                     .deferred_callable_operations
                     .get(&span)
@@ -46204,7 +46217,7 @@ impl StaticHookAliasCollector<'_> {
                     );
                     continue;
                 }
-                if !precise {
+                if !source_order_materializable {
                     self.imprecisely_invoked_alias_effects.extend(
                         operations
                             .iter()
@@ -46232,9 +46245,26 @@ impl StaticHookAliasCollector<'_> {
                         })
                         .collect()
                 };
-                for operation in operations {
+                let mut operations = operations.into_iter();
+                while let Some(operation) = operations.next() {
                     let target = operation.target;
                     let effect = (instance_target.clone(), span, target.clone());
+                    if conditional_invocation
+                        && matches!(
+                            &operation.kind,
+                            DeferredCallableOperationKind::DeleteOwnProperty
+                                | DeferredCallableOperationKind::DeleteComputedOwnProperty
+                                | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
+                                | DeferredCallableOperationKind::DescriptorProtection { .. }
+                        )
+                    {
+                        self.imprecisely_invoked_alias_effects.insert(effect);
+                        self.imprecisely_invoked_alias_effects
+                            .extend(operations.map(|operation| {
+                                (instance_target.clone(), span, operation.target)
+                            }));
+                        break;
+                    }
                     let targets = if matches!(
                         &operation.kind,
                         DeferredCallableOperationKind::ArrayMutation { .. }
@@ -46261,6 +46291,13 @@ impl StaticHookAliasCollector<'_> {
                         invocation.function_depth,
                     ) {
                         self.imprecisely_invoked_alias_effects.insert(effect);
+                        if conditional_invocation {
+                            self.imprecisely_invoked_alias_effects
+                                .extend(operations.map(|operation| {
+                                    (instance_target.clone(), span, operation.target)
+                                }));
+                            break;
+                        }
                         continue;
                     }
                     let (source, computed_strong, auto_accessor_strong) = match &operation.kind {
@@ -46277,18 +46314,42 @@ impl StaticHookAliasCollector<'_> {
                         | DeferredCallableOperationKind::DescriptorProtection { .. }
                         | DeferredCallableOperationKind::ArrayMutation { .. }
                         | DeferredCallableOperationKind::ArrayLengthAssignment { .. } => {
-                            let applied = targets.len() == 1
-                                && targets.into_iter().all(|target| {
-                                    self.apply_deferred_callable_operation(
-                                        &target,
-                                        &operation.kind,
-                                        &mappers,
-                                    )
-                                });
-                            if applied {
-                                self.precisely_invoked_alias_effects.insert(effect);
+                            let rejects_unconditionally = matches!(
+                                &operation.kind,
+                                DeferredCallableOperationKind::ArrayMutation {
+                                    conditional: false,
+                                    ..
+                                }
+                            );
+                            let outcome = if targets.len() == 1 {
+                                self.apply_deferred_callable_operation(
+                                    targets.iter().next().expect("one deferred target"),
+                                    &operation.kind,
+                                    &mappers,
+                                    conditional_invocation,
+                                )
                             } else {
+                                DeferredCallableOperationOutcome::Unresolved
+                            };
+                            if outcome == DeferredCallableOperationOutcome::Unresolved {
                                 self.imprecisely_invoked_alias_effects.insert(effect);
+                                if conditional_invocation {
+                                    self.imprecisely_invoked_alias_effects
+                                        .extend(operations.map(|operation| {
+                                            (instance_target.clone(), span, operation.target)
+                                        }));
+                                    break;
+                                }
+                            } else {
+                                self.precisely_invoked_alias_effects.insert(effect);
+                            }
+                            if outcome == DeferredCallableOperationOutcome::Rejected
+                                && rejects_unconditionally
+                            {
+                                self.precisely_invoked_alias_effects.extend(operations.map(
+                                    |operation| (instance_target.clone(), span, operation.target),
+                                ));
+                                break;
                             }
                             continue;
                         }
@@ -46310,7 +46371,8 @@ impl StaticHookAliasCollector<'_> {
                             self.local_value_read_paths(&source, historical)
                         })
                         .collect::<BTreeSet<_>>();
-                    let ambiguous = targets.len() != 1 || sources.len() != 1;
+                    let ambiguous =
+                        conditional_invocation || targets.len() != 1 || sources.len() != 1;
                     let mut applied = false;
                     for target in targets {
                         let descriptor_target = target.clone();
@@ -46351,7 +46413,7 @@ impl StaticHookAliasCollector<'_> {
                                 continue;
                             }
                         }
-                        if computed_strong == Some(true) {
+                        if computed_strong == Some(true) && !conditional_invocation {
                             self.clear_matching_dynamic_data_property(&target);
                         }
                         let dynamic_ambiguous = computed_strong.is_some()
@@ -46359,8 +46421,10 @@ impl StaticHookAliasCollector<'_> {
                         if auto_accessor_strong == Some(true) && !ambiguous {
                             self.clear_alias_target_history(&target);
                         }
-                        self.cross_scope_alias_targets
-                            .retain(|candidate| !candidate.overlaps(&target));
+                        if !conditional_invocation {
+                            self.cross_scope_alias_targets
+                                .retain(|candidate| !candidate.overlaps(&target));
+                        }
                         if sources.is_empty() {
                             self.mark_alias_target_ambiguous(target);
                             applied = true;
@@ -46370,7 +46434,7 @@ impl StaticHookAliasCollector<'_> {
                             if let Some(owner) = dynamic_property_alias_owner(&target) {
                                 self.open_structured_containers.insert(owner);
                             }
-                        } else if auto_accessor_strong.is_none() {
+                        } else if auto_accessor_strong.is_none() && !conditional_invocation {
                             self.record_local_own_property_assignment(&own_target);
                         }
                         for source in &sources {
@@ -46445,17 +46509,29 @@ impl StaticHookAliasCollector<'_> {
         raw_target: &StaticAliasPath,
         operation: &DeferredCallableOperationKind,
         mappers: &[Vec<LocalInvocationFact>],
-    ) -> bool {
+        conditional_invocation: bool,
+    ) -> DeferredCallableOperationOutcome {
         match operation {
             DeferredCallableOperationKind::Alias(_)
             | DeferredCallableOperationKind::AutoAccessorAlias { .. }
-            | DeferredCallableOperationKind::ComputedDataAlias { .. } => false,
+            | DeferredCallableOperationKind::ComputedDataAlias { .. } => {
+                DeferredCallableOperationOutcome::Unresolved
+            }
             DeferredCallableOperationKind::DeleteOwnProperty => {
-                self.apply_deferred_own_property_deletion(raw_target)
+                if self.apply_deferred_own_property_deletion(raw_target) {
+                    DeferredCallableOperationOutcome::Applied
+                } else {
+                    DeferredCallableOperationOutcome::Unresolved
+                }
             }
             DeferredCallableOperationKind::DeleteComputedOwnProperty => {
-                self.local_reflect_delete_property_is_configurable(raw_target)
+                if self.local_reflect_delete_property_is_configurable(raw_target)
                     && self.clear_matching_dynamic_own_property(raw_target)
+                {
+                    DeferredCallableOperationOutcome::Applied
+                } else {
+                    DeferredCallableOperationOutcome::Unresolved
+                }
             }
             DeferredCallableOperationKind::ReflectDeleteProperty { callee, computed } => {
                 let builtin = StaticAliasPath::unresolved_global("Reflect".to_string())
@@ -46465,12 +46541,17 @@ impl StaticHookAliasCollector<'_> {
                     || !self.path_is_currently_intact(&builtin)
                     || !self.local_reflect_delete_property_is_configurable(raw_target)
                 {
-                    return false;
+                    return DeferredCallableOperationOutcome::Unresolved;
                 }
-                if *computed {
+                let applied = if *computed {
                     self.clear_matching_dynamic_own_property(raw_target)
                 } else {
                     self.apply_deferred_own_property_deletion(raw_target)
+                };
+                if applied {
+                    DeferredCallableOperationOutcome::Applied
+                } else {
+                    DeferredCallableOperationOutcome::Unresolved
                 }
             }
             DeferredCallableOperationKind::DescriptorProtection {
@@ -46501,16 +46582,31 @@ impl StaticHookAliasCollector<'_> {
                     self.non_extensible_descriptor_containers
                         .insert(raw_target.clone());
                 }
-                true
+                DeferredCallableOperationOutcome::Applied
             }
             DeferredCallableOperationKind::ArrayMutation {
                 mutation,
                 conditional,
-            } => self.apply_deferred_array_mutation(raw_target, mutation, mappers, *conditional),
+            } => self.apply_deferred_array_mutation(
+                raw_target,
+                mutation,
+                mappers,
+                *conditional || conditional_invocation,
+            ),
             DeferredCallableOperationKind::ArrayLengthAssignment {
                 assignment,
                 conditional,
-            } => self.apply_local_array_length_assignment(raw_target, assignment, *conditional),
+            } => {
+                if self.apply_local_array_length_assignment(
+                    raw_target,
+                    assignment,
+                    *conditional || conditional_invocation,
+                ) {
+                    DeferredCallableOperationOutcome::Applied
+                } else {
+                    DeferredCallableOperationOutcome::Unresolved
+                }
+            }
         }
     }
 
@@ -46728,13 +46824,12 @@ impl StaticHookAliasCollector<'_> {
         mutation: &DeferredArrayMutation,
         mappers: &[Vec<LocalInvocationFact>],
         conditional: bool,
-    ) -> bool {
+    ) -> DeferredCallableOperationOutcome {
         let target = resolve_static_alias_path(&self.aliases, raw_target);
         if !self.known_array_path(&target)
-            || !self.path_is_currently_intact(&target)
             || !self.array_mutation_method_is_intact(&target, &mutation.method)
         {
-            return false;
+            return DeferredCallableOperationOutcome::Unresolved;
         }
         let retained_json_replacer_property_lists = self
             .local_json_replacer_property_lists
@@ -46758,7 +46853,7 @@ impl StaticHookAliasCollector<'_> {
         if property_effect.as_ref().is_some_and(|(owner, effect)| {
             !self.local_array_mutation_effect_is_allowed(owner, effect)
         }) {
-            return true;
+            return DeferredCallableOperationOutcome::Rejected;
         }
         let old_sources = known_length.map(|length| {
             (0..length)
@@ -46818,7 +46913,7 @@ impl StaticHookAliasCollector<'_> {
                 .insert(target.with_element_wildcard());
             self.local_json_replacer_property_lists
                 .extend(retained_json_replacer_property_lists);
-            return true;
+            return DeferredCallableOperationOutcome::Applied;
         };
         if length > MAX_PRECISE_ARRAY_PROVENANCE_SLOTS
             || matches!(&mutation.kind, DeferredArrayMutationKind::Opaque)
@@ -46829,7 +46924,7 @@ impl StaticHookAliasCollector<'_> {
                 .insert(target.with_element_wildcard());
             self.local_json_replacer_property_lists
                 .extend(retained_json_replacer_property_lists);
-            return true;
+            return DeferredCallableOperationOutcome::Applied;
         }
 
         let mut numeric_properties = old_properties
@@ -46945,7 +47040,7 @@ impl StaticHookAliasCollector<'_> {
                         .insert(target.with_element_wildcard());
                     self.local_json_replacer_property_lists
                         .extend(retained_json_replacer_property_lists);
-                    return true;
+                    return DeferredCallableOperationOutcome::Applied;
                 };
                 new_sources.extend(std::iter::repeat_n(None, values.len()));
                 for (offset, value) in values.iter().enumerate() {
@@ -46974,7 +47069,7 @@ impl StaticHookAliasCollector<'_> {
                         .insert(target.with_element_wildcard());
                     self.local_json_replacer_property_lists
                         .extend(retained_json_replacer_property_lists);
-                    return true;
+                    return DeferredCallableOperationOutcome::Applied;
                 };
                 self.record_deferred_array_snapshot_range(
                     &target,
@@ -47014,7 +47109,7 @@ impl StaticHookAliasCollector<'_> {
                         .insert(target.with_element_wildcard());
                     self.local_json_replacer_property_lists
                         .extend(retained_json_replacer_property_lists);
-                    return true;
+                    return DeferredCallableOperationOutcome::Applied;
                 };
                 self.record_deferred_array_snapshot_range(&target, &snapshot, 0, 0, start);
                 let suffix = length.saturating_sub(start.saturating_add(delete));
@@ -47121,7 +47216,7 @@ impl StaticHookAliasCollector<'_> {
         }
         self.local_json_replacer_property_lists
             .extend(retained_json_replacer_property_lists);
-        true
+        DeferredCallableOperationOutcome::Applied
     }
 
     fn apply_deferred_own_property_deletion(&mut self, raw_target: &StaticAliasPath) -> bool {
