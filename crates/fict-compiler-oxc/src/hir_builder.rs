@@ -20731,6 +20731,7 @@ struct ConstructorReplacementResultCollector<'collector, 'semantic> {
 #[derive(Debug, Clone, Default)]
 struct ExternalStorageFlowState {
     aliases: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    retained_identity_origins: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     attached_alias_roots: BTreeMap<StaticAliasPath, BTreeSet<SymbolId>>,
     shallow_copies: BTreeMap<StaticAliasPath, BTreeSet<ExternalStorageShallowCopy>>,
     attached_parameters: BTreeSet<SymbolId>,
@@ -21012,6 +21013,20 @@ impl ExternalStorageFlowState {
                 )
             })
             .collect::<Vec<_>>();
+        let retained_identity_origins = self
+            .retained_identity_origins
+            .iter()
+            .filter(|(path, _)| path.starts_with(source))
+            .map(|(path, origins)| {
+                (
+                    Self::rebase_subtree_path(path, source, target),
+                    origins
+                        .iter()
+                        .map(|origin| Self::rebase_subtree_path(origin, source, target))
+                        .collect::<BTreeSet<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
         let attached_alias_roots = self
             .attached_alias_roots
             .iter()
@@ -21043,6 +21058,12 @@ impl ExternalStorageFlowState {
             .collect::<Vec<_>>();
         for (path, candidates) in aliases {
             self.aliases.entry(path).or_default().extend(candidates);
+        }
+        for (path, origins) in retained_identity_origins {
+            self.retained_identity_origins
+                .entry(path)
+                .or_default()
+                .extend(origins);
         }
         for (path, roots) in attached_alias_roots {
             self.attached_alias_roots
@@ -21079,6 +21100,13 @@ impl ExternalStorageFlowState {
         for (target, sources) in right.aliases {
             merged.aliases.entry(target).or_default().extend(sources);
         }
+        for (target, origins) in right.retained_identity_origins {
+            merged
+                .retained_identity_origins
+                .entry(target)
+                .or_default()
+                .extend(origins);
+        }
         for (target, roots) in right.attached_alias_roots {
             merged
                 .attached_alias_roots
@@ -21107,6 +21135,12 @@ impl ExternalStorageFlowState {
             for alias in resolve_historical_alias_paths(&self.aliases, &current) {
                 if !resolved.contains(&alias) {
                     pending.push_back(alias);
+                }
+            }
+            for origin in resolve_historical_alias_paths(&self.retained_identity_origins, &current)
+            {
+                if !resolved.contains(&origin) {
+                    pending.push_back(origin);
                 }
             }
             for (target, copies) in &self.shallow_copies {
@@ -21185,6 +21219,13 @@ impl ExternalStorageFlowState {
             self.storage_container_attached_roots(&parent)
         };
         self.aliases.retain(|target, _| !target.overlaps(path));
+        self.retained_identity_origins.retain(|target, origins| {
+            if target.overlaps(path) {
+                return false;
+            }
+            origins.retain(|origin| !origin.overlaps(path));
+            !origins.is_empty()
+        });
         self.attached_alias_roots
             .retain(|target, _| !target.overlaps(path));
         self.shallow_copies.retain(|target, copies| {
@@ -21244,6 +21285,23 @@ impl ExternalStorageFlowState {
         self.clear_aliases(path);
         self.attached_alias_roots
             .retain(|target, _| !target.overlaps(path));
+    }
+
+    fn identity_origins(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
+        let mut origins = resolve_historical_alias_paths(&self.retained_identity_origins, path);
+        origins.remove(&path.clone().canonicalized());
+        origins
+    }
+
+    fn record_identity_move(
+        &mut self,
+        target: StaticAliasPath,
+        origins: BTreeSet<StaticAliasPath>,
+    ) {
+        self.retained_identity_origins
+            .entry(target)
+            .or_default()
+            .extend(origins);
     }
 
     fn insert_alias(
@@ -23233,6 +23291,11 @@ impl StaticHookAliasCollector<'_> {
 
     fn record_externally_stored_path(&mut self, source: StaticAliasPath) {
         let (_, mut sources) = self.current_value_alias_candidates(&source);
+        let identity_origins = sources
+            .iter()
+            .flat_map(|source| self.external_storage_flow.identity_origins(source))
+            .collect::<BTreeSet<_>>();
+        sources.extend(identity_origins);
         if !self
             .returned_structured_instances_for_path(&source)
             .is_empty()
@@ -43801,6 +43864,8 @@ impl StaticHookAliasCollector<'_> {
         raw_source: &StaticAliasPath,
     ) -> bool {
         let source = resolve_static_alias_path(&self.aliases, raw_source);
+        let mut retained_identity_origins = self.external_storage_flow.identity_origins(&source);
+        retained_identity_origins.insert(source.clone());
         let structured = self.structured_own_properties.contains_key(&source);
         let local_class = self.local_class_instances.contains(&source);
         let callable = self.local_callable_parameters.contains_key(&source)
@@ -44102,6 +44167,9 @@ impl StaticHookAliasCollector<'_> {
                 .insert(source.clone(), target.clone());
         }
         self.insert_alias(source, target.clone());
+        self.external_storage_flow
+            .record_identity_move(target.clone(), retained_identity_origins);
+        self.record_external_storage_exception_flow();
         true
     }
 

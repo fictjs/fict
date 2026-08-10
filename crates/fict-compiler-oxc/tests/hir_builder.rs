@@ -3714,6 +3714,70 @@ fn external_property_assignments_reject_reactive_escapes() {
 }
 
 #[test]
+fn mutable_temporary_aliases_preserve_external_storage_identity() {
+    for (name, setup, expected_escape) in [
+        (
+            "a temporary retains an array element deleted by length truncation",
+            "const local = {}; const source = [{}, local]; let value; holder.item = (value = source[1], source.length = 1, value); local.run = run;",
+            true,
+        ),
+        (
+            "a temporary retains a projected array element identity",
+            "const local = { child: {} }; const source = [{}, local.child]; let value; holder.item = (value = source[1], source.length = 1, value); local.child.run = run;",
+            true,
+        ),
+        (
+            "an alias of a temporary retains the moved identity",
+            "const local = {}; const source = [{}, local]; let value = source[1]; source.length = 1; const alias = value; holder.item = alias; local.run = run;",
+            true,
+        ),
+        (
+            "an overwritten temporary does not expose its previous value",
+            "const local = {}; let value = local; value = {}; holder.item = value; local.run = run;",
+            false,
+        ),
+        (
+            "a rebound source does not inherit the stored previous identity",
+            "let local = {}; let value = local; local = {}; holder.item = value; local.run = run;",
+            false,
+        ),
+        (
+            "a replaced source member does not inherit the stored previous identity",
+            "const local = { child: {} }; let value = local.child; local.child = {}; holder.item = value; local.child.run = run;",
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    {setup}
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let has_escape = output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005"
+                && diagnostic.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize] == "run"
+                })
+        });
+        assert_eq!(
+            has_escape, expected_escape,
+            "{name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn external_property_assignments_allow_definitely_primitive_results() {
     let source = r#"
         import { $state } from 'fict';
