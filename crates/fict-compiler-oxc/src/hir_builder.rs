@@ -33556,6 +33556,31 @@ impl StaticHookAliasCollector<'_> {
             .then(|| *definedness.first().expect("single local value definedness"))
     }
 
+    fn current_local_value_definedness(
+        &self,
+        value: &StaticAliasPath,
+    ) -> Option<LocalGetterResultDefinedness> {
+        let resolved = resolve_static_alias_path(&self.aliases, value);
+        if self
+            .ambiguous_alias_targets
+            .iter()
+            .any(|ambiguous| ambiguous.overlaps(value) || ambiguous.overlaps(&resolved))
+        {
+            return None;
+        }
+        let values = [value, &resolved]
+            .into_iter()
+            .filter_map(|candidate| {
+                if candidate == &StaticAliasPath::unresolved_global("undefined".to_string()) {
+                    Some(LocalGetterResultDefinedness::Undefined)
+                } else {
+                    self.local_value_definedness.get(candidate).copied()
+                }
+            })
+            .collect::<BTreeSet<_>>();
+        (values.len() == 1).then(|| *values.first().expect("single current value definedness"))
+    }
+
     fn resolved_local_value_truthiness(
         &self,
         value: &StaticAliasPath,
@@ -33601,6 +33626,37 @@ impl StaticHookAliasCollector<'_> {
             None
         } else if truthiness.len() == 1 {
             truthiness.first().copied()
+        } else {
+            Some(LocalValueTruthiness::Unknown)
+        }
+    }
+
+    fn current_local_value_truthiness(
+        &self,
+        value: &StaticAliasPath,
+    ) -> Option<LocalValueTruthiness> {
+        let resolved = resolve_static_alias_path(&self.aliases, value);
+        if self
+            .ambiguous_alias_targets
+            .iter()
+            .any(|ambiguous| ambiguous.overlaps(value) || ambiguous.overlaps(&resolved))
+        {
+            return None;
+        }
+        let values = [value, &resolved]
+            .into_iter()
+            .filter_map(|candidate| {
+                if candidate == &StaticAliasPath::unresolved_global("undefined".to_string()) {
+                    Some(LocalValueTruthiness::Falsy)
+                } else {
+                    self.local_value_truthiness.get(candidate).copied()
+                }
+            })
+            .collect::<BTreeSet<_>>();
+        if values.is_empty() {
+            None
+        } else if values.len() == 1 {
+            values.first().copied()
         } else {
             Some(LocalValueTruthiness::Unknown)
         }
@@ -43505,13 +43561,15 @@ impl StaticHookAliasCollector<'_> {
         raw_descriptor: &StaticAliasPath,
         result_root: &StaticAliasPath,
     ) -> Option<LocalPropertyDescriptor<'reference, 'ast>> {
-        if self.path_requires_historical_aliases(raw_descriptor, self.function_depth)
-            || !self.path_is_currently_intact(raw_descriptor)
-        {
+        if self.path_requires_historical_aliases(raw_descriptor, self.function_depth) {
             return None;
         }
         let descriptor = resolve_static_alias_path(&self.aliases, raw_descriptor);
-        let properties = self.known_structured_own_properties(&descriptor)?;
+        let properties = if self.path_is_currently_intact(raw_descriptor) {
+            self.known_structured_own_properties(&descriptor)?
+        } else {
+            self.known_modeled_stored_descriptor_properties(raw_descriptor, &descriptor)?
+        };
         if properties.contains("__proto__")
             || [
                 "get",
@@ -43582,6 +43640,78 @@ impl StaticHookAliasCollector<'_> {
             enumerable,
             configurable,
         })
+    }
+
+    fn local_descriptor_field_assignment_target(
+        &self,
+        path: &StaticAliasPath,
+    ) -> Option<StaticAliasPath> {
+        if path.element_wildcard
+            || dynamic_property_alias_marker(path).is_some()
+            || self.canonical_returned_structured_member_path(path) != *path
+        {
+            return None;
+        }
+        let mut owner = path.clone();
+        let field = owner.properties.pop()?;
+        if !matches!(
+            field.as_str(),
+            "get" | "set" | "value" | "writable" | "enumerable" | "configurable"
+        ) || self.path_requires_historical_aliases(&owner, self.function_depth)
+        {
+            return None;
+        }
+        let resolved_owner = resolve_static_alias_path(&self.aliases, &owner);
+        if [owner, resolved_owner.clone()].into_iter().any(|owner| {
+            self.open_structured_containers.contains(&owner)
+                || self
+                    .ambiguous_alias_targets
+                    .iter()
+                    .any(|ambiguous| ambiguous.overlaps(&owner))
+        }) || !self.structured_own_properties.contains_key(&resolved_owner)
+        {
+            return None;
+        }
+        Some(resolved_owner.with_property(field))
+    }
+
+    fn known_modeled_stored_descriptor_properties(
+        &self,
+        raw_descriptor: &StaticAliasPath,
+        descriptor: &StaticAliasPath,
+    ) -> Option<BTreeSet<String>> {
+        let roots = BTreeSet::from([raw_descriptor.clone(), descriptor.clone()]);
+        if roots.iter().any(|root| {
+            self.open_structured_containers.contains(root)
+                || self
+                    .ambiguous_alias_targets
+                    .iter()
+                    .any(|ambiguous| ambiguous.overlaps(root))
+        }) {
+            return None;
+        }
+        let properties = roots
+            .iter()
+            .find_map(|root| self.structured_own_properties.get(root).cloned())?;
+        let precisely_modeled = self.member_invalidated.iter().all(|invalidated| {
+            let resolved = resolve_static_alias_slot_path(&self.aliases, invalidated);
+            let candidates = [invalidated, &resolved];
+            if !candidates
+                .iter()
+                .any(|candidate| roots.iter().any(|root| candidate.overlaps(root)))
+            {
+                return true;
+            }
+            candidates.iter().any(|candidate| {
+                !candidate.element_wildcard
+                    && dynamic_property_alias_marker(candidate).is_none()
+                    && roots.iter().any(|root| {
+                        candidate.starts_with(root)
+                            && candidate.properties.len() > root.properties.len()
+                    })
+            })
+        });
+        precisely_modeled.then_some(properties)
     }
 
     fn local_define_property_descriptor<'reference, 'ast>(
@@ -44719,6 +44849,7 @@ impl StaticHookAliasCollector<'_> {
             }
             LocalDescriptorValue::Path(value) => self
                 .resolved_local_value_definedness(value)
+                .or_else(|| self.current_local_value_definedness(value))
                 .unwrap_or(LocalGetterResultDefinedness::Unknown),
             LocalDescriptorValue::GetterResult { property, .. } => self
                 .resolved_local_getter_result_definedness(property)
@@ -44734,6 +44865,7 @@ impl StaticHookAliasCollector<'_> {
             LocalDescriptorValue::Expression(value) => self.local_expression_truthiness(value),
             LocalDescriptorValue::Path(value) => self
                 .resolved_local_value_truthiness(value)
+                .or_else(|| self.current_local_value_truthiness(value))
                 .unwrap_or(LocalValueTruthiness::Unknown),
             LocalDescriptorValue::GetterResult { property, .. } => self
                 .resolved_local_getter_result_truthiness(property)
@@ -50772,8 +50904,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     .clone()
                     .or_else(|| self.local_auto_accessor_storage_match(&path));
                 let auto_accessor = storage_match.is_some();
-                let (storage_path, definite) =
-                    storage_match.unwrap_or_else(|| (path.clone(), true));
+                let (storage_path, definite) = storage_match.unwrap_or_else(|| {
+                    (
+                        self.local_descriptor_field_assignment_target(&path)
+                            .unwrap_or_else(|| path.clone()),
+                        true,
+                    )
+                });
                 let deferred = self.deferred_callable_alias_capture_span(&storage_path);
                 if auto_accessor && definite && !conditional && deferred.is_none() {
                     self.clear_alias_target_history(&storage_path);

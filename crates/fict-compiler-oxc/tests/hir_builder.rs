@@ -13773,6 +13773,144 @@ fn stored_descriptor_attributes_preserve_static_truthiness() {
 }
 
 #[test]
+fn stored_descriptors_use_latest_modeled_fields_at_call_time() {
+    for (name, setup, expected_escape) in [
+        (
+            "writable becomes true before definition",
+            "const descriptor = { value: local, writable: false }; descriptor.writable = true; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "writable becomes false before definition",
+            "const descriptor = { value: local, writable: true }; descriptor.writable = false; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "configurable becomes true before definition",
+            "const descriptor = { value: local, configurable: false }; descriptor.configurable = true; Object.defineProperty(source, 'item', descriptor); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "configurable becomes false before definition",
+            "const descriptor = { value: local, configurable: true }; descriptor.configurable = false; Object.defineProperty(source, 'item', descriptor); delete source.item; holder.item = source.item;",
+            true,
+        ),
+        (
+            "enumerable becomes true before definition",
+            "const descriptor = { value: local, enumerable: false }; descriptor.enumerable = true; Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            true,
+        ),
+        (
+            "enumerable becomes false before definition",
+            "const descriptor = { value: local, enumerable: true }; descriptor.enumerable = false; Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "descriptor value becomes local before definition",
+            "const descriptor = { value: {}, writable: true }; descriptor.value = local; Object.defineProperty(source, 'item', descriptor); holder.item = source.item;",
+            true,
+        ),
+        (
+            "descriptor value becomes detached before definition",
+            "const descriptor = { value: local, writable: true }; descriptor.value = {}; Object.defineProperty(source, 'item', descriptor); holder.item = source.item;",
+            false,
+        ),
+        (
+            "writable is added before definition",
+            "const descriptor = { value: local }; descriptor.writable = true; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "writable is deleted before definition",
+            "const descriptor = { value: local, writable: true }; delete descriptor.writable; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "value is deleted before definition",
+            "const descriptor = { value: local, writable: true }; delete descriptor.value; Object.defineProperty(source, 'item', descriptor); holder.item = source.item;",
+            false,
+        ),
+        (
+            "enumerable is deleted before definition",
+            "const descriptor = { value: local, enumerable: true }; delete descriptor.enumerable; Object.defineProperty(source, 'item', descriptor); const copy = { ...source }; holder.item = copy.item;",
+            false,
+        ),
+        (
+            "ignored static field changes stay local",
+            "const descriptor = { value: {} }; descriptor.extra = local; Object.defineProperty(source, 'item', descriptor); holder.item = source.item;",
+            false,
+        ),
+        (
+            "descriptor field changes through an owner alias",
+            "const descriptor = { value: local, writable: false }; const alias = descriptor; alias.writable = true; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "descriptor field is added through an owner alias",
+            "const descriptor = { value: local }; const alias = descriptor; alias.configurable = true; Object.defineProperty(source, 'item', descriptor); delete source.item; holder.item = source.item;",
+            false,
+        ),
+        (
+            "descriptor value changes through an owner alias",
+            "const descriptor = { value: local }; const alias = descriptor; alias.value = {}; Object.defineProperty(source, 'item', descriptor); holder.item = source.item;",
+            false,
+        ),
+        (
+            "descriptor field is deleted through an owner alias",
+            "const descriptor = { value: local, writable: true }; const alias = descriptor; delete alias.writable; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "conditional field change remains conservative",
+            "const descriptor = { value: local, writable: false }; if (holder.flag) descriptor.writable = true; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+        (
+            "unknown computed field change remains conservative",
+            "const descriptor = { value: local, writable: false }; descriptor[holder.key] = true; Object.defineProperty(source, 'item', descriptor); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    const source = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let mut escape_codes = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        escape_codes.sort_unstable();
+        let expected = if expected_escape {
+            vec!["FICT-R002", "FICT-R005"]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            escape_codes, expected,
+            "stored descriptor field timing mismatch for {name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn precisely_modeled_local_descriptor_calls_do_not_escape_arguments() {
     for (name, setup, expected_escape) in [
         (
