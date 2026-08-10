@@ -8730,6 +8730,7 @@ fn is_non_enumerable_internal_class_property(property: &str) -> bool {
     ) || property.starts_with("<computed-static-field-value@")
         || property.starts_with("<computed-object-property-value@")
         || property.starts_with("<computed-property-assignment-value@")
+        || property.starts_with("<computed-define-property-value@")
         || property.starts_with("<computed-key-")
         || property.starts_with("<object-assign-computed-data@")
         || property.starts_with("<computed-instance-field-value@")
@@ -27167,7 +27168,9 @@ impl StaticHookAliasCollector<'_> {
                     }
                 }
                 DeferredClassInstanceOperationKind::DeleteComputedOwnProperty => {
-                    if !operation.conditional {
+                    if !operation.conditional
+                        && self.local_reflect_delete_property_is_configurable(&rebased_target)
+                    {
                         self.clear_matching_dynamic_own_property(&rebased_target);
                     }
                 }
@@ -28778,10 +28781,14 @@ impl StaticHookAliasCollector<'_> {
             let deferred = self
                 .deferred_callable_alias_capture_span(&plan.target)
                 .is_some();
-            if unconditional && !deferred {
+            let descriptor_defined =
+                self.matching_dynamic_data_property_is_descriptor_defined(&plan.target);
+            if unconditional && !deferred && !descriptor_defined {
                 self.clear_matching_dynamic_data_property(&plan.target);
             }
-            let ambiguous = conditional || self.has_other_dynamic_data_property(&plan.target);
+            let ambiguous = conditional
+                || descriptor_defined
+                || self.has_other_dynamic_data_property(&plan.target);
             if deferred {
                 let span = self
                     .deferred_callable_alias_capture_span(&plan.target)
@@ -29430,6 +29437,8 @@ impl StaticHookAliasCollector<'_> {
                     target.properties[marker] == DYNAMIC_DATA_PROPERTY
                         && dynamic_property_alias_owner(target)
                             .is_some_and(|owner| owners.contains(&owner))
+                        && (!self.matching_dynamic_data_property_is_descriptor_defined(target)
+                            || self.matching_dynamic_data_property_is_enumerable(target))
                 })
             })
             .cloned()
@@ -32174,6 +32183,45 @@ impl StaticHookAliasCollector<'_> {
                         resolve_static_alias_path(&self.aliases, &candidate_owner) == owner
                     })
                     .unwrap_or(false)
+            })
+    }
+
+    fn matching_dynamic_data_property_is_descriptor_defined(
+        &self,
+        target: &StaticAliasPath,
+    ) -> bool {
+        self.matching_dynamic_data_property_has_metadata(
+            target,
+            &self.descriptor_defined_properties,
+        )
+    }
+
+    fn matching_dynamic_data_property_is_enumerable(&self, target: &StaticAliasPath) -> bool {
+        self.matching_dynamic_data_property_has_metadata(
+            target,
+            &self.enumerable_descriptor_properties,
+        )
+    }
+
+    fn matching_dynamic_data_property_has_metadata(
+        &self,
+        target: &StaticAliasPath,
+        properties: &BTreeSet<StaticAliasPath>,
+    ) -> bool {
+        let Some(owner) = dynamic_property_alias_owner(target) else {
+            return false;
+        };
+        let owner = resolve_static_alias_path(&self.aliases, &owner);
+        let Some(key) = Self::dynamic_data_property_key(target) else {
+            return false;
+        };
+        properties
+            .iter()
+            .filter(|property| Self::dynamic_data_property_key(property) == Some(key))
+            .any(|property| {
+                dynamic_property_alias_owner(property).is_some_and(|property_owner| {
+                    resolve_static_alias_path(&self.aliases, &property_owner) == owner
+                })
             })
     }
 
@@ -40894,25 +40942,31 @@ impl StaticHookAliasCollector<'_> {
                             .collect::<BTreeSet<_>>()
                     });
             let resolved_spread_source = resolve_static_alias_path(&self.aliases, spread_source);
-            let mut non_enumerable_properties = BTreeSet::new();
-            for owner in [spread_source, &resolved_spread_source] {
-                non_enumerable_properties.extend(
-                    self.descriptor_defined_properties
-                        .iter()
-                        .filter(|property| {
-                            property.starts_with(owner)
-                                && property.properties.len() == owner.properties.len() + 1
-                                && !self.enumerable_descriptor_properties.contains(*property)
-                        })
-                        .map(|property| property.properties[owner.properties.len()].clone()),
-                );
-            }
+            let entry_is_non_enumerable_descriptor = |properties: &[String]| {
+                let Some(property) = properties.first() else {
+                    return false;
+                };
+                [spread_source, &resolved_spread_source]
+                    .into_iter()
+                    .any(|owner| {
+                        let mut target = owner.clone();
+                        target.properties.extend_from_slice(properties);
+                        if Self::dynamic_data_property_key(&target).is_some() {
+                            self.matching_dynamic_data_property_is_descriptor_defined(&target)
+                                && !self.matching_dynamic_data_property_is_enumerable(&target)
+                        } else {
+                            let target = owner.with_property(property.clone());
+                            self.descriptor_defined_properties.contains(&target)
+                                && !self.enumerable_descriptor_properties.contains(&target)
+                        }
+                    })
+            };
             let copies_entry = |properties: &[String], element_wildcard: bool| {
                 let property = properties.first();
                 if !element_wildcard
                     && property.is_some_and(|property| {
                         is_non_enumerable_internal_class_property(property)
-                            || non_enumerable_properties.contains(property)
+                            || entry_is_non_enumerable_descriptor(properties)
                     })
                 {
                     return false;
@@ -40922,6 +40976,28 @@ impl StaticHookAliasCollector<'_> {
                         || property.is_some_and(|property| own_properties.contains(property))
                 })
             };
+            let sources = sources
+                .into_iter()
+                .filter(|source| copies_entry(&source.properties, source.element_wildcard))
+                .collect::<Vec<_>>();
+            let callable_signatures = callable_signatures.map(|mut signatures| {
+                signatures.entries.retain(|signature| {
+                    copies_entry(&signature.properties, signature.element_wildcard)
+                });
+                signatures
+            });
+            let bound_callables = bound_callables.map(|mut callables| {
+                callables.entries.retain(|callable| {
+                    copies_entry(&callable.properties, callable.element_wildcard)
+                });
+                callables
+            });
+            let callable_exposures = callable_exposures.map(|mut exposures| {
+                exposures.entries.retain(|exposure| {
+                    copies_entry(&exposure.properties, exposure.element_wildcard)
+                });
+                exposures
+            });
             if let Some(own_properties) = &own_properties {
                 for property in own_properties {
                     let property_target = target.with_property(property.clone());
@@ -40951,10 +41027,7 @@ impl StaticHookAliasCollector<'_> {
                     .insert(target.clone(), known_properties);
                 self.open_structured_containers.insert(target.clone());
             }
-            for source in sources
-                .into_iter()
-                .filter(|source| copies_entry(&source.properties, source.element_wildcard))
-            {
+            for source in sources {
                 let mut property_target = target.clone();
                 property_target.properties.extend(source.properties);
                 property_target.element_wildcard |= source.element_wildcard;
@@ -40964,22 +41037,13 @@ impl StaticHookAliasCollector<'_> {
                 }
                 self.insert_alias(property_target, source.source);
             }
-            if let Some(mut signatures) = callable_signatures {
-                signatures.entries.retain(|signature| {
-                    copies_entry(&signature.properties, signature.element_wildcard)
-                });
+            if let Some(signatures) = callable_signatures {
                 self.record_stored_spread_callable_signatures(target, signatures, None);
             }
-            if let Some(mut callables) = bound_callables {
-                callables.entries.retain(|callable| {
-                    copies_entry(&callable.properties, callable.element_wildcard)
-                });
+            if let Some(callables) = bound_callables {
                 self.record_stored_spread_bound_callables(target, callables, None);
             }
-            if let Some(mut exposures) = callable_exposures {
-                exposures.entries.retain(|exposure| {
-                    copies_entry(&exposure.properties, exposure.element_wildcard)
-                });
+            if let Some(exposures) = callable_exposures {
                 self.record_stored_spread_callable_exposures(target, exposures, None);
             }
             self.record_enumerable_local_getter_copies(target, spread_source, &BTreeSet::new());
@@ -41893,6 +41957,60 @@ impl StaticHookAliasCollector<'_> {
         )
     }
 
+    fn local_define_property_owner_supports_computed_data(&self, owner: &StaticAliasPath) -> bool {
+        if !self.path_is_currently_intact(owner) {
+            return false;
+        }
+        let resolved = resolve_static_alias_path(&self.aliases, owner);
+        if self
+            .ambiguous_alias_targets
+            .iter()
+            .any(|target| target.overlaps(owner) || target.overlaps(&resolved))
+        {
+            return false;
+        }
+        let candidates = [owner, &resolved];
+        let has_non_data_dynamic_property = self
+            .aliases
+            .keys()
+            .chain(self.alias_history.keys())
+            .any(|target| {
+                dynamic_property_alias_marker(target).is_some_and(|marker| {
+                    target.properties[marker] != DYNAMIC_DATA_PROPERTY
+                        && dynamic_property_alias_owner(target).is_some_and(|target_owner| {
+                            resolve_static_alias_path(&self.aliases, &target_owner) == resolved
+                        })
+                })
+            });
+        if has_non_data_dynamic_property {
+            return false;
+        }
+        if candidates.iter().any(|candidate| {
+            self.structured_own_properties
+                .get(*candidate)
+                .is_some_and(|properties| !properties.is_empty())
+                || self.array_lengths.contains_key(*candidate)
+                || self.local_class_instances.contains(*candidate)
+                || self
+                    .local_object_prototypes
+                    .get(*candidate)
+                    .is_some_and(|prototypes| !prototypes.is_empty())
+                || self
+                    .dynamic_getter_properties
+                    .get(*candidate)
+                    .is_some_and(|getters| !getters.is_empty())
+                || self
+                    .dynamic_setter_properties
+                    .get(*candidate)
+                    .is_some_and(|setters| !setters.is_empty())
+        }) {
+            return false;
+        }
+        candidates
+            .into_iter()
+            .any(|candidate| self.structured_own_properties.contains_key(candidate))
+    }
+
     fn local_define_property_target(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
         if call.arguments.len() != 3
             || !matches!(
@@ -41904,7 +42022,7 @@ impl StaticHookAliasCollector<'_> {
         {
             return None;
         }
-        self.local_define_property_descriptor(call)?;
+        let descriptor = self.local_define_property_descriptor(call)?;
         let raw_callee = static_alias_source_path(self.scoping, &call.callee)?;
         let callee = resolve_static_alias_path(&self.aliases, &raw_callee);
         let direct_builtin = matches!(
@@ -41944,20 +42062,41 @@ impl StaticHookAliasCollector<'_> {
         } else {
             self.canonical_returned_structured_value_path(&raw_target)
         };
-        let property = call
+        let key = call
             .arguments
             .get(1)
-            .and_then(|argument| argument.as_expression())
-            .and_then(static_member_name)?;
-        if property == "length" && self.known_array_length(&target).is_some() {
-            return None;
-        }
-        let property = target.with_property(property);
+            .and_then(|argument| argument.as_expression())?;
+        let (property, computed) = if let Some(property) = static_member_name(key) {
+            if property == "length" && self.known_array_length(&target).is_some() {
+                return None;
+            }
+            (target.with_property(property), false)
+        } else {
+            if descriptor.getter.is_some()
+                || descriptor.setter.is_some()
+                || descriptor.value.is_none()
+                || !self.computed_property_key_is_non_coercive(key)
+            {
+                return None;
+            }
+            let property = self.dynamic_data_property_target(&target, key);
+            if self
+                .deferred_callable_alias_capture_span(&property)
+                .is_some()
+                || self
+                    .deferred_class_instance_operation_span(&property)
+                    .is_some()
+            {
+                return None;
+            }
+            (property, true)
+        };
         if self
             .descriptor_defined_properties
             .iter()
             .any(|defined| defined.overlaps(&property))
             || (self.known_structured_own_properties(&target).is_none()
+                && !(computed && self.local_define_property_owner_supports_computed_data(&target))
                 && !self.transient_callable_alias_targets.contains(&property))
         {
             return None;
@@ -41977,7 +42116,11 @@ impl StaticHookAliasCollector<'_> {
             return None;
         }
         let mut target = self.local_define_property_target(call)?;
-        target.properties.pop()?;
+        if let Some(owner) = dynamic_property_alias_owner(&target) {
+            target = owner;
+        } else {
+            target.properties.pop()?;
+        }
         self.local_define_property_results
             .insert(span, target.clone());
         Some(target)
@@ -43179,7 +43322,70 @@ impl StaticHookAliasCollector<'_> {
         let Some(descriptor) = self.local_define_property_descriptor(call) else {
             return false;
         };
+        if Self::dynamic_data_property_key(property).is_some() {
+            return self.apply_local_dynamic_data_property_descriptor(call, &descriptor, property);
+        }
         self.apply_local_property_descriptor(&descriptor, property)
+    }
+
+    fn apply_local_dynamic_data_property_descriptor(
+        &mut self,
+        call: &CallExpression<'_>,
+        descriptor: &LocalPropertyDescriptor<'_, '_>,
+        property: &StaticAliasPath,
+    ) -> bool {
+        let Some(owner) = dynamic_property_alias_owner(property) else {
+            return false;
+        };
+        let Some(value) = descriptor.value.as_ref() else {
+            return false;
+        };
+        if !self.local_define_property_owner_supports_computed_data(&owner)
+            || matches!(value, LocalDescriptorValue::Expression(value) if self
+                .local_getter_source_path(value)
+                .is_some_and(|source| !self.local_getter_resolution(&source, false).1.is_empty()))
+        {
+            return false;
+        }
+        self.clear_matching_dynamic_own_property(property);
+        let ambiguous = self.has_other_dynamic_data_property(property);
+        let value_target = owner.clone().with_property(format!(
+            "<computed-define-property-value@{}:{}>",
+            call.span.start, call.span.end
+        ));
+        match value {
+            LocalDescriptorValue::Expression(value) => {
+                if let Some(source) = Self::local_descriptor_structured_expression_path(value) {
+                    self.insert_alias(value_target.clone(), source);
+                } else {
+                    self.collect_initializer(value_target.clone(), value);
+                }
+            }
+            LocalDescriptorValue::Path(value) => {
+                self.insert_alias(value_target.clone(), value.clone());
+                self.record_local_descriptor_value_capture(value, &value_target);
+            }
+            LocalDescriptorValue::GetterResult { target, .. } => {
+                self.insert_alias(value_target.clone(), target.clone());
+            }
+        }
+        self.insert_alias(property.clone(), value_target);
+        if ambiguous {
+            self.mark_alias_target_ambiguous(property.clone());
+        }
+        self.descriptor_defined_properties.insert(property.clone());
+        if descriptor
+            .enumerable
+            .as_ref()
+            .is_some_and(|value| self.descriptor_enumerable_may_be_true(value))
+        {
+            self.enumerable_descriptor_properties
+                .insert(property.clone());
+        } else {
+            self.enumerable_descriptor_properties.remove(property);
+        }
+        self.open_structured_containers.insert(owner);
+        true
     }
 
     fn prepare_local_reflect_delete_property(
@@ -44493,11 +44699,14 @@ impl StaticHookAliasCollector<'_> {
                             self.local_auto_accessor_storage_property(&own_target)
                                 .unwrap_or_else(|| own_target.clone())
                         };
-                        if computed_strong == Some(true) {
+                        let descriptor_defined = computed_strong.is_some()
+                            && self.matching_dynamic_data_property_is_descriptor_defined(&target);
+                        if computed_strong == Some(true) && !descriptor_defined {
                             self.clear_matching_dynamic_data_property(&target);
                         }
                         let dynamic_ambiguous = computed_strong.is_some()
-                            && self.has_other_dynamic_data_property(&target);
+                            && (descriptor_defined
+                                || self.has_other_dynamic_data_property(&target));
                         if auto_accessor_strong == Some(true) && !ambiguous {
                             self.clear_alias_target_history(&target);
                         }
@@ -44596,7 +44805,8 @@ impl StaticHookAliasCollector<'_> {
                 self.apply_deferred_own_property_deletion(raw_target)
             }
             DeferredCallableOperationKind::DeleteComputedOwnProperty => {
-                self.clear_matching_dynamic_own_property(raw_target)
+                self.local_reflect_delete_property_is_configurable(raw_target)
+                    && self.clear_matching_dynamic_own_property(raw_target)
             }
             DeferredCallableOperationKind::ReflectDeleteProperty { callee, computed } => {
                 let builtin = StaticAliasPath::unresolved_global("Reflect".to_string())
@@ -48184,11 +48394,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 let deferred = self
                     .deferred_callable_alias_capture_span(dynamic_target)
                     .is_some();
-                if !conditional && !deferred {
+                let descriptor_defined =
+                    self.matching_dynamic_data_property_is_descriptor_defined(dynamic_target);
+                if !conditional && !deferred && !descriptor_defined {
                     self.clear_matching_dynamic_data_property(dynamic_target);
                 }
                 self.collect_initializer(hidden_target.clone(), &assignment.right);
-                let ambiguous = conditional || self.has_other_dynamic_data_property(dynamic_target);
+                let ambiguous = conditional
+                    || descriptor_defined
+                    || self.has_other_dynamic_data_property(dynamic_target);
                 if deferred {
                     let span = self
                         .deferred_callable_alias_capture_span(dynamic_target)
@@ -48289,11 +48503,17 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 _ => None,
             };
             let operation_target = dynamic_target.as_ref().or(path.as_ref());
+            let configurable = dynamic_target
+                .as_ref()
+                .is_none_or(|target| self.local_reflect_delete_property_is_configurable(target));
             let deferred_class_instance_delete = operation_target.and_then(|target| {
                 self.deferred_class_instance_operation_span(target)
                     .map(|span| (span, target.clone(), dynamic_target.is_some()))
             });
-            if !conditional && let Some(target) = operation_target {
+            if !conditional
+                && configurable
+                && let Some(target) = operation_target
+            {
                 if deferred_class_instance_delete.is_none()
                     && let Some(span) = self.deferred_callable_alias_capture_span(target)
                 {
@@ -48590,11 +48810,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         if let Some(mutation) = local_set_prototype_of {
             self.apply_local_set_prototype_of(mutation.target, mutation.prototype, !unconditional);
         }
-        if let Some(property) = &local_define_property
-            && !self.apply_local_define_property(call, property)
-        {
-            self.cancel_local_define_property(call);
-        }
+        let local_define_property_applied = if let Some(property) = &local_define_property {
+            let applied = self.apply_local_define_property(call, property);
+            if !applied {
+                self.cancel_local_define_property(call);
+            }
+            applied
+        } else {
+            false
+        };
         let local_define_properties_applied =
             local_define_properties
                 .as_ref()
@@ -48611,6 +48835,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     applied
                 });
         if let Some(property) = local_descriptor_mutation
+            && !local_define_property_applied
             && !local_define_properties_applied
         {
             self.descriptor_defined_properties.insert(property);

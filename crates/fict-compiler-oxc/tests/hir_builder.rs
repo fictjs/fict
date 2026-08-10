@@ -5200,6 +5200,151 @@ fn local_callable_alias_effects_follow_invocation_timing() {
             true,
         ),
         (
+            "computed defineProperty materializes a local data value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); holder.item = source[key];",
+            true,
+        ),
+        (
+            "computed Reflect.defineProperty materializes a local data value",
+            "const key = 'item'; const source = {}; Reflect.defineProperty(source, key, { value: local }); holder.item = source[key];",
+            true,
+        ),
+        (
+            "computed Object.defineProperty result preserves its target identity",
+            "const key = 'item'; const source = {}; const result = Object.defineProperty(source, key, { value: local }); holder.item = result[key];",
+            true,
+        ),
+        (
+            "computed defineProperty data value remains local until read",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); void source;",
+            false,
+        ),
+        (
+            "computed defineProperty snapshots its data value",
+            "const key = 'item'; const source = {}; let captured = local; Object.defineProperty(source, key, { value: captured }); captured = {}; holder.item = source[key];",
+            true,
+        ),
+        (
+            "computed defineProperty preserves a nested local data value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: { nested: local } }); holder.item = source.item.nested;",
+            true,
+        ),
+        (
+            "computed defineProperty follows a local target alias",
+            "const key = 'item'; const source = {}; const alias = source; Object.defineProperty(alias, key, { value: local }); holder.item = source[key];",
+            true,
+        ),
+        (
+            "computed defineProperty data value is non-enumerable by default",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const values = Object.values(source); holder.item = values[0];",
+            false,
+        ),
+        (
+            "enumerable computed defineProperty data value appears in Object.values",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local, enumerable: true }); const values = Object.values(source); holder.item = values[0];",
+            true,
+        ),
+        (
+            "computed defineProperty data value is excluded from spread by default",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const copy = { ...source }; holder.item = copy[key];",
+            false,
+        ),
+        (
+            "enumerable computed defineProperty data value appears in spread",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local, enumerable: true }); const copy = { ...source }; holder.item = copy[key];",
+            true,
+        ),
+        (
+            "non-enumerable computed descriptor does not hide another enumerable descriptor from spread",
+            "const hidden = 'hidden'; const visible = 'visible'; const source = {}; Object.defineProperty(source, hidden, { value: {} }); Object.defineProperty(source, visible, { value: local, enumerable: true }); const copy = { ...source }; holder.item = copy[visible];",
+            true,
+        ),
+        (
+            "computed defineProperty data value is excluded from Object.assign by default",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const copy = Object.assign({}, source); holder.item = copy[key];",
+            false,
+        ),
+        (
+            "enumerable computed defineProperty data value appears in Object.assign",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local, enumerable: true }); const copy = Object.assign({}, source); holder.item = copy[key];",
+            true,
+        ),
+        (
+            "computed defineProperty replaces the matching computed data value",
+            "const key = 'item'; const source = { [key]: local }; Object.defineProperty(source, key, { value: {} }); holder.item = source[key];",
+            false,
+        ),
+        (
+            "computed defineProperty preserves a different computed data value",
+            "const first = 'first'; const second = 'second'; const source = { [first]: local }; Object.defineProperty(source, second, { value: {} }); holder.item = source[first];",
+            true,
+        ),
+        (
+            "unproven computed defineProperty key preserves a possible data value",
+            "const key = holder.key; const source = { [key]: local }; Object.defineProperty(source, key, { value: {} }); holder.item = source[key];",
+            true,
+        ),
+        (
+            "assignment preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); source[key] = {}; holder.item = source[key];",
+            true,
+        ),
+        (
+            "Reflect.set preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); Reflect.set(source, key, {}); holder.item = source[key];",
+            true,
+        ),
+        (
+            "Object.assign preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); Object.assign(source, { item: {} }); holder.item = source[key];",
+            true,
+        ),
+        (
+            "delete preserves a computed non-configurable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); delete source[key]; holder.item = source[key];",
+            true,
+        ),
+        (
+            "deferred assignment preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const replace = () => { source[key] = {}; }; replace(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "deferred assignment preserves computed descriptor non-enumerability",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const replace = () => { source[key] = {}; }; replace(); const values = Object.values(source); holder.item = values[0];",
+            false,
+        ),
+        (
+            "deferred assignment preserves computed descriptor enumerability",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local, enumerable: true }); const replace = () => { source[key] = {}; }; replace(); const values = Object.values(source); holder.item = values[0];",
+            true,
+        ),
+        (
+            "deferred Reflect.set preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const replace = () => Reflect.set(source, key, {}); replace(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "deferred Object.assign preserves a computed non-writable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const replace = () => Object.assign(source, { item: {} }); replace(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "deferred delete preserves a computed non-configurable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const remove = () => delete source[key]; remove(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "deferred Reflect.deleteProperty preserves a computed non-configurable descriptor value",
+            "const key = 'item'; const source = {}; Object.defineProperty(source, key, { value: local }); const remove = () => Reflect.deleteProperty(source, key); remove(); holder.item = source[key];",
+            true,
+        ),
+        (
+            "uninvoked computed defineProperty helper remains inert",
+            "const key = 'item'; const source = {}; const put = () => Object.defineProperty(source, key, { value: local }); void put;",
+            false,
+        ),
+        (
             "Reflect.deleteProperty removes a matching computed data property",
             "const key = 'item'; const source = { [key]: local }; Reflect.deleteProperty(source, key); holder.item = source[key];",
             false,
