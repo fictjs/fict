@@ -8762,6 +8762,7 @@ struct StaticHookAliases {
     snapshotted_callable_effect_spans: BTreeMap<StaticAliasPath, BTreeSet<(u32, u32)>>,
     non_escaping_object_from_entries_calls: BTreeSet<(u32, u32)>,
     non_escaping_local_array_mutation_arguments: BTreeSet<(u32, u32)>,
+    non_escaping_local_call_arguments: BTreeSet<(u32, u32)>,
     exclusive_json_replacer_arrays: BTreeSet<SymbolId>,
 }
 
@@ -21709,6 +21710,7 @@ struct StaticHookAliasCollector<'semantic> {
     parameter_exposed: BTreeSet<StaticAliasPath>,
     reflective_mutations: Vec<ReflectiveMemberMutationFact>,
     non_escaping_local_array_mutation_arguments: BTreeSet<(u32, u32)>,
+    non_escaping_local_call_arguments: BTreeSet<(u32, u32)>,
     external_callable_parameters: BTreeSet<SymbolId>,
     control_depth: usize,
     function_control_baselines: Vec<usize>,
@@ -22932,6 +22934,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             parameter_exposed: BTreeSet::new(),
             reflective_mutations: Vec::new(),
             non_escaping_local_array_mutation_arguments: BTreeSet::new(),
+            non_escaping_local_call_arguments: BTreeSet::new(),
             external_callable_parameters: BTreeSet::new(),
             control_depth: 0,
             function_control_baselines: Vec::new(),
@@ -45289,6 +45292,15 @@ impl StaticHookAliasCollector<'_> {
         exposed
     }
 
+    fn record_non_escaping_local_call_arguments(&mut self, call: &CallExpression<'_>) {
+        self.non_escaping_local_call_arguments.extend(
+            call.arguments
+                .iter()
+                .filter_map(|argument| argument.as_expression())
+                .map(|argument| (argument.span().start, argument.span().end)),
+        );
+    }
+
     fn prepare_exposed_paths(
         &mut self,
         exposed: BTreeSet<StaticAliasPath>,
@@ -48247,6 +48259,7 @@ impl StaticHookAliasCollector<'_> {
             snapshotted_callable_effect_spans: BTreeMap::new(),
             non_escaping_object_from_entries_calls: BTreeSet::new(),
             non_escaping_local_array_mutation_arguments: BTreeSet::new(),
+            non_escaping_local_call_arguments: BTreeSet::new(),
             exclusive_json_replacer_arrays: BTreeSet::new(),
         };
         let reflective_mutations = self
@@ -48354,6 +48367,7 @@ impl StaticHookAliasCollector<'_> {
             non_escaping_object_from_entries_calls: self.non_escaping_object_from_entries_calls,
             non_escaping_local_array_mutation_arguments: self
                 .non_escaping_local_array_mutation_arguments,
+            non_escaping_local_call_arguments: self.non_escaping_local_call_arguments,
             exclusive_json_replacer_arrays: BTreeSet::new(),
         }
     }
@@ -50569,6 +50583,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         let _ = self.record_local_property_descriptor_result(call);
         self.record_local_json_stringify(call);
         let local_object_create = self.record_local_object_create_result(call);
+        if local_object_create.is_some() {
+            self.record_non_escaping_local_call_arguments(call);
+        }
         self.record_local_define_property_result(call);
         self.record_local_define_properties_result(call);
         self.record_local_set_prototype_of_result(call);
@@ -50820,6 +50837,21 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     }
                     applied
                 });
+        if local_define_property_applied
+            && local_define_property
+                .as_ref()
+                .and_then(|property| self.local_descriptor_property_owner(property))
+                .is_some_and(|owner| !self.local_reflect_set_owner_is_externally_stored(&owner))
+        {
+            self.record_non_escaping_local_call_arguments(call);
+        }
+        if local_define_properties_applied
+            && local_define_properties.as_ref().is_some_and(|(target, _)| {
+                !self.local_reflect_set_owner_is_externally_stored(target)
+            })
+        {
+            self.record_non_escaping_local_call_arguments(call);
+        }
         if let Some((property, non_writable, non_configurable, non_extensible, container)) =
             local_descriptor_mutation
             && !local_define_property_applied
@@ -51808,6 +51840,10 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                             .callback_aliases
                             .non_escaping_local_array_mutation_arguments
                             .contains(&(argument.span.start(), argument.span.end())))
+                    || self
+                        .callback_aliases
+                        .non_escaping_local_call_arguments
+                        .contains(&(argument.span.start(), argument.span.end()))
                     || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
                     || self.is_non_retaining_null_prototype_array_target(
                         &call.callee,
@@ -51843,6 +51879,10 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                         .callback_aliases
                         .non_escaping_local_array_mutation_arguments
                         .contains(&(argument.span.start(), argument.span.end())))
+                || self
+                    .callback_aliases
+                    .non_escaping_local_call_arguments
+                    .contains(&(argument.span.start(), argument.span.end()))
                 || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
                 || self.is_non_retaining_null_prototype_array_target(
                     &call.callee,

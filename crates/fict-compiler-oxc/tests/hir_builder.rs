@@ -13645,6 +13645,104 @@ fn writable_only_descriptor_creates_an_assignable_undefined_property() {
 }
 
 #[test]
+fn precisely_modeled_local_descriptor_calls_do_not_escape_arguments() {
+    for (name, setup, expected_escape) in [
+        (
+            "define then replace",
+            "Object.defineProperty(source, 'item', { value: local, writable: true }); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "local target then replace",
+            "const filled = { item: local }; Object.defineProperty(filled, 'other', { value: 1 }); filled.item = {}; holder.item = filled.item;",
+            false,
+        ),
+        (
+            "define only",
+            "Object.defineProperty(source, 'item', { value: local, writable: true }); holder.item = source.item;",
+            true,
+        ),
+        (
+            "direct then replace",
+            "source.item = local; source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "defineProperties then replace",
+            "Object.defineProperties(source, { item: { value: local, writable: true } }); source.item = {}; holder.item = source.item;",
+            false,
+        ),
+        (
+            "Object.create descriptor then replace",
+            "const created = Object.create(null, { item: { value: local, writable: true } }); created.item = {}; holder.item = created.item;",
+            false,
+        ),
+        (
+            "Object.create local prototype",
+            "const prototype = { item: local }; const created = Object.create(prototype); void created;",
+            false,
+        ),
+        (
+            "already external defineProperty target",
+            "holder.source = source; Object.defineProperty(source, 'item', { value: local });",
+            true,
+        ),
+        (
+            "later exposed defineProperty value",
+            "Object.defineProperty(source, 'item', { value: local }); holder.item = source.item;",
+            true,
+        ),
+        (
+            "external Object.create result",
+            "holder.source = Object.create(null, { item: { value: local } });",
+            true,
+        ),
+        (
+            "unmodeled descriptor remains conservative",
+            "Object.defineProperty(source, 'item', { ...holder.descriptor, value: local }); source.item = {}; holder.item = source.item;",
+            true,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    const source = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let mut escape_codes = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        escape_codes.sort_unstable();
+        let expected = if expected_escape {
+            vec!["FICT-R002", "FICT-R005"]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            escape_codes, expected,
+            "descriptor argument retention mismatch for {name}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn define_property_replaces_accessors_with_data_properties() {
     for (name, declaration, definition, observation) in [
         (
