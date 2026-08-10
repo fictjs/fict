@@ -4280,6 +4280,238 @@ fn in_place_array_mutations_preserve_local_storage() {
 }
 
 #[test]
+fn object_integrity_level_calls_preserve_inline_reactive_snapshot_diagnostics() {
+    for method in ["freeze", "seal", "preventExtensions"] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    Object.{method}({{ count }});
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-R002"),
+            "Object.{method} must preserve the inline reactive snapshot diagnostic: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn array_mutations_respect_descriptors_and_extensibility() {
+    let mut mismatches = Vec::new();
+    for (name, setup, expected_escape) in [
+        (
+            "preventExtensions blocks push",
+            "const source = []; Object.preventExtensions(source); source.push(local); holder.item = source[0];",
+            false,
+        ),
+        (
+            "seal blocks push",
+            "const source = []; Object.seal(source); source.push(local); holder.item = source[0];",
+            false,
+        ),
+        (
+            "freeze blocks push",
+            "const source = []; Object.freeze(source); source.push(local); holder.item = source[0];",
+            false,
+        ),
+        (
+            "preventExtensions blocks unshift",
+            "const source = [{}]; Object.preventExtensions(source); source.unshift(local); holder.item = source[0];",
+            false,
+        ),
+        (
+            "preventExtensions blocks growing splice",
+            "const source = [{}]; Object.preventExtensions(source); source.splice(1, 0, local); holder.item = source[1];",
+            false,
+        ),
+        (
+            "preventExtensions blocks filling an array hole",
+            "const source = [,]; Object.preventExtensions(source); source.fill(local); holder.item = source[0];",
+            false,
+        ),
+        (
+            "preventExtensions allows filling an existing writable element",
+            "const source = [{}]; Object.preventExtensions(source); source.fill(local); holder.item = source[0];",
+            true,
+        ),
+        (
+            "seal allows filling an existing writable element",
+            "const source = [{}]; Object.seal(source); source.fill(local); holder.item = source[0];",
+            true,
+        ),
+        (
+            "freeze preserves an element rejected by fill",
+            "const source = [local]; Object.freeze(source); source.fill({}); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a non-writable element rejects fill",
+            "const source = [local]; Object.defineProperty(source, '0', { writable: false, configurable: true }); source.fill({}); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a non-configurable final element rejects pop",
+            "const source = [local]; Object.defineProperty(source, '0', { configurable: false }); source.pop(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "preventExtensions still allows pop results",
+            "const source = [local]; Object.preventExtensions(source); const removed = source.pop(); holder.item = removed;",
+            true,
+        ),
+        (
+            "seal rejects pop",
+            "const source = [local]; Object.seal(source); source.pop(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "preventExtensions still allows shift",
+            "const source = [{}, local]; Object.preventExtensions(source); source.shift(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "preventExtensions still allows reversing dense elements",
+            "const source = [{}, local]; Object.preventExtensions(source); source.reverse(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "freeze rejects reverse",
+            "const source = [local, {}]; Object.freeze(source); source.reverse(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "freeze rejects sorting non-writable elements",
+            "const source = [{}, local]; Object.freeze(source); source.sort(() => -1); holder.item = source[0];",
+            false,
+        ),
+        (
+            "seal allows sorting existing writable elements",
+            "const source = [{}, local]; Object.seal(source); source.sort(() => -1); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a non-writable element rejects copyWithin",
+            "const source = [local, {}]; Object.defineProperty(source, '0', { writable: false }); source.copyWithin(0, 1); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a non-writable length rejects push",
+            "const source = []; Object.defineProperty(source, 'length', { writable: false }); source.push(local); holder.item = source[0];",
+            false,
+        ),
+        (
+            "an exact push keeps the array closed for later protection",
+            "const source = []; source.push({}); Object.preventExtensions(source); source.push(local); holder.item = source[1];",
+            false,
+        ),
+        (
+            "pop removes an own index before later protection",
+            "const source = [{}]; source.pop(); Object.preventExtensions(source); source[0] = local; holder.item = source[0];",
+            false,
+        ),
+        (
+            "shift removes the former final index before later protection",
+            "const source = [{}, {}]; source.shift(); Object.preventExtensions(source); source[1] = local; holder.item = source[1];",
+            false,
+        ),
+        (
+            "an invoked helper respects preventExtensions",
+            "const source = []; const append = () => source.push(local); Object.preventExtensions(source); append(); holder.item = source[0];",
+            false,
+        ),
+        (
+            "an invoked helper applies a permitted push",
+            "const source = []; const append = () => source.push(local); append(); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a helper applies protection before its mutation",
+            "const source = []; const append = () => { Object.preventExtensions(source); source.push(local); }; append(); holder.item = source[0];",
+            false,
+        ),
+        (
+            "a constructed field respects preventExtensions",
+            "const source = []; class Box { value = (source.push(local), 0); } Object.preventExtensions(source); new Box(); holder.item = source[0];",
+            false,
+        ),
+        (
+            "conditional preventExtensions preserves a possible push",
+            "const source = []; if (holder.flag) Object.preventExtensions(source); source.push(local); holder.item = source[0];",
+            true,
+        ),
+        (
+            "a conditional direct pop preserves the untouched branch",
+            "const source = [{}, local]; if (holder.flag) source.pop(); holder.item = source[1];",
+            true,
+        ),
+        (
+            "a conditional helper pop preserves the untouched branch",
+            "const source = [{}, local]; const shrink = () => { if (holder.flag) source.pop(); }; shrink(); holder.item = source[1];",
+            true,
+        ),
+        (
+            "a conditional class-field pop preserves the untouched branch",
+            "const source = [{}, local]; class Box { value = holder.flag ? source.pop() : 0; } new Box(); holder.item = source[1];",
+            true,
+        ),
+        (
+            "an external array still retains pushed values",
+            "const source = holder.items; source.push(local);",
+            true,
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const local = {{}};
+                    {setup}
+                    local.run = run;
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        let mut findings = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        findings.sort_unstable();
+        findings.dedup();
+        let expected = if expected_escape {
+            vec!["FICT-R002", "FICT-R005"]
+        } else {
+            Vec::new()
+        };
+        if findings != expected {
+            mismatches.push(format!("{name}: {:?}", output.diagnostics));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
 fn array_mutator_results_preserve_local_storage_shapes() {
     let source = r#"
         import { $state } from 'fict';
