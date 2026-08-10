@@ -8953,6 +8953,145 @@ fn exported_binding_replacements_do_not_count_as_object_slots() {
 }
 
 #[test]
+fn intact_builtin_targets_do_not_escape_reactive_values() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(holder) {
+            const count = $state(0);
+            const run = () => count;
+            const target = { run };
+            Reflect.apply(run, null, []);
+            Reflect.construct(class { constructor() { void count; } }, []);
+            Reflect.defineProperty(target, 'item', { value: {} });
+            Reflect.deleteProperty(target, 'item');
+            Reflect.get(target, 'run');
+            Reflect.getOwnPropertyDescriptor(target, 'run');
+            Reflect.getPrototypeOf(target);
+            Reflect.has(target, 'run');
+            Reflect.isExtensible(target);
+            Reflect.ownKeys(target);
+            Reflect.set(target, 'item', {});
+            Reflect.setPrototypeOf(target, null);
+            const set = Reflect.set;
+            set(target, 'item', {});
+            Reflect['get'](target, 'run');
+            Object.assign(target, {});
+            const assign = Object.assign;
+            assign(target, {});
+            Object['assign'](target, {});
+            Reflect.preventExtensions(target);
+            const local = {};
+            const source = {};
+            const descriptor = { value: local, writable: false };
+            Reflect.set(descriptor, 'writable', true);
+            Object.defineProperty(source, 'item', descriptor);
+            source.item = {};
+            holder.item = source.item;
+            local.run = run;
+            return count;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005")),
+        "intact builtins must not retain their target arguments: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn builtin_target_escape_exemptions_fail_closed() {
+    for (name, setup, call, expected_span) in [
+        (
+            "overridden Reflect method",
+            "Reflect.set = sink;",
+            "Reflect.set(target, 'item', {});",
+            "target",
+        ),
+        (
+            "reassigned Reflect method alias",
+            "let set = Reflect.set; set = sink;",
+            "set(target, 'item', {});",
+            "target",
+        ),
+        (
+            "spread target",
+            "",
+            "Reflect.set(...[target, 'item', {}]);",
+            "...[target, 'item', {}]",
+        ),
+        (
+            "retained set value",
+            "",
+            "Reflect.set(holder, 'item', run);",
+            "run",
+        ),
+        (
+            "retained prototype",
+            "",
+            "Reflect.setPrototypeOf(holder, target);",
+            "target",
+        ),
+        (
+            "overridden Object.assign",
+            "Object.assign = sink;",
+            "Object.assign(target, {});",
+            "target",
+        ),
+        (
+            "reassigned Object.assign alias",
+            "let assign = Object.assign; assign = sink;",
+            "assign(target, {});",
+            "target",
+        ),
+        (
+            "Object.assign source copied to external storage",
+            "",
+            "Object.assign(holder, target);",
+            "target",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder, sink) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    const target = {{ run }};
+                    {setup}
+                    {call}
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-R005"
+                    && diagnostic.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == expected_span
+                    })
+            }),
+            "{name}: expected FICT-R005 on {expected_span:?}, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn identity_lookup_arguments_do_not_escape_proven_builtin_receivers() {
     let source = r#"
         import { $state } from 'fict';

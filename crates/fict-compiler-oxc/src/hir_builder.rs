@@ -52347,7 +52347,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                         .callback_aliases
                         .non_escaping_local_call_arguments
                         .contains(&(argument.span.start(), argument.span.end()))
-                    || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
+                    || self.is_non_retaining_builtin_target(&call.callee, index, *argument)
                     || self.is_non_retaining_null_prototype_array_target(
                         &call.callee,
                         index,
@@ -52386,7 +52386,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
                     .callback_aliases
                     .non_escaping_local_call_arguments
                     .contains(&(argument.span.start(), argument.span.end()))
-                || self.is_non_retaining_reflect_target(&call.callee, index, *argument)
+                || self.is_non_retaining_builtin_target(&call.callee, index, *argument)
                 || self.is_non_retaining_null_prototype_array_target(
                     &call.callee,
                     index,
@@ -53508,7 +53508,7 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         )
     }
 
-    fn is_non_retaining_reflect_target(
+    fn is_non_retaining_builtin_target(
         &self,
         callee: &Expression<'_>,
         index: usize,
@@ -53517,12 +53517,31 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         if index != 0 || argument.spread {
             return false;
         }
+        if self.resolves_to_intact_global_method(callee, "Object", "assign") {
+            return true;
+        }
         let Some(path) = static_alias_source_path(self.scoping, callee) else {
             return false;
         };
         let resolved = self.callback_aliases.resolve(&path);
         let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
-        ["apply", "construct"].into_iter().any(|method| {
+        [
+            "apply",
+            "construct",
+            "defineProperty",
+            "deleteProperty",
+            "get",
+            "getOwnPropertyDescriptor",
+            "getPrototypeOf",
+            "has",
+            "isExtensible",
+            "ownKeys",
+            "preventExtensions",
+            "set",
+            "setPrototypeOf",
+        ]
+        .into_iter()
+        .any(|method| {
             let target = reflect.clone().with_property(method.to_string());
             resolved == target
                 && self.callback_aliases.path_is_intact(&path)
