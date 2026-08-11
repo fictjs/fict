@@ -14762,6 +14762,30 @@ fn define_property_accessors_propagate_read_and_write_effects() {
             "source.reverse();",
         ),
         (
+            "a conditional accessor replacement preserves the old getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { if (Math.random() < 0.5) Object.defineProperty(source, '2', { configurable: true, get() { return 0; } }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "a setter-only replacement retains the old getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { configurable: true, set(value) {} }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "Reflect accessor rejection preserves the old getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Reflect.defineProperty(source, '2', { get() { return 0; } }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: false, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "an earlier getter installs a later getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} }); return 0; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
             "sort invokes getters for collected elements",
             "const source = [0, 0];",
             "Object.defineProperty(source, '1', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
@@ -15066,6 +15090,36 @@ fn unread_define_property_accessors_remain_unexecuted() {
             "const source = {};",
             "Object.defineProperty(source, 'run', { configurable: true, get() { values.forEach = null; return 1; } }); const replace = () => Object.defineProperty(source, 'run', { configurable: true, value: 0 });",
             "replace(); void source.run;",
+        ),
+        (
+            "an earlier getter replaces a later getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { configurable: true, get() { return 0; }, set(value) {} }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "an earlier getter clears a later getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { configurable: true, get: undefined }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "an invoked wrapper replaces a getter",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { configurable: true, get() { values.forEach = null; return 1; } }); const replace = () => Object.defineProperty(source, 'run', { configurable: true, get() { return 0; } });",
+            "replace(); void source.run;",
+        ),
+        (
+            "a later data replacement clears a deferred getter identity",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { configurable: true, get() { return 0; } }); Object.defineProperty(source, '2', { configurable: true, value: 0 }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "a setter update retains only the deferred replacement getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { configurable: true, get() { return 0; } }); Object.defineProperty(source, '2', { configurable: true, set(value) {} }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
         ),
         (
             "reverse observes data protection installed by an earlier getter",

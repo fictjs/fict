@@ -22026,6 +22026,15 @@ enum DeferredCallableOperationKind {
         throws_on_rejection: bool,
         conditional: bool,
     },
+    AccessorDescriptorReplacement {
+        getter: Option<bool>,
+        getter_slot: Option<String>,
+        setter: Option<bool>,
+        configurable: Option<bool>,
+        enumerable: Option<bool>,
+        throws_on_rejection: bool,
+        conditional: bool,
+    },
     ArrayMutation {
         mutation: DeferredArrayMutation,
         conditional: bool,
@@ -45031,7 +45040,59 @@ impl StaticHookAliasCollector<'_> {
         ))
     }
 
-    fn defer_local_data_descriptor_replacement(
+    fn local_accessor_descriptor_replacement(
+        &self,
+        call: &CallExpression<'_>,
+    ) -> Option<(StaticAliasPath, DeferredCallableOperationKind)> {
+        if !self.is_local_define_property_callee(call) {
+            return None;
+        }
+        let descriptor = self.local_define_property_descriptor(call)?;
+        if descriptor.value.is_some()
+            || descriptor.writable.is_some()
+            || (descriptor.getter.is_none() && descriptor.setter.is_none())
+            || descriptor
+                .getter
+                .iter()
+                .chain(descriptor.setter.iter())
+                .any(|value| !self.descriptor_accessor_supported(value))
+        {
+            return None;
+        }
+        let (property, _, _, _, container) = self.local_descriptor_mutation_path(call)?;
+        if container {
+            return None;
+        }
+        let presence = |value: &LocalDescriptorValue<'_, '_>| {
+            self.local_descriptor_value_definedness(value)
+                != LocalGetterResultDefinedness::Undefined
+        };
+        Some((
+            property,
+            DeferredCallableOperationKind::AccessorDescriptorReplacement {
+                getter: descriptor.getter.as_ref().map(presence),
+                getter_slot: descriptor
+                    .getter
+                    .as_ref()
+                    .filter(|value| presence(value))
+                    .map(|_| format!("<getter@deferred:{}:{}>", call.span.start, call.span.end)),
+                setter: descriptor.setter.as_ref().map(presence),
+                configurable: descriptor
+                    .configurable
+                    .as_ref()
+                    .map(|value| self.descriptor_attribute_is_definitely_true(value)),
+                enumerable: descriptor
+                    .enumerable
+                    .as_ref()
+                    .map(|value| self.descriptor_attribute_is_definitely_true(value)),
+                throws_on_rejection: self
+                    .is_intact_object_method_callee(&call.callee, "defineProperty"),
+                conditional: self.current_execution_is_branch_conditional(),
+            },
+        ))
+    }
+
+    fn defer_local_descriptor_replacement(
         &mut self,
         target: &StaticAliasPath,
         operation: DeferredCallableOperationKind,
@@ -47688,6 +47749,9 @@ impl StaticHookAliasCollector<'_> {
                         } | DeferredCallableOperationKind::DataDescriptorReplacement {
                             conditional: true,
                             ..
+                        } | DeferredCallableOperationKind::AccessorDescriptorReplacement {
+                            conditional: true,
+                            ..
                         }
                     );
                     if (conditional_invocation || conditional_operation)
@@ -47698,6 +47762,7 @@ impl StaticHookAliasCollector<'_> {
                                 | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                                 | DeferredCallableOperationKind::DescriptorProtection { .. }
                                 | DeferredCallableOperationKind::DataDescriptorReplacement { .. }
+                                | DeferredCallableOperationKind::AccessorDescriptorReplacement { .. }
                         )
                     {
                         self.imprecisely_invoked_alias_effects.insert(effect);
@@ -47755,6 +47820,7 @@ impl StaticHookAliasCollector<'_> {
                         | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                         | DeferredCallableOperationKind::DescriptorProtection { .. }
                         | DeferredCallableOperationKind::DataDescriptorReplacement { .. }
+                        | DeferredCallableOperationKind::AccessorDescriptorReplacement { .. }
                         | DeferredCallableOperationKind::ArrayMutation { .. }
                         | DeferredCallableOperationKind::ArrayLengthAssignment { .. } => {
                             let rejects_unconditionally = matches!(
@@ -47763,6 +47829,10 @@ impl StaticHookAliasCollector<'_> {
                                     conditional: false,
                                     ..
                                 } | DeferredCallableOperationKind::DataDescriptorReplacement {
+                                    conditional: false,
+                                    throws_on_rejection: true,
+                                    ..
+                                } | DeferredCallableOperationKind::AccessorDescriptorReplacement {
                                     conditional: false,
                                     throws_on_rejection: true,
                                     ..
@@ -48059,13 +48129,14 @@ impl StaticHookAliasCollector<'_> {
                     .structured_own_properties
                     .get(&owner)
                     .is_some_and(|properties| properties.contains(&name));
-                let replaces_accessor = self.local_getter_properties.contains(&property)
+                let current_getters = self.local_getter_resolution(&property, false).1;
+                let replaces_accessor = !current_getters.is_empty()
                     || self.local_setter_properties.contains_key(&property);
                 let current_configurable =
                     self.local_reflect_delete_property_is_configurable(&property);
                 let current_writable = self.local_property_is_writable(&property);
                 let current_enumerable = if self.descriptor_defined_properties.contains(&property) {
-                    self.enumerable_getter_properties.contains(&property)
+                    !self.local_getter_resolution(&property, true).1.is_empty()
                         || self.enumerable_descriptor_properties.contains(&property)
                 } else {
                     existing_own
@@ -48097,12 +48168,27 @@ impl StaticHookAliasCollector<'_> {
                 }
                 let descriptor_writable =
                     writable.unwrap_or(existing_own && !replaces_accessor && current_writable);
-                let descriptor_configurable = configurable.unwrap_or(current_configurable);
-                let descriptor_enumerable = enumerable.unwrap_or(current_enumerable);
+                let descriptor_configurable =
+                    configurable.unwrap_or(existing_own && current_configurable);
+                let descriptor_enumerable =
+                    enumerable.unwrap_or(existing_own && current_enumerable);
                 let extended_array_length = self.extended_array_length_for_property(&owner, &name);
                 let replaces_value = *has_value || !existing_own || replaces_accessor;
                 if replaces_value {
                     self.clear_overlapping_aliases(&property);
+                    if replaces_accessor {
+                        self.clear_alias_target_history(&property);
+                        for getter in current_getters {
+                            self.local_getter_properties.remove(&getter);
+                            self.local_getter_property_history.remove(&getter);
+                            self.enumerable_getter_properties.remove(&getter);
+                            self.enumerable_getter_property_history.remove(&getter);
+                            self.local_getter_result_definedness.remove(&getter);
+                            self.local_getter_result_definedness_history.remove(&getter);
+                            self.local_getter_result_truthiness.remove(&getter);
+                            self.local_getter_result_truthiness_history.remove(&getter);
+                        }
+                    }
                 }
                 self.structured_own_properties
                     .entry(owner.clone())
@@ -48135,6 +48221,153 @@ impl StaticHookAliasCollector<'_> {
                 }
                 self.remove_local_auto_accessor_property(&owner, &name);
                 if let Some(length) = extended_array_length {
+                    self.update_known_array_length(&owner, Some(length));
+                }
+                DeferredCallableOperationOutcome::Applied
+            }
+            DeferredCallableOperationKind::AccessorDescriptorReplacement {
+                getter,
+                getter_slot,
+                setter,
+                configurable,
+                enumerable,
+                throws_on_rejection,
+                conditional,
+            } => {
+                if *conditional || conditional_invocation {
+                    return DeferredCallableOperationOutcome::Unresolved;
+                }
+                let property = self
+                    .local_descriptor_property_slot(raw_target)
+                    .unwrap_or_else(|| raw_target.clone());
+                let mut owner = property.clone();
+                let Some(name) = owner.properties.pop() else {
+                    return DeferredCallableOperationOutcome::Unresolved;
+                };
+                let existing_own = self
+                    .structured_own_properties
+                    .get(&owner)
+                    .is_some_and(|properties| properties.contains(&name));
+                let current_getters = self.local_getter_resolution(&property, false).1;
+                let current_getter = !current_getters.is_empty();
+                let current_setter = self.local_setter_properties.get(&property).cloned();
+                let current_accessor = current_getter || current_setter.is_some();
+                let current_configurable =
+                    self.local_reflect_delete_property_is_configurable(&property);
+                let current_enumerable = if self.descriptor_defined_properties.contains(&property) {
+                    !self.local_getter_resolution(&property, true).1.is_empty()
+                        || self.enumerable_descriptor_properties.contains(&property)
+                } else {
+                    existing_own
+                };
+                let rejection = if *throws_on_rejection {
+                    DeferredCallableOperationOutcome::Rejected
+                } else {
+                    DeferredCallableOperationOutcome::Applied
+                };
+                if !existing_own
+                    && self.local_property_owner_has_descriptor_container(
+                        &property,
+                        &self.non_extensible_descriptor_containers,
+                    )
+                {
+                    return rejection;
+                }
+                if existing_own && !current_configurable {
+                    if *configurable == Some(true)
+                        || enumerable.is_some_and(|value| value != current_enumerable)
+                        || !current_accessor
+                        || (*getter == Some(false) && current_getter)
+                        || (*setter == Some(false) && current_setter.is_some())
+                    {
+                        return rejection;
+                    }
+                    if *getter == Some(true) || *setter == Some(true) {
+                        return DeferredCallableOperationOutcome::Unresolved;
+                    }
+                }
+                let final_getter = getter.unwrap_or(existing_own && current_getter);
+                let final_setter = setter.unwrap_or(existing_own && current_setter.is_some());
+                let descriptor_configurable =
+                    configurable.unwrap_or(existing_own && current_configurable);
+                let descriptor_enumerable =
+                    enumerable.unwrap_or(existing_own && current_enumerable);
+                let replaces_kind = !existing_own || !current_accessor;
+                let replaces_getter = getter.is_some() || replaces_kind;
+                let retained_setter = (setter.is_none()).then_some(current_setter).flatten();
+                let mut final_getter_markers = if final_getter && !replaces_getter {
+                    current_getters.clone()
+                } else {
+                    BTreeSet::new()
+                };
+                if replaces_getter {
+                    self.clear_overlapping_aliases(&property);
+                    self.clear_alias_target_history(&property);
+                    for getter in current_getters {
+                        self.local_getter_properties.remove(&getter);
+                        self.local_getter_property_history.remove(&getter);
+                        self.enumerable_getter_properties.remove(&getter);
+                        self.enumerable_getter_property_history.remove(&getter);
+                        self.local_getter_result_definedness.remove(&getter);
+                        self.local_getter_result_definedness_history.remove(&getter);
+                        self.local_getter_result_truthiness.remove(&getter);
+                        self.local_getter_result_truthiness_history.remove(&getter);
+                    }
+                    if final_getter {
+                        let source = getter_slot
+                            .as_ref()
+                            .map(|slot| owner.clone().with_property(slot.clone()))
+                            .unwrap_or_else(|| property.clone());
+                        if source != property {
+                            self.insert_alias(property.clone(), source.clone());
+                        }
+                        self.local_getter_properties.insert(source.clone());
+                        self.local_getter_property_history.insert(source.clone());
+                        final_getter_markers.insert(source);
+                    }
+                    if final_setter {
+                        let setter = retained_setter
+                            .unwrap_or_else(|| Self::local_stored_setter_callable_path(&property));
+                        self.replace_local_setter(property.clone(), setter);
+                    }
+                } else if let Some(setter) = setter {
+                    self.clear_local_descriptor_setter(&property);
+                    if *setter {
+                        let setter = Self::local_stored_setter_callable_path(&property);
+                        self.replace_local_setter(property.clone(), setter);
+                    }
+                }
+                self.structured_own_properties
+                    .entry(owner.clone())
+                    .or_default()
+                    .insert(name.clone());
+                self.exclude_dynamic_local_accessor_property(&owner, name.clone());
+                self.descriptor_defined_properties.insert(property.clone());
+                self.non_writable_descriptor_properties.remove(&property);
+                if descriptor_configurable {
+                    self.non_configurable_descriptor_properties
+                        .remove(&property);
+                } else {
+                    self.non_configurable_descriptor_properties
+                        .insert(property.clone());
+                }
+                if descriptor_enumerable {
+                    self.enumerable_descriptor_properties
+                        .insert(property.clone());
+                } else {
+                    self.enumerable_descriptor_properties.remove(&property);
+                }
+                for marker in final_getter_markers {
+                    if descriptor_enumerable {
+                        self.enumerable_getter_properties.insert(marker.clone());
+                        self.enumerable_getter_property_history.insert(marker);
+                    } else {
+                        self.enumerable_getter_properties.remove(&marker);
+                        self.enumerable_getter_property_history.remove(&marker);
+                    }
+                }
+                self.remove_local_auto_accessor_property(&owner, &name);
+                if let Some(length) = self.extended_array_length_for_property(&owner, &name) {
                     self.update_known_array_length(&owner, Some(length));
                 }
                 DeferredCallableOperationOutcome::Applied
@@ -48903,6 +49136,7 @@ impl StaticHookAliasCollector<'_> {
                     | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                     | DeferredCallableOperationKind::DescriptorProtection { .. }
                     | DeferredCallableOperationKind::DataDescriptorReplacement { .. }
+                    | DeferredCallableOperationKind::AccessorDescriptorReplacement { .. }
                     | DeferredCallableOperationKind::ArrayMutation { .. }
                     | DeferredCallableOperationKind::ArrayLengthAssignment { .. } => None,
                 };
@@ -52287,6 +52521,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .flatten();
         let local_set_prototype_of = self.local_set_prototype_of(call);
         let local_data_descriptor_replacement = self.local_data_descriptor_replacement(call);
+        let local_accessor_descriptor_replacement =
+            self.local_accessor_descriptor_replacement(call);
         let local_descriptor_mutation = self.local_descriptor_mutation_path(call);
         if let Some(property) = &local_define_property {
             self.prepare_local_define_property(call, property);
@@ -52562,12 +52798,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             && !local_define_property_applied
             && !local_define_properties_applied
         {
-            let deferred_data_replacement = local_data_descriptor_replacement
+            let deferred_descriptor_replacement = local_data_descriptor_replacement
+                .or(local_accessor_descriptor_replacement)
                 .filter(|(target, _)| target == &property)
                 .is_some_and(|(_, operation)| {
-                    self.defer_local_data_descriptor_replacement(&property, operation)
+                    self.defer_local_descriptor_replacement(&property, operation)
                 });
-            let deferred = deferred_data_replacement
+            let deferred = deferred_descriptor_replacement
                 || self.defer_local_descriptor_protection(
                     &property,
                     non_writable,
