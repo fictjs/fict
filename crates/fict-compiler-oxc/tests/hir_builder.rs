@@ -4477,6 +4477,41 @@ fn array_mutations_respect_descriptors_and_extensibility() {
             false,
         ),
         (
+            "defineProperty array indices extend length",
+            "const source = []; Object.defineProperty(source, '3', { value: local, configurable: true }); const removed = source.pop(); holder.item = removed;",
+            true,
+        ),
+        (
+            "Reflect.defineProperty array indices extend length",
+            "const source = []; Reflect.defineProperty(source, '3', { value: local, configurable: true }); const removed = source.pop(); holder.item = removed;",
+            true,
+        ),
+        (
+            "defineProperties array indices extend length",
+            "const source = []; Object.defineProperties(source, { 1: { value: {}, configurable: true }, 3: { value: local, configurable: true } }); const removed = source.pop(); holder.item = removed;",
+            true,
+        ),
+        (
+            "the maximum uint32 property is not an array index",
+            "const source = []; Object.defineProperty(source, '4294967295', { value: local, configurable: true }); const removed = source.pop(); holder.item = removed;",
+            false,
+        ),
+        (
+            "a non-canonical numeric property is not an array index",
+            "const source = []; Object.defineProperty(source, '03', { value: local, configurable: true }); const removed = source.pop(); holder.item = removed;",
+            false,
+        ),
+        (
+            "a non-writable length blocks defineProperty array extension",
+            "const source = []; Object.defineProperty(source, 'length', { writable: false }); Object.defineProperty(source, '3', { value: local, configurable: true }); const removed = source.pop(); holder.item = removed;",
+            false,
+        ),
+        (
+            "a non-extensible array blocks defineProperty array extension",
+            "const source = []; Object.preventExtensions(source); Object.defineProperty(source, '3', { value: local, configurable: true }); const removed = source.pop(); holder.item = removed;",
+            false,
+        ),
+        (
             "an exact push keeps the array closed for later protection",
             "const source = []; source.push({}); Object.preventExtensions(source); source.push(local); holder.item = source[1];",
             false,

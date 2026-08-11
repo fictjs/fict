@@ -36439,6 +36439,20 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn extended_array_length_for_property(
+        &self,
+        owner: &StaticAliasPath,
+        property: &str,
+    ) -> Option<usize> {
+        let index = property.parse::<u32>().ok()?;
+        if index == u32::MAX || index.to_string() != property {
+            return None;
+        }
+        let length = self.known_array_length(owner)?;
+        let extended = usize::try_from(index).ok()?.checked_add(1)?;
+        (extended > length).then_some(extended)
+    }
+
     fn apply_local_array_length_assignment(
         &mut self,
         raw_target: &StaticAliasPath,
@@ -45351,6 +45365,12 @@ impl StaticHookAliasCollector<'_> {
         {
             return true;
         }
+        let extended_array_length = self.extended_array_length_for_property(&owner, &name);
+        if extended_array_length.is_some()
+            && !self.local_property_is_writable(&owner.clone().with_property("length".to_string()))
+        {
+            return true;
+        }
         let existing_getter = existing_own && self.local_getter_properties.contains(property);
         let existing_setter = existing_own
             .then(|| self.local_setter_properties.get(property).cloned())
@@ -45469,6 +45489,9 @@ impl StaticHookAliasCollector<'_> {
                 self.enumerable_descriptor_properties.remove(property);
             }
             self.remove_local_auto_accessor_property(&owner, &name);
+            if let Some(length) = extended_array_length {
+                self.update_known_array_length(&owner, Some(length));
+            }
             return true;
         }
         if !accessor {
@@ -45508,6 +45531,9 @@ impl StaticHookAliasCollector<'_> {
             } else {
                 self.non_configurable_descriptor_properties
                     .insert(property.clone());
+            }
+            if let Some(length) = extended_array_length {
+                self.update_known_array_length(&owner, Some(length));
             }
             return true;
         }
@@ -45564,6 +45590,9 @@ impl StaticHookAliasCollector<'_> {
             self.enumerable_descriptor_properties.remove(property);
         }
         self.remove_local_auto_accessor_property(&owner, &name);
+        if let Some(length) = extended_array_length {
+            self.update_known_array_length(&owner, Some(length));
+        }
         true
     }
 
