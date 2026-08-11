@@ -101,6 +101,7 @@ mod memo_side_effects;
 mod native_jsx_spreads;
 mod reactive_jsx_writes;
 mod resource_declarations;
+mod storage_origin;
 mod structured_control_flow;
 
 use class_components::ClassBindingCollector;
@@ -141,12 +142,15 @@ impl Default for HirBuildOptions {
 pub struct HirAnalysisBudgets {
     /// Maximum whole-program sweeps used to resolve static hook aliases and deferred effects.
     pub max_static_hook_alias_iterations: u32,
+    /// Maximum distinct CFG block-state visits used by storage-origin dataflow.
+    pub max_storage_origin_block_visits: u32,
 }
 
 impl Default for HirAnalysisBudgets {
     fn default() -> Self {
         Self {
             max_static_hook_alias_iterations: 256,
+            max_storage_origin_block_visits: 2_000_000,
         }
     }
 }
@@ -2257,20 +2261,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.validate_native_jsx_spreads(program);
         self.validate_dynamic_property_access(program, &reactive_symbols.reactive);
         self.validate_reactive_jsx_writes(program, &reactive_symbols.reactive);
-        self.validate_reactive_escapes(
-            program,
-            &calls.calls,
-            &known_arrays.symbols,
-            &reactive_symbols,
-            &class_bindings,
-            &static_hook_aliases,
-        );
-        self.validate_component_props_patterns();
         self.apply_call_classification(&calls.calls);
-        self.validate_macro_placement(&calls.calls);
-        self.validate_runtime_reactive_placement(&calls.calls);
-        self.validate_missing_hook_metadata(&calls.calls, &static_hook_aliases);
-        self.validate_hook_placement(&calls.calls);
         self.populate_function_bodies(
             &calls.calls,
             &variable_declarations.facts,
@@ -2279,6 +2270,30 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &member_accesses.facts,
             &jsx.roots,
         );
+        let storage_origin = match storage_origin::analyze(
+            &self.functions,
+            self.analysis_budgets.max_storage_origin_block_visits,
+        ) {
+            Ok(facts) => facts,
+            Err(diagnostic) => {
+                self.diagnostics.push(diagnostic);
+                storage_origin::StorageOriginFacts::default()
+            }
+        };
+        self.validate_reactive_escapes(
+            program,
+            &calls.calls,
+            &known_arrays.symbols,
+            &reactive_symbols,
+            &class_bindings,
+            &static_hook_aliases,
+            &storage_origin,
+        );
+        self.validate_component_props_patterns();
+        self.validate_macro_placement(&calls.calls);
+        self.validate_runtime_reactive_placement(&calls.calls);
+        self.validate_missing_hook_metadata(&calls.calls, &static_hook_aliases);
+        self.validate_hook_placement(&calls.calls);
         self.validate_synchronous_function_abi(&calls.calls, &jsx.roots);
     }
 
@@ -2897,6 +2912,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         reactive: &ReactiveSymbolAnalysis,
         classes: &ClassBindingCollector<'_>,
         callback_aliases: &StaticHookAliases,
+        storage_origin: &storage_origin::StorageOriginFacts,
     ) {
         let binding_owners: BTreeMap<_, _> = self
             .frontend
@@ -3189,6 +3205,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             callback_property_captures: &callback_property_captures,
             callback_timings: &callback_timings,
             callback_aliases,
+            storage_origin,
             external_storage_roots: &external_storage_roots,
             external_storage_nested_roots: &external_storage_nested_roots,
             component_parameter_symbols: &component_parameter_symbols,
@@ -52052,6 +52069,7 @@ struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
     callback_property_captures: &'facts BTreeMap<(SymbolId, String), BTreeSet<SymbolId>>,
     callback_timings: &'facts BTreeMap<StaticAliasPath, Option<CallbackTiming>>,
     callback_aliases: &'facts StaticHookAliases,
+    storage_origin: &'facts storage_origin::StorageOriginFacts,
     external_storage_roots: &'facts BTreeSet<SymbolId>,
     external_storage_nested_roots: &'facts BTreeSet<SymbolId>,
     component_parameter_symbols: &'facts BTreeSet<SymbolId>,
@@ -52514,10 +52532,21 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         assignment_span: Option<Span>,
     ) -> bool {
         if let Some(place) = planned_assignment_target_place(self.scoping, target) {
+            let span = assignment_span.map(|span| (span.start, span.end));
+            if span.is_some_and(|span| {
+                self.storage_origin
+                    .classified_projected_writes
+                    .contains(&span)
+            }) {
+                return span.is_some_and(|span| {
+                    self.storage_origin
+                        .external_projected_writes
+                        .contains(&span)
+                });
+            }
             if self.place_is_external_storage(&place) {
                 return true;
             }
-            let span = assignment_span.map(|span| (span.start, span.end));
             let aliases =
                 span.and_then(|span| self.callback_aliases.assignment_target_aliases.get(&span));
             if aliases.is_some_and(|aliases| {

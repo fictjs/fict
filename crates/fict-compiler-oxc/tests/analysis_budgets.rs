@@ -34,6 +34,7 @@ fn static_hook_alias_analysis_fails_closed_when_its_budget_is_exhausted() {
         &HirBuildOptions {
             analysis_budgets: HirAnalysisBudgets {
                 max_static_hook_alias_iterations: 1,
+                ..HirAnalysisBudgets::default()
             },
             ..HirBuildOptions::default()
         },
@@ -44,6 +45,42 @@ fn static_hook_alias_analysis_fails_closed_when_its_budget_is_exhausted() {
         output.diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "FICT-PASS-BUDGET"
                 && diagnostic.message.contains("static hook alias analysis")
+        }),
+        "{:#?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn storage_origin_analysis_fails_closed_when_its_budget_is_exhausted() {
+    let output = build_hir(
+        r#"
+            import { $state } from 'fict';
+            function App(holder) {
+                const count = $state(0);
+                let callbacks = {};
+                while (holder.more()) {
+                    callbacks = holder.callbacks;
+                }
+                callbacks.run = () => count;
+                return count;
+            }
+        "#,
+        options(),
+        &HirBuildOptions {
+            analysis_budgets: HirAnalysisBudgets {
+                max_storage_origin_block_visits: 1,
+                ..HirAnalysisBudgets::default()
+            },
+            ..HirBuildOptions::default()
+        },
+    );
+
+    assert!(output.hir.is_none(), "budget exhaustion must fail closed");
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-PASS-BUDGET"
+                && diagnostic.message.contains("storage origin analysis")
         }),
         "{:#?}",
         output.diagnostics

@@ -21,7 +21,6 @@ fn guarantee_codes(source: &str) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "known external-storage control-flow unsoundness; enable with the CFG dataflow rewrite"]
 fn external_storage_follows_javascript_control_flow() {
     let cases = [
         (
@@ -155,6 +154,21 @@ fn external_storage_follows_javascript_control_flow() {
                         case 1:
                             callbacks.run = run;
                     }
+                    return count;
+                }
+            "#,
+            true,
+        ),
+        (
+            "an optional call preserves the skipped argument path",
+            r#"
+                import { $state } from 'fict';
+                function App(holder) {
+                    const count = $state(0);
+                    const run = () => count;
+                    let callbacks = holder.callbacks;
+                    holder.install?.(callbacks = {});
+                    callbacks.run = run;
                     return count;
                 }
             "#,
