@@ -120,6 +120,8 @@ pub struct HirBuildOptions {
     pub reactive_creation_control_flow_severity: DiagnosticSeverity,
     /// Bundler-authoritative metadata snapshot used to annotate imported runtime bindings.
     pub resolved_metadata: Vec<ResolvedMetadataInput>,
+    /// Hard resource limits for request-local frontend analyses.
+    pub analysis_budgets: HirAnalysisBudgets,
 }
 
 impl Default for HirBuildOptions {
@@ -129,6 +131,22 @@ impl Default for HirBuildOptions {
             strict_guarantee: true,
             reactive_creation_control_flow_severity: DiagnosticSeverity::Error,
             resolved_metadata: Vec::new(),
+            analysis_budgets: HirAnalysisBudgets::default(),
+        }
+    }
+}
+
+/// Hard budgets for analyses that run before Fict-owned HIR reaches the core pass manager.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HirAnalysisBudgets {
+    /// Maximum whole-program sweeps used to resolve static hook aliases and deferred effects.
+    pub max_static_hook_alias_iterations: u32,
+}
+
+impl Default for HirAnalysisBudgets {
+    fn default() -> Self {
+        Self {
+            max_static_hook_alias_iterations: 256,
         }
     }
 }
@@ -1667,6 +1685,7 @@ struct Builder<'source, 'semantic> {
     control_flow_plans: BTreeMap<FunctionId, structured_control_flow::FunctionControlFlowPlan>,
     strict_guarantee: bool,
     reactive_creation_control_flow_severity: DiagnosticSeverity,
+    analysis_budgets: HirAnalysisBudgets,
 }
 
 fn apply_resolved_import_metadata(
@@ -1920,6 +1939,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             strict_guarantee: options.strict_guarantee,
             reactive_creation_control_flow_severity: options
                 .reactive_creation_control_flow_severity,
+            analysis_budgets: options.analysis_budgets,
         }
     }
 
@@ -2039,7 +2059,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut deferred_accessor_spans = BTreeSet::new();
         let mut executed_descriptor_callable_spans = BTreeSet::new();
         let mut executed_setter_spans = BTreeSet::new();
+        let mut static_hook_alias_iterations = 0_u32;
         let static_hook_aliases = loop {
+            static_hook_alias_iterations = static_hook_alias_iterations.saturating_add(1);
             let mut collector = StaticHookAliasCollector::new(
                 self.semantic.scoping(),
                 &generator_execution,
@@ -2074,6 +2096,26 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     == executed_descriptor_callable_spans
                 && collector.executed_setter_spans == executed_setter_spans
             {
+                break collector;
+            }
+            if static_hook_alias_iterations
+                >= self
+                    .analysis_budgets
+                    .max_static_hook_alias_iterations
+                    .max(1)
+            {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::new("FICT-PASS-BUDGET")
+                            .expect("frontend pass budget diagnostic literal"),
+                        DiagnosticSeverity::Error,
+                        format!(
+                            "static hook alias analysis exceeded its configured fixed-point budget: {static_hook_alias_iterations}/{} whole-program sweeps",
+                            self.analysis_budgets.max_static_hook_alias_iterations.max(1)
+                        ),
+                    )
+                    .with_guarantee_class(GuaranteeClass::Internal),
+                );
                 break collector;
             }
             unexecuted_expression_spans.clone_from(&collector.unexecuted_expression_spans);

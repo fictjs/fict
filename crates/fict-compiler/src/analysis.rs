@@ -256,6 +256,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
                 DiagnosticSeverity::Error,
             ),
             resolved_metadata: request.metadata.clone(),
+            analysis_budgets: Default::default(),
         },
     );
     let suppressions = build

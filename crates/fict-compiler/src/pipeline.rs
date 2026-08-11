@@ -125,6 +125,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                 DiagnosticSeverity::Error,
             ),
             resolved_metadata: request.metadata.clone(),
+            analysis_budgets: Default::default(),
         },
     );
     result.diagnostics.extend(build.diagnostics);

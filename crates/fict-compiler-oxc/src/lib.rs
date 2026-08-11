@@ -35,7 +35,9 @@ pub use frontend::{
     FrontendScopeKind, FrontendSourceSummary, FrontendSummary, NamespaceMacroCall,
     analyze_frontend,
 };
-pub use hir_builder::{HirBuildOptions, HirBuildOutput, OxcSyntaxFragment, build_hir};
+pub use hir_builder::{
+    HirAnalysisBudgets, HirBuildOptions, HirBuildOutput, OxcSyntaxFragment, build_hir,
+};
 pub use scan::{
     OxcScanOutput, ScanModuleRequest, ScanModuleRequestKind, scan_static_module_requests,
 };
