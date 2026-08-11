@@ -14738,6 +14738,30 @@ fn define_property_accessors_propagate_read_and_write_effects() {
             "try { source.reverse(); } catch {}",
         ),
         (
+            "reverse preserves a later getter after a conditional data replacement",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { if (Math.random() < 0.5) Object.defineProperty(source, '2', { configurable: true, value: 0 }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "reverse preserves a later getter after a conditional data protection",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { if (Math.random() < 0.5) Object.defineProperty(source, '3', { writable: false }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "try { source.reverse(); } catch {}",
+        ),
+        (
+            "reverse observes data unprotection from an earlier getter",
+            "const source = [0, 0, 0, 0]; Object.defineProperty(source, '3', { configurable: true, writable: false });",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '3', { writable: true }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "Reflect rejection preserves the old getter and continues",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Reflect.defineProperty(source, '2', { value: 0 }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: false, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
             "sort invokes getters for collected elements",
             "const source = [0, 0];",
             "Object.defineProperty(source, '1', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
@@ -15023,6 +15047,30 @@ fn unread_define_property_accessors_remain_unexecuted() {
             "reverse observes sealing from an earlier getter",
             "const source = [0, 0, 0]; source.length = 4;",
             "Object.defineProperty(source, '0', { configurable: true, get() { Object.seal(source); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "try { source.reverse(); } catch {}",
+        ),
+        (
+            "reverse observes a data descriptor installed by an earlier getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { configurable: true, value: 0, writable: true }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
+            "source.reverse();",
+        ),
+        (
+            "a rejected data replacement stops before the old getter executes",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '2', { value: 0 }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { get() { values.forEach = null; return 1; }, set(value) {} });",
+            "try { source.reverse(); } catch {}",
+        ),
+        (
+            "an invoked wrapper replaces an accessor with data",
+            "const source = {};",
+            "Object.defineProperty(source, 'run', { configurable: true, get() { values.forEach = null; return 1; } }); const replace = () => Object.defineProperty(source, 'run', { configurable: true, value: 0 });",
+            "replace(); void source.run;",
+        ),
+        (
+            "reverse observes data protection installed by an earlier getter",
+            "const source = [0, 0, 0, 0];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { Object.defineProperty(source, '3', { writable: false }); return 0; }, set(value) {} }); Object.defineProperty(source, '2', { configurable: true, get() { values.forEach = null; return 1; }, set(value) {} });",
             "try { source.reverse(); } catch {}",
         ),
         (
