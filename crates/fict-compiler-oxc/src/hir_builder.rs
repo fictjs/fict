@@ -20755,6 +20755,13 @@ struct LocalArrayMutationPlan {
     stable_arguments: bool,
 }
 
+struct LocalArrayMutationAccessorContext<'collector> {
+    value_target: &'collector StaticAliasPath,
+    mutation_values: &'collector [Vec<LocalInvocationArgument>],
+    timing: LocalAliasInvocationTiming,
+    conditional_invocation: bool,
+}
+
 #[derive(Clone, Copy)]
 enum PreciseArrayMutation {
     Reverse,
@@ -32529,11 +32536,23 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
+        self.clear_overlapping_aliases_with_resolved_detachment(path, true);
+    }
+
+    fn clear_array_mutation_target_aliases(&mut self, path: &StaticAliasPath) {
+        self.clear_overlapping_aliases_with_resolved_detachment(path, false);
+    }
+
+    fn clear_overlapping_aliases_with_resolved_detachment(
+        &mut self,
+        path: &StaticAliasPath,
+        detach_resolved: bool,
+    ) {
         let canonical_path = self.canonical_returned_structured_member_path(path);
         let path = &canonical_path;
         let resolved_path = resolve_static_alias_path(&self.aliases, path);
         self.detach_overwritten_local_descriptor_values(path);
-        if resolved_path != *path {
+        if detach_resolved && resolved_path != *path {
             self.detach_overwritten_local_descriptor_values(&resolved_path);
         }
         self.detach_overwritten_local_object_prototypes(path);
@@ -34380,6 +34399,82 @@ impl StaticHookAliasCollector<'_> {
         (historical, setters)
     }
 
+    fn current_local_accessor_candidates(
+        &self,
+        path: &StaticAliasPath,
+    ) -> BTreeSet<StaticAliasPath> {
+        let mut candidates = resolve_static_alias_path_chain(&self.aliases, path)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let prototypes = local_object_prototype_member_paths_from_state(
+            &self.aliases,
+            None,
+            &self.local_object_prototypes,
+            &self.structured_own_properties,
+            path,
+            |_| false,
+        );
+        for prototype in prototypes {
+            candidates.extend(resolve_static_alias_path_chain(&self.aliases, &prototype));
+        }
+        candidates.extend(
+            self.returned_structured_instances_for_path(path)
+                .into_iter()
+                .map(|(source, _)| source),
+        );
+        candidates
+    }
+
+    fn current_local_setters(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
+        let mut setters = BTreeSet::new();
+        for candidate in self.current_local_accessor_candidates(path) {
+            if let Some(setter) = self.local_setter_properties.get(&candidate) {
+                setters.insert(setter.clone());
+            }
+            if candidate.properties.is_empty() {
+                continue;
+            }
+            let mut owner = candidate;
+            let property = owner.properties.pop().expect("setter property");
+            if self
+                .dynamic_accessor_excluded_properties
+                .get(&owner)
+                .is_some_and(|excluded| excluded.contains(&property))
+            {
+                continue;
+            }
+            if let Some(dynamic) = self.dynamic_setter_properties.get(&owner) {
+                setters.extend(dynamic.iter().cloned());
+            }
+        }
+        setters
+    }
+
+    fn current_local_getters(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
+        let mut getters = BTreeSet::new();
+        for candidate in self.current_local_accessor_candidates(path) {
+            if self.local_getter_properties.contains(&candidate) {
+                getters.insert(candidate.clone());
+            }
+            if candidate.properties.is_empty() {
+                continue;
+            }
+            let mut owner = candidate;
+            let property = owner.properties.pop().expect("getter property");
+            if self
+                .dynamic_accessor_excluded_properties
+                .get(&owner)
+                .is_some_and(|excluded| excluded.contains(&property))
+            {
+                continue;
+            }
+            if let Some(dynamic) = self.dynamic_getter_properties.get(&owner) {
+                getters.extend(dynamic.iter().cloned());
+            }
+        }
+        getters
+    }
+
     fn enumerable_local_getter_names(&self, source: &StaticAliasPath) -> BTreeSet<String> {
         let resolved = resolve_static_alias_path(&self.aliases, source);
         let historical = [source, &resolved]
@@ -35239,8 +35334,35 @@ impl StaticHookAliasCollector<'_> {
         arguments: Vec<LocalInvocationArgument>,
         receiver_override: Option<Vec<LocalInvocationArgument>>,
     ) -> bool {
+        self.record_local_setter_invocations_with_resolution(
+            property,
+            arguments,
+            receiver_override,
+            false,
+        )
+    }
+
+    fn record_current_local_setter_invocations_with_arguments(
+        &mut self,
+        property: &StaticAliasPath,
+        arguments: Vec<LocalInvocationArgument>,
+    ) -> bool {
+        self.record_local_setter_invocations_with_resolution(property, arguments, None, true)
+    }
+
+    fn record_local_setter_invocations_with_resolution(
+        &mut self,
+        property: &StaticAliasPath,
+        arguments: Vec<LocalInvocationArgument>,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
+        current_only: bool,
+    ) -> bool {
         let structured_sources = self.returned_structured_instances_for_path(property);
-        let (historical, setters) = self.local_setter_resolution(property);
+        let (historical, setters) = if current_only {
+            (false, self.current_local_setters(property))
+        } else {
+            self.local_setter_resolution(property)
+        };
         if setters.is_empty() {
             return false;
         }
@@ -35260,11 +35382,12 @@ impl StaticHookAliasCollector<'_> {
             let raw_callee = structured_sources
                 .iter()
                 .find_map(|(source_property, _)| {
-                    if !self
-                        .local_setter_resolution(source_property)
-                        .1
-                        .contains(&setter)
-                    {
+                    let source_setters = if current_only {
+                        self.current_local_setters(source_property)
+                    } else {
+                        self.local_setter_resolution(source_property).1
+                    };
+                    if !source_setters.contains(&setter) {
                         return None;
                     }
                     let mut source_owner = source_property.clone();
@@ -36727,6 +36850,28 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn local_array_mutation_setter_arguments(
+        &self,
+        call: &CallExpression<'_>,
+        method: &str,
+    ) -> Vec<Vec<LocalInvocationArgument>> {
+        let arguments = match method {
+            "fill" => call.arguments.get(..1).unwrap_or_default(),
+            "push" | "unshift" => call.arguments.as_slice(),
+            "splice" => call.arguments.get(2..).unwrap_or_default(),
+            _ => &[],
+        };
+        arguments
+            .iter()
+            .map(|argument| {
+                argument
+                    .as_expression()
+                    .map(|argument| self.collect_local_invocation_value_arguments(argument))
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
     fn local_array_mutation_getter_read_ranges(
         mutation: Option<PreciseArrayMutation>,
         method: &str,
@@ -36793,6 +36938,181 @@ impl StaticHookAliasCollector<'_> {
                     Vec::new()
                 }
             }
+        }
+    }
+
+    fn local_array_mutation_setter_write_ranges(
+        mutation: Option<PreciseArrayMutation>,
+        method: &str,
+        length: usize,
+    ) -> Vec<(usize, usize)> {
+        let Some(mutation) = mutation else {
+            return match method {
+                "pop" => Vec::new(),
+                "push" => vec![(length, usize::MAX)],
+                "unshift" | "splice" => vec![(0, usize::MAX)],
+                _ => vec![(0, length)],
+            };
+        };
+        match mutation {
+            PreciseArrayMutation::Reverse => {
+                Self::local_array_mutation_getter_read_ranges(Some(mutation), method, length)
+            }
+            PreciseArrayMutation::Sort => vec![(0, length)],
+            PreciseArrayMutation::CopyWithin { target, start, end } => {
+                let target = Self::normalized_array_start(target, length);
+                let start = Self::normalized_array_start(start, length);
+                let end = Self::normalized_array_start(
+                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
+                    length,
+                );
+                let copied = end.saturating_sub(start).min(length.saturating_sub(target));
+                (copied > 0)
+                    .then_some((target, target.saturating_add(copied)))
+                    .into_iter()
+                    .collect()
+            }
+            PreciseArrayMutation::Fill { start, end } => {
+                let start = Self::normalized_array_start(start, length);
+                let end = Self::normalized_array_start(
+                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
+                    length,
+                )
+                .max(start);
+                (start < end).then_some((start, end)).into_iter().collect()
+            }
+            PreciseArrayMutation::Pop => Vec::new(),
+            PreciseArrayMutation::Push(inserted) => (inserted > 0)
+                .then_some((length, length.saturating_add(inserted)))
+                .into_iter()
+                .collect(),
+            PreciseArrayMutation::Shift => (length > 1)
+                .then_some((0, length.saturating_sub(1)))
+                .into_iter()
+                .collect(),
+            PreciseArrayMutation::Unshift(inserted) => (inserted > 0)
+                .then_some((0, length.saturating_add(inserted)))
+                .into_iter()
+                .collect(),
+            PreciseArrayMutation::Splice {
+                start,
+                delete,
+                inserted,
+            } => {
+                let start = Self::normalized_array_start(start, length);
+                let delete = delete.map_or(length.saturating_sub(start), |delete| {
+                    usize::try_from(delete.max(0))
+                        .unwrap_or(usize::MAX)
+                        .min(length.saturating_sub(start))
+                });
+                let end = if inserted == delete {
+                    start.saturating_add(inserted)
+                } else {
+                    length.saturating_sub(delete).saturating_add(inserted)
+                };
+                (start < end).then_some((start, end)).into_iter().collect()
+            }
+        }
+    }
+
+    fn local_array_mutation_setter_write_indices(
+        &self,
+        mutation: Option<PreciseArrayMutation>,
+        method: &str,
+        length: usize,
+    ) -> BTreeSet<usize> {
+        let ranges = Self::local_array_mutation_setter_write_ranges(mutation, method, length);
+        let writes = |index: usize| {
+            ranges
+                .iter()
+                .any(|(start, end)| *start <= index && index < *end)
+        };
+        let mut indices = self
+            .local_setter_properties
+            .keys()
+            .chain(self.local_setter_property_history.keys())
+            .filter_map(|property| property.properties.last())
+            .filter_map(|property| property.parse::<usize>().ok())
+            .filter(|index| writes(*index))
+            .collect::<BTreeSet<_>>();
+        if !self.dynamic_setter_properties.is_empty()
+            || !self.dynamic_setter_property_history.is_empty()
+        {
+            indices.extend(
+                ranges
+                    .iter()
+                    .filter(|(start, end)| start < end)
+                    .map(|(start, _)| *start),
+            );
+        }
+        indices
+    }
+
+    fn fallback_array_setter_arguments(
+        &self,
+        source: &StaticAliasPath,
+        mutation: Option<PreciseArrayMutation>,
+        index: usize,
+        length: usize,
+        mutation_values: &[Vec<LocalInvocationArgument>],
+    ) -> Vec<LocalInvocationArgument> {
+        let moved_value = |source_index: usize| {
+            vec![self.collect_local_invocation_path(
+                source.clone().with_property(source_index.to_string()),
+            )]
+        };
+        match mutation {
+            Some(PreciseArrayMutation::Reverse) => {
+                moved_value(length.saturating_sub(index).saturating_sub(1))
+            }
+            Some(PreciseArrayMutation::CopyWithin { target, start, .. }) => {
+                let target = Self::normalized_array_start(target, length);
+                let start = Self::normalized_array_start(start, length);
+                moved_value(start.saturating_add(index.saturating_sub(target)))
+            }
+            Some(PreciseArrayMutation::Fill { .. }) => {
+                mutation_values.first().cloned().unwrap_or_default()
+            }
+            Some(PreciseArrayMutation::Push(_)) => mutation_values
+                .get(index.saturating_sub(length))
+                .cloned()
+                .unwrap_or_default(),
+            Some(PreciseArrayMutation::Shift) => moved_value(index.saturating_add(1)),
+            Some(PreciseArrayMutation::Unshift(inserted)) => {
+                if index < inserted {
+                    mutation_values.get(index).cloned().unwrap_or_default()
+                } else {
+                    moved_value(index - inserted)
+                }
+            }
+            Some(PreciseArrayMutation::Splice {
+                start,
+                delete,
+                inserted,
+            }) => {
+                let start = Self::normalized_array_start(start, length);
+                let delete = delete.map_or(length.saturating_sub(start), |delete| {
+                    usize::try_from(delete.max(0))
+                        .unwrap_or(usize::MAX)
+                        .min(length.saturating_sub(start))
+                });
+                if index < start.saturating_add(inserted) {
+                    mutation_values
+                        .get(index.saturating_sub(start))
+                        .cloned()
+                        .unwrap_or_default()
+                } else if inserted < delete {
+                    moved_value(index.saturating_add(delete - inserted))
+                } else {
+                    moved_value(index.saturating_sub(inserted - delete))
+                }
+            }
+            Some(PreciseArrayMutation::Sort) => self
+                .array_element_copy_sources(source)
+                .into_iter()
+                .map(|source| self.collect_local_invocation_path(source))
+                .collect(),
+            Some(PreciseArrayMutation::Pop) | None => Vec::new(),
         }
     }
 
@@ -36885,11 +37205,31 @@ impl StaticHookAliasCollector<'_> {
         recorded_result_index: Option<usize>,
         timing: LocalAliasInvocationTiming,
     ) -> bool {
+        self.activate_local_array_getter_read_value(
+            source,
+            index,
+            recorded_result_index,
+            None,
+            timing,
+            false,
+        )
+        .0
+    }
+
+    fn activate_local_array_getter_read_value(
+        &mut self,
+        source: &StaticAliasPath,
+        index: usize,
+        recorded_result_index: Option<usize>,
+        value_target: Option<StaticAliasPath>,
+        timing: LocalAliasInvocationTiming,
+        conditional_invocation: bool,
+    ) -> (bool, Vec<LocalInvocationArgument>) {
         let element = source.clone().with_property(index.to_string());
         let Some((_, _, mut invocations)) =
             self.local_getter_read_invocations(&element, None, true)
         else {
-            return false;
+            return (false, vec![self.collect_local_invocation_path(element)]);
         };
         for invocation in &mut invocations {
             invocation.historical_callee = true;
@@ -36897,13 +37237,55 @@ impl StaticHookAliasCollector<'_> {
         if recorded_result_index != Some(index) {
             self.local_invocations.extend(invocations.iter().cloned());
         }
-        let conditional_invocation = self.current_execution_is_branch_conditional();
         self.activate_precise_local_alias_invocations_with_conditionality(
             &invocations,
             timing,
-            conditional_invocation,
+            conditional_invocation || self.current_execution_is_branch_conditional(),
         );
-        true
+        let arguments = value_target.map_or_else(Vec::new, |target| {
+            let mut result_invocations = invocations;
+            for invocation in &mut result_invocations {
+                invocation.result_discarded = false;
+            }
+            self.record_callable_result_initializer_from_invocations(
+                target.clone(),
+                result_invocations,
+                None,
+            );
+            vec![self.collect_local_invocation_path(target)]
+        });
+        (true, arguments)
+    }
+
+    fn local_array_write_is_rejected(&self, property: &StaticAliasPath) -> bool {
+        let setters = self.current_local_setters(property);
+        let getters = self.current_local_getters(property);
+        setters.is_empty() && (!getters.is_empty() || !self.local_property_is_writable(property))
+    }
+
+    fn activate_local_array_setter_write(
+        &mut self,
+        source: &StaticAliasPath,
+        index: usize,
+        arguments: Vec<LocalInvocationArgument>,
+        timing: LocalAliasInvocationTiming,
+        conditional_invocation: bool,
+    ) -> (bool, bool) {
+        let property = source.clone().with_property(index.to_string());
+        if self.local_array_write_is_rejected(&property) {
+            return (false, true);
+        }
+        let invocation_start = self.local_invocations.len();
+        if !self.record_current_local_setter_invocations_with_arguments(&property, arguments) {
+            return (false, false);
+        }
+        let invocations = self.local_invocations[invocation_start..].to_vec();
+        self.activate_precise_local_alias_invocations_with_conditionality(
+            &invocations,
+            timing,
+            conditional_invocation || self.current_execution_is_branch_conditional(),
+        );
+        (true, false)
     }
 
     fn activate_local_array_mutation_getter_reads(
@@ -36913,11 +37295,14 @@ impl StaticHookAliasCollector<'_> {
         method: &str,
         length: usize,
         recorded_result_index: Option<usize>,
-        timing: LocalAliasInvocationTiming,
-    ) -> bool {
-        if length == 0 {
-            return false;
-        }
+        context: LocalArrayMutationAccessorContext<'_>,
+    ) -> (bool, BTreeSet<usize>) {
+        let LocalArrayMutationAccessorContext {
+            value_target,
+            mutation_values,
+            timing,
+            conditional_invocation,
+        } = context;
         let Some(mutation) = mutation.filter(|_| length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS)
         else {
             let mut activated = false;
@@ -36929,10 +37314,30 @@ impl StaticHookAliasCollector<'_> {
                     timing,
                 );
             }
-            return activated;
-        };
-        let rejected_write = |collector: &Self, index: usize| {
-            !collector.local_property_is_writable(&source.clone().with_property(index.to_string()))
+            let mut intercepted_writes = BTreeSet::new();
+            for index in self.local_array_mutation_setter_write_indices(mutation, method, length) {
+                let arguments = self.fallback_array_setter_arguments(
+                    source,
+                    mutation,
+                    index,
+                    length,
+                    mutation_values,
+                );
+                let (intercepted, rejected) = self.activate_local_array_setter_write(
+                    source,
+                    index,
+                    arguments,
+                    timing,
+                    conditional_invocation,
+                );
+                if intercepted {
+                    intercepted_writes.insert(index);
+                }
+                if rejected {
+                    break;
+                }
+            }
+            return (activated, intercepted_writes);
         };
         let rejected_delete = |collector: &Self, index: usize| {
             !collector.local_reflect_delete_property_is_configurable(
@@ -36940,14 +37345,53 @@ impl StaticHookAliasCollector<'_> {
             )
         };
         let mut activated = false;
-        macro_rules! read_getter {
+        let mut intercepted_writes = BTreeSet::new();
+        let mut read_sequence = 0usize;
+        macro_rules! read_value {
             ($index:expr) => {{
-                activated |= self.activate_local_array_getter_read(
+                let target = value_target
+                    .clone()
+                    .with_property(format!("<getter-result-{}>", read_sequence));
+                read_sequence = read_sequence.saturating_add(1);
+                let (read_activated, arguments) = self.activate_local_array_getter_read_value(
                     source,
                     $index,
                     recorded_result_index,
+                    Some(target),
                     timing,
+                    conditional_invocation,
                 );
+                activated |= read_activated;
+                arguments
+            }};
+        }
+        macro_rules! read_getter {
+            ($index:expr) => {{
+                activated |= self
+                    .activate_local_array_getter_read_value(
+                        source,
+                        $index,
+                        recorded_result_index,
+                        None,
+                        timing,
+                        conditional_invocation,
+                    )
+                    .0;
+            }};
+        }
+        macro_rules! write_value {
+            ($index:expr, $arguments:expr) => {{
+                let (intercepted, rejected) = self.activate_local_array_setter_write(
+                    source,
+                    $index,
+                    $arguments,
+                    timing,
+                    conditional_invocation,
+                );
+                if intercepted {
+                    intercepted_writes.insert($index);
+                }
+                rejected
             }};
         }
         match mutation {
@@ -36955,24 +37399,37 @@ impl StaticHookAliasCollector<'_> {
                 for lower in 0..(length / 2) {
                     let upper = length - lower - 1;
                     let lower_present = self.local_array_index_presence(source, lower);
-                    if lower_present != Some(false) {
-                        read_getter!(lower);
-                    }
+                    let lower_value = if lower_present != Some(false) {
+                        read_value!(lower)
+                    } else {
+                        Vec::new()
+                    };
                     let upper_present = self.local_array_index_presence(source, upper);
-                    if upper_present != Some(false) {
-                        read_getter!(upper);
-                    }
+                    let upper_value = if upper_present != Some(false) {
+                        read_value!(upper)
+                    } else {
+                        Vec::new()
+                    };
                     let rejected = match (lower_present, upper_present) {
                         (Some(true), Some(true)) => {
-                            rejected_write(self, lower) || rejected_write(self, upper)
+                            write_value!(lower, upper_value) || write_value!(upper, lower_value)
                         }
                         (Some(false), Some(true)) => {
-                            rejected_write(self, lower) || rejected_delete(self, upper)
+                            write_value!(lower, upper_value) || rejected_delete(self, upper)
                         }
                         (Some(true), Some(false)) => {
-                            rejected_delete(self, lower) || rejected_write(self, upper)
+                            rejected_delete(self, lower) || write_value!(upper, lower_value)
                         }
-                        (Some(false), Some(false)) | (None, _) | (_, None) => false,
+                        (Some(false), Some(false)) => false,
+                        _ => {
+                            if upper_present != Some(false) {
+                                let _ = write_value!(lower, upper_value);
+                            }
+                            if lower_present != Some(false) {
+                                let _ = write_value!(upper, lower_value);
+                            }
+                            false
+                        }
                     };
                     if rejected {
                         break;
@@ -36980,9 +37437,17 @@ impl StaticHookAliasCollector<'_> {
                 }
             }
             PreciseArrayMutation::Sort => {
+                let mut values = Vec::new();
                 for index in 0..length {
                     if self.local_array_index_presence(source, index) != Some(false) {
-                        read_getter!(index);
+                        values.push(read_value!(index));
+                    }
+                }
+                let item_count = values.len();
+                let arguments = values.into_iter().flatten().collect::<Vec<_>>();
+                for index in 0..item_count {
+                    if write_value!(index, arguments.clone()) {
+                        break;
                     }
                 }
             }
@@ -36999,48 +37464,99 @@ impl StaticHookAliasCollector<'_> {
                     let offset = if reverse { copied - offset - 1 } else { offset };
                     let source_index = start.saturating_add(offset);
                     let present = self.local_array_index_presence(source, source_index);
-                    if present != Some(false) {
-                        read_getter!(source_index);
-                    }
+                    let value = if present != Some(false) {
+                        read_value!(source_index)
+                    } else {
+                        Vec::new()
+                    };
                     let target = target.saturating_add(offset);
-                    if (present == Some(true) && rejected_write(self, target))
+                    if (present == Some(true) && write_value!(target, value.clone()))
                         || (present == Some(false) && rejected_delete(self, target))
                     {
+                        break;
+                    }
+                    if present.is_none() {
+                        let _ = write_value!(target, value);
+                    }
+                }
+            }
+            PreciseArrayMutation::Fill { start, end } => {
+                let start = Self::normalized_array_start(start, length);
+                let end = Self::normalized_array_start(
+                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
+                    length,
+                )
+                .max(start);
+                let arguments = mutation_values.first().cloned().unwrap_or_default();
+                for index in start..end {
+                    if write_value!(index, arguments.clone()) {
                         break;
                     }
                 }
             }
-            PreciseArrayMutation::Fill { .. } | PreciseArrayMutation::Push(_) => {}
             PreciseArrayMutation::Pop => {
-                read_getter!(length - 1);
+                if length > 0 {
+                    read_getter!(length - 1);
+                }
+            }
+            PreciseArrayMutation::Push(inserted) => {
+                for offset in 0..inserted {
+                    let index = length.saturating_add(offset);
+                    let arguments = mutation_values.get(offset).cloned().unwrap_or_default();
+                    if write_value!(index, arguments) {
+                        break;
+                    }
+                }
             }
             PreciseArrayMutation::Shift => {
-                read_getter!(0);
+                if length > 0 {
+                    read_getter!(0);
+                }
                 for source_index in 1..length {
                     let present = self.local_array_index_presence(source, source_index);
-                    if present != Some(false) {
-                        read_getter!(source_index);
-                    }
+                    let value = if present != Some(false) {
+                        read_value!(source_index)
+                    } else {
+                        Vec::new()
+                    };
                     let target = source_index - 1;
-                    if (present == Some(true) && rejected_write(self, target))
+                    if (present == Some(true) && write_value!(target, value.clone()))
                         || (present == Some(false) && rejected_delete(self, target))
                     {
                         break;
+                    }
+                    if present.is_none() {
+                        let _ = write_value!(target, value);
                     }
                 }
             }
             PreciseArrayMutation::Unshift(inserted) => {
                 if inserted > 0 {
+                    let mut rejected = false;
                     for source_index in (0..length).rev() {
                         let present = self.local_array_index_presence(source, source_index);
-                        if present != Some(false) {
-                            read_getter!(source_index);
-                        }
+                        let value = if present != Some(false) {
+                            read_value!(source_index)
+                        } else {
+                            Vec::new()
+                        };
                         let target = source_index.saturating_add(inserted);
-                        if (present == Some(true) && rejected_write(self, target))
+                        if (present == Some(true) && write_value!(target, value.clone()))
                             || (present == Some(false) && rejected_delete(self, target))
                         {
+                            rejected = true;
                             break;
+                        }
+                        if present.is_none() {
+                            let _ = write_value!(target, value);
+                        }
+                    }
+                    if !rejected {
+                        for index in 0..inserted {
+                            let arguments = mutation_values.get(index).cloned().unwrap_or_default();
+                            if write_value!(index, arguments) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -37061,38 +37577,61 @@ impl StaticHookAliasCollector<'_> {
                         read_getter!(index);
                     }
                 }
+                let mut rejected = false;
                 if inserted < delete {
                     let shift = delete - inserted;
                     for source_index in start.saturating_add(delete)..length {
                         let present = self.local_array_index_presence(source, source_index);
-                        if present != Some(false) {
-                            read_getter!(source_index);
-                        }
+                        let value = if present != Some(false) {
+                            read_value!(source_index)
+                        } else {
+                            Vec::new()
+                        };
                         let target = source_index - shift;
-                        if (present == Some(true) && rejected_write(self, target))
+                        if (present == Some(true) && write_value!(target, value.clone()))
                             || (present == Some(false) && rejected_delete(self, target))
                         {
+                            rejected = true;
                             break;
+                        }
+                        if present.is_none() {
+                            let _ = write_value!(target, value);
                         }
                     }
                 } else if inserted > delete {
                     let shift = inserted - delete;
                     for source_index in (start.saturating_add(delete)..length).rev() {
                         let present = self.local_array_index_presence(source, source_index);
-                        if present != Some(false) {
-                            read_getter!(source_index);
-                        }
+                        let value = if present != Some(false) {
+                            read_value!(source_index)
+                        } else {
+                            Vec::new()
+                        };
                         let target = source_index.saturating_add(shift);
-                        if (present == Some(true) && rejected_write(self, target))
+                        if (present == Some(true) && write_value!(target, value.clone()))
                             || (present == Some(false) && rejected_delete(self, target))
                         {
+                            rejected = true;
+                            break;
+                        }
+                        if present.is_none() {
+                            let _ = write_value!(target, value);
+                        }
+                    }
+                }
+                if !rejected {
+                    for offset in 0..inserted {
+                        let target = start.saturating_add(offset);
+                        let arguments = mutation_values.get(offset).cloned().unwrap_or_default();
+                        if write_value!(target, arguments) {
                             break;
                         }
                     }
                 }
             }
         }
-        activated
+        let _ = read_sequence;
+        (activated, intercepted_writes)
     }
 
     fn precise_array_mutation_from_deferred(
@@ -37393,7 +37932,7 @@ impl StaticHookAliasCollector<'_> {
         effect: &LocalArrayMutationEffect,
     ) -> bool {
         effect.writes.iter().all(|index| {
-            self.local_property_is_writable(&owner.clone().with_property(index.to_string()))
+            !self.local_array_write_is_rejected(&owner.clone().with_property(index.to_string()))
         }) && effect.deletes.iter().all(|index| {
             self.local_reflect_delete_property_is_configurable(
                 &owner.clone().with_property(index.to_string()),
@@ -37421,9 +37960,42 @@ impl StaticHookAliasCollector<'_> {
         self.open_structured_containers.remove(owner);
     }
 
-    fn clear_local_array_index_history(&mut self, owner: &StaticAliasPath, extent: usize) {
-        for index in 0..extent {
-            self.clear_alias_target_history(&owner.clone().with_property(index.to_string()));
+    fn preserve_intercepted_array_writes(
+        &self,
+        owner: &StaticAliasPath,
+        effect: &mut LocalArrayMutationEffect,
+        intercepted: &BTreeSet<usize>,
+    ) {
+        let current_properties = self
+            .tracked_structured_own_properties(owner)
+            .map(|(_, properties)| properties.clone())
+            .unwrap_or_default();
+        for index in intercepted {
+            effect.writes.remove(index);
+            let property = index.to_string();
+            if current_properties.contains(&property) {
+                effect.properties.insert(*index);
+            } else {
+                effect.properties.remove(index);
+            }
+            if let Some(sources) = effect.sources.get_mut(*index) {
+                sources.clear();
+                if current_properties.contains(&property) {
+                    sources.insert(*index);
+                }
+            }
+        }
+    }
+
+    fn clear_local_array_mutation_targets(
+        &mut self,
+        owner: &StaticAliasPath,
+        effect: &LocalArrayMutationEffect,
+    ) {
+        for index in effect.writes.iter().chain(&effect.deletes) {
+            let target = owner.clone().with_property(index.to_string());
+            self.clear_alias_target_history(&target);
+            self.clear_array_mutation_target_aliases(&target);
         }
     }
 
@@ -38433,8 +39005,9 @@ impl StaticHookAliasCollector<'_> {
         call: &CallExpression<'_>,
         plan: LocalArrayMutationPlan,
         conditional: bool,
+        intercepted_setter_writes: &BTreeSet<usize>,
     ) {
-        let property_effect = plan
+        let mut property_effect = plan
             .source_length
             .filter(|length| *length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS && plan.stable_arguments)
             .and_then(|length| {
@@ -38442,6 +39015,9 @@ impl StaticHookAliasCollector<'_> {
                     self.precise_local_array_mutation_effect(&plan.source, length, mutation)
                 })
             });
+        if let Some((owner, effect)) = &mut property_effect {
+            self.preserve_intercepted_array_writes(owner, effect, intercepted_setter_writes);
+        }
         if property_effect.as_ref().is_some_and(|(owner, effect)| {
             !self.local_array_mutation_effect_is_allowed(owner, effect)
         }) {
@@ -38478,12 +39054,10 @@ impl StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         self.external_storage_flow
             .detach_shallow_copy_sources(&plan.source, &plan.snapshot);
-        self.clear_overlapping_aliases(&plan.source.with_element_wildcard());
         if let Some((owner, effect)) = &property_effect {
-            self.clear_local_array_index_history(
-                owner,
-                plan.source_length.unwrap_or_default().max(effect.length),
-            );
+            self.clear_local_array_mutation_targets(owner, effect);
+        } else if intercepted_setter_writes.is_empty() {
+            self.clear_overlapping_aliases(&plan.source.with_element_wildcard());
         }
         self.external_storage_flow.clear_array_element_copies(
             &plan.source,
@@ -38588,6 +39162,9 @@ impl StaticHookAliasCollector<'_> {
                         .and_then(|argument| argument.as_expression())
                     {
                         for index in start..end {
+                            if intercepted_setter_writes.contains(&index) {
+                                continue;
+                            }
                             self.collect_initializer(
                                 plan.source.clone().with_property(index.to_string()),
                                 value,
@@ -38609,10 +39186,12 @@ impl StaticHookAliasCollector<'_> {
                 let result_length = length.checked_add(call.arguments.len());
                 if let Some(result_length) = result_length {
                     for (offset, argument) in call.arguments.iter().enumerate() {
+                        let index = length.saturating_add(offset);
+                        if intercepted_setter_writes.contains(&index) {
+                            continue;
+                        }
                         self.collect_initializer(
-                            plan.source
-                                .clone()
-                                .with_property(length.saturating_add(offset).to_string()),
+                            plan.source.clone().with_property(index.to_string()),
                             argument.as_expression().expect("stable array argument"),
                         );
                     }
@@ -38632,6 +39211,9 @@ impl StaticHookAliasCollector<'_> {
                 if let Some(result_length) = length.checked_add(inserted) {
                     self.record_array_mutation_snapshot_range(&plan, inserted, 0, length);
                     for (index, argument) in call.arguments.iter().enumerate() {
+                        if intercepted_setter_writes.contains(&index) {
+                            continue;
+                        }
                         self.collect_initializer(
                             plan.source.clone().with_property(index.to_string()),
                             argument.as_expression().expect("stable array argument"),
@@ -38671,10 +39253,12 @@ impl StaticHookAliasCollector<'_> {
                     let inserted = call.arguments.len().saturating_sub(2);
                     self.record_array_mutation_snapshot_range(&plan, 0, 0, start);
                     for (offset, argument) in call.arguments.iter().skip(2).enumerate() {
+                        let index = start.saturating_add(offset);
+                        if intercepted_setter_writes.contains(&index) {
+                            continue;
+                        }
                         self.collect_initializer(
-                            plan.source
-                                .clone()
-                                .with_property(start.saturating_add(offset).to_string()),
+                            plan.source.clone().with_property(index.to_string()),
                             argument.as_expression().expect("stable array argument"),
                         );
                     }
@@ -48611,16 +49195,60 @@ impl StaticHookAliasCollector<'_> {
         target: &StaticAliasPath,
         mutation: &DeferredArrayMutation,
         length: usize,
-    ) {
+        mappers: &[Vec<LocalInvocationFact>],
+        conditional: bool,
+    ) -> BTreeSet<usize> {
         let precise = Self::precise_array_mutation_from_deferred(&mutation.kind);
+        let values = self.mapped_deferred_array_mutation_setter_arguments(mutation, mappers);
         self.activate_local_array_mutation_getter_reads(
             target,
             precise,
             &mutation.method,
             length,
             None,
-            LocalAliasInvocationTiming::Eager,
-        );
+            LocalArrayMutationAccessorContext {
+                value_target: &mutation.snapshot,
+                mutation_values: &values,
+                timing: LocalAliasInvocationTiming::Eager,
+                conditional_invocation: conditional,
+            },
+        )
+        .1
+    }
+
+    fn mapped_deferred_array_mutation_setter_arguments(
+        &self,
+        mutation: &DeferredArrayMutation,
+        mappers: &[Vec<LocalInvocationFact>],
+    ) -> Vec<Vec<LocalInvocationArgument>> {
+        let values = match &mutation.kind {
+            DeferredArrayMutationKind::Fill { value, .. } => std::slice::from_ref(value),
+            DeferredArrayMutationKind::Push(values)
+            | DeferredArrayMutationKind::Unshift(values)
+            | DeferredArrayMutationKind::Splice { values, .. } => values,
+            _ => &[],
+        };
+        values
+            .iter()
+            .map(|value| {
+                value
+                    .sources
+                    .iter()
+                    .flat_map(|argument| {
+                        if mappers.is_empty() {
+                            vec![argument.clone()]
+                        } else {
+                            mappers
+                                .iter()
+                                .flat_map(|mapper| {
+                                    self.map_returned_callable_invocation_argument(argument, mapper)
+                                })
+                                .collect()
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     fn apply_deferred_array_mutation(
@@ -48643,21 +49271,30 @@ impl StaticHookAliasCollector<'_> {
             .map(|(candidate, properties)| (candidate.clone(), properties.clone()))
             .collect::<Vec<_>>();
         let known_length = self.known_array_length(&target);
-        if let Some(length) = known_length {
-            self.activate_deferred_array_mutation_getter_reads(&target, mutation, length);
-        }
+        let intercepted_setter_writes = known_length.map_or_else(BTreeSet::new, |length| {
+            self.activate_deferred_array_mutation_getter_reads(
+                &target,
+                mutation,
+                length,
+                mappers,
+                conditional,
+            )
+        });
         let old_properties = self
             .structured_own_properties
             .get(&target)
             .cloned()
             .unwrap_or_default();
-        let property_effect = known_length
+        let mut property_effect = known_length
             .filter(|length| *length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS)
             .and_then(|length| {
                 Self::precise_array_mutation_from_deferred(&mutation.kind).and_then(|mutation| {
                     self.precise_local_array_mutation_effect(&target, length, mutation)
                 })
             });
+        if let Some((owner, effect)) = &mut property_effect {
+            self.preserve_intercepted_array_writes(owner, effect, &intercepted_setter_writes);
+        }
         if property_effect.as_ref().is_some_and(|(owner, effect)| {
             !self.local_array_mutation_effect_is_allowed(owner, effect)
         }) {
@@ -48697,12 +49334,10 @@ impl StaticHookAliasCollector<'_> {
             .snapshot_subtree(&snapshot, &target);
         self.external_storage_flow
             .detach_shallow_copy_sources(&target, &snapshot);
-        self.clear_overlapping_aliases(&target.with_element_wildcard());
         if let Some((owner, effect)) = &property_effect {
-            self.clear_local_array_index_history(
-                owner,
-                known_length.unwrap_or_default().max(effect.length),
-            );
+            self.clear_local_array_mutation_targets(owner, effect);
+        } else if intercepted_setter_writes.is_empty() {
+            self.clear_overlapping_aliases(&target.with_element_wildcard());
         }
         self.external_storage_flow.clear_array_element_copies(
             &target,
@@ -48744,6 +49379,7 @@ impl StaticHookAliasCollector<'_> {
             .collect::<BTreeSet<_>>();
         let mut new_length = length;
         let mut new_sources = old_sources.expect("known deferred array length has slot sources");
+        let original_sources = new_sources.clone();
         let mut pending_values = Vec::<(usize, &DeferredArrayMutationValue)>::new();
 
         match &mutation.kind {
@@ -48955,6 +49591,18 @@ impl StaticHookAliasCollector<'_> {
             DeferredArrayMutationKind::Opaque => unreachable!("opaque mutations return early"),
         }
 
+        for index in &intercepted_setter_writes {
+            let Some(source) = new_sources.get_mut(*index) else {
+                continue;
+            };
+            *source = original_sources.get(*index).cloned().flatten();
+            if old_properties.contains(&index.to_string()) {
+                numeric_properties.insert(*index);
+            } else {
+                numeric_properties.remove(index);
+            }
+        }
+
         debug_assert_eq!(new_sources.len(), new_length);
         for (index, source) in new_sources.into_iter().enumerate() {
             let Some(source) = source.filter(|source| !source.starts_with(&target)) else {
@@ -48963,6 +49611,9 @@ impl StaticHookAliasCollector<'_> {
             self.insert_alias(target.clone().with_property(index.to_string()), source);
         }
         for (index, value) in pending_values {
+            if intercepted_setter_writes.contains(&index) {
+                continue;
+            }
             self.apply_deferred_array_value(&target, index, value, mappers);
         }
 
@@ -52637,32 +53288,41 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         } else {
             None
         };
+        let mut local_array_setter_writes = BTreeSet::new();
         walk_call_expression(self, call);
         if let Some(plan) = local_array_mutation.as_ref()
             && !local_array_mutation_is_deferred
             && !self
                 .handled_local_array_getter_read_spans
                 .contains(&call_span)
-            && let Some(length) = self
-                .known_array_length(&plan.source)
-                .filter(|length| *length > 0)
+            && let Some(length) = self.known_array_length(&plan.source)
         {
             let returned_index = match plan.method.as_str() {
-                "pop" => Some(length - 1),
-                "shift" => Some(0),
+                "pop" => length.checked_sub(1),
+                "shift" => (length > 0).then_some(0),
                 _ => None,
             };
             let returned_getter_was_recorded =
                 self.handled_local_getter_read_spans.contains(&call_span);
-            let mutation = Self::precise_array_mutation_from_call(call, &plan.method);
-            let activated = self.activate_local_array_mutation_getter_reads(
+            let mutation = plan
+                .stable_arguments
+                .then(|| Self::precise_array_mutation_from_call(call, &plan.method))
+                .flatten();
+            let mutation_values = self.local_array_mutation_setter_arguments(call, &plan.method);
+            let (activated, intercepted_writes) = self.activate_local_array_mutation_getter_reads(
                 &plan.source,
                 mutation,
                 &plan.method,
                 length,
                 returned_index.filter(|_| returned_getter_was_recorded),
-                local_alias_timing,
+                LocalArrayMutationAccessorContext {
+                    value_target: &plan.snapshot,
+                    mutation_values: &mutation_values,
+                    timing: local_alias_timing,
+                    conditional_invocation: false,
+                },
             );
+            local_array_setter_writes = intercepted_writes;
             if activated {
                 self.handled_local_array_getter_read_spans.insert(call_span);
                 self.handled_local_getter_read_spans.insert(call_span);
@@ -52738,7 +53398,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         if let Some(mutation) = local_array_mutation
             && !local_array_mutation_is_deferred
         {
-            self.apply_local_array_mutation(call, mutation, !unconditional);
+            self.apply_local_array_mutation(
+                call,
+                mutation,
+                !unconditional,
+                &local_array_setter_writes,
+            );
         }
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
