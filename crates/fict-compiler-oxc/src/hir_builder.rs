@@ -21723,6 +21723,8 @@ struct StaticHookAliasCollector<'semantic> {
     external_callable_parameters: BTreeSet<SymbolId>,
     control_depth: usize,
     function_control_baselines: Vec<usize>,
+    try_control_depth: usize,
+    function_try_control_baselines: Vec<usize>,
     function_depth: usize,
     dynamic_this_roots: Vec<Option<StaticAliasPath>>,
     generator_iterator_invocations: BTreeMap<StaticAliasPath, Vec<LocalInvocationFact>>,
@@ -22012,6 +22014,7 @@ enum DeferredCallableOperationKind {
         non_configurable: bool,
         non_extensible: bool,
         container: bool,
+        conditional: bool,
     },
     ArrayMutation {
         mutation: DeferredArrayMutation,
@@ -23002,6 +23005,8 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             external_callable_parameters: BTreeSet::new(),
             control_depth: 0,
             function_control_baselines: Vec::new(),
+            try_control_depth: 0,
+            function_try_control_baselines: Vec::new(),
             function_depth: 0,
             dynamic_this_roots: Vec::new(),
             generator_iterator_invocations: BTreeMap::new(),
@@ -36873,7 +36878,12 @@ impl StaticHookAliasCollector<'_> {
         if recorded_result_index != Some(index) {
             self.local_invocations.extend(invocations.iter().cloned());
         }
-        self.activate_precise_local_alias_invocations(&invocations, timing);
+        let conditional_invocation = self.current_execution_is_branch_conditional();
+        self.activate_precise_local_alias_invocations_with_conditionality(
+            &invocations,
+            timing,
+            conditional_invocation,
+        );
         true
     }
 
@@ -44245,6 +44255,21 @@ impl StaticHookAliasCollector<'_> {
                 .is_some_and(|baseline| self.control_depth == *baseline)
     }
 
+    fn current_execution_is_branch_conditional(&self) -> bool {
+        let control_baseline = self
+            .function_control_baselines
+            .last()
+            .copied()
+            .unwrap_or_default();
+        let try_baseline = self
+            .function_try_control_baselines
+            .last()
+            .copied()
+            .unwrap_or_default();
+        self.control_depth.saturating_sub(control_baseline)
+            > self.try_control_depth.saturating_sub(try_baseline)
+    }
+
     fn constructor_may_mutate_arguments(&self, callee: &Expression<'_>) -> bool {
         if let Some(path) = static_alias_source_path(self.scoping, callee) {
             return self.constructor_path_may_mutate_arguments(&path);
@@ -44944,6 +44969,56 @@ impl StaticHookAliasCollector<'_> {
             non_extensible,
             container,
         ))
+    }
+
+    fn defer_local_descriptor_protection(
+        &mut self,
+        target: &StaticAliasPath,
+        non_writable: bool,
+        non_configurable: bool,
+        non_extensible: bool,
+        container: bool,
+        conditional: bool,
+    ) -> bool {
+        if !(non_writable || non_configurable || non_extensible) {
+            return false;
+        }
+        let Some(span) = self.deferred_callable_alias_capture_span(target) else {
+            return false;
+        };
+        self.record_deferred_callable_operation(
+            span,
+            target.clone(),
+            DeferredCallableOperationKind::DescriptorProtection {
+                non_writable,
+                non_configurable,
+                non_extensible,
+                container,
+                conditional,
+            },
+        );
+        true
+    }
+
+    fn defer_applied_local_descriptor_protection(&mut self, property: &StaticAliasPath) {
+        let non_writable = self.local_property_has_descriptor_metadata(
+            property,
+            &self.non_writable_descriptor_properties,
+            &self.non_writable_descriptor_containers,
+        );
+        let non_configurable = self.local_property_has_descriptor_metadata(
+            property,
+            &self.non_configurable_descriptor_properties,
+            &self.non_configurable_descriptor_containers,
+        );
+        self.defer_local_descriptor_protection(
+            property,
+            non_writable,
+            non_configurable,
+            false,
+            false,
+            false,
+        );
     }
 
     fn local_object_integrity_result(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
@@ -47430,16 +47505,29 @@ impl StaticHookAliasCollector<'_> {
         invocations: &[LocalInvocationFact],
         timing: LocalAliasInvocationTiming,
     ) {
-        // Materialize direct invocations in source order. Conditional calls keep both the old and
-        // new value through alias ambiguity and the surrounding external-storage flow merge. A
-        // tracked generator creation remains deferred until its iterator is advanced; escaping and
-        // otherwise unresolved instances are rejoined by the conservative pass.
         let unconditional = self
             .function_control_baselines
             .last()
             .map_or(self.control_depth == 0, |baseline| {
                 self.control_depth == *baseline
             });
+        self.activate_precise_local_alias_invocations_with_conditionality(
+            invocations,
+            timing,
+            !unconditional,
+        );
+    }
+
+    fn activate_precise_local_alias_invocations_with_conditionality(
+        &mut self,
+        invocations: &[LocalInvocationFact],
+        timing: LocalAliasInvocationTiming,
+        conditional_invocation: bool,
+    ) {
+        // Materialize direct invocations in source order. Conditional calls keep both the old and
+        // new value through alias ambiguity and the surrounding external-storage flow merge. A
+        // tracked generator creation remains deferred until its iterator is advanced; escaping and
+        // otherwise unresolved instances are rejoined by the conservative pass.
         let invocations = invocations
             .iter()
             .cloned()
@@ -47457,7 +47545,6 @@ impl StaticHookAliasCollector<'_> {
                         .is_none()
                     && (!generator
                         || matches!(timing, LocalAliasInvocationTiming::GeneratorAdvance(_)));
-                let conditional_invocation = !unconditional;
                 let mut operations = self
                     .deferred_callable_operations
                     .get(&span)
@@ -47521,7 +47608,14 @@ impl StaticHookAliasCollector<'_> {
                 while let Some(operation) = operations.next() {
                     let target = operation.target;
                     let effect = (instance_target.clone(), span, target.clone());
-                    if conditional_invocation
+                    let conditional_operation = matches!(
+                        &operation.kind,
+                        DeferredCallableOperationKind::DescriptorProtection {
+                            conditional: true,
+                            ..
+                        }
+                    );
+                    if (conditional_invocation || conditional_operation)
                         && matches!(
                             &operation.kind,
                             DeferredCallableOperationKind::DeleteOwnProperty
@@ -47831,7 +47925,11 @@ impl StaticHookAliasCollector<'_> {
                 non_configurable,
                 non_extensible,
                 container,
+                conditional,
             } => {
+                if *conditional || conditional_invocation {
+                    return DeferredCallableOperationOutcome::Unresolved;
+                }
                 if *non_writable || *non_configurable {
                     self.descriptor_defined_properties
                         .insert(raw_target.clone());
@@ -49697,9 +49795,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         if is_parameter_detachment_control_context(kind) {
             self.control_depth = self.control_depth.saturating_add(1);
         }
+        if matches!(kind, AstKind::TryStatement(_)) {
+            self.try_control_depth = self.try_control_depth.saturating_add(1);
+        }
     }
 
     fn leave_node(&mut self, kind: AstKind<'a>) {
+        if matches!(kind, AstKind::TryStatement(_)) {
+            self.try_control_depth = self.try_control_depth.saturating_sub(1);
+        }
         if is_parameter_detachment_control_context(kind) {
             self.control_depth = self.control_depth.saturating_sub(1);
         }
@@ -50581,6 +50685,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .map(|(target, callable)| (target.clone(), callable.clone()))
             .collect::<Vec<_>>();
         self.function_control_baselines.push(self.control_depth);
+        self.function_try_control_baselines
+            .push(self.try_control_depth);
         self.function_depth = depth;
         self.current_callable_spans
             .push((function.span.start, function.span.end));
@@ -50855,6 +50961,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_bound_callables
             .extend(outer_local_bound_callables);
         self.function_control_baselines.pop();
+        self.function_try_control_baselines.pop();
         self.function_depth = depth - 1;
     }
 
@@ -51063,6 +51170,8 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .map(|(target, callable)| (target.clone(), callable.clone()))
             .collect::<Vec<_>>();
         self.function_control_baselines.push(self.control_depth);
+        self.function_try_control_baselines
+            .push(self.try_control_depth);
         self.function_depth = depth;
         self.current_callable_spans
             .push((function.span.start, function.span.end));
@@ -51325,6 +51434,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_bound_callables
             .extend(outer_local_bound_callables);
         self.function_control_baselines.pop();
+        self.function_try_control_baselines.pop();
         self.function_depth = depth - 1;
     }
 
@@ -52236,6 +52346,15 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     }
                     applied
                 });
+        if local_define_property_applied && let Some(property) = &local_define_property {
+            self.defer_applied_local_descriptor_protection(property);
+        }
+        if local_define_properties_applied && let Some((_, definitions)) = &local_define_properties
+        {
+            for (property, _) in definitions {
+                self.defer_applied_local_descriptor_protection(property);
+            }
+        }
         if local_define_property_applied
             && local_define_property
                 .as_ref()
@@ -52256,23 +52375,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             && !local_define_property_applied
             && !local_define_properties_applied
         {
-            if non_writable || non_configurable {
-                self.descriptor_defined_properties.insert(property.clone());
-            }
-            if let Some(span) = self.deferred_callable_alias_capture_span(&property)
-                && (non_writable || (non_extensible && unconditional))
-            {
-                self.record_deferred_callable_operation(
-                    span,
-                    property.clone(),
-                    DeferredCallableOperationKind::DescriptorProtection {
-                        non_writable,
-                        non_configurable: false,
-                        non_extensible: non_extensible && unconditional,
-                        container,
-                    },
-                );
-            } else {
+            let deferred = self.defer_local_descriptor_protection(
+                &property,
+                non_writable,
+                non_configurable,
+                non_extensible && unconditional,
+                container,
+                !unconditional,
+            );
+            if !deferred {
+                if non_writable || non_configurable {
+                    self.descriptor_defined_properties.insert(property.clone());
+                }
                 if non_writable && container {
                     self.non_writable_descriptor_containers
                         .insert(property.clone());
@@ -52284,11 +52398,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     self.non_extensible_descriptor_containers
                         .insert(property.clone());
                 }
-            }
-            if non_configurable && container {
-                self.non_configurable_descriptor_containers.insert(property);
-            } else if non_configurable {
-                self.non_configurable_descriptor_properties.insert(property);
+                if non_configurable && container {
+                    self.non_configurable_descriptor_containers.insert(property);
+                } else if non_configurable {
+                    self.non_configurable_descriptor_properties.insert(property);
+                }
             }
         }
         self.local_invocations.extend(local_invocations);
