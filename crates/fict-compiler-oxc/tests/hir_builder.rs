@@ -17208,6 +17208,24 @@ fn replaced_or_unread_setters_remain_unexecuted() {
             "source.run = 1;",
             "void source.run;",
         ),
+        (
+            "an invoked setter can delete a later setter",
+            "const source = { set first(value) { delete source.second; }, set second(value) { values.forEach = null; } };",
+            "source.first = 1;",
+            "source.second = 1;",
+        ),
+        (
+            "an invoked update setter can delete a later setter",
+            "const source = { set first(value) { delete source.second; }, set second(value) { values.forEach = null; } };",
+            "source.first++;",
+            "source.second = 1;",
+        ),
+        (
+            "an invoked compound assignment setter can delete a later setter",
+            "const source = { set first(value) { delete source.second; }, set second(value) { values.forEach = null; } };",
+            "source.first += 1;",
+            "source.second = 1;",
+        ),
     ] {
         let source = format!(
             r#"

@@ -2064,6 +2064,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .executed_setter_spans
                 .clone_from(&executed_setter_spans);
             collector.visit_program(program);
+            collector
+                .executed_setter_spans
+                .clone_from(&collector.current_executed_setter_spans);
             if collector.unexecuted_expression_spans == unexecuted_expression_spans
                 && collector.unexecuted_read_counts == unexecuted_read_counts
                 && collector.deferred_accessor_spans == deferred_accessor_spans
@@ -21716,6 +21719,7 @@ struct StaticHookAliasCollector<'semantic> {
     pending_expression_initializer_snapshots: BTreeMap<(u32, u32), Vec<StaticAliasPath>>,
     executed_descriptor_callable_spans: BTreeSet<(u32, u32)>,
     executed_setter_spans: BTreeSet<(u32, u32)>,
+    current_executed_setter_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
@@ -23017,6 +23021,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             pending_expression_initializer_snapshots: BTreeMap::new(),
             executed_descriptor_callable_spans: BTreeSet::new(),
             executed_setter_spans: BTreeSet::new(),
+            current_executed_setter_spans: BTreeSet::new(),
             merely_observed_callable_paths: generator.merely_observed_callable_paths.clone(),
             local_invocations: Vec::new(),
             attached_callable_parameters: BTreeSet::new(),
@@ -34300,6 +34305,7 @@ impl StaticHookAliasCollector<'_> {
 
     fn activate_local_setter(&mut self, setter: &StaticAliasPath) {
         for span in self.local_callable_path_effect_spans(setter) {
+            self.current_executed_setter_spans.insert(span);
             self.executed_setter_spans.insert(span);
             self.unreferenced_callable_spans.remove(&span);
             self.deferred_accessor_spans.remove(&span);
@@ -52642,6 +52648,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             })
             .flatten();
         let auto_accessor_write = auto_accessor_storage.is_some();
+        let setter_invocation_start = self.local_invocations.len();
         let mut accessor_write =
             if let Some(path) = place.as_ref().and_then(static_alias_invalidation_path) {
                 let invokes_setter = self.record_local_setter_invocations(&path, setter_value);
@@ -52655,6 +52662,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 );
                 assignment.operator == OxcAssignmentOperator::Assign && invokes_setter
             };
+        let mut setter_invocations = self.local_invocations[setter_invocation_start..].to_vec();
         let dynamic_descriptor_protected = computed_data_target
             .as_ref()
             .is_some_and(|target| !self.local_property_is_writable(target));
@@ -52852,12 +52860,18 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 }
             }
         }
+        let setter_invocation_start = self.local_invocations.len();
         if assignment.operator == OxcAssignmentOperator::Assign && !accessor_write {
             accessor_write = self.record_structured_assignment_target_setter_invocations(
                 &assignment.left,
                 setter_value,
             );
         }
+        setter_invocations.extend_from_slice(&self.local_invocations[setter_invocation_start..]);
+        self.activate_precise_local_alias_invocations(
+            &setter_invocations,
+            LocalAliasInvocationTiming::Eager,
+        );
         for span in suppressed_getter_reads {
             self.handled_local_getter_read_spans.remove(&span);
         }
@@ -53016,11 +53030,13 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
         let place = planned_simple_assignment_target_place(self.scoping, &update.argument);
         let path = place.as_ref().and_then(static_alias_invalidation_path);
+        let setter_invocation_start = self.local_invocations.len();
         if let Some(path) = &path {
             self.record_local_setter_invocations(path, None);
         } else {
             self.record_structured_simple_assignment_target_setter_invocations(&update.argument);
         }
+        let setter_invocations = self.local_invocations[setter_invocation_start..].to_vec();
         let dynamic_target = self.dynamic_computed_simple_assignment_data_target(&update.argument);
         let descriptor_rejects_update = dynamic_target.as_ref().map_or_else(
             || path.is_some_and(|path| !self.local_property_is_writable(&path)),
@@ -53030,6 +53046,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.invalidate_place(place);
         }
         oxc::ast_visit::walk::walk_update_expression(self, update);
+        self.activate_precise_local_alias_invocations(
+            &setter_invocations,
+            LocalAliasInvocationTiming::Eager,
+        );
     }
 
     fn visit_unary_expression(&mut self, expression: &oxc::ast::ast::UnaryExpression<'a>) {
