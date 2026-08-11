@@ -2086,9 +2086,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .executed_setter_spans
                 .clone_from(&executed_setter_spans);
             collector.visit_program(program);
-            collector
-                .executed_setter_spans
-                .clone_from(&collector.current_executed_setter_spans);
             if collector.unexecuted_expression_spans == unexecuted_expression_spans
                 && collector.unexecuted_read_counts == unexecuted_read_counts
                 && collector.deferred_accessor_spans == deferred_accessor_spans
@@ -20800,13 +20797,6 @@ struct LocalArrayMutationPlan {
     stable_arguments: bool,
 }
 
-struct LocalArrayMutationAccessorContext<'collector> {
-    value_target: &'collector StaticAliasPath,
-    mutation_values: &'collector [Vec<LocalInvocationArgument>],
-    timing: LocalAliasInvocationTiming,
-    conditional_invocation: bool,
-}
-
 #[derive(Clone, Copy)]
 enum PreciseArrayMutation {
     Reverse,
@@ -21620,7 +21610,6 @@ struct StaticHookAliasCollector<'semantic> {
     array_length_history: BTreeMap<StaticAliasPath, BTreeSet<usize>>,
     structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     open_structured_containers: BTreeSet<StaticAliasPath>,
-    precisely_enumerable_structured_containers: BTreeSet<StaticAliasPath>,
     local_getter_properties: BTreeSet<StaticAliasPath>,
     local_getter_property_history: BTreeSet<StaticAliasPath>,
     enumerable_getter_properties: BTreeSet<StaticAliasPath>,
@@ -21655,7 +21644,6 @@ struct StaticHookAliasCollector<'semantic> {
     local_value_truthiness_history: BTreeMap<StaticAliasPath, BTreeSet<LocalValueTruthiness>>,
     local_getter_call_invocations: BTreeMap<(u32, u32), Vec<LocalInvocationFact>>,
     handled_local_getter_read_spans: BTreeSet<(u32, u32)>,
-    handled_local_array_getter_read_spans: BTreeSet<(u32, u32)>,
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
     local_object_assign_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_value_enumeration_results: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -21761,7 +21749,6 @@ struct StaticHookAliasCollector<'semantic> {
     pending_expression_initializer_snapshots: BTreeMap<(u32, u32), Vec<StaticAliasPath>>,
     executed_descriptor_callable_spans: BTreeSet<(u32, u32)>,
     executed_setter_spans: BTreeSet<(u32, u32)>,
-    current_executed_setter_spans: BTreeSet<(u32, u32)>,
     merely_observed_callable_paths: BTreeSet<StaticAliasPath>,
     local_invocations: Vec<LocalInvocationFact>,
     attached_callable_parameters: BTreeSet<SymbolId>,
@@ -21771,13 +21758,9 @@ struct StaticHookAliasCollector<'semantic> {
     reflective_mutations: Vec<ReflectiveMemberMutationFact>,
     non_escaping_local_array_mutation_arguments: BTreeSet<(u32, u32)>,
     non_escaping_local_call_arguments: BTreeSet<(u32, u32)>,
-    pending_non_escaping_object_assign_arguments: Vec<PendingNonEscapingObjectAssignArgument>,
-    pending_object_assign_setter_rechecks: Vec<PendingObjectAssignSetterRecheck>,
     external_callable_parameters: BTreeSet<SymbolId>,
     control_depth: usize,
     function_control_baselines: Vec<usize>,
-    try_control_depth: usize,
-    function_try_control_baselines: Vec<usize>,
     function_depth: usize,
     dynamic_this_roots: Vec<Option<StaticAliasPath>>,
     generator_iterator_invocations: BTreeMap<StaticAliasPath, Vec<LocalInvocationFact>>,
@@ -21804,29 +21787,6 @@ struct ReflectiveMemberMutationFact {
     key: Option<String>,
     function_depth: usize,
     returned_callable_span: Option<(u32, u32)>,
-}
-
-#[derive(Clone)]
-struct PendingNonEscapingObjectAssignArgument {
-    call_span: (u32, u32),
-    span: (u32, u32),
-    targets: Vec<StaticAliasPath>,
-    requires_precise_final_target: bool,
-}
-
-#[derive(Clone)]
-struct PendingObjectAssignSetterRecheck {
-    call_span: (u32, u32),
-    target: StaticAliasPath,
-    dynamic_target: bool,
-}
-
-#[derive(Clone, Copy)]
-struct LocalObjectAssignSourceContext {
-    call_span: Span,
-    source_index: usize,
-    source_alternative_index: usize,
-    conditional_source: bool,
 }
 
 enum LocalDescriptorValue<'reference, 'ast> {
@@ -21858,7 +21818,6 @@ struct DeferredClassStateSnapshot {
     array_lengths: BTreeMap<StaticAliasPath, usize>,
     structured_own_properties: BTreeMap<StaticAliasPath, BTreeSet<String>>,
     open_structured_containers: BTreeSet<StaticAliasPath>,
-    precisely_enumerable_structured_containers: BTreeSet<StaticAliasPath>,
     local_getter_properties: BTreeSet<StaticAliasPath>,
     enumerable_getter_properties: BTreeSet<StaticAliasPath>,
     dynamic_getter_properties: BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
@@ -22067,26 +22026,6 @@ enum DeferredCallableOperationKind {
         non_configurable: bool,
         non_extensible: bool,
         container: bool,
-        conditional: bool,
-    },
-    DataDescriptorReplacement {
-        has_value: bool,
-        writable: Option<bool>,
-        configurable: Option<bool>,
-        enumerable: Option<bool>,
-        definedness: LocalGetterResultDefinedness,
-        truthiness: LocalValueTruthiness,
-        throws_on_rejection: bool,
-        conditional: bool,
-    },
-    AccessorDescriptorReplacement {
-        getter: Option<bool>,
-        getter_slot: Option<String>,
-        setter: Option<bool>,
-        configurable: Option<bool>,
-        enumerable: Option<bool>,
-        throws_on_rejection: bool,
-        conditional: bool,
     },
     ArrayMutation {
         mutation: DeferredArrayMutation,
@@ -22935,7 +22874,6 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             array_length_history: BTreeMap::new(),
             structured_own_properties: BTreeMap::new(),
             open_structured_containers: BTreeSet::new(),
-            precisely_enumerable_structured_containers: BTreeSet::new(),
             local_getter_properties: BTreeSet::new(),
             local_getter_property_history: BTreeSet::new(),
             enumerable_getter_properties: BTreeSet::new(),
@@ -22966,7 +22904,6 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_value_truthiness_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
             handled_local_getter_read_spans: BTreeSet::new(),
-            handled_local_array_getter_read_spans: BTreeSet::new(),
             handled_object_spread_getter_spans: BTreeSet::new(),
             local_object_assign_results: BTreeMap::new(),
             local_object_value_enumeration_results: BTreeMap::new(),
@@ -23063,7 +23000,6 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             pending_expression_initializer_snapshots: BTreeMap::new(),
             executed_descriptor_callable_spans: BTreeSet::new(),
             executed_setter_spans: BTreeSet::new(),
-            current_executed_setter_spans: BTreeSet::new(),
             merely_observed_callable_paths: generator.merely_observed_callable_paths.clone(),
             local_invocations: Vec::new(),
             attached_callable_parameters: BTreeSet::new(),
@@ -23073,13 +23009,9 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             reflective_mutations: Vec::new(),
             non_escaping_local_array_mutation_arguments: BTreeSet::new(),
             non_escaping_local_call_arguments: BTreeSet::new(),
-            pending_non_escaping_object_assign_arguments: Vec::new(),
-            pending_object_assign_setter_rechecks: Vec::new(),
             external_callable_parameters: BTreeSet::new(),
             control_depth: 0,
             function_control_baselines: Vec::new(),
-            try_control_depth: 0,
-            function_try_control_baselines: Vec::new(),
             function_depth: 0,
             dynamic_this_roots: Vec::new(),
             generator_iterator_invocations: BTreeMap::new(),
@@ -24544,14 +24476,6 @@ impl StaticHookAliasCollector<'_> {
         }
         let index = if method == "pop" { length - 1 } else { 0 };
         let element = source.clone().with_property(index.to_string());
-        if let Some((_, _, mut invocations)) =
-            self.local_getter_invocation_facts(&element, None, false)
-        {
-            for invocation in &mut invocations {
-                invocation.historical_callee = true;
-            }
-            return vec![LocalCallableResult::Invocation(invocations)];
-        }
         let resolved = resolve_static_alias_path(&self.aliases, &element);
         let mut candidates = self.external_storage_flow.alias_candidates(&element);
         candidates.retain(|candidate| candidate != &element && !candidate.starts_with(source));
@@ -25150,9 +25074,6 @@ impl StaticHookAliasCollector<'_> {
             array_lengths: self.array_lengths.clone(),
             structured_own_properties: self.structured_own_properties.clone(),
             open_structured_containers: self.open_structured_containers.clone(),
-            precisely_enumerable_structured_containers: self
-                .precisely_enumerable_structured_containers
-                .clone(),
             local_getter_properties: self.local_getter_properties.clone(),
             enumerable_getter_properties: self.enumerable_getter_properties.clone(),
             dynamic_getter_properties: self.dynamic_getter_properties.clone(),
@@ -25237,7 +25158,6 @@ impl StaticHookAliasCollector<'_> {
         restore_path_map!(array_lengths);
         restore_path_map!(structured_own_properties);
         restore_path_set!(open_structured_containers);
-        restore_path_set!(precisely_enumerable_structured_containers);
         restore_path_set!(local_getter_properties);
         restore_path_set!(enumerable_getter_properties);
         restore_path_map!(dynamic_getter_properties);
@@ -29489,17 +29409,8 @@ impl StaticHookAliasCollector<'_> {
         &mut self,
         expression: &Expression<'_>,
     ) -> Vec<StaticAliasPath> {
-        self.local_object_assign_value_paths_with_precision(expression, false)
-            .0
-    }
-
-    fn local_object_assign_value_paths_with_precision(
-        &mut self,
-        expression: &Expression<'_>,
-        allow_noop_primitive: bool,
-    ) -> (Vec<StaticAliasPath>, bool) {
         if let Some(source) = self.stored_spread_source_path(expression) {
-            return (vec![source], true);
+            return vec![source];
         }
         match expression.get_inner_expression() {
             Expression::ObjectExpression(object) => {
@@ -29509,7 +29420,7 @@ impl StaticHookAliasCollector<'_> {
                 self.structured_own_properties
                     .insert(target.clone(), BTreeSet::new());
                 self.collect_object(&target, object);
-                (vec![target], true)
+                vec![target]
             }
             Expression::ArrayExpression(array) => {
                 let target = StaticAliasPath::dynamic_this(array.span);
@@ -29518,202 +29429,47 @@ impl StaticHookAliasCollector<'_> {
                 self.structured_own_properties
                     .insert(target.clone(), BTreeSet::new());
                 self.collect_array(&target, array);
-                (vec![target], true)
-            }
-            Expression::StringLiteral(literal) if !literal.value.is_empty() => {
-                let target = StaticAliasPath::dynamic_this(literal.span);
-                self.dynamic_path_owner_depths
-                    .insert((literal.span.start, literal.span.end), self.function_depth);
-                self.structured_own_properties.insert(
-                    target.clone(),
-                    (0..literal.value.encode_utf16().count())
-                        .map(|index| index.to_string())
-                        .collect(),
-                );
-                (vec![target], true)
+                vec![target]
             }
             Expression::ConditionalExpression(expression) => {
-                let (mut paths, consequent_precise) = self
-                    .local_object_assign_value_paths_with_precision(
-                        &expression.consequent,
-                        allow_noop_primitive,
-                    );
-                let (alternate, alternate_precise) = self
-                    .local_object_assign_value_paths_with_precision(
-                        &expression.alternate,
-                        allow_noop_primitive,
-                    );
-                paths.extend(alternate);
+                let mut paths = self.local_object_assign_value_paths(&expression.consequent);
+                paths.extend(self.local_object_assign_value_paths(&expression.alternate));
                 paths.sort();
                 paths.dedup();
-                (paths, consequent_precise && alternate_precise)
+                paths
             }
             Expression::LogicalExpression(expression) => {
-                let (mut paths, left_precise) = self
-                    .local_object_assign_value_paths_with_precision(
-                        &expression.left,
-                        allow_noop_primitive,
-                    );
-                let (right, right_precise) = self.local_object_assign_value_paths_with_precision(
-                    &expression.right,
-                    allow_noop_primitive,
-                );
-                paths.extend(right);
+                let mut paths = self.local_object_assign_value_paths(&expression.left);
+                paths.extend(self.local_object_assign_value_paths(&expression.right));
                 paths.sort();
                 paths.dedup();
-                (paths, left_precise && right_precise)
+                paths
             }
             Expression::SequenceExpression(expression) => expression
                 .expressions
                 .last()
-                .map(|value| {
-                    self.local_object_assign_value_paths_with_precision(value, allow_noop_primitive)
-                })
-                .unwrap_or_else(|| (Vec::new(), false)),
+                .map(|value| self.local_object_assign_value_paths(value))
+                .unwrap_or_default(),
             Expression::AssignmentExpression(expression)
                 if expression.operator == OxcAssignmentOperator::Assign =>
             {
-                self.local_object_assign_value_paths_with_precision(
-                    &expression.right,
-                    allow_noop_primitive,
-                )
+                self.local_object_assign_value_paths(&expression.right)
             }
-            _ => (
-                Vec::new(),
-                allow_noop_primitive
-                    && Self::local_object_assign_source_has_no_enumerable_own_properties(
-                        expression,
-                    ),
-            ),
+            _ => Vec::new(),
         }
-    }
-
-    fn local_object_assign_spread_value_paths(
-        &mut self,
-        expression: &Expression<'_>,
-    ) -> (Vec<Vec<StaticAliasPath>>, bool) {
-        let Expression::ArrayExpression(array) = expression.get_inner_expression() else {
-            return (Vec::new(), false);
-        };
-        let mut arguments = Vec::new();
-        let mut precisely_modeled = true;
-        for element in &array.elements {
-            match element {
-                ArrayExpressionElement::Elision(_) => arguments.push(Vec::new()),
-                ArrayExpressionElement::SpreadElement(spread) => {
-                    let (nested, nested_precise) =
-                        self.local_object_assign_spread_value_paths(&spread.argument);
-                    arguments.extend(nested);
-                    precisely_modeled &= nested_precise;
-                }
-                element => {
-                    let expression = element.to_expression();
-                    let (paths, precise) =
-                        self.local_object_assign_value_paths_with_precision(expression, true);
-                    arguments.push(paths);
-                    precisely_modeled &= precise;
-                }
-            }
-        }
-        (arguments, precisely_modeled)
-    }
-
-    fn local_object_assign_source_has_no_enumerable_own_properties(
-        expression: &Expression<'_>,
-    ) -> bool {
-        match expression.get_inner_expression() {
-            Expression::NullLiteral(_)
-            | Expression::BooleanLiteral(_)
-            | Expression::NumericLiteral(_)
-            | Expression::BigIntLiteral(_) => true,
-            Expression::StringLiteral(literal) => literal.value.is_empty(),
-            _ => false,
-        }
-    }
-
-    fn invalidate_precisely_enumerable_container(&mut self, path: &StaticAliasPath) {
-        let resolved = resolve_static_alias_path(&self.aliases, path);
-        self.precisely_enumerable_structured_containers
-            .retain(|candidate| !candidate.starts_with(path) && !candidate.starts_with(&resolved));
-        self.open_structured_containers.insert(path.clone());
-        self.open_structured_containers.insert(resolved);
-    }
-
-    fn local_object_assign_target_has_prototype_update(&self, target: &StaticAliasPath) -> bool {
-        let resolved = resolve_static_alias_path(&self.aliases, target);
-        self.reflective_mutations.iter().any(|mutation| {
-            matches!(
-                (&mutation.callee.root, mutation.callee.properties.as_slice()),
-                (StaticAliasRoot::UnresolvedGlobal(root), [method])
-                    if matches!(root.as_str(), "Object" | "Reflect")
-                        && method == "setPrototypeOf"
-            ) && [&mutation.raw_target, &mutation.target]
-                .into_iter()
-                .any(|candidate| candidate.overlaps(target) || candidate.overlaps(&resolved))
-        })
-    }
-
-    fn current_local_object_assign_properties(
-        &self,
-        path: &StaticAliasPath,
-    ) -> Option<BTreeSet<String>> {
-        self.known_structured_own_properties(path).or_else(|| {
-            let resolved = resolve_static_alias_path(&self.aliases, path);
-            self.known_modeled_stored_own_properties(path, &resolved)
-        })
-    }
-
-    fn local_object_assign_source_is_empty_callable(&self, source: &StaticAliasPath) -> bool {
-        let resolved = resolve_static_alias_path(&self.aliases, source);
-        !self.path_requires_historical_aliases(source, self.function_depth)
-            && self.path_is_currently_intact(source)
-            && self.path_is_currently_intact(&resolved)
-            && [source, &resolved].into_iter().any(|candidate| {
-                self.local_callable_parameters.contains_key(candidate)
-                    || self.local_bound_callables.contains_key(candidate)
-            })
-    }
-
-    fn local_object_assign_source_is_precisely_enumerable(&self, source: &StaticAliasPath) -> bool {
-        let resolved = resolve_static_alias_path(&self.aliases, source);
-        !self.path_requires_historical_aliases(source, self.function_depth)
-            && self.path_is_currently_intact(source)
-            && self.path_is_currently_intact(&resolved)
-            && [source, &resolved].into_iter().any(|candidate| {
-                self.precisely_enumerable_structured_containers
-                    .contains(candidate)
-            })
-            && [source, &resolved].into_iter().all(|candidate| {
-                !self.dynamic_setter_properties.contains_key(candidate)
-                    && self
-                        .ambiguous_alias_targets
-                        .iter()
-                        .all(|ambiguous| !ambiguous.overlaps(candidate))
-            })
     }
 
     fn record_local_object_assign_source(
         &mut self,
         target: &StaticAliasPath,
-        setter_recheck_target: Option<&StaticAliasPath>,
         source: &StaticAliasPath,
-        context: LocalObjectAssignSourceContext,
-    ) -> bool {
-        let LocalObjectAssignSourceContext {
-            call_span,
-            source_index,
-            source_alternative_index,
-            conditional_source,
-        } = context;
+        call_span: Span,
+        source_index: usize,
+        source_alternative_index: usize,
+        conditional_source: bool,
+    ) {
         let getter_names = self.enumerable_local_getter_names(source);
-        let known_properties = self.current_local_object_assign_properties(source);
-        let empty_callable =
-            known_properties.is_none() && self.local_object_assign_source_is_empty_callable(source);
-        let precise_dynamic_properties = known_properties.is_none()
-            && !empty_callable
-            && self.local_object_assign_source_is_precisely_enumerable(source);
-        let mut invokes_target_setter = false;
-        let mut copied_without_target_setter = Vec::new();
+        let known_properties = self.known_structured_own_properties(source);
         let mut properties = known_properties.clone().unwrap_or_default();
         properties.extend(getter_names.iter().cloned());
         for property in properties {
@@ -29740,10 +29496,6 @@ impl StaticHookAliasCollector<'_> {
             let property_target = target.clone().with_property(property.clone());
             let invokes_setter =
                 self.record_local_setter_path_invocations(&property_target, value.clone());
-            invokes_target_setter |= invokes_setter;
-            if !invokes_setter {
-                copied_without_target_setter.push(property_target.clone());
-            }
             let retains_getter = !self
                 .local_getter_resolution(&property_target, false)
                 .1
@@ -29797,8 +29549,7 @@ impl StaticHookAliasCollector<'_> {
             }
             self.open_structured_containers.insert(target.clone());
         }
-        let has_dynamic_getters = !self.enumerable_dynamic_local_getters(source).is_empty();
-        if has_dynamic_getters {
+        if !self.enumerable_dynamic_local_getters(source).is_empty() {
             let value = StaticAliasPath::dynamic_this(call_span)
                 .with_property(format!("object-assign-source-{source_index}-computed"));
             self.dynamic_path_owner_depths
@@ -29808,43 +29559,16 @@ impl StaticHookAliasCollector<'_> {
                 Some(value.clone()),
             ) {
                 for property_target in self.dynamic_structured_member_paths_for_owner(target) {
-                    invokes_target_setter |=
-                        self.record_local_setter_path_invocations(&property_target, value.clone());
+                    self.record_local_setter_path_invocations(&property_target, value.clone());
                 }
             }
         }
-        let recheck_setters = !getter_names.is_empty() || has_dynamic_getters;
-        if recheck_setters && let Some(setter_recheck_target) = setter_recheck_target {
-            for property_target in copied_without_target_setter {
-                self.pending_object_assign_setter_rechecks
-                    .push(PendingObjectAssignSetterRecheck {
-                        call_span: (call_span.start, call_span.end),
-                        target: Self::rebase_returned_class_path(
-                            &property_target,
-                            target,
-                            setter_recheck_target,
-                        ),
-                        dynamic_target: false,
-                    });
-            }
-        }
-        if known_properties.is_none() && !empty_callable {
+        if known_properties.is_none() {
             let value = source.clone().with_element_wildcard();
             for property_target in self.dynamic_structured_member_paths_for_owner(target) {
-                invokes_target_setter |=
-                    self.record_local_setter_path_invocations(&property_target, value.clone());
-            }
-            if recheck_setters && let Some(setter_recheck_target) = setter_recheck_target {
-                self.pending_object_assign_setter_rechecks
-                    .push(PendingObjectAssignSetterRecheck {
-                        call_span: (call_span.start, call_span.end),
-                        target: setter_recheck_target.clone(),
-                        dynamic_target: true,
-                    });
+                self.record_local_setter_path_invocations(&property_target, value.clone());
             }
         }
-        (known_properties.is_some() || empty_callable || precise_dynamic_properties)
-            && !invokes_target_setter
     }
 
     fn record_local_object_assign(&mut self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
@@ -29856,29 +29580,7 @@ impl StaticHookAliasCollector<'_> {
             return None;
         }
         let target_expression = call.arguments.first()?.as_expression()?;
-        let (targets, target_expression_precisely_modeled) =
-            self.local_object_assign_value_paths_with_precision(target_expression, false);
-        let precisely_modeled_targets = target_expression_precisely_modeled
-            && !targets.is_empty()
-            && targets.iter().all(|target| {
-                self.current_local_object_assign_properties(target)
-                    .is_some()
-                    && !self.local_object_assign_target_has_prototype_update(target)
-            });
-        let mut target_snapshots = Vec::new();
-        if precisely_modeled_targets {
-            target_snapshots.reserve(targets.len());
-            for (target_index, target) in targets.iter().enumerate() {
-                let owner = self.canonical_local_reflect_set_owner(target);
-                let snapshot = StaticAliasPath::dynamic_this(call.span)
-                    .with_property(format!("<object-assign-target-{target_index}>"));
-                self.dynamic_path_owner_depths
-                    .insert((call.span.start, call.span.end), self.function_depth);
-                self.insert_alias(snapshot.clone(), owner);
-                self.record_local_identity_capture(target, &snapshot);
-                target_snapshots.push(snapshot);
-            }
-        }
+        let targets = self.local_object_assign_value_paths(target_expression);
         let target = match targets.as_slice() {
             [] => return None,
             [target] => target.clone(),
@@ -29896,69 +29598,23 @@ impl StaticHookAliasCollector<'_> {
         };
         self.local_object_assign_results
             .insert(span, target.clone());
-        let mut precisely_modeled_source_arguments = Vec::new();
-        let mut precisely_modeled_sources = true;
-        let mut expanded_source_index = 1usize;
-        for argument in call.arguments.iter().skip(1) {
-            let (source_groups, mut precisely_modeled) =
-                if let Some(source_expression) = argument.as_expression() {
-                    let (sources, precisely_modeled) = self
-                        .local_object_assign_value_paths_with_precision(source_expression, true);
-                    (vec![sources], precisely_modeled)
-                } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
-                    self.local_object_assign_spread_value_paths(&spread.argument)
-                } else {
-                    precisely_modeled_sources = false;
-                    continue;
-                };
-            for sources in source_groups {
-                if sources.is_empty() {
-                    expanded_source_index = expanded_source_index.saturating_add(1);
-                    continue;
+        for (source_index, argument) in call.arguments.iter().enumerate().skip(1) {
+            let Some(source_expression) = argument.as_expression() else {
+                continue;
+            };
+            let sources = self.local_object_assign_value_paths(source_expression);
+            let conditional_source = sources.len() > 1;
+            for (source_alternative_index, source) in sources.into_iter().enumerate() {
+                for target in &targets {
+                    self.record_local_object_assign_source(
+                        target,
+                        &source,
+                        call.span,
+                        source_index,
+                        source_alternative_index,
+                        conditional_source,
+                    );
                 }
-                let conditional_source = sources.len() > 1;
-                for (source_alternative_index, source) in sources.into_iter().enumerate() {
-                    for (target_index, target) in targets.iter().enumerate() {
-                        precisely_modeled &= self.record_local_object_assign_source(
-                            target,
-                            target_snapshots.get(target_index),
-                            &source,
-                            LocalObjectAssignSourceContext {
-                                call_span: call.span,
-                                source_index: expanded_source_index,
-                                source_alternative_index,
-                                conditional_source,
-                            },
-                        );
-                    }
-                }
-                expanded_source_index = expanded_source_index.saturating_add(1);
-            }
-            if precisely_modeled {
-                precisely_modeled_source_arguments
-                    .push((argument.span().start, argument.span().end));
-            }
-            precisely_modeled_sources &= precisely_modeled;
-        }
-        if precisely_modeled_targets && precisely_modeled_sources {
-            let call_span = span;
-            let requires_precise_final_target = self
-                .pending_object_assign_setter_rechecks
-                .iter()
-                .any(|recheck| recheck.call_span == call_span);
-            self.pending_non_escaping_object_assign_arguments.extend(
-                precisely_modeled_source_arguments
-                    .into_iter()
-                    .map(|argument_span| PendingNonEscapingObjectAssignArgument {
-                        call_span,
-                        span: argument_span,
-                        targets: target_snapshots.clone(),
-                        requires_precise_final_target,
-                    }),
-            );
-        } else if !precisely_modeled_sources {
-            for target in &targets {
-                self.invalidate_precisely_enumerable_container(target);
             }
         }
         Some(target)
@@ -32583,23 +32239,11 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn clear_overlapping_aliases(&mut self, path: &StaticAliasPath) {
-        self.clear_overlapping_aliases_with_resolved_detachment(path, true);
-    }
-
-    fn clear_array_mutation_target_aliases(&mut self, path: &StaticAliasPath) {
-        self.clear_overlapping_aliases_with_resolved_detachment(path, false);
-    }
-
-    fn clear_overlapping_aliases_with_resolved_detachment(
-        &mut self,
-        path: &StaticAliasPath,
-        detach_resolved: bool,
-    ) {
         let canonical_path = self.canonical_returned_structured_member_path(path);
         let path = &canonical_path;
         let resolved_path = resolve_static_alias_path(&self.aliases, path);
         self.detach_overwritten_local_descriptor_values(path);
-        if detach_resolved && resolved_path != *path {
+        if resolved_path != *path {
             self.detach_overwritten_local_descriptor_values(&resolved_path);
         }
         self.detach_overwritten_local_object_prototypes(path);
@@ -32636,8 +32280,6 @@ impl StaticHookAliasCollector<'_> {
             .retain(|target, _| !target.starts_with(path));
         self.structured_own_properties
             .retain(|target, _| !target.starts_with(path));
-        self.precisely_enumerable_structured_containers
-            .retain(|target| !target.starts_with(path));
         self.local_static_from_entries_sources
             .retain(|target, _| !target.overlaps(path));
         self.local_json_replacer_property_lists
@@ -34347,7 +33989,6 @@ impl StaticHookAliasCollector<'_> {
 
     fn activate_local_setter(&mut self, setter: &StaticAliasPath) {
         for span in self.local_callable_path_effect_spans(setter) {
-            self.current_executed_setter_spans.insert(span);
             self.executed_setter_spans.insert(span);
             self.unreferenced_callable_spans.remove(&span);
             self.deferred_accessor_spans.remove(&span);
@@ -34447,82 +34088,6 @@ impl StaticHookAliasCollector<'_> {
         (historical, setters)
     }
 
-    fn current_local_accessor_candidates(
-        &self,
-        path: &StaticAliasPath,
-    ) -> BTreeSet<StaticAliasPath> {
-        let mut candidates = resolve_static_alias_path_chain(&self.aliases, path)
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        let prototypes = local_object_prototype_member_paths_from_state(
-            &self.aliases,
-            None,
-            &self.local_object_prototypes,
-            &self.structured_own_properties,
-            path,
-            |_| false,
-        );
-        for prototype in prototypes {
-            candidates.extend(resolve_static_alias_path_chain(&self.aliases, &prototype));
-        }
-        candidates.extend(
-            self.returned_structured_instances_for_path(path)
-                .into_iter()
-                .map(|(source, _)| source),
-        );
-        candidates
-    }
-
-    fn current_local_setters(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
-        let mut setters = BTreeSet::new();
-        for candidate in self.current_local_accessor_candidates(path) {
-            if let Some(setter) = self.local_setter_properties.get(&candidate) {
-                setters.insert(setter.clone());
-            }
-            if candidate.properties.is_empty() {
-                continue;
-            }
-            let mut owner = candidate;
-            let property = owner.properties.pop().expect("setter property");
-            if self
-                .dynamic_accessor_excluded_properties
-                .get(&owner)
-                .is_some_and(|excluded| excluded.contains(&property))
-            {
-                continue;
-            }
-            if let Some(dynamic) = self.dynamic_setter_properties.get(&owner) {
-                setters.extend(dynamic.iter().cloned());
-            }
-        }
-        setters
-    }
-
-    fn current_local_getters(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
-        let mut getters = BTreeSet::new();
-        for candidate in self.current_local_accessor_candidates(path) {
-            if self.local_getter_properties.contains(&candidate) {
-                getters.insert(candidate.clone());
-            }
-            if candidate.properties.is_empty() {
-                continue;
-            }
-            let mut owner = candidate;
-            let property = owner.properties.pop().expect("getter property");
-            if self
-                .dynamic_accessor_excluded_properties
-                .get(&owner)
-                .is_some_and(|excluded| excluded.contains(&property))
-            {
-                continue;
-            }
-            if let Some(dynamic) = self.dynamic_getter_properties.get(&owner) {
-                getters.extend(dynamic.iter().cloned());
-            }
-        }
-        getters
-    }
-
     fn enumerable_local_getter_names(&self, source: &StaticAliasPath) -> BTreeSet<String> {
         let resolved = resolve_static_alias_path(&self.aliases, source);
         let historical = [source, &resolved]
@@ -34582,15 +34147,7 @@ impl StaticHookAliasCollector<'_> {
         property: StaticAliasPath,
         target: Option<StaticAliasPath>,
     ) -> bool {
-        self.record_local_getter_read_with_options(property, target, None, false)
-    }
-
-    fn record_local_getter_read_before_overwrite(
-        &mut self,
-        property: StaticAliasPath,
-        target: Option<StaticAliasPath>,
-    ) -> bool {
-        self.record_local_getter_read_with_options(property, target, None, true)
+        self.record_local_getter_read_with_receiver(property, target, None)
     }
 
     fn record_local_getter_read_with_receiver(
@@ -34599,26 +34156,11 @@ impl StaticHookAliasCollector<'_> {
         target: Option<StaticAliasPath>,
         receiver_override: Option<Vec<LocalInvocationArgument>>,
     ) -> bool {
-        self.record_local_getter_read_with_options(property, target, receiver_override, false)
-    }
-
-    fn record_local_getter_read_with_options(
-        &mut self,
-        property: StaticAliasPath,
-        target: Option<StaticAliasPath>,
-        receiver_override: Option<Vec<LocalInvocationArgument>>,
-        preserve_callee: bool,
-    ) -> bool {
-        let Some((historical, getter_count, mut invocations)) =
+        let Some((historical, getter_count, invocations)) =
             self.local_getter_read_invocations(&property, receiver_override, target.is_none())
         else {
             return false;
         };
-        if preserve_callee {
-            for invocation in &mut invocations {
-                invocation.historical_callee = true;
-            }
-        }
         self.local_invocations.extend(invocations.iter().cloned());
         if let Some(target) = target {
             self.clear_overlapping_aliases(&target);
@@ -34640,23 +34182,12 @@ impl StaticHookAliasCollector<'_> {
         receiver_override: Option<Vec<LocalInvocationArgument>>,
         result_discarded: bool,
     ) -> Option<(bool, usize, Vec<LocalInvocationFact>)> {
-        let (historical, getters, invocations) =
-            self.local_getter_invocation_facts(property, receiver_override, result_discarded)?;
-        for getter in &getters {
-            self.activate_local_getter(getter);
-        }
-        Some((historical, getters.len(), invocations))
-    }
-
-    fn local_getter_invocation_facts(
-        &self,
-        property: &StaticAliasPath,
-        receiver_override: Option<Vec<LocalInvocationArgument>>,
-        result_discarded: bool,
-    ) -> Option<(bool, BTreeSet<StaticAliasPath>, Vec<LocalInvocationFact>)> {
         let (historical, getters) = self.local_getter_resolution(property, false);
         if getters.is_empty() {
             return None;
+        }
+        for getter in &getters {
+            self.activate_local_getter(getter);
         }
         let mut owner = property.clone();
         owner.properties.pop();
@@ -34693,7 +34224,7 @@ impl StaticHookAliasCollector<'_> {
                 self.with_current_bound_callable(invocation, &callee)
             })
             .collect::<Vec<_>>();
-        Some((historical, getters, invocations))
+        Some((historical, getters.len(), invocations))
     }
 
     fn local_callable_path_effect_spans(&self, callable: &StaticAliasPath) -> BTreeSet<(u32, u32)> {
@@ -35382,35 +34913,8 @@ impl StaticHookAliasCollector<'_> {
         arguments: Vec<LocalInvocationArgument>,
         receiver_override: Option<Vec<LocalInvocationArgument>>,
     ) -> bool {
-        self.record_local_setter_invocations_with_resolution(
-            property,
-            arguments,
-            receiver_override,
-            false,
-        )
-    }
-
-    fn record_current_local_setter_invocations_with_arguments(
-        &mut self,
-        property: &StaticAliasPath,
-        arguments: Vec<LocalInvocationArgument>,
-    ) -> bool {
-        self.record_local_setter_invocations_with_resolution(property, arguments, None, true)
-    }
-
-    fn record_local_setter_invocations_with_resolution(
-        &mut self,
-        property: &StaticAliasPath,
-        arguments: Vec<LocalInvocationArgument>,
-        receiver_override: Option<Vec<LocalInvocationArgument>>,
-        current_only: bool,
-    ) -> bool {
         let structured_sources = self.returned_structured_instances_for_path(property);
-        let (historical, setters) = if current_only {
-            (false, self.current_local_setters(property))
-        } else {
-            self.local_setter_resolution(property)
-        };
+        let (historical, setters) = self.local_setter_resolution(property);
         if setters.is_empty() {
             return false;
         }
@@ -35430,12 +34934,11 @@ impl StaticHookAliasCollector<'_> {
             let raw_callee = structured_sources
                 .iter()
                 .find_map(|(source_property, _)| {
-                    let source_setters = if current_only {
-                        self.current_local_setters(source_property)
-                    } else {
-                        self.local_setter_resolution(source_property).1
-                    };
-                    if !source_setters.contains(&setter) {
+                    if !self
+                        .local_setter_resolution(source_property)
+                        .1
+                        .contains(&setter)
+                    {
                         return None;
                     }
                     let mut source_owner = source_property.clone();
@@ -35919,7 +35422,6 @@ impl StaticHookAliasCollector<'_> {
     ) -> Vec<LocalCallableResult> {
         let candidates = self.bind_deferred_local_callable_array_receivers(receiver, invocation);
         let mut references = BTreeSet::new();
-        let mut getter_results = Vec::new();
         let mut known_local = false;
         let mut unknown = candidates.is_empty();
         for (source, binding) in candidates {
@@ -35953,9 +35455,6 @@ impl StaticHookAliasCollector<'_> {
                     }
                 }
             };
-            let results = self
-                .resolve_local_callable_result_invocations(results, &mut BTreeSet::new(), None)
-                .0;
             for result in results {
                 match result {
                     LocalCallableResult::Reference(source) => {
@@ -35963,23 +35462,17 @@ impl StaticHookAliasCollector<'_> {
                     }
                     LocalCallableResult::KnownLocal => known_local = true,
                     LocalCallableResult::Unknown => unknown = true,
-                    LocalCallableResult::Direct { .. }
-                    | LocalCallableResult::Bound { .. }
-                    | LocalCallableResult::Structured { .. }
-                    | LocalCallableResult::KnownLocalArray { .. } => getter_results.push(result),
-                    LocalCallableResult::Invocation(_) => unreachable!(
-                        "getter result invocations must resolve before array element binding"
-                    ),
-                    LocalCallableResult::DeferredLocalArray { .. }
-                    | LocalCallableResult::DeferredLocalArrayElement { .. } => unknown = true,
+                    _ => unreachable!("array element results have scalar provenance"),
                 }
             }
         }
-        let mut results = getter_results;
-        results.extend(references.into_iter().map(|source| {
-            self.materialize_local_callable_reference(&source, invocation.function_depth)
-                .unwrap_or(LocalCallableResult::Reference(source))
-        }));
+        let mut results = references
+            .into_iter()
+            .map(|source| {
+                self.materialize_local_callable_reference(&source, invocation.function_depth)
+                    .unwrap_or(LocalCallableResult::Reference(source))
+            })
+            .collect::<Vec<_>>();
         if known_local {
             results.push(LocalCallableResult::KnownLocal);
         }
@@ -36688,20 +36181,6 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
-    fn extended_array_length_for_property(
-        &self,
-        owner: &StaticAliasPath,
-        property: &str,
-    ) -> Option<usize> {
-        let index = property.parse::<u32>().ok()?;
-        if index == u32::MAX || index.to_string() != property {
-            return None;
-        }
-        let length = self.known_array_length(owner)?;
-        let extended = usize::try_from(index).ok()?.checked_add(1)?;
-        (extended > length).then_some(extended)
-    }
-
     fn apply_local_array_length_assignment(
         &mut self,
         raw_target: &StaticAliasPath,
@@ -36863,14 +36342,6 @@ impl StaticHookAliasCollector<'_> {
             "shift" => Some(PreciseArrayMutation::Shift),
             "unshift" => Some(PreciseArrayMutation::Unshift(call.arguments.len())),
             "splice" => {
-                if call
-                    .arguments
-                    .iter()
-                    .skip(2)
-                    .any(|argument| argument.as_expression().is_none())
-                {
-                    return None;
-                }
                 let start = call.arguments.first().map_or(Some(0), |argument| {
                     argument
                         .as_expression()
@@ -36896,790 +36367,6 @@ impl StaticHookAliasCollector<'_> {
             }
             _ => None,
         }
-    }
-
-    fn local_array_mutation_setter_arguments(
-        &self,
-        call: &CallExpression<'_>,
-        method: &str,
-    ) -> Vec<Vec<LocalInvocationArgument>> {
-        let arguments = match method {
-            "fill" => call.arguments.get(..1).unwrap_or_default(),
-            "push" | "unshift" => call.arguments.as_slice(),
-            "splice" => call.arguments.get(2..).unwrap_or_default(),
-            _ => &[],
-        };
-        arguments
-            .iter()
-            .map(|argument| {
-                argument
-                    .as_expression()
-                    .map(|argument| self.collect_local_invocation_value_arguments(argument))
-                    .unwrap_or_default()
-            })
-            .collect()
-    }
-
-    fn local_array_mutation_getter_read_ranges(
-        mutation: Option<PreciseArrayMutation>,
-        method: &str,
-        length: usize,
-    ) -> Vec<(usize, usize)> {
-        if length == 0 {
-            return Vec::new();
-        }
-        let Some(mutation) = mutation else {
-            return if matches!(method, "fill" | "push") {
-                Vec::new()
-            } else {
-                vec![(0, length)]
-            };
-        };
-        match mutation {
-            PreciseArrayMutation::Reverse => {
-                let swapped = length / 2;
-                if swapped > 0 {
-                    vec![(0, swapped), (length - swapped, length)]
-                } else {
-                    Vec::new()
-                }
-            }
-            PreciseArrayMutation::Sort | PreciseArrayMutation::Shift => vec![(0, length)],
-            PreciseArrayMutation::CopyWithin { target, start, end } => {
-                let target = Self::normalized_array_start(target, length);
-                let start = Self::normalized_array_start(start, length);
-                let end = Self::normalized_array_start(
-                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
-                    length,
-                );
-                let copied = end.saturating_sub(start).min(length.saturating_sub(target));
-                (copied > 0)
-                    .then_some((start, start.saturating_add(copied)))
-                    .into_iter()
-                    .collect()
-            }
-            PreciseArrayMutation::Fill { .. } | PreciseArrayMutation::Push(_) => Vec::new(),
-            PreciseArrayMutation::Pop => vec![(length - 1, length)],
-            PreciseArrayMutation::Unshift(inserted) => {
-                if inserted == 0 {
-                    Vec::new()
-                } else {
-                    vec![(0, length)]
-                }
-            }
-            PreciseArrayMutation::Splice {
-                start,
-                delete,
-                inserted,
-            } => {
-                let start = Self::normalized_array_start(start, length);
-                let delete = delete.map_or(length.saturating_sub(start), |delete| {
-                    usize::try_from(delete.max(0))
-                        .unwrap_or(usize::MAX)
-                        .min(length.saturating_sub(start))
-                });
-                if inserted != delete {
-                    vec![(start, length)]
-                } else if delete > 0 {
-                    vec![(start, start.saturating_add(delete))]
-                } else {
-                    Vec::new()
-                }
-            }
-        }
-    }
-
-    fn local_array_mutation_setter_write_ranges(
-        mutation: Option<PreciseArrayMutation>,
-        method: &str,
-        length: usize,
-    ) -> Vec<(usize, usize)> {
-        let Some(mutation) = mutation else {
-            return match method {
-                "pop" => Vec::new(),
-                "push" => vec![(length, usize::MAX)],
-                "unshift" | "splice" => vec![(0, usize::MAX)],
-                _ => vec![(0, length)],
-            };
-        };
-        match mutation {
-            PreciseArrayMutation::Reverse => {
-                Self::local_array_mutation_getter_read_ranges(Some(mutation), method, length)
-            }
-            PreciseArrayMutation::Sort => vec![(0, length)],
-            PreciseArrayMutation::CopyWithin { target, start, end } => {
-                let target = Self::normalized_array_start(target, length);
-                let start = Self::normalized_array_start(start, length);
-                let end = Self::normalized_array_start(
-                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
-                    length,
-                );
-                let copied = end.saturating_sub(start).min(length.saturating_sub(target));
-                (copied > 0)
-                    .then_some((target, target.saturating_add(copied)))
-                    .into_iter()
-                    .collect()
-            }
-            PreciseArrayMutation::Fill { start, end } => {
-                let start = Self::normalized_array_start(start, length);
-                let end = Self::normalized_array_start(
-                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
-                    length,
-                )
-                .max(start);
-                (start < end).then_some((start, end)).into_iter().collect()
-            }
-            PreciseArrayMutation::Pop => Vec::new(),
-            PreciseArrayMutation::Push(inserted) => (inserted > 0)
-                .then_some((length, length.saturating_add(inserted)))
-                .into_iter()
-                .collect(),
-            PreciseArrayMutation::Shift => (length > 1)
-                .then_some((0, length.saturating_sub(1)))
-                .into_iter()
-                .collect(),
-            PreciseArrayMutation::Unshift(inserted) => (inserted > 0)
-                .then_some((0, length.saturating_add(inserted)))
-                .into_iter()
-                .collect(),
-            PreciseArrayMutation::Splice {
-                start,
-                delete,
-                inserted,
-            } => {
-                let start = Self::normalized_array_start(start, length);
-                let delete = delete.map_or(length.saturating_sub(start), |delete| {
-                    usize::try_from(delete.max(0))
-                        .unwrap_or(usize::MAX)
-                        .min(length.saturating_sub(start))
-                });
-                let end = if inserted == delete {
-                    start.saturating_add(inserted)
-                } else {
-                    length.saturating_sub(delete).saturating_add(inserted)
-                };
-                (start < end).then_some((start, end)).into_iter().collect()
-            }
-        }
-    }
-
-    fn local_array_mutation_setter_write_indices(
-        &self,
-        mutation: Option<PreciseArrayMutation>,
-        method: &str,
-        length: usize,
-    ) -> BTreeSet<usize> {
-        let ranges = Self::local_array_mutation_setter_write_ranges(mutation, method, length);
-        let writes = |index: usize| {
-            ranges
-                .iter()
-                .any(|(start, end)| *start <= index && index < *end)
-        };
-        let mut indices = self
-            .local_setter_properties
-            .keys()
-            .chain(self.local_setter_property_history.keys())
-            .filter_map(|property| property.properties.last())
-            .filter_map(|property| property.parse::<usize>().ok())
-            .filter(|index| writes(*index))
-            .collect::<BTreeSet<_>>();
-        if !self.dynamic_setter_properties.is_empty()
-            || !self.dynamic_setter_property_history.is_empty()
-        {
-            indices.extend(
-                ranges
-                    .iter()
-                    .filter(|(start, end)| start < end)
-                    .map(|(start, _)| *start),
-            );
-        }
-        indices
-    }
-
-    fn fallback_array_setter_arguments(
-        &self,
-        source: &StaticAliasPath,
-        mutation: Option<PreciseArrayMutation>,
-        index: usize,
-        length: usize,
-        mutation_values: &[Vec<LocalInvocationArgument>],
-    ) -> Vec<LocalInvocationArgument> {
-        let moved_value = |source_index: usize| {
-            vec![self.collect_local_invocation_path(
-                source.clone().with_property(source_index.to_string()),
-            )]
-        };
-        match mutation {
-            Some(PreciseArrayMutation::Reverse) => {
-                moved_value(length.saturating_sub(index).saturating_sub(1))
-            }
-            Some(PreciseArrayMutation::CopyWithin { target, start, .. }) => {
-                let target = Self::normalized_array_start(target, length);
-                let start = Self::normalized_array_start(start, length);
-                moved_value(start.saturating_add(index.saturating_sub(target)))
-            }
-            Some(PreciseArrayMutation::Fill { .. }) => {
-                mutation_values.first().cloned().unwrap_or_default()
-            }
-            Some(PreciseArrayMutation::Push(_)) => mutation_values
-                .get(index.saturating_sub(length))
-                .cloned()
-                .unwrap_or_default(),
-            Some(PreciseArrayMutation::Shift) => moved_value(index.saturating_add(1)),
-            Some(PreciseArrayMutation::Unshift(inserted)) => {
-                if index < inserted {
-                    mutation_values.get(index).cloned().unwrap_or_default()
-                } else {
-                    moved_value(index - inserted)
-                }
-            }
-            Some(PreciseArrayMutation::Splice {
-                start,
-                delete,
-                inserted,
-            }) => {
-                let start = Self::normalized_array_start(start, length);
-                let delete = delete.map_or(length.saturating_sub(start), |delete| {
-                    usize::try_from(delete.max(0))
-                        .unwrap_or(usize::MAX)
-                        .min(length.saturating_sub(start))
-                });
-                if index < start.saturating_add(inserted) {
-                    mutation_values
-                        .get(index.saturating_sub(start))
-                        .cloned()
-                        .unwrap_or_default()
-                } else if inserted < delete {
-                    moved_value(index.saturating_add(delete - inserted))
-                } else {
-                    moved_value(index.saturating_sub(inserted - delete))
-                }
-            }
-            Some(PreciseArrayMutation::Sort) => self
-                .array_element_copy_sources(source)
-                .into_iter()
-                .map(|source| self.collect_local_invocation_path(source))
-                .collect(),
-            Some(PreciseArrayMutation::Pop) | None => Vec::new(),
-        }
-    }
-
-    fn local_array_mutation_getter_read_indices(
-        &self,
-        mutation: Option<PreciseArrayMutation>,
-        method: &str,
-        length: usize,
-    ) -> BTreeSet<usize> {
-        let ranges = Self::local_array_mutation_getter_read_ranges(mutation, method, length);
-        let reads = |index: usize| {
-            ranges
-                .iter()
-                .any(|(start, end)| *start <= index && index < *end)
-        };
-        let static_index = |property: &str| {
-            let index = property.parse::<usize>().ok()?;
-            (index.to_string() == property && index < length).then_some(index)
-        };
-        let mut indices = self
-            .local_getter_properties
-            .iter()
-            .chain(&self.local_getter_property_history)
-            .filter_map(|getter| getter.properties.last())
-            .filter_map(|property| static_index(property))
-            .filter(|index| reads(*index))
-            .collect::<BTreeSet<_>>();
-        if !self.dynamic_getter_properties.is_empty()
-            || !self.dynamic_getter_property_history.is_empty()
-        {
-            for (start, end) in &ranges {
-                if start < end {
-                    indices.insert(*start);
-                }
-            }
-            for property in self
-                .structured_own_properties
-                .values()
-                .flatten()
-                .chain(self.dynamic_accessor_excluded_properties.values().flatten())
-            {
-                let Some(index) = static_index(property) else {
-                    continue;
-                };
-                if reads(index) {
-                    indices.insert(index);
-                }
-                if let Some(next) = index.checked_add(1)
-                    && reads(next)
-                {
-                    indices.insert(next);
-                }
-            }
-        }
-        indices
-    }
-
-    fn local_array_index_presence(&self, source: &StaticAliasPath, index: usize) -> Option<bool> {
-        let property = index.to_string();
-        let (_, properties) = self.tracked_structured_own_properties(source)?;
-        if properties.contains(&property) {
-            return Some(true);
-        }
-        let element = source.clone().with_property(property.clone());
-        if !self.local_getter_resolution(&element, false).1.is_empty() {
-            return Some(true);
-        }
-        if !self
-            .local_object_prototype_member_paths(&element)
-            .is_empty()
-        {
-            return None;
-        }
-        ["Array", "Object"]
-            .into_iter()
-            .all(|global| {
-                self.path_is_currently_intact(
-                    &StaticAliasPath::unresolved_global(global.to_string())
-                        .with_property("prototype".to_string())
-                        .with_property(property.clone()),
-                )
-            })
-            .then_some(false)
-    }
-
-    fn activate_local_array_getter_read(
-        &mut self,
-        source: &StaticAliasPath,
-        index: usize,
-        recorded_result_index: Option<usize>,
-        timing: LocalAliasInvocationTiming,
-    ) -> bool {
-        self.activate_local_array_getter_read_value(
-            source,
-            index,
-            recorded_result_index,
-            None,
-            timing,
-            false,
-        )
-        .0
-    }
-
-    fn activate_local_array_getter_read_value(
-        &mut self,
-        source: &StaticAliasPath,
-        index: usize,
-        recorded_result_index: Option<usize>,
-        value_target: Option<StaticAliasPath>,
-        timing: LocalAliasInvocationTiming,
-        conditional_invocation: bool,
-    ) -> (bool, Vec<LocalInvocationArgument>) {
-        let element = source.clone().with_property(index.to_string());
-        let Some((_, _, mut invocations)) =
-            self.local_getter_read_invocations(&element, None, true)
-        else {
-            return (false, vec![self.collect_local_invocation_path(element)]);
-        };
-        for invocation in &mut invocations {
-            invocation.historical_callee = true;
-        }
-        if recorded_result_index != Some(index) {
-            self.local_invocations.extend(invocations.iter().cloned());
-        }
-        self.activate_precise_local_alias_invocations_with_conditionality(
-            &invocations,
-            timing,
-            conditional_invocation || self.current_execution_is_branch_conditional(),
-        );
-        let arguments = value_target.map_or_else(Vec::new, |target| {
-            let mut result_invocations = invocations;
-            for invocation in &mut result_invocations {
-                invocation.result_discarded = false;
-            }
-            self.record_callable_result_initializer_from_invocations(
-                target.clone(),
-                result_invocations,
-                None,
-            );
-            vec![self.collect_local_invocation_path(target)]
-        });
-        (true, arguments)
-    }
-
-    fn local_array_write_is_rejected(&self, property: &StaticAliasPath) -> bool {
-        let setters = self.current_local_setters(property);
-        let getters = self.current_local_getters(property);
-        setters.is_empty() && (!getters.is_empty() || !self.local_property_is_writable(property))
-    }
-
-    fn activate_local_array_setter_write(
-        &mut self,
-        source: &StaticAliasPath,
-        index: usize,
-        arguments: Vec<LocalInvocationArgument>,
-        timing: LocalAliasInvocationTiming,
-        conditional_invocation: bool,
-    ) -> (bool, bool) {
-        let property = source.clone().with_property(index.to_string());
-        if self.local_array_write_is_rejected(&property) {
-            return (false, true);
-        }
-        let invocation_start = self.local_invocations.len();
-        if !self.record_current_local_setter_invocations_with_arguments(&property, arguments) {
-            return (false, false);
-        }
-        let invocations = self.local_invocations[invocation_start..].to_vec();
-        self.activate_precise_local_alias_invocations_with_conditionality(
-            &invocations,
-            timing,
-            conditional_invocation || self.current_execution_is_branch_conditional(),
-        );
-        (true, false)
-    }
-
-    fn activate_local_array_mutation_getter_reads(
-        &mut self,
-        source: &StaticAliasPath,
-        mutation: Option<PreciseArrayMutation>,
-        method: &str,
-        length: usize,
-        recorded_result_index: Option<usize>,
-        context: LocalArrayMutationAccessorContext<'_>,
-    ) -> (bool, BTreeSet<usize>) {
-        let LocalArrayMutationAccessorContext {
-            value_target,
-            mutation_values,
-            timing,
-            conditional_invocation,
-        } = context;
-        let Some(mutation) = mutation.filter(|_| length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS)
-        else {
-            let mut activated = false;
-            for index in self.local_array_mutation_getter_read_indices(mutation, method, length) {
-                activated |= self.activate_local_array_getter_read(
-                    source,
-                    index,
-                    recorded_result_index,
-                    timing,
-                );
-            }
-            let mut intercepted_writes = BTreeSet::new();
-            for index in self.local_array_mutation_setter_write_indices(mutation, method, length) {
-                let arguments = self.fallback_array_setter_arguments(
-                    source,
-                    mutation,
-                    index,
-                    length,
-                    mutation_values,
-                );
-                let (intercepted, rejected) = self.activate_local_array_setter_write(
-                    source,
-                    index,
-                    arguments,
-                    timing,
-                    conditional_invocation,
-                );
-                if intercepted {
-                    intercepted_writes.insert(index);
-                }
-                if rejected {
-                    break;
-                }
-            }
-            return (activated, intercepted_writes);
-        };
-        let rejected_delete = |collector: &Self, index: usize| {
-            !collector.local_reflect_delete_property_is_configurable(
-                &source.clone().with_property(index.to_string()),
-            )
-        };
-        let mut activated = false;
-        let mut intercepted_writes = BTreeSet::new();
-        let mut read_sequence = 0usize;
-        macro_rules! read_value {
-            ($index:expr) => {{
-                let target = value_target
-                    .clone()
-                    .with_property(format!("<getter-result-{}>", read_sequence));
-                read_sequence = read_sequence.saturating_add(1);
-                let (read_activated, arguments) = self.activate_local_array_getter_read_value(
-                    source,
-                    $index,
-                    recorded_result_index,
-                    Some(target),
-                    timing,
-                    conditional_invocation,
-                );
-                activated |= read_activated;
-                arguments
-            }};
-        }
-        macro_rules! read_getter {
-            ($index:expr) => {{
-                activated |= self
-                    .activate_local_array_getter_read_value(
-                        source,
-                        $index,
-                        recorded_result_index,
-                        None,
-                        timing,
-                        conditional_invocation,
-                    )
-                    .0;
-            }};
-        }
-        macro_rules! write_value {
-            ($index:expr, $arguments:expr) => {{
-                let (intercepted, rejected) = self.activate_local_array_setter_write(
-                    source,
-                    $index,
-                    $arguments,
-                    timing,
-                    conditional_invocation,
-                );
-                if intercepted {
-                    intercepted_writes.insert($index);
-                }
-                rejected
-            }};
-        }
-        match mutation {
-            PreciseArrayMutation::Reverse => {
-                for lower in 0..(length / 2) {
-                    let upper = length - lower - 1;
-                    let lower_present = self.local_array_index_presence(source, lower);
-                    let lower_value = if lower_present != Some(false) {
-                        read_value!(lower)
-                    } else {
-                        Vec::new()
-                    };
-                    let upper_present = self.local_array_index_presence(source, upper);
-                    let upper_value = if upper_present != Some(false) {
-                        read_value!(upper)
-                    } else {
-                        Vec::new()
-                    };
-                    let rejected = match (lower_present, upper_present) {
-                        (Some(true), Some(true)) => {
-                            write_value!(lower, upper_value) || write_value!(upper, lower_value)
-                        }
-                        (Some(false), Some(true)) => {
-                            write_value!(lower, upper_value) || rejected_delete(self, upper)
-                        }
-                        (Some(true), Some(false)) => {
-                            rejected_delete(self, lower) || write_value!(upper, lower_value)
-                        }
-                        (Some(false), Some(false)) => false,
-                        _ => {
-                            if upper_present != Some(false) {
-                                let _ = write_value!(lower, upper_value);
-                            }
-                            if lower_present != Some(false) {
-                                let _ = write_value!(upper, lower_value);
-                            }
-                            false
-                        }
-                    };
-                    if rejected {
-                        break;
-                    }
-                }
-            }
-            PreciseArrayMutation::Sort => {
-                let mut values = Vec::new();
-                for index in 0..length {
-                    if self.local_array_index_presence(source, index) != Some(false) {
-                        values.push(read_value!(index));
-                    }
-                }
-                let item_count = values.len();
-                let arguments = values.into_iter().flatten().collect::<Vec<_>>();
-                for index in 0..item_count {
-                    if write_value!(index, arguments.clone()) {
-                        break;
-                    }
-                }
-            }
-            PreciseArrayMutation::CopyWithin { target, start, end } => {
-                let target = Self::normalized_array_start(target, length);
-                let start = Self::normalized_array_start(start, length);
-                let end = Self::normalized_array_start(
-                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
-                    length,
-                );
-                let copied = end.saturating_sub(start).min(length.saturating_sub(target));
-                let reverse = start < target && target < start.saturating_add(copied);
-                for offset in 0..copied {
-                    let offset = if reverse { copied - offset - 1 } else { offset };
-                    let source_index = start.saturating_add(offset);
-                    let present = self.local_array_index_presence(source, source_index);
-                    let value = if present != Some(false) {
-                        read_value!(source_index)
-                    } else {
-                        Vec::new()
-                    };
-                    let target = target.saturating_add(offset);
-                    if (present == Some(true) && write_value!(target, value.clone()))
-                        || (present == Some(false) && rejected_delete(self, target))
-                    {
-                        break;
-                    }
-                    if present.is_none() {
-                        let _ = write_value!(target, value);
-                    }
-                }
-            }
-            PreciseArrayMutation::Fill { start, end } => {
-                let start = Self::normalized_array_start(start, length);
-                let end = Self::normalized_array_start(
-                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
-                    length,
-                )
-                .max(start);
-                let arguments = mutation_values.first().cloned().unwrap_or_default();
-                for index in start..end {
-                    if write_value!(index, arguments.clone()) {
-                        break;
-                    }
-                }
-            }
-            PreciseArrayMutation::Pop => {
-                if length > 0 {
-                    read_getter!(length - 1);
-                }
-            }
-            PreciseArrayMutation::Push(inserted) => {
-                for offset in 0..inserted {
-                    let index = length.saturating_add(offset);
-                    let arguments = mutation_values.get(offset).cloned().unwrap_or_default();
-                    if write_value!(index, arguments) {
-                        break;
-                    }
-                }
-            }
-            PreciseArrayMutation::Shift => {
-                if length > 0 {
-                    read_getter!(0);
-                }
-                for source_index in 1..length {
-                    let present = self.local_array_index_presence(source, source_index);
-                    let value = if present != Some(false) {
-                        read_value!(source_index)
-                    } else {
-                        Vec::new()
-                    };
-                    let target = source_index - 1;
-                    if (present == Some(true) && write_value!(target, value.clone()))
-                        || (present == Some(false) && rejected_delete(self, target))
-                    {
-                        break;
-                    }
-                    if present.is_none() {
-                        let _ = write_value!(target, value);
-                    }
-                }
-            }
-            PreciseArrayMutation::Unshift(inserted) => {
-                if inserted > 0 {
-                    let mut rejected = false;
-                    for source_index in (0..length).rev() {
-                        let present = self.local_array_index_presence(source, source_index);
-                        let value = if present != Some(false) {
-                            read_value!(source_index)
-                        } else {
-                            Vec::new()
-                        };
-                        let target = source_index.saturating_add(inserted);
-                        if (present == Some(true) && write_value!(target, value.clone()))
-                            || (present == Some(false) && rejected_delete(self, target))
-                        {
-                            rejected = true;
-                            break;
-                        }
-                        if present.is_none() {
-                            let _ = write_value!(target, value);
-                        }
-                    }
-                    if !rejected {
-                        for index in 0..inserted {
-                            let arguments = mutation_values.get(index).cloned().unwrap_or_default();
-                            if write_value!(index, arguments) {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            PreciseArrayMutation::Splice {
-                start,
-                delete,
-                inserted,
-            } => {
-                let start = Self::normalized_array_start(start, length);
-                let delete = delete.map_or(length.saturating_sub(start), |delete| {
-                    usize::try_from(delete.max(0))
-                        .unwrap_or(usize::MAX)
-                        .min(length.saturating_sub(start))
-                });
-                for index in start..start.saturating_add(delete) {
-                    if self.local_array_index_presence(source, index) != Some(false) {
-                        read_getter!(index);
-                    }
-                }
-                let mut rejected = false;
-                if inserted < delete {
-                    let shift = delete - inserted;
-                    for source_index in start.saturating_add(delete)..length {
-                        let present = self.local_array_index_presence(source, source_index);
-                        let value = if present != Some(false) {
-                            read_value!(source_index)
-                        } else {
-                            Vec::new()
-                        };
-                        let target = source_index - shift;
-                        if (present == Some(true) && write_value!(target, value.clone()))
-                            || (present == Some(false) && rejected_delete(self, target))
-                        {
-                            rejected = true;
-                            break;
-                        }
-                        if present.is_none() {
-                            let _ = write_value!(target, value);
-                        }
-                    }
-                } else if inserted > delete {
-                    let shift = inserted - delete;
-                    for source_index in (start.saturating_add(delete)..length).rev() {
-                        let present = self.local_array_index_presence(source, source_index);
-                        let value = if present != Some(false) {
-                            read_value!(source_index)
-                        } else {
-                            Vec::new()
-                        };
-                        let target = source_index.saturating_add(shift);
-                        if (present == Some(true) && write_value!(target, value.clone()))
-                            || (present == Some(false) && rejected_delete(self, target))
-                        {
-                            rejected = true;
-                            break;
-                        }
-                        if present.is_none() {
-                            let _ = write_value!(target, value);
-                        }
-                    }
-                }
-                if !rejected {
-                    for offset in 0..inserted {
-                        let target = start.saturating_add(offset);
-                        let arguments = mutation_values.get(offset).cloned().unwrap_or_default();
-                        if write_value!(target, arguments) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        let _ = read_sequence;
-        (activated, intercepted_writes)
     }
 
     fn precise_array_mutation_from_deferred(
@@ -37980,7 +36667,7 @@ impl StaticHookAliasCollector<'_> {
         effect: &LocalArrayMutationEffect,
     ) -> bool {
         effect.writes.iter().all(|index| {
-            !self.local_array_write_is_rejected(&owner.clone().with_property(index.to_string()))
+            self.local_property_is_writable(&owner.clone().with_property(index.to_string()))
         }) && effect.deletes.iter().all(|index| {
             self.local_reflect_delete_property_is_configurable(
                 &owner.clone().with_property(index.to_string()),
@@ -38008,42 +36695,9 @@ impl StaticHookAliasCollector<'_> {
         self.open_structured_containers.remove(owner);
     }
 
-    fn preserve_intercepted_array_writes(
-        &self,
-        owner: &StaticAliasPath,
-        effect: &mut LocalArrayMutationEffect,
-        intercepted: &BTreeSet<usize>,
-    ) {
-        let current_properties = self
-            .tracked_structured_own_properties(owner)
-            .map(|(_, properties)| properties.clone())
-            .unwrap_or_default();
-        for index in intercepted {
-            effect.writes.remove(index);
-            let property = index.to_string();
-            if current_properties.contains(&property) {
-                effect.properties.insert(*index);
-            } else {
-                effect.properties.remove(index);
-            }
-            if let Some(sources) = effect.sources.get_mut(*index) {
-                sources.clear();
-                if current_properties.contains(&property) {
-                    sources.insert(*index);
-                }
-            }
-        }
-    }
-
-    fn clear_local_array_mutation_targets(
-        &mut self,
-        owner: &StaticAliasPath,
-        effect: &LocalArrayMutationEffect,
-    ) {
-        for index in effect.writes.iter().chain(&effect.deletes) {
-            let target = owner.clone().with_property(index.to_string());
-            self.clear_alias_target_history(&target);
-            self.clear_array_mutation_target_aliases(&target);
+    fn clear_local_array_index_history(&mut self, owner: &StaticAliasPath, extent: usize) {
+        for index in 0..extent {
+            self.clear_alias_target_history(&owner.clone().with_property(index.to_string()));
         }
     }
 
@@ -38889,15 +37543,7 @@ impl StaticHookAliasCollector<'_> {
         stable_arguments: bool,
     ) -> Option<((u32, u32), StaticAliasPath, DeferredArrayMutation)> {
         let capture_span = self.deferred_callable_alias_capture_span(raw_source);
-        let parameter_span = raw_source
-            .binding_root()
-            .filter(|root| {
-                self.function_depth > 1
-                    && self.attached_callable_parameters.contains(root)
-                    && self.binding_owner_depths.get(root).copied() == Some(self.function_depth)
-            })
-            .and_then(|_| self.current_callable_effect_span());
-        let effect_span = capture_span.or(parameter_span).or_else(|| {
+        let effect_span = capture_span.or_else(|| {
             self.class_effect_contexts
                 .last()
                 .copied()
@@ -39053,9 +37699,8 @@ impl StaticHookAliasCollector<'_> {
         call: &CallExpression<'_>,
         plan: LocalArrayMutationPlan,
         conditional: bool,
-        intercepted_setter_writes: &BTreeSet<usize>,
     ) {
-        let mut property_effect = plan
+        let property_effect = plan
             .source_length
             .filter(|length| *length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS && plan.stable_arguments)
             .and_then(|length| {
@@ -39063,9 +37708,6 @@ impl StaticHookAliasCollector<'_> {
                     self.precise_local_array_mutation_effect(&plan.source, length, mutation)
                 })
             });
-        if let Some((owner, effect)) = &mut property_effect {
-            self.preserve_intercepted_array_writes(owner, effect, intercepted_setter_writes);
-        }
         if property_effect.as_ref().is_some_and(|(owner, effect)| {
             !self.local_array_mutation_effect_is_allowed(owner, effect)
         }) {
@@ -39102,10 +37744,12 @@ impl StaticHookAliasCollector<'_> {
             .collect::<Vec<_>>();
         self.external_storage_flow
             .detach_shallow_copy_sources(&plan.source, &plan.snapshot);
+        self.clear_overlapping_aliases(&plan.source.with_element_wildcard());
         if let Some((owner, effect)) = &property_effect {
-            self.clear_local_array_mutation_targets(owner, effect);
-        } else if intercepted_setter_writes.is_empty() {
-            self.clear_overlapping_aliases(&plan.source.with_element_wildcard());
+            self.clear_local_array_index_history(
+                owner,
+                plan.source_length.unwrap_or_default().max(effect.length),
+            );
         }
         self.external_storage_flow.clear_array_element_copies(
             &plan.source,
@@ -39210,9 +37854,6 @@ impl StaticHookAliasCollector<'_> {
                         .and_then(|argument| argument.as_expression())
                     {
                         for index in start..end {
-                            if intercepted_setter_writes.contains(&index) {
-                                continue;
-                            }
                             self.collect_initializer(
                                 plan.source.clone().with_property(index.to_string()),
                                 value,
@@ -39234,12 +37875,10 @@ impl StaticHookAliasCollector<'_> {
                 let result_length = length.checked_add(call.arguments.len());
                 if let Some(result_length) = result_length {
                     for (offset, argument) in call.arguments.iter().enumerate() {
-                        let index = length.saturating_add(offset);
-                        if intercepted_setter_writes.contains(&index) {
-                            continue;
-                        }
                         self.collect_initializer(
-                            plan.source.clone().with_property(index.to_string()),
+                            plan.source
+                                .clone()
+                                .with_property(length.saturating_add(offset).to_string()),
                             argument.as_expression().expect("stable array argument"),
                         );
                     }
@@ -39259,9 +37898,6 @@ impl StaticHookAliasCollector<'_> {
                 if let Some(result_length) = length.checked_add(inserted) {
                     self.record_array_mutation_snapshot_range(&plan, inserted, 0, length);
                     for (index, argument) in call.arguments.iter().enumerate() {
-                        if intercepted_setter_writes.contains(&index) {
-                            continue;
-                        }
                         self.collect_initializer(
                             plan.source.clone().with_property(index.to_string()),
                             argument.as_expression().expect("stable array argument"),
@@ -39301,12 +37937,10 @@ impl StaticHookAliasCollector<'_> {
                     let inserted = call.arguments.len().saturating_sub(2);
                     self.record_array_mutation_snapshot_range(&plan, 0, 0, start);
                     for (offset, argument) in call.arguments.iter().skip(2).enumerate() {
-                        let index = start.saturating_add(offset);
-                        if intercepted_setter_writes.contains(&index) {
-                            continue;
-                        }
                         self.collect_initializer(
-                            plan.source.clone().with_property(index.to_string()),
+                            plan.source
+                                .clone()
+                                .with_property(start.saturating_add(offset).to_string()),
                             argument.as_expression().expect("stable array argument"),
                         );
                     }
@@ -39755,16 +38389,6 @@ impl StaticHookAliasCollector<'_> {
             return true;
         }
 
-        if call.arguments.iter().any(|argument| {
-            argument
-                .as_expression()
-                .is_none_or(structured_control_flow::expression_has_effects)
-        }) {
-            self.clear_overlapping_aliases(target);
-            self.record_opaque_external_storage_result(target.clone());
-            return true;
-        }
-
         let Some(length) = self.known_array_length(&source) else {
             self.clear_overlapping_aliases(target);
             self.record_opaque_external_storage_result(target.clone());
@@ -39776,11 +38400,6 @@ impl StaticHookAliasCollector<'_> {
         }
         let index = if method == "pop" { length - 1 } else { 0 };
         let element = source.clone().with_property(index.to_string());
-        if self.record_local_getter_read_before_overwrite(element.clone(), Some(target.clone())) {
-            self.handled_local_getter_read_spans
-                .insert((call.span.start, call.span.end));
-            return true;
-        }
         let resolved_element = resolve_static_alias_path(&self.aliases, &element);
         if resolved_element != element && !resolved_element.starts_with(&source) {
             self.insert_alias(target.clone(), resolved_element);
@@ -44468,17 +43087,6 @@ impl StaticHookAliasCollector<'_> {
         target: &StaticAliasPath,
         object: &oxc::ast::ast::ObjectExpression<'_>,
     ) {
-        if object
-            .properties
-            .iter()
-            .all(|property| matches!(property, OxcObjectPropertyKind::ObjectProperty(_)))
-        {
-            self.precisely_enumerable_structured_containers
-                .insert(target.clone());
-        } else {
-            self.precisely_enumerable_structured_containers
-                .remove(target);
-        }
         for property in &object.properties {
             let OxcObjectPropertyKind::ObjectProperty(property) = property else {
                 if let OxcObjectPropertyKind::SpreadProperty(spread) = property {
@@ -44753,24 +43361,6 @@ impl StaticHookAliasCollector<'_> {
         static_alias_path_is_intact(&self.aliases, &self.member_invalidated, path)
     }
 
-    fn path_identity_is_currently_intact(&self, path: &StaticAliasPath) -> bool {
-        let path = path.clone().canonicalized();
-        let resolved = resolve_static_alias_path(&self.aliases, &path);
-        if self
-            .member_invalidated
-            .iter()
-            .any(StaticAliasPath::is_global_object_root)
-            && [&path, &resolved].iter().any(|candidate| {
-                matches!(&candidate.root, StaticAliasRoot::UnresolvedGlobal(root) if root != "globalThis")
-            })
-        {
-            return false;
-        }
-        self.member_invalidated
-            .iter()
-            .all(|invalidated| !path.starts_with(invalidated) && !resolved.starts_with(invalidated))
-    }
-
     fn callable_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
         let prototypes = self.local_object_prototype_member_paths(path);
         if prototypes.len() > 1 {
@@ -44924,21 +43514,6 @@ impl StaticHookAliasCollector<'_> {
                 .is_some_and(|baseline| self.control_depth == *baseline)
     }
 
-    fn current_execution_is_branch_conditional(&self) -> bool {
-        let control_baseline = self
-            .function_control_baselines
-            .last()
-            .copied()
-            .unwrap_or_default();
-        let try_baseline = self
-            .function_try_control_baselines
-            .last()
-            .copied()
-            .unwrap_or_default();
-        self.control_depth.saturating_sub(control_baseline)
-            > self.try_control_depth.saturating_sub(try_baseline)
-    }
-
     fn constructor_may_mutate_arguments(&self, callee: &Expression<'_>) -> bool {
         if let Some(path) = static_alias_source_path(self.scoping, callee) {
             return self.constructor_path_may_mutate_arguments(&path);
@@ -45035,7 +43610,7 @@ impl StaticHookAliasCollector<'_> {
         let properties = if self.path_is_currently_intact(raw_descriptor) {
             self.known_structured_own_properties(&descriptor)?
         } else {
-            self.known_modeled_stored_own_properties(raw_descriptor, &descriptor)?
+            self.known_modeled_stored_descriptor_properties(raw_descriptor, &descriptor)?
         };
         if properties.contains("__proto__")
             || [
@@ -45142,7 +43717,7 @@ impl StaticHookAliasCollector<'_> {
         Some(resolved_owner.with_property(field))
     }
 
-    fn known_modeled_stored_own_properties(
+    fn known_modeled_stored_descriptor_properties(
         &self,
         raw_descriptor: &StaticAliasPath,
         descriptor: &StaticAliasPath,
@@ -45285,7 +43860,7 @@ impl StaticHookAliasCollector<'_> {
             .filter(|target| matches!(target.get_inner_expression(), Expression::Identifier(_)))
             .and_then(|target| self.alias_source_path(target))?;
         if self.path_requires_historical_aliases(&raw_target, self.function_depth)
-            || !self.path_identity_is_currently_intact(&raw_target)
+            || !self.path_is_currently_intact(&raw_target)
         {
             return None;
         }
@@ -45330,7 +43905,7 @@ impl StaticHookAliasCollector<'_> {
             .descriptor_defined_properties
             .iter()
             .any(|defined| defined.overlaps(&property))
-            || (self.tracked_structured_own_properties(&target).is_none()
+            || (self.known_structured_own_properties(&target).is_none()
                 && !(computed && self.local_define_property_owner_supports_computed_data(&target))
                 && !self.transient_callable_alias_targets.contains(&property))
         {
@@ -45484,7 +44059,7 @@ impl StaticHookAliasCollector<'_> {
             .filter(|target| matches!(target.get_inner_expression(), Expression::Identifier(_)))
             .and_then(|target| self.alias_source_path(target))?;
         if self.path_requires_historical_aliases(&raw_target, self.function_depth)
-            || !self.path_identity_is_currently_intact(&raw_target)
+            || !self.path_is_currently_intact(&raw_target)
         {
             return None;
         }
@@ -45496,7 +44071,7 @@ impl StaticHookAliasCollector<'_> {
         } else {
             self.canonical_returned_structured_value_path(&raw_target)
         };
-        self.tracked_structured_own_properties(&target)?;
+        self.known_structured_own_properties(&target)?;
         let descriptors = call
             .arguments
             .get(1)
@@ -45638,170 +44213,6 @@ impl StaticHookAliasCollector<'_> {
             non_extensible,
             container,
         ))
-    }
-
-    fn local_data_descriptor_replacement(
-        &self,
-        call: &CallExpression<'_>,
-    ) -> Option<(StaticAliasPath, DeferredCallableOperationKind)> {
-        if !self.is_local_define_property_callee(call) {
-            return None;
-        }
-        let descriptor = self.local_define_property_descriptor(call)?;
-        if descriptor.value.is_none() && descriptor.writable.is_none() {
-            return None;
-        }
-        let (property, _, _, _, container) = self.local_descriptor_mutation_path(call)?;
-        if container {
-            return None;
-        }
-        let definedness = descriptor
-            .value
-            .as_ref()
-            .map(|value| self.local_descriptor_value_definedness(value))
-            .unwrap_or(LocalGetterResultDefinedness::Undefined);
-        let truthiness = descriptor
-            .value
-            .as_ref()
-            .map(|value| self.local_descriptor_value_truthiness(value))
-            .unwrap_or(LocalValueTruthiness::Falsy);
-        Some((
-            property,
-            DeferredCallableOperationKind::DataDescriptorReplacement {
-                has_value: descriptor.value.is_some(),
-                writable: descriptor
-                    .writable
-                    .as_ref()
-                    .map(|value| self.descriptor_attribute_is_definitely_true(value)),
-                configurable: descriptor
-                    .configurable
-                    .as_ref()
-                    .map(|value| self.descriptor_attribute_is_definitely_true(value)),
-                enumerable: descriptor
-                    .enumerable
-                    .as_ref()
-                    .map(|value| self.descriptor_attribute_is_definitely_true(value)),
-                definedness,
-                truthiness,
-                throws_on_rejection: self
-                    .is_intact_object_method_callee(&call.callee, "defineProperty"),
-                conditional: self.current_execution_is_branch_conditional(),
-            },
-        ))
-    }
-
-    fn local_accessor_descriptor_replacement(
-        &self,
-        call: &CallExpression<'_>,
-    ) -> Option<(StaticAliasPath, DeferredCallableOperationKind)> {
-        if !self.is_local_define_property_callee(call) {
-            return None;
-        }
-        let descriptor = self.local_define_property_descriptor(call)?;
-        if descriptor.value.is_some()
-            || descriptor.writable.is_some()
-            || (descriptor.getter.is_none() && descriptor.setter.is_none())
-            || descriptor
-                .getter
-                .iter()
-                .chain(descriptor.setter.iter())
-                .any(|value| !self.descriptor_accessor_supported(value))
-        {
-            return None;
-        }
-        let (property, _, _, _, container) = self.local_descriptor_mutation_path(call)?;
-        if container {
-            return None;
-        }
-        let presence = |value: &LocalDescriptorValue<'_, '_>| {
-            self.local_descriptor_value_definedness(value)
-                != LocalGetterResultDefinedness::Undefined
-        };
-        Some((
-            property,
-            DeferredCallableOperationKind::AccessorDescriptorReplacement {
-                getter: descriptor.getter.as_ref().map(presence),
-                getter_slot: descriptor
-                    .getter
-                    .as_ref()
-                    .filter(|value| presence(value))
-                    .map(|_| format!("<getter@deferred:{}:{}>", call.span.start, call.span.end)),
-                setter: descriptor.setter.as_ref().map(presence),
-                configurable: descriptor
-                    .configurable
-                    .as_ref()
-                    .map(|value| self.descriptor_attribute_is_definitely_true(value)),
-                enumerable: descriptor
-                    .enumerable
-                    .as_ref()
-                    .map(|value| self.descriptor_attribute_is_definitely_true(value)),
-                throws_on_rejection: self
-                    .is_intact_object_method_callee(&call.callee, "defineProperty"),
-                conditional: self.current_execution_is_branch_conditional(),
-            },
-        ))
-    }
-
-    fn defer_local_descriptor_replacement(
-        &mut self,
-        target: &StaticAliasPath,
-        operation: DeferredCallableOperationKind,
-    ) -> bool {
-        let Some(span) = self.deferred_callable_alias_capture_span(target) else {
-            return false;
-        };
-        self.record_deferred_callable_operation(span, target.clone(), operation);
-        true
-    }
-
-    fn defer_local_descriptor_protection(
-        &mut self,
-        target: &StaticAliasPath,
-        non_writable: bool,
-        non_configurable: bool,
-        non_extensible: bool,
-        container: bool,
-        conditional: bool,
-    ) -> bool {
-        if !(non_writable || non_configurable || non_extensible) {
-            return false;
-        }
-        let Some(span) = self.deferred_callable_alias_capture_span(target) else {
-            return false;
-        };
-        self.record_deferred_callable_operation(
-            span,
-            target.clone(),
-            DeferredCallableOperationKind::DescriptorProtection {
-                non_writable,
-                non_configurable,
-                non_extensible,
-                container,
-                conditional,
-            },
-        );
-        true
-    }
-
-    fn defer_applied_local_descriptor_protection(&mut self, property: &StaticAliasPath) {
-        let non_writable = self.local_property_has_descriptor_metadata(
-            property,
-            &self.non_writable_descriptor_properties,
-            &self.non_writable_descriptor_containers,
-        );
-        let non_configurable = self.local_property_has_descriptor_metadata(
-            property,
-            &self.non_configurable_descriptor_properties,
-            &self.non_configurable_descriptor_containers,
-        );
-        self.defer_local_descriptor_protection(
-            property,
-            non_writable,
-            non_configurable,
-            false,
-            false,
-            false,
-        );
     }
 
     fn local_object_integrity_result(&self, call: &CallExpression<'_>) -> Option<StaticAliasPath> {
@@ -46093,12 +44504,6 @@ impl StaticHookAliasCollector<'_> {
             .filter(|(path, _)| path.starts_with(&source))
             .map(|(path, properties)| (path.clone(), properties.clone()))
             .collect::<Vec<_>>();
-        let precisely_enumerable = self
-            .precisely_enumerable_structured_containers
-            .iter()
-            .filter(|path| path.starts_with(&source))
-            .cloned()
-            .collect::<Vec<_>>();
         let lengths = self
             .array_lengths
             .iter()
@@ -46204,10 +44609,6 @@ impl StaticHookAliasCollector<'_> {
                 Self::rebase_returned_class_path(&path, &source, target),
                 properties,
             );
-        }
-        for path in precisely_enumerable {
-            self.precisely_enumerable_structured_containers
-                .insert(Self::rebase_returned_class_path(&path, &source, target));
         }
         for (path, length) in lengths {
             self.array_lengths.insert(
@@ -46653,9 +45054,9 @@ impl StaticHookAliasCollector<'_> {
         let Some(name) = owner.properties.pop() else {
             return false;
         };
-        let known_container = self.tracked_structured_own_properties(&owner).is_some()
+        let known_container = self.known_structured_own_properties(&owner).is_some()
             || self.transient_callable_alias_targets.contains(property);
-        if !self.path_identity_is_currently_intact(&owner) || !known_container {
+        if !self.path_is_currently_intact(&owner) || !known_container {
             return false;
         }
         let accessor = descriptor.getter.is_some() || descriptor.setter.is_some();
@@ -46668,12 +45069,6 @@ impl StaticHookAliasCollector<'_> {
             property,
             &self.non_extensible_descriptor_containers,
         ) && self.local_property_is_definitely_new(property)
-        {
-            return true;
-        }
-        let extended_array_length = self.extended_array_length_for_property(&owner, &name);
-        if extended_array_length.is_some()
-            && !self.local_property_is_writable(&owner.clone().with_property("length".to_string()))
         {
             return true;
         }
@@ -46795,9 +45190,6 @@ impl StaticHookAliasCollector<'_> {
                 self.enumerable_descriptor_properties.remove(property);
             }
             self.remove_local_auto_accessor_property(&owner, &name);
-            if let Some(length) = extended_array_length {
-                self.update_known_array_length(&owner, Some(length));
-            }
             return true;
         }
         if !accessor {
@@ -46837,9 +45229,6 @@ impl StaticHookAliasCollector<'_> {
             } else {
                 self.non_configurable_descriptor_properties
                     .insert(property.clone());
-            }
-            if let Some(length) = extended_array_length {
-                self.update_known_array_length(&owner, Some(length));
             }
             return true;
         }
@@ -46896,9 +45285,6 @@ impl StaticHookAliasCollector<'_> {
             self.enumerable_descriptor_properties.remove(property);
         }
         self.remove_local_auto_accessor_property(&owner, &name);
-        if let Some(length) = extended_array_length {
-            self.update_known_array_length(&owner, Some(length));
-        }
         true
     }
 
@@ -48288,29 +46674,16 @@ impl StaticHookAliasCollector<'_> {
         invocations: &[LocalInvocationFact],
         timing: LocalAliasInvocationTiming,
     ) {
+        // Materialize direct invocations in source order. Conditional calls keep both the old and
+        // new value through alias ambiguity and the surrounding external-storage flow merge. A
+        // tracked generator creation remains deferred until its iterator is advanced; escaping and
+        // otherwise unresolved instances are rejoined by the conservative pass.
         let unconditional = self
             .function_control_baselines
             .last()
             .map_or(self.control_depth == 0, |baseline| {
                 self.control_depth == *baseline
             });
-        self.activate_precise_local_alias_invocations_with_conditionality(
-            invocations,
-            timing,
-            !unconditional,
-        );
-    }
-
-    fn activate_precise_local_alias_invocations_with_conditionality(
-        &mut self,
-        invocations: &[LocalInvocationFact],
-        timing: LocalAliasInvocationTiming,
-        conditional_invocation: bool,
-    ) {
-        // Materialize direct invocations in source order. Conditional calls keep both the old and
-        // new value through alias ambiguity and the surrounding external-storage flow merge. A
-        // tracked generator creation remains deferred until its iterator is advanced; escaping and
-        // otherwise unresolved instances are rejoined by the conservative pass.
         let invocations = invocations
             .iter()
             .cloned()
@@ -48328,6 +46701,7 @@ impl StaticHookAliasCollector<'_> {
                         .is_none()
                     && (!generator
                         || matches!(timing, LocalAliasInvocationTiming::GeneratorAdvance(_)));
+                let conditional_invocation = !unconditional;
                 let mut operations = self
                     .deferred_callable_operations
                     .get(&span)
@@ -48391,28 +46765,13 @@ impl StaticHookAliasCollector<'_> {
                 while let Some(operation) = operations.next() {
                     let target = operation.target;
                     let effect = (instance_target.clone(), span, target.clone());
-                    let conditional_operation = matches!(
-                        &operation.kind,
-                        DeferredCallableOperationKind::DescriptorProtection {
-                            conditional: true,
-                            ..
-                        } | DeferredCallableOperationKind::DataDescriptorReplacement {
-                            conditional: true,
-                            ..
-                        } | DeferredCallableOperationKind::AccessorDescriptorReplacement {
-                            conditional: true,
-                            ..
-                        }
-                    );
-                    if (conditional_invocation || conditional_operation)
+                    if conditional_invocation
                         && matches!(
                             &operation.kind,
                             DeferredCallableOperationKind::DeleteOwnProperty
                                 | DeferredCallableOperationKind::DeleteComputedOwnProperty
                                 | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                                 | DeferredCallableOperationKind::DescriptorProtection { .. }
-                                | DeferredCallableOperationKind::DataDescriptorReplacement { .. }
-                                | DeferredCallableOperationKind::AccessorDescriptorReplacement { .. }
                         )
                     {
                         self.imprecisely_invoked_alias_effects.insert(effect);
@@ -48469,22 +46828,12 @@ impl StaticHookAliasCollector<'_> {
                         | DeferredCallableOperationKind::DeleteComputedOwnProperty
                         | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                         | DeferredCallableOperationKind::DescriptorProtection { .. }
-                        | DeferredCallableOperationKind::DataDescriptorReplacement { .. }
-                        | DeferredCallableOperationKind::AccessorDescriptorReplacement { .. }
                         | DeferredCallableOperationKind::ArrayMutation { .. }
                         | DeferredCallableOperationKind::ArrayLengthAssignment { .. } => {
                             let rejects_unconditionally = matches!(
                                 &operation.kind,
                                 DeferredCallableOperationKind::ArrayMutation {
                                     conditional: false,
-                                    ..
-                                } | DeferredCallableOperationKind::DataDescriptorReplacement {
-                                    conditional: false,
-                                    throws_on_rejection: true,
-                                    ..
-                                } | DeferredCallableOperationKind::AccessorDescriptorReplacement {
-                                    conditional: false,
-                                    throws_on_rejection: true,
                                     ..
                                 }
                             );
@@ -48726,11 +47075,7 @@ impl StaticHookAliasCollector<'_> {
                 non_configurable,
                 non_extensible,
                 container,
-                conditional,
             } => {
-                if *conditional || conditional_invocation {
-                    return DeferredCallableOperationOutcome::Unresolved;
-                }
                 if *non_writable || *non_configurable {
                     self.descriptor_defined_properties
                         .insert(raw_target.clone());
@@ -48752,273 +47097,6 @@ impl StaticHookAliasCollector<'_> {
                 if *non_extensible && *container {
                     self.non_extensible_descriptor_containers
                         .insert(raw_target.clone());
-                }
-                DeferredCallableOperationOutcome::Applied
-            }
-            DeferredCallableOperationKind::DataDescriptorReplacement {
-                has_value,
-                writable,
-                configurable,
-                enumerable,
-                definedness,
-                truthiness,
-                throws_on_rejection,
-                conditional,
-            } => {
-                if *conditional || conditional_invocation {
-                    return DeferredCallableOperationOutcome::Unresolved;
-                }
-                let property = self
-                    .local_descriptor_property_slot(raw_target)
-                    .unwrap_or_else(|| raw_target.clone());
-                let mut owner = property.clone();
-                let Some(name) = owner.properties.pop() else {
-                    return DeferredCallableOperationOutcome::Unresolved;
-                };
-                let existing_own = self
-                    .structured_own_properties
-                    .get(&owner)
-                    .is_some_and(|properties| properties.contains(&name));
-                let current_getters = self.local_getter_resolution(&property, false).1;
-                let replaces_accessor = !current_getters.is_empty()
-                    || self.local_setter_properties.contains_key(&property);
-                let current_configurable =
-                    self.local_reflect_delete_property_is_configurable(&property);
-                let current_writable = self.local_property_is_writable(&property);
-                let current_enumerable = if self.descriptor_defined_properties.contains(&property) {
-                    !self.local_getter_resolution(&property, true).1.is_empty()
-                        || self.enumerable_descriptor_properties.contains(&property)
-                } else {
-                    existing_own
-                };
-                let rejection = if *throws_on_rejection {
-                    DeferredCallableOperationOutcome::Rejected
-                } else {
-                    DeferredCallableOperationOutcome::Applied
-                };
-                if !existing_own
-                    && self.local_property_owner_has_descriptor_container(
-                        &property,
-                        &self.non_extensible_descriptor_containers,
-                    )
-                {
-                    return rejection;
-                }
-                if !current_configurable {
-                    if *configurable == Some(true)
-                        || enumerable.is_some_and(|value| value != current_enumerable)
-                        || replaces_accessor
-                        || (*writable == Some(true) && !current_writable)
-                    {
-                        return rejection;
-                    }
-                    if *has_value && !current_writable {
-                        return DeferredCallableOperationOutcome::Unresolved;
-                    }
-                }
-                let descriptor_writable =
-                    writable.unwrap_or(existing_own && !replaces_accessor && current_writable);
-                let descriptor_configurable =
-                    configurable.unwrap_or(existing_own && current_configurable);
-                let descriptor_enumerable =
-                    enumerable.unwrap_or(existing_own && current_enumerable);
-                let extended_array_length = self.extended_array_length_for_property(&owner, &name);
-                let replaces_value = *has_value || !existing_own || replaces_accessor;
-                if replaces_value {
-                    self.clear_overlapping_aliases(&property);
-                    if replaces_accessor {
-                        self.clear_alias_target_history(&property);
-                        for getter in current_getters {
-                            self.local_getter_properties.remove(&getter);
-                            self.local_getter_property_history.remove(&getter);
-                            self.enumerable_getter_properties.remove(&getter);
-                            self.enumerable_getter_property_history.remove(&getter);
-                            self.local_getter_result_definedness.remove(&getter);
-                            self.local_getter_result_definedness_history.remove(&getter);
-                            self.local_getter_result_truthiness.remove(&getter);
-                            self.local_getter_result_truthiness_history.remove(&getter);
-                        }
-                    }
-                }
-                self.structured_own_properties
-                    .entry(owner.clone())
-                    .or_default()
-                    .insert(name.clone());
-                self.exclude_dynamic_local_accessor_property(&owner, name.clone());
-                self.descriptor_defined_properties.insert(property.clone());
-                if descriptor_writable {
-                    self.non_writable_descriptor_properties.remove(&property);
-                } else {
-                    self.non_writable_descriptor_properties
-                        .insert(property.clone());
-                }
-                if descriptor_configurable {
-                    self.non_configurable_descriptor_properties
-                        .remove(&property);
-                } else {
-                    self.non_configurable_descriptor_properties
-                        .insert(property.clone());
-                }
-                if descriptor_enumerable {
-                    self.enumerable_descriptor_properties
-                        .insert(property.clone());
-                } else {
-                    self.enumerable_descriptor_properties.remove(&property);
-                }
-                if replaces_value {
-                    self.record_descriptor_result_definedness(property.clone(), *definedness);
-                    self.record_descriptor_result_truthiness(property.clone(), *truthiness);
-                }
-                self.remove_local_auto_accessor_property(&owner, &name);
-                if let Some(length) = extended_array_length {
-                    self.update_known_array_length(&owner, Some(length));
-                }
-                DeferredCallableOperationOutcome::Applied
-            }
-            DeferredCallableOperationKind::AccessorDescriptorReplacement {
-                getter,
-                getter_slot,
-                setter,
-                configurable,
-                enumerable,
-                throws_on_rejection,
-                conditional,
-            } => {
-                if *conditional || conditional_invocation {
-                    return DeferredCallableOperationOutcome::Unresolved;
-                }
-                let property = self
-                    .local_descriptor_property_slot(raw_target)
-                    .unwrap_or_else(|| raw_target.clone());
-                let mut owner = property.clone();
-                let Some(name) = owner.properties.pop() else {
-                    return DeferredCallableOperationOutcome::Unresolved;
-                };
-                let existing_own = self
-                    .structured_own_properties
-                    .get(&owner)
-                    .is_some_and(|properties| properties.contains(&name));
-                let current_getters = self.local_getter_resolution(&property, false).1;
-                let current_getter = !current_getters.is_empty();
-                let current_setter = self.local_setter_properties.get(&property).cloned();
-                let current_accessor = current_getter || current_setter.is_some();
-                let current_configurable =
-                    self.local_reflect_delete_property_is_configurable(&property);
-                let current_enumerable = if self.descriptor_defined_properties.contains(&property) {
-                    !self.local_getter_resolution(&property, true).1.is_empty()
-                        || self.enumerable_descriptor_properties.contains(&property)
-                } else {
-                    existing_own
-                };
-                let rejection = if *throws_on_rejection {
-                    DeferredCallableOperationOutcome::Rejected
-                } else {
-                    DeferredCallableOperationOutcome::Applied
-                };
-                if !existing_own
-                    && self.local_property_owner_has_descriptor_container(
-                        &property,
-                        &self.non_extensible_descriptor_containers,
-                    )
-                {
-                    return rejection;
-                }
-                if existing_own && !current_configurable {
-                    if *configurable == Some(true)
-                        || enumerable.is_some_and(|value| value != current_enumerable)
-                        || !current_accessor
-                        || (*getter == Some(false) && current_getter)
-                        || (*setter == Some(false) && current_setter.is_some())
-                    {
-                        return rejection;
-                    }
-                    if *getter == Some(true) || *setter == Some(true) {
-                        return DeferredCallableOperationOutcome::Unresolved;
-                    }
-                }
-                let final_getter = getter.unwrap_or(existing_own && current_getter);
-                let final_setter = setter.unwrap_or(existing_own && current_setter.is_some());
-                let descriptor_configurable =
-                    configurable.unwrap_or(existing_own && current_configurable);
-                let descriptor_enumerable =
-                    enumerable.unwrap_or(existing_own && current_enumerable);
-                let replaces_kind = !existing_own || !current_accessor;
-                let replaces_getter = getter.is_some() || replaces_kind;
-                let retained_setter = (setter.is_none()).then_some(current_setter).flatten();
-                let mut final_getter_markers = if final_getter && !replaces_getter {
-                    current_getters.clone()
-                } else {
-                    BTreeSet::new()
-                };
-                if replaces_getter {
-                    self.clear_overlapping_aliases(&property);
-                    self.clear_alias_target_history(&property);
-                    for getter in current_getters {
-                        self.local_getter_properties.remove(&getter);
-                        self.local_getter_property_history.remove(&getter);
-                        self.enumerable_getter_properties.remove(&getter);
-                        self.enumerable_getter_property_history.remove(&getter);
-                        self.local_getter_result_definedness.remove(&getter);
-                        self.local_getter_result_definedness_history.remove(&getter);
-                        self.local_getter_result_truthiness.remove(&getter);
-                        self.local_getter_result_truthiness_history.remove(&getter);
-                    }
-                    if final_getter {
-                        let source = getter_slot
-                            .as_ref()
-                            .map(|slot| owner.clone().with_property(slot.clone()))
-                            .unwrap_or_else(|| property.clone());
-                        if source != property {
-                            self.insert_alias(property.clone(), source.clone());
-                        }
-                        self.local_getter_properties.insert(source.clone());
-                        self.local_getter_property_history.insert(source.clone());
-                        final_getter_markers.insert(source);
-                    }
-                    if final_setter {
-                        let setter = retained_setter
-                            .unwrap_or_else(|| Self::local_stored_setter_callable_path(&property));
-                        self.replace_local_setter(property.clone(), setter);
-                    }
-                } else if let Some(setter) = setter {
-                    self.clear_local_descriptor_setter(&property);
-                    if *setter {
-                        let setter = Self::local_stored_setter_callable_path(&property);
-                        self.replace_local_setter(property.clone(), setter);
-                    }
-                }
-                self.structured_own_properties
-                    .entry(owner.clone())
-                    .or_default()
-                    .insert(name.clone());
-                self.exclude_dynamic_local_accessor_property(&owner, name.clone());
-                self.descriptor_defined_properties.insert(property.clone());
-                self.non_writable_descriptor_properties.remove(&property);
-                if descriptor_configurable {
-                    self.non_configurable_descriptor_properties
-                        .remove(&property);
-                } else {
-                    self.non_configurable_descriptor_properties
-                        .insert(property.clone());
-                }
-                if descriptor_enumerable {
-                    self.enumerable_descriptor_properties
-                        .insert(property.clone());
-                } else {
-                    self.enumerable_descriptor_properties.remove(&property);
-                }
-                for marker in final_getter_markers {
-                    if descriptor_enumerable {
-                        self.enumerable_getter_properties.insert(marker.clone());
-                        self.enumerable_getter_property_history.insert(marker);
-                    } else {
-                        self.enumerable_getter_properties.remove(&marker);
-                        self.enumerable_getter_property_history.remove(&marker);
-                    }
-                }
-                self.remove_local_auto_accessor_property(&owner, &name);
-                if let Some(length) = self.extended_array_length_for_property(&owner, &name) {
-                    self.update_known_array_length(&owner, Some(length));
                 }
                 DeferredCallableOperationOutcome::Applied
             }
@@ -49256,67 +47334,6 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
-    fn activate_deferred_array_mutation_getter_reads(
-        &mut self,
-        target: &StaticAliasPath,
-        mutation: &DeferredArrayMutation,
-        length: usize,
-        mappers: &[Vec<LocalInvocationFact>],
-        conditional: bool,
-    ) -> BTreeSet<usize> {
-        let precise = Self::precise_array_mutation_from_deferred(&mutation.kind);
-        let values = self.mapped_deferred_array_mutation_setter_arguments(mutation, mappers);
-        self.activate_local_array_mutation_getter_reads(
-            target,
-            precise,
-            &mutation.method,
-            length,
-            None,
-            LocalArrayMutationAccessorContext {
-                value_target: &mutation.snapshot,
-                mutation_values: &values,
-                timing: LocalAliasInvocationTiming::Eager,
-                conditional_invocation: conditional,
-            },
-        )
-        .1
-    }
-
-    fn mapped_deferred_array_mutation_setter_arguments(
-        &self,
-        mutation: &DeferredArrayMutation,
-        mappers: &[Vec<LocalInvocationFact>],
-    ) -> Vec<Vec<LocalInvocationArgument>> {
-        let values = match &mutation.kind {
-            DeferredArrayMutationKind::Fill { value, .. } => std::slice::from_ref(value),
-            DeferredArrayMutationKind::Push(values)
-            | DeferredArrayMutationKind::Unshift(values)
-            | DeferredArrayMutationKind::Splice { values, .. } => values,
-            _ => &[],
-        };
-        values
-            .iter()
-            .map(|value| {
-                value
-                    .sources
-                    .iter()
-                    .flat_map(|argument| {
-                        if mappers.is_empty() {
-                            vec![argument.clone()]
-                        } else {
-                            mappers
-                                .iter()
-                                .flat_map(|mapper| {
-                                    self.map_returned_callable_invocation_argument(argument, mapper)
-                                })
-                                .collect()
-                        }
-                    })
-                    .collect()
-            })
-            .collect()
-    }
-
     fn apply_deferred_array_mutation(
         &mut self,
         raw_target: &StaticAliasPath,
@@ -49337,30 +47354,18 @@ impl StaticHookAliasCollector<'_> {
             .map(|(candidate, properties)| (candidate.clone(), properties.clone()))
             .collect::<Vec<_>>();
         let known_length = self.known_array_length(&target);
-        let intercepted_setter_writes = known_length.map_or_else(BTreeSet::new, |length| {
-            self.activate_deferred_array_mutation_getter_reads(
-                &target,
-                mutation,
-                length,
-                mappers,
-                conditional,
-            )
-        });
         let old_properties = self
             .structured_own_properties
             .get(&target)
             .cloned()
             .unwrap_or_default();
-        let mut property_effect = known_length
+        let property_effect = known_length
             .filter(|length| *length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS)
             .and_then(|length| {
                 Self::precise_array_mutation_from_deferred(&mutation.kind).and_then(|mutation| {
                     self.precise_local_array_mutation_effect(&target, length, mutation)
                 })
             });
-        if let Some((owner, effect)) = &mut property_effect {
-            self.preserve_intercepted_array_writes(owner, effect, &intercepted_setter_writes);
-        }
         if property_effect.as_ref().is_some_and(|(owner, effect)| {
             !self.local_array_mutation_effect_is_allowed(owner, effect)
         }) {
@@ -49400,10 +47405,12 @@ impl StaticHookAliasCollector<'_> {
             .snapshot_subtree(&snapshot, &target);
         self.external_storage_flow
             .detach_shallow_copy_sources(&target, &snapshot);
+        self.clear_overlapping_aliases(&target.with_element_wildcard());
         if let Some((owner, effect)) = &property_effect {
-            self.clear_local_array_mutation_targets(owner, effect);
-        } else if intercepted_setter_writes.is_empty() {
-            self.clear_overlapping_aliases(&target.with_element_wildcard());
+            self.clear_local_array_index_history(
+                owner,
+                known_length.unwrap_or_default().max(effect.length),
+            );
         }
         self.external_storage_flow.clear_array_element_copies(
             &target,
@@ -49445,7 +47452,6 @@ impl StaticHookAliasCollector<'_> {
             .collect::<BTreeSet<_>>();
         let mut new_length = length;
         let mut new_sources = old_sources.expect("known deferred array length has slot sources");
-        let original_sources = new_sources.clone();
         let mut pending_values = Vec::<(usize, &DeferredArrayMutationValue)>::new();
 
         match &mutation.kind {
@@ -49657,18 +47663,6 @@ impl StaticHookAliasCollector<'_> {
             DeferredArrayMutationKind::Opaque => unreachable!("opaque mutations return early"),
         }
 
-        for index in &intercepted_setter_writes {
-            let Some(source) = new_sources.get_mut(*index) else {
-                continue;
-            };
-            *source = original_sources.get(*index).cloned().flatten();
-            if old_properties.contains(&index.to_string()) {
-                numeric_properties.insert(*index);
-            } else {
-                numeric_properties.remove(index);
-            }
-        }
-
         debug_assert_eq!(new_sources.len(), new_length);
         for (index, source) in new_sources.into_iter().enumerate() {
             let Some(source) = source.filter(|source| !source.starts_with(&target)) else {
@@ -49677,9 +47671,6 @@ impl StaticHookAliasCollector<'_> {
             self.insert_alias(target.clone().with_property(index.to_string()), source);
         }
         for (index, value) in pending_values {
-            if intercepted_setter_writes.contains(&index) {
-                continue;
-            }
             self.apply_deferred_array_value(&target, index, value, mappers);
         }
 
@@ -49852,8 +47843,6 @@ impl StaticHookAliasCollector<'_> {
                     | DeferredCallableOperationKind::DeleteComputedOwnProperty
                     | DeferredCallableOperationKind::ReflectDeleteProperty { .. }
                     | DeferredCallableOperationKind::DescriptorProtection { .. }
-                    | DeferredCallableOperationKind::DataDescriptorReplacement { .. }
-                    | DeferredCallableOperationKind::AccessorDescriptorReplacement { .. }
                     | DeferredCallableOperationKind::ArrayMutation { .. }
                     | DeferredCallableOperationKind::ArrayLengthAssignment { .. } => None,
                 };
@@ -49898,33 +47887,6 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
-    fn activate_pending_object_assign_setter_rechecks(&mut self) -> BTreeSet<(u32, u32)> {
-        let mut unsafe_calls = BTreeSet::new();
-        for recheck in std::mem::take(&mut self.pending_object_assign_setter_rechecks) {
-            let targets = if recheck.dynamic_target {
-                self.dynamic_structured_member_paths_for_owner(&recheck.target)
-            } else {
-                vec![recheck.target]
-            };
-            if targets
-                .iter()
-                .any(|target| !self.local_setter_resolution(target).1.is_empty())
-            {
-                unsafe_calls.insert(recheck.call_span);
-            }
-        }
-        unsafe_calls
-    }
-
-    fn discard_unresolved_object_assign_setter_rechecks(&mut self) {
-        let unsafe_calls = std::mem::take(&mut self.pending_object_assign_setter_rechecks)
-            .into_iter()
-            .map(|recheck| recheck.call_span)
-            .collect::<BTreeSet<_>>();
-        self.pending_non_escaping_object_assign_arguments
-            .retain(|candidate| !unsafe_calls.contains(&candidate.call_span));
-    }
-
     fn activate_invoked_returned_callable_effects(&mut self) {
         let invocations = self.local_invocations.clone();
         let mut instances = BTreeMap::<(StaticAliasPath, (u32, u32)), bool>::new();
@@ -49935,7 +47897,6 @@ impl StaticHookAliasCollector<'_> {
         for (target, span, historical) in self.escaped_callable_effect_instances() {
             instances.insert((target, span), historical);
         }
-        let mut converged = false;
         for _ in 0..=invocations.len() {
             let previous_len = instances.len();
             let previous_owner_len = creator_owners.values().map(BTreeSet::len).sum::<usize>();
@@ -49990,16 +47951,8 @@ impl StaticHookAliasCollector<'_> {
             if instances.len() == previous_len
                 && creator_owners.values().map(BTreeSet::len).sum::<usize>() == previous_owner_len
             {
-                converged = true;
                 break;
             }
-        }
-        if converged {
-            let unsafe_calls = self.activate_pending_object_assign_setter_rechecks();
-            self.pending_non_escaping_object_assign_arguments
-                .retain(|candidate| !unsafe_calls.contains(&candidate.call_span));
-        } else {
-            self.discard_unresolved_object_assign_setter_rechecks();
         }
         self.active_returned_callable_instances
             .clone_from(&instances);
@@ -50863,18 +48816,6 @@ impl StaticHookAliasCollector<'_> {
                 resolve_static_alias_slot_path(&resolver.aliases, path)
             }
         }));
-        for candidate in std::mem::take(&mut self.pending_non_escaping_object_assign_arguments) {
-            if candidate.targets.iter().all(|target| {
-                (!candidate.requires_precise_final_target
-                    || self
-                        .current_local_object_assign_properties(target)
-                        .is_some())
-                    && !self.local_reflect_set_owner_is_externally_stored(target)
-            }) {
-                self.non_escaping_local_call_arguments
-                    .insert(candidate.span);
-            }
-        }
         self.aliases.retain(|target, source| {
             !self.transient_callable_alias_targets.contains(target)
                 && target
@@ -50932,15 +48873,9 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         if is_parameter_detachment_control_context(kind) {
             self.control_depth = self.control_depth.saturating_add(1);
         }
-        if matches!(kind, AstKind::TryStatement(_)) {
-            self.try_control_depth = self.try_control_depth.saturating_add(1);
-        }
     }
 
     fn leave_node(&mut self, kind: AstKind<'a>) {
-        if matches!(kind, AstKind::TryStatement(_)) {
-            self.try_control_depth = self.try_control_depth.saturating_sub(1);
-        }
         if is_parameter_detachment_control_context(kind) {
             self.control_depth = self.control_depth.saturating_sub(1);
         }
@@ -51822,8 +49757,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .map(|(target, callable)| (target.clone(), callable.clone()))
             .collect::<Vec<_>>();
         self.function_control_baselines.push(self.control_depth);
-        self.function_try_control_baselines
-            .push(self.try_control_depth);
         self.function_depth = depth;
         self.current_callable_spans
             .push((function.span.start, function.span.end));
@@ -52098,7 +50031,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_bound_callables
             .extend(outer_local_bound_callables);
         self.function_control_baselines.pop();
-        self.function_try_control_baselines.pop();
         self.function_depth = depth - 1;
     }
 
@@ -52307,8 +50239,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .map(|(target, callable)| (target.clone(), callable.clone()))
             .collect::<Vec<_>>();
         self.function_control_baselines.push(self.control_depth);
-        self.function_try_control_baselines
-            .push(self.try_control_depth);
         self.function_depth = depth;
         self.current_callable_spans
             .push((function.span.start, function.span.end));
@@ -52571,7 +50501,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.local_bound_callables
             .extend(outer_local_bound_callables);
         self.function_control_baselines.pop();
-        self.function_try_control_baselines.pop();
         self.function_depth = depth - 1;
     }
 
@@ -52690,7 +50619,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             })
             .flatten();
         let auto_accessor_write = auto_accessor_storage.is_some();
-        let setter_invocation_start = self.local_invocations.len();
         let mut accessor_write =
             if let Some(path) = place.as_ref().and_then(static_alias_invalidation_path) {
                 let invokes_setter = self.record_local_setter_invocations(&path, setter_value);
@@ -52704,7 +50632,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 );
                 assignment.operator == OxcAssignmentOperator::Assign && invokes_setter
             };
-        let mut setter_invocations = self.local_invocations[setter_invocation_start..].to_vec();
         let dynamic_descriptor_protected = computed_data_target
             .as_ref()
             .is_some_and(|target| !self.local_property_is_writable(target));
@@ -52902,18 +50829,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 }
             }
         }
-        let setter_invocation_start = self.local_invocations.len();
         if assignment.operator == OxcAssignmentOperator::Assign && !accessor_write {
             accessor_write = self.record_structured_assignment_target_setter_invocations(
                 &assignment.left,
                 setter_value,
             );
         }
-        setter_invocations.extend_from_slice(&self.local_invocations[setter_invocation_start..]);
-        self.activate_precise_local_alias_invocations(
-            &setter_invocations,
-            LocalAliasInvocationTiming::Eager,
-        );
         for span in suppressed_getter_reads {
             self.handled_local_getter_read_spans.remove(&span);
         }
@@ -53072,13 +50993,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
         let place = planned_simple_assignment_target_place(self.scoping, &update.argument);
         let path = place.as_ref().and_then(static_alias_invalidation_path);
-        let setter_invocation_start = self.local_invocations.len();
         if let Some(path) = &path {
             self.record_local_setter_invocations(path, None);
         } else {
             self.record_structured_simple_assignment_target_setter_invocations(&update.argument);
         }
-        let setter_invocations = self.local_invocations[setter_invocation_start..].to_vec();
         let dynamic_target = self.dynamic_computed_simple_assignment_data_target(&update.argument);
         let descriptor_rejects_update = dynamic_target.as_ref().map_or_else(
             || path.is_some_and(|path| !self.local_property_is_writable(&path)),
@@ -53088,10 +51007,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             self.invalidate_place(place);
         }
         oxc::ast_visit::walk::walk_update_expression(self, update);
-        self.activate_precise_local_alias_invocations(
-            &setter_invocations,
-            LocalAliasInvocationTiming::Eager,
-        );
     }
 
     fn visit_unary_expression(&mut self, expression: &oxc::ast::ast::UnaryExpression<'a>) {
@@ -53186,7 +51101,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let call_span = (call.span.start, call.span.end);
         self.record_local_json_replacer_array_mutation(call);
         let local_array_mutation = self.prepare_local_array_mutation(call);
         if local_array_mutation.as_ref().is_some_and(|plan| {
@@ -53220,6 +51134,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.record_local_define_property_result(call);
         self.record_local_define_properties_result(call);
         self.record_local_set_prototype_of_result(call);
+        let call_span = (call.span.start, call.span.end);
         let generator_advance_invocations = self.precise_generator_advance_invocations(call);
         let local_alias_timing = if self.tracked_generator_invocation_spans.contains(&call_span) {
             LocalAliasInvocationTiming::DeferredGenerator
@@ -53251,9 +51166,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             .then(|| self.local_define_properties(call))
             .flatten();
         let local_set_prototype_of = self.local_set_prototype_of(call);
-        let local_data_descriptor_replacement = self.local_data_descriptor_replacement(call);
-        let local_accessor_descriptor_replacement =
-            self.local_accessor_descriptor_replacement(call);
         let local_descriptor_mutation = self.local_descriptor_mutation_path(call);
         if let Some(property) = &local_define_property {
             self.prepare_local_define_property(call, property);
@@ -53368,46 +51280,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         } else {
             None
         };
-        let mut local_array_setter_writes = BTreeSet::new();
         walk_call_expression(self, call);
-        if let Some(plan) = local_array_mutation.as_ref()
-            && !local_array_mutation_is_deferred
-            && !self
-                .handled_local_array_getter_read_spans
-                .contains(&call_span)
-            && let Some(length) = self.known_array_length(&plan.source)
-        {
-            let returned_index = match plan.method.as_str() {
-                "pop" => length.checked_sub(1),
-                "shift" => (length > 0).then_some(0),
-                _ => None,
-            };
-            let returned_getter_was_recorded =
-                self.handled_local_getter_read_spans.contains(&call_span);
-            let mutation = plan
-                .stable_arguments
-                .then(|| Self::precise_array_mutation_from_call(call, &plan.method))
-                .flatten();
-            let mutation_values = self.local_array_mutation_setter_arguments(call, &plan.method);
-            let (activated, intercepted_writes) = self.activate_local_array_mutation_getter_reads(
-                &plan.source,
-                mutation,
-                &plan.method,
-                length,
-                returned_index.filter(|_| returned_getter_was_recorded),
-                LocalArrayMutationAccessorContext {
-                    value_target: &plan.snapshot,
-                    mutation_values: &mutation_values,
-                    timing: local_alias_timing,
-                    conditional_invocation: false,
-                },
-            );
-            local_array_setter_writes = intercepted_writes;
-            if activated {
-                self.handled_local_array_getter_read_spans.insert(call_span);
-                self.handled_local_getter_read_spans.insert(call_span);
-            }
-        }
         let mut local_reflect_set_mutates = true;
         if let Some(snapshots) = local_reflect_set_snapshots.as_ref() {
             match self.local_reflect_set_outcome(call, snapshots) {
@@ -53478,12 +51351,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         if let Some(mutation) = local_array_mutation
             && !local_array_mutation_is_deferred
         {
-            self.apply_local_array_mutation(
-                call,
-                mutation,
-                !unconditional,
-                &local_array_setter_writes,
-            );
+            self.apply_local_array_mutation(call, mutation, !unconditional);
         }
         self.materialize_ready_returned_structured_values();
         self.activate_deferred_descriptor_invocations(&local_invocations);
@@ -53514,15 +51382,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     }
                     applied
                 });
-        if local_define_property_applied && let Some(property) = &local_define_property {
-            self.defer_applied_local_descriptor_protection(property);
-        }
-        if local_define_properties_applied && let Some((_, definitions)) = &local_define_properties
-        {
-            for (property, _) in definitions {
-                self.defer_applied_local_descriptor_protection(property);
-            }
-        }
         if local_define_property_applied
             && local_define_property
                 .as_ref()
@@ -53543,25 +51402,23 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             && !local_define_property_applied
             && !local_define_properties_applied
         {
-            let deferred_descriptor_replacement = local_data_descriptor_replacement
-                .or(local_accessor_descriptor_replacement)
-                .filter(|(target, _)| target == &property)
-                .is_some_and(|(_, operation)| {
-                    self.defer_local_descriptor_replacement(&property, operation)
-                });
-            let deferred = deferred_descriptor_replacement
-                || self.defer_local_descriptor_protection(
-                    &property,
-                    non_writable,
-                    non_configurable,
-                    non_extensible && unconditional,
-                    container,
-                    !unconditional,
+            if non_writable || non_configurable {
+                self.descriptor_defined_properties.insert(property.clone());
+            }
+            if let Some(span) = self.deferred_callable_alias_capture_span(&property)
+                && (non_writable || (non_extensible && unconditional))
+            {
+                self.record_deferred_callable_operation(
+                    span,
+                    property.clone(),
+                    DeferredCallableOperationKind::DescriptorProtection {
+                        non_writable,
+                        non_configurable: false,
+                        non_extensible: non_extensible && unconditional,
+                        container,
+                    },
                 );
-            if !deferred {
-                if non_writable || non_configurable {
-                    self.descriptor_defined_properties.insert(property.clone());
-                }
+            } else {
                 if non_writable && container {
                     self.non_writable_descriptor_containers
                         .insert(property.clone());
@@ -53573,11 +51430,11 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                     self.non_extensible_descriptor_containers
                         .insert(property.clone());
                 }
-                if non_configurable && container {
-                    self.non_configurable_descriptor_containers.insert(property);
-                } else if non_configurable {
-                    self.non_configurable_descriptor_properties.insert(property);
-                }
+            }
+            if non_configurable && container {
+                self.non_configurable_descriptor_containers.insert(property);
+            } else if non_configurable {
+                self.non_configurable_descriptor_properties.insert(property);
             }
         }
         self.local_invocations.extend(local_invocations);
