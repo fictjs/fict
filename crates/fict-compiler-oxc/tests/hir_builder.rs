@@ -14642,6 +14642,24 @@ fn define_property_accessors_propagate_read_and_write_effects() {
             "source.run = values;",
         ),
         (
+            "defineProperty remains precise after an unrelated member write",
+            "const source = {}; source.values = values;",
+            "Object.defineProperty(source, 'run', { set(value) { this.values.forEach = null; } });",
+            "source.run = 1;",
+        ),
+        (
+            "defineProperties remains precise after an unrelated member write",
+            "const source = {}; source.values = values;",
+            "Object.defineProperties(source, { run: { set(value) { this.values.forEach = null; } } });",
+            "source.run = 1;",
+        ),
+        (
+            "indexed descriptors remain precise after an array member write",
+            "const source = [0]; source.values = values;",
+            "Object.defineProperty(source, '0', { configurable: true, set(value) { this.values.forEach = null; } });",
+            "source.fill(1);",
+        ),
+        (
             "enumerable getter executes during object spread",
             "const source = {};",
             "Object.defineProperty(source, 'run', { enumerable: true, get() { values.forEach = null; return 1; } });",

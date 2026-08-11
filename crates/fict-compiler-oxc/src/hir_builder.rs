@@ -44705,6 +44705,24 @@ impl StaticHookAliasCollector<'_> {
         static_alias_path_is_intact(&self.aliases, &self.member_invalidated, path)
     }
 
+    fn path_identity_is_currently_intact(&self, path: &StaticAliasPath) -> bool {
+        let path = path.clone().canonicalized();
+        let resolved = resolve_static_alias_path(&self.aliases, &path);
+        if self
+            .member_invalidated
+            .iter()
+            .any(StaticAliasPath::is_global_object_root)
+            && [&path, &resolved].iter().any(|candidate| {
+                matches!(&candidate.root, StaticAliasRoot::UnresolvedGlobal(root) if root != "globalThis")
+            })
+        {
+            return false;
+        }
+        self.member_invalidated
+            .iter()
+            .all(|invalidated| !path.starts_with(invalidated) && !resolved.starts_with(invalidated))
+    }
+
     fn callable_path_may_mutate_arguments(&self, path: &StaticAliasPath) -> bool {
         let prototypes = self.local_object_prototype_member_paths(path);
         if prototypes.len() > 1 {
@@ -45219,7 +45237,7 @@ impl StaticHookAliasCollector<'_> {
             .filter(|target| matches!(target.get_inner_expression(), Expression::Identifier(_)))
             .and_then(|target| self.alias_source_path(target))?;
         if self.path_requires_historical_aliases(&raw_target, self.function_depth)
-            || !self.path_is_currently_intact(&raw_target)
+            || !self.path_identity_is_currently_intact(&raw_target)
         {
             return None;
         }
@@ -45264,7 +45282,7 @@ impl StaticHookAliasCollector<'_> {
             .descriptor_defined_properties
             .iter()
             .any(|defined| defined.overlaps(&property))
-            || (self.known_structured_own_properties(&target).is_none()
+            || (self.tracked_structured_own_properties(&target).is_none()
                 && !(computed && self.local_define_property_owner_supports_computed_data(&target))
                 && !self.transient_callable_alias_targets.contains(&property))
         {
@@ -45418,7 +45436,7 @@ impl StaticHookAliasCollector<'_> {
             .filter(|target| matches!(target.get_inner_expression(), Expression::Identifier(_)))
             .and_then(|target| self.alias_source_path(target))?;
         if self.path_requires_historical_aliases(&raw_target, self.function_depth)
-            || !self.path_is_currently_intact(&raw_target)
+            || !self.path_identity_is_currently_intact(&raw_target)
         {
             return None;
         }
@@ -45430,7 +45448,7 @@ impl StaticHookAliasCollector<'_> {
         } else {
             self.canonical_returned_structured_value_path(&raw_target)
         };
-        self.known_structured_own_properties(&target)?;
+        self.tracked_structured_own_properties(&target)?;
         let descriptors = call
             .arguments
             .get(1)
@@ -46587,9 +46605,9 @@ impl StaticHookAliasCollector<'_> {
         let Some(name) = owner.properties.pop() else {
             return false;
         };
-        let known_container = self.known_structured_own_properties(&owner).is_some()
+        let known_container = self.tracked_structured_own_properties(&owner).is_some()
             || self.transient_callable_alias_targets.contains(property);
-        if !self.path_is_currently_intact(&owner) || !known_container {
+        if !self.path_identity_is_currently_intact(&owner) || !known_container {
             return false;
         }
         let accessor = descriptor.getter.is_some() || descriptor.setter.is_some();
