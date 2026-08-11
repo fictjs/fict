@@ -9092,6 +9092,288 @@ fn builtin_target_escape_exemptions_fail_closed() {
 }
 
 #[test]
+fn precisely_modeled_object_assign_sources_remain_local() {
+    let mut mismatches = Vec::new();
+    for (name, setup, assignment) in [
+        (
+            "inline target",
+            "const source = { run };",
+            "Object.assign({}, source);",
+        ),
+        (
+            "named target",
+            "const source = { run }; const target = {};",
+            "Object.assign(target, source);",
+        ),
+        (
+            "aliased builtin",
+            "const source = { run }; const assign = Object.assign;",
+            "assign({}, source);",
+        ),
+        (
+            "computed builtin",
+            "const source = { run };",
+            "Object['assign']({}, source);",
+        ),
+        (
+            "multiple sources",
+            "const first = { run }; const second = { other: run };",
+            "Object.assign({}, first, second);",
+        ),
+        (
+            "conditional source",
+            "const first = { run }; const second = { run };",
+            "Object.assign({}, holder.flag ? first : second);",
+        ),
+        (
+            "conditional string source",
+            "const source = { run };",
+            "Object.assign({}, holder.flag ? source : 'x');",
+        ),
+        (
+            "local getter result",
+            "const source = { get run() { return run; } };",
+            "Object.assign({}, source);",
+        ),
+        (
+            "invoked local result",
+            "const source = { run };",
+            "Object.assign({}, source).run();",
+        ),
+        (
+            "assigned source property",
+            "const source = {}; source.run = run;",
+            "Object.assign({}, source);",
+        ),
+        (
+            "replaced source property",
+            "const source = { run }; source.run = {};",
+            "Object.assign({}, source);",
+        ),
+        (
+            "deleted source property",
+            "const source = { run }; delete source.run;",
+            "Object.assign({}, source);",
+        ),
+        (
+            "computed source property",
+            "const key = holder.key; const source = { [key]: run };",
+            "Object.assign({}, source);",
+        ),
+        (
+            "array source",
+            "const source = [run];",
+            "Object.assign({}, source);",
+        ),
+        (
+            "function source",
+            "const source = run;",
+            "Object.assign({}, source);",
+        ),
+        (
+            "assigned target property",
+            "const source = { run }; const target = {}; target.item = {};",
+            "Object.assign(target, source);",
+        ),
+        (
+            "null prototype target",
+            "const source = { run }; const target = Object.create(null);",
+            "Object.assign(target, source);",
+        ),
+        (
+            "spread source argument",
+            "const source = { run };",
+            "Object.assign({}, ...[source]);",
+        ),
+        (
+            "detached previously exposed target",
+            "const source = { run }; let target = {}; holder.old = target; target = {};",
+            "Object.assign(target, source);",
+        ),
+        (
+            "target rebound before later exposure",
+            "const source = { run }; let target = {}; Object.assign(target, source); target = {};",
+            "holder.target = target;",
+        ),
+        (
+            "invoked local helper",
+            "const source = { run }; const target = {}; const copy = () => Object.assign(target, source);",
+            "copy();",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    {setup}
+                    {assignment}
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        if output.hir.is_none()
+            || output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005"))
+        {
+            mismatches.push(format!("{name}: {:?}", output.diagnostics));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn object_assign_source_escape_exemptions_fail_closed() {
+    for (name, setup, assignment) in [
+        (
+            "external target",
+            "const source = { run };",
+            "Object.assign(holder, source);",
+        ),
+        (
+            "previously attached target",
+            "const source = { run }; const target = {}; holder.target = target;",
+            "Object.assign(target, source);",
+        ),
+        (
+            "external target setter",
+            "const source = { run }; const target = { set run(value) { holder.run = value; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "overridden builtin",
+            "const source = { run }; Object.assign = sink;",
+            "Object.assign({}, source);",
+        ),
+        (
+            "unknown prototype",
+            "const source = { run }; const target = {}; Object.setPrototypeOf(target, holder.prototype);",
+            "Object.assign(target, source);",
+        ),
+        (
+            "unknown prototype from object creation",
+            "const source = { run }; const target = Object.create(holder.prototype);",
+            "Object.assign(target, source);",
+        ),
+        (
+            "target exposed after copying",
+            "const source = { run }; const target = {};",
+            "Object.assign(target, source); holder.target = target;",
+        ),
+        (
+            "result exposed directly",
+            "const source = { run };",
+            "holder.target = Object.assign({}, source);",
+        ),
+        (
+            "computed source reaches an external setter",
+            "const key = holder.key; const source = { [key]: run }; const target = { set item(value) { holder.value = value; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "spread source copied to external target",
+            "const source = { run };",
+            "Object.assign(holder, ...[source]);",
+        ),
+        (
+            "spread source target exposed later",
+            "const source = { run }; const target = {};",
+            "Object.assign(target, ...[source]); holder.target = target;",
+        ),
+        (
+            "helper result exposed after copying",
+            "const source = { run }; const target = {}; const copy = () => Object.assign(target, source); copy();",
+            "holder.target = target;",
+        ),
+        (
+            "invoked helper old target alias exposed after rebinding",
+            "const source = { run }; let target = {}; const copy = () => Object.assign(target, source); copy(); const old = target; target = {};",
+            "holder.target = old;",
+        ),
+        (
+            "old target alias exposed after rebinding",
+            "const source = { run }; let target = {}; const alias = target; Object.assign(target, source); target = {};",
+            "holder.target = alias;",
+        ),
+        (
+            "one branch retains the copied target",
+            "const source = { run }; let target = {}; Object.assign(target, source); if (holder.flag) { target = {}; }",
+            "holder.target = target;",
+        ),
+        (
+            "later string source invokes a target setter",
+            "const source = { run }; const target = { set 0(value) { holder.saved = this.run; } };",
+            "Object.assign(target, source, 'x');",
+        ),
+        (
+            "conditional string source invokes a target setter",
+            "const source = { run }; const fallback = {}; const target = { set 0(value) { holder.saved = this.run; } };",
+            "Object.assign(target, source, holder.flag ? fallback : 'x');",
+        ),
+        (
+            "spread string source invokes a target setter",
+            "const source = { run }; const target = { set 0(value) { holder.saved = this.run; } };",
+            "Object.assign(target, ...[source, 'x']);",
+        ),
+        (
+            "source getter exposes the evaluated target before rebinding",
+            "let target = {}; const source = { get run() { const old = target; target = {}; holder.target = old; return run; } };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "source getter exposes its callback container",
+            "const source = { run, get expose() { holder.source = source; return 0; } };",
+            "Object.assign({}, source);",
+        ),
+        (
+            "source getter installs a later target setter",
+            "const leak = value => { globalThis.saved = value; }; const target = {}; const source = { get z() { Object.defineProperty(target, 'a', { set: leak }); return 0; }, a: run };",
+            "Object.assign(target, source);",
+        ),
+        (
+            "unknown descriptors can add a later escaping getter",
+            "const source = {}; Object.defineProperties(source, holder.descriptors); source.run = run; const target = { set hidden(value) { holder.saved = value; } };",
+            "Object.assign(target, source);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App(holder, sink) {{
+                    const count = $state(0);
+                    const run = () => count;
+                    {setup}
+                    {assignment}
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{name}: expected a hard diagnostic");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-R005"),
+            "{name}: expected a callback escape, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn identity_lookup_arguments_do_not_escape_proven_builtin_receivers() {
     let source = r#"
         import { $state } from 'fict';
