@@ -1298,8 +1298,8 @@ test('retains the independently generated Babel 0.28 semantic oracle', () => {
       oracleInputsSha256: sha256(inputsText),
     },
   )
-  assert.equal(inputs.fixtures.length, 25)
-  assert.equal(oracle.fixtures.length, 25)
+  assert.equal(inputs.fixtures.length, 28)
+  assert.equal(oracle.fixtures.length, 28)
   assert.deepEqual(
     oracle.fixtures.map(fixture => fixture.id),
     inputs.fixtures.map(fixture => fixture.id),

@@ -432,6 +432,59 @@
         "exportName": "Scenario",
         "arguments": []
       }
+    },
+    {
+      "id": "reactive-generator-deferred-order",
+      "request": {
+        "code": "import { $state } from 'fict'\nexport function Scenario() {\n  let count = $state(1)\n  function* sequence(): Generator<number, number, void> {\n    yield count\n    yield count\n    return count\n  }\n  const iterator = sequence()\n  const values: Array<number | boolean> = [count]\n  const first = iterator.next()\n  values.push(first.value, count, first.done)\n  count = 5\n  const second = iterator.next()\n  values.push(second.value, count, second.done)\n  const third = iterator.next()\n  values.push(third.value, count, third.done)\n  return values\n}\n",
+        "filename": "/oracle/reactive-generator-deferred-order.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false,
+          "dev": false
+        }
+      },
+      "invocation": {
+        "exportName": "Scenario",
+        "arguments": []
+      },
+      "diagnosticDeviation": "rust-removes-spurious-generator-receiver-warnings"
+    },
+    {
+      "id": "reactive-descriptor-accessor-order",
+      "request": {
+        "code": "import { $state } from 'fict'\nexport function Scenario() {\n  let count = $state(1)\n  const log: Array<[string, number]> = []\n  const target: { value?: number } = {}\n  Object.defineProperty(target, 'value', {\n    configurable: true,\n    enumerable: true,\n    get() { log.push(['get', count]); return count },\n    set(next: number) { log.push(['set', next]); count = next },\n  })\n  const first = target.value\n  target.value = 4\n  const second = target.value\n  const descriptor = Object.getOwnPropertyDescriptor(target, 'value')\n  return { first, second, count, log, flags: [descriptor?.configurable, descriptor?.enumerable] }\n}\n",
+        "filename": "/oracle/reactive-descriptor-accessor-order.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false,
+          "dev": false
+        }
+      },
+      "invocation": {
+        "exportName": "Scenario",
+        "arguments": []
+      },
+      "diagnosticDeviation": "rust-removes-spurious-local-descriptor-escape-warnings"
+    },
+    {
+      "id": "builtin-receiver-execution-order",
+      "request": {
+        "code": "import { $state } from 'fict'\nexport function Scenario() {\n  let count = $state(1)\n  const run = () => count\n  const target = {\n    run,\n    last: 0,\n    get read() { return this.run },\n    set write(value: number) { this.last = value },\n  }\n  const first = Reflect.get(target, 'read')()\n  const assignReturnsTarget = Object.assign(target, { write: 2 }) === target\n  const setSucceeded = Reflect.set(target, 'write', 3)\n  class Target {\n    run: () => number\n    constructor() { this.run = run }\n  }\n  const instance = Reflect.construct(Target, [])\n  const before = [first, target.last, instance.run()]\n  count = 5\n  const after = [Reflect.get(target, 'read')(), instance.run()]\n  return { assignReturnsTarget, setSucceeded, before, after }\n}\n",
+        "filename": "/oracle/builtin-receiver-execution-order.tsx",
+        "language": "tsx",
+        "moduleKind": "commonjs",
+        "options": {
+          "strictGuarantee": false,
+          "dev": false
+        }
+      },
+      "invocation": {
+        "exportName": "Scenario",
+        "arguments": []
+      }
     }
   ]
 }

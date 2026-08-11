@@ -12,7 +12,7 @@
       "@babel/plugin-transform-modules-commonjs": "7.28.6",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "oracleInputsSha256": "c9d1bcafd74821b4828448b77c5b5b2da92f681f1d0e9440933236873ddbf2be"
+    "oracleInputsSha256": "55d37fad5a0297f60357863d317d1d7cd897001965a4951a31494591e3e0b7d9"
   },
   "fixtures": [
     {
@@ -393,6 +393,108 @@
       "babelCodeSha256": "18b1d25482bf4235a760828f4b547682d85d12b298a0de81e1dd03453d8eea91",
       "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nlet Box = void 0;\n(function (_Box) {\n  let Step = function (Step) {\n    Step[Step[\"One\"] = 1] = \"One\";\n    Step[Step[\"Two\"] = 2] = \"Two\";\n    return Step;\n  }({});\n  _Box.Step = Step;\n  const add = _Box.add = value => value + Step.Two;\n})(Box || (Box = {}));\nfunction Scenario() {\n  return [Box.Step.One, Box.Step[2], Box.add(3)];\n}",
       "expected": [1, "Two", 5]
+    },
+    {
+      "id": "reactive-generator-deferred-order",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/reactive-generator-deferred-order.tsx",
+          "line": 12,
+          "column": 28
+        },
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/reactive-generator-deferred-order.tsx",
+          "line": 15,
+          "column": 29
+        },
+        {
+          "code": "FICT-S002",
+          "severity": "warning",
+          "message": "State variable is passed as an argument; this passes a value snapshot and may escape component scope.",
+          "fileName": "/oracle/reactive-generator-deferred-order.tsx",
+          "line": 17,
+          "column": 28
+        },
+        {
+          "code": "FICT-M",
+          "severity": "warning",
+          "message": "Direct mutation of nested property detected; use immutable update or $store helpers",
+          "fileName": "/oracle/reactive-generator-deferred-order.tsx",
+          "line": 12,
+          "column": 3
+        },
+        {
+          "code": "FICT-M",
+          "severity": "warning",
+          "message": "Direct mutation of nested property detected; use immutable update or $store helpers",
+          "fileName": "/oracle/reactive-generator-deferred-order.tsx",
+          "line": 15,
+          "column": 3
+        },
+        {
+          "code": "FICT-M",
+          "severity": "warning",
+          "message": "Direct mutation of nested property detected; use immutable update or $store helpers",
+          "fileName": "/oracle/reactive-generator-deferred-order.tsx",
+          "line": 17,
+          "column": 3
+        }
+      ],
+      "babelCodeSha256": "3a4f0fa3be88f8069991f055e1bc1a814292fd03aed46adad29d96a4f80c8b80",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  function* sequence() {\n    yield count();\n    yield count();\n    return count();\n  }\n  const __region_0 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const iterator = sequence();\n    return {\n      iterator\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const {\n    iterator\n  } = __region_0();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const values = (0, _internal.__fictUseMemo)(__fictCtx, () => [count()], {\n    name: \"values\"\n  });\n  const first = iterator.next();\n  values().push(first.value, count(), first.done);\n  count(5);\n  const second = iterator.next();\n  values().push(second.value, count(), second.done);\n  const third = iterator.next();\n  values().push(third.value, count(), third.done);\n  return values();\n}",
+      "expected": [5, 5, 5, false, 5, 5, true]
+    },
+    {
+      "id": "reactive-descriptor-accessor-order",
+      "babelDiagnostics": [
+        {
+          "code": "FICT-R005",
+          "severity": "warning",
+          "message": "Function captures reactive variable(s): count. Pass them as parameters or memoize explicitly to avoid hidden dependencies.",
+          "fileName": "/oracle/reactive-descriptor-accessor-order.tsx",
+          "line": 6,
+          "column": 42
+        },
+        {
+          "code": "FICT-R002",
+          "severity": "warning",
+          "message": "Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise",
+          "fileName": "/oracle/reactive-descriptor-accessor-order.tsx",
+          "line": 9,
+          "column": 22
+        }
+      ],
+      "babelCodeSha256": "3743d0f698fb9c2d4ecaeb0c29c4b0ab11599ffc46d9033867471d7df1591f18",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const log = [];\n  const target = {};\n  Object.defineProperty(target, \"value\", {\n    configurable: true,\n    enumerable: true,\n    get() {\n      log.push([\"get\", count()]);\n      return count();\n    },\n    set(next) {\n      log.push([\"set\", next]);\n      count(next);\n    }\n  });\n  const first = target.value;\n  target.value = 4;\n  const second = target.value;\n  const descriptor = Object.getOwnPropertyDescriptor(target, \"value\");\n  return {\n    first,\n    second,\n    count: count(),\n    log,\n    flags: [descriptor?.configurable, descriptor?.enumerable]\n  };\n}",
+      "expected": {
+        "count": 4,
+        "first": 1,
+        "flags": [true, true],
+        "log": [
+          ["get", 1],
+          ["set", 4],
+          ["get", 4]
+        ],
+        "second": 4
+      }
+    },
+    {
+      "id": "builtin-receiver-execution-order",
+      "babelDiagnostics": [],
+      "babelCodeSha256": "9a6f1ce8328a231f9d9e0c224e91438ad763053eb4a9924c9c046309ba78c794",
+      "babelCode": "\"use strict\";\n\nObject.defineProperty(exports, \"__esModule\", {\n  value: true\n});\nexports.Scenario = Scenario;\nvar _internal = require(\"fict/internal\");\nfunction Scenario() {\n  const __fictCtx = (0, _internal.__fictUseContext)();\n  const count = (0, _internal.__fictUseSignal)(__fictCtx, 1, {\n    name: \"count\"\n  });\n  const run = () => count();\n  const target = {\n    run,\n    last: 0,\n    get read() {\n      return this.run;\n    },\n    set write(value) {\n      this.last = value;\n    }\n  };\n  const first = Reflect.get(target, \"read\")();\n  const assignReturnsTarget = Object.assign(target, {\n    write: 2\n  }) === target;\n  const setSucceeded = Reflect.set(target, \"write\", 3);\n  let Target = class Target {\n    run;\n    constructor() {\n      this.run = run;\n    }\n  };\n  const __region_6 = (0, _internal.__fictUseMemo)(__fictCtx, () => {\n    const instance = Reflect.construct(Target, []);\n    return {\n      instance\n    };\n  }, {\n    internal: true\n  }, 1000);\n  const {\n    instance\n  } = __region_6();\n  const before = [first, target.last, instance.run()];\n  count(5);\n  const after = [Reflect.get(target, \"read\")(), instance.run()];\n  return {\n    assignReturnsTarget,\n    setSucceeded,\n    before,\n    after\n  };\n}",
+      "expected": {
+        "after": [5, 5],
+        "assignReturnsTarget": true,
+        "before": [1, 3, 1],
+        "setSucceeded": true
+      }
     }
   ]
 }

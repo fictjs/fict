@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "reportFinding": "E-07",
   "baselineSemanticFixtureCount": 12,
-  "expandedSemanticFixtureCount": 13,
+  "expandedSemanticFixtureCount": 16,
   "categories": [
     {
       "id": "runtime-import-family",
@@ -185,6 +185,9 @@
           "semanticFixtureIds": [
             "async-await-order",
             "generator-yield-order",
+            "reactive-generator-deferred-order",
+            "reactive-descriptor-accessor-order",
+            "builtin-receiver-execution-order",
             "reactive-class-declaration-order",
             "class-field-order",
             "typescript-namespace-enum"
@@ -196,7 +199,7 @@
           "markers": ["standard decorators fail closed before emitting unsupported syntax"]
         }
       ],
-      "claimBoundary": "Compares reviewed async, generator, reactive class declaration, class-field, namespace, and enum results; raw standard decorators are an explicit fail-closed diagnostic contract, not runtime parity."
+      "claimBoundary": "Compares reviewed async, generator, reactive generator suspension, descriptor accessor, builtin receiver execution, reactive class declaration, class-field, namespace, and enum results; raw standard decorators are an explicit fail-closed diagnostic contract, not runtime parity."
     },
     {
       "id": "ssr-hydration-and-resume",

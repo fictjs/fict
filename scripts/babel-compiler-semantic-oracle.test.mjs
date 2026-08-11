@@ -36,7 +36,7 @@ test('Babel 0.28 semantic oracle has exact independent provenance', () => {
     },
     oracleInputsSha256: sha256(inputsText),
   })
-  assert.equal(inputs.fixtures.length, 25)
+  assert.equal(inputs.fixtures.length, 28)
   assert.equal(oracle.fixtures.length, inputs.fixtures.length)
 })
 
@@ -73,6 +73,31 @@ for (const fixture of inputs.fixtures) {
     } else if (fixture.diagnosticDeviation === 'rust-removes-spurious-hook-member-escape-warning') {
       assert.deepEqual(babelDiagnostics, ['FICT-R005:warning', 'FICT-R005:warning'], fixture.id)
       assert.deepEqual(rustDiagnostics, [], fixture.id)
+    } else if (
+      fixture.diagnosticDeviation === 'rust-removes-spurious-local-descriptor-escape-warnings'
+    ) {
+      assert.deepEqual(babelDiagnostics, ['FICT-R002:warning', 'FICT-R005:warning'], fixture.id)
+      assert.deepEqual(rustDiagnostics, [], fixture.id)
+    } else if (
+      fixture.diagnosticDeviation === 'rust-removes-spurious-generator-receiver-warnings'
+    ) {
+      assert.deepEqual(
+        babelDiagnostics,
+        [
+          'FICT-M:warning',
+          'FICT-M:warning',
+          'FICT-M:warning',
+          'FICT-S002:warning',
+          'FICT-S002:warning',
+          'FICT-S002:warning',
+        ],
+        fixture.id,
+      )
+      assert.deepEqual(
+        rustDiagnostics,
+        ['FICT-S002:warning', 'FICT-S002:warning', 'FICT-S002:warning'],
+        fixture.id,
+      )
     } else {
       assert.equal(
         fixture.diagnosticDeviation,
@@ -104,6 +129,11 @@ test('Babel semantic oracle contains no unreferenced or duplicate fixtures', () 
     [
       ['structured-hook-return', 'rust-removes-spurious-hook-member-escape-warning'],
       ['vnode-event-order', 'rust-adds-unproven-reactive-receiver-warning'],
+      ['reactive-generator-deferred-order', 'rust-removes-spurious-generator-receiver-warnings'],
+      [
+        'reactive-descriptor-accessor-order',
+        'rust-removes-spurious-local-descriptor-escape-warnings',
+      ],
     ],
   )
 })
