@@ -38672,6 +38672,9 @@ impl StaticHookAliasCollector<'_> {
         }
         let index = if method == "pop" { length - 1 } else { 0 };
         let element = source.clone().with_property(index.to_string());
+        if self.record_local_getter_read(element.clone(), Some(target.clone())) {
+            return true;
+        }
         let resolved_element = resolve_static_alias_path(&self.aliases, &element);
         if resolved_element != element && !resolved_element.starts_with(&source) {
             self.insert_alias(target.clone(), resolved_element);
