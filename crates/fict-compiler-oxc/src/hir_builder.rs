@@ -91,6 +91,7 @@ use crate::{
 use super::compile::{convert_diagnostics, parse_source, sorted};
 
 mod advisory_diagnostics;
+mod builtin_effects;
 mod class_components;
 mod dangerous_html;
 mod function_abi;
@@ -8811,6 +8812,8 @@ struct StaticExpressionValueSnapshot {
 struct StaticHookAliases {
     aliases: BTreeMap<StaticAliasPath, StaticAliasPath>,
     member_invalidated: BTreeSet<StaticAliasPath>,
+    externally_stored_value_paths: BTreeSet<StaticAliasPath>,
+    externally_storing_callable_targets: BTreeSet<StaticAliasPath>,
     externally_stored_roots: BTreeSet<SymbolId>,
     externally_stored_nested_roots: BTreeSet<SymbolId>,
     assignment_target_aliases: BTreeMap<(u32, u32), BTreeSet<StaticAliasPath>>,
@@ -48751,9 +48754,38 @@ impl StaticHookAliasCollector<'_> {
                 (!spans.is_empty()).then(|| (target.clone(), spans))
             })
             .collect();
+        let externally_storing_callable_spans = self
+            .local_callable_external_storage_effects
+            .iter()
+            .filter_map(|(span, effects)| (!effects.is_empty()).then_some(*span))
+            .collect::<BTreeSet<_>>();
+        let mut externally_storing_callable_targets = BTreeSet::new();
+        for (target, spans) in &self.local_callable_effect_spans {
+            if spans
+                .iter()
+                .any(|span| externally_storing_callable_spans.contains(span))
+            {
+                externally_storing_callable_targets.insert(target.clone());
+                externally_storing_callable_targets
+                    .insert(resolve_static_alias_path(&self.aliases, target));
+            }
+        }
+        for (target, history) in &self.local_callable_effect_span_history {
+            if history
+                .iter()
+                .flatten()
+                .any(|span| externally_storing_callable_spans.contains(span))
+            {
+                externally_storing_callable_targets.insert(target.clone());
+                externally_storing_callable_targets
+                    .insert(resolve_static_alias_path(&self.aliases, target));
+            }
+        }
         let resolver = StaticHookAliases {
             aliases: self.aliases.clone(),
             member_invalidated: BTreeSet::new(),
+            externally_stored_value_paths: BTreeSet::new(),
+            externally_storing_callable_targets: BTreeSet::new(),
             externally_stored_roots: BTreeSet::new(),
             externally_stored_nested_roots: BTreeSet::new(),
             assignment_target_aliases: BTreeMap::new(),
@@ -48861,6 +48893,8 @@ impl StaticHookAliasCollector<'_> {
         StaticHookAliases {
             aliases: self.aliases,
             member_invalidated,
+            externally_stored_value_paths: self.externally_stored_value_paths,
+            externally_storing_callable_targets,
             externally_stored_roots: self.externally_stored_roots,
             externally_stored_nested_roots: self.externally_stored_nested_roots,
             assignment_target_aliases,
@@ -53585,39 +53619,66 @@ impl ReactiveEscapeCollector<'_, '_, '_> {
         index: usize,
         argument: EscapeArgument<'_, '_>,
     ) -> bool {
-        if index != 0 || argument.spread {
+        if argument.spread {
             return false;
         }
-        if self.resolves_to_intact_global_method(callee, "Object", "assign") {
-            return true;
-        }
-        let Some(path) = static_alias_source_path(self.scoping, callee) else {
+        let Some(raw_callee) = static_alias_source_path(self.scoping, callee) else {
             return false;
         };
-        let resolved = self.callback_aliases.resolve(&path);
-        let reflect = StaticAliasPath::unresolved_global("Reflect".to_string());
-        [
-            "apply",
-            "construct",
-            "defineProperty",
-            "deleteProperty",
-            "get",
-            "getOwnPropertyDescriptor",
-            "getPrototypeOf",
-            "has",
-            "isExtensible",
-            "ownKeys",
-            "preventExtensions",
-            "set",
-            "setPrototypeOf",
-        ]
-        .into_iter()
-        .any(|method| {
-            let target = reflect.clone().with_property(method.to_string());
-            resolved == target
-                && self.callback_aliases.path_is_intact(&path)
-                && self.callback_aliases.path_is_intact(&target)
-        })
+        let resolved_callee = self.callback_aliases.resolve(&raw_callee);
+        let (StaticAliasRoot::UnresolvedGlobal(owner), [method]) =
+            (&resolved_callee.root, resolved_callee.properties.as_slice())
+        else {
+            return false;
+        };
+        let Some(summary) = builtin_effects::lookup(owner, method) else {
+            return false;
+        };
+        let Some(argument_effect) = summary.argument(index) else {
+            return false;
+        };
+        let canonical =
+            StaticAliasPath::unresolved_global(owner.clone()).with_property(method.clone());
+        if !self.callback_aliases.path_is_intact(&raw_callee)
+            || !self.callback_aliases.path_is_intact(&canonical)
+            || argument_effect
+                .effects
+                .contains(builtin_effects::EffectSet::RETAIN)
+        {
+            return false;
+        }
+
+        let mut argument_paths =
+            BTreeSet::from([StaticAliasPath::dynamic_this(argument.expression.span())]);
+        if let Some(raw_argument) = static_alias_source_path(self.scoping, argument.expression) {
+            argument_paths.insert(raw_argument.clone());
+            argument_paths.insert(self.callback_aliases.resolve(&raw_argument));
+        }
+        let overlaps_argument = |candidate: &StaticAliasPath| {
+            argument_paths
+                .iter()
+                .any(|argument| candidate.starts_with(argument) || argument.starts_with(candidate))
+        };
+        if self
+            .callback_aliases
+            .externally_stored_value_paths
+            .iter()
+            .any(overlaps_argument)
+        {
+            return false;
+        }
+        if argument_effect
+            .effects
+            .contains(builtin_effects::EffectSet::CALL_SYNC)
+            && self
+                .callback_aliases
+                .externally_storing_callable_targets
+                .iter()
+                .any(overlaps_argument)
+        {
+            return false;
+        }
+        true
     }
 
     fn is_non_retaining_null_prototype_array_target(

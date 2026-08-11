@@ -20,7 +20,6 @@ fn diagnostic_codes(source: &str) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "known builtin receiver-exposure unsoundness; enable with callable effect summaries"]
 fn builtin_effects_expose_receivers_that_user_code_retains() {
     let cases = [
         (
@@ -91,4 +90,36 @@ fn builtin_effects_expose_receivers_that_user_code_retains() {
     }
 
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn builtin_effects_do_not_treat_synchronous_execution_as_retention() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            const run = () => count;
+            const target = {
+                run,
+                get read() { return this.run; },
+                set write(value) { void this; void value; },
+            };
+            Reflect.get(target, 'read');
+            Reflect.set(target, 'write', 1);
+            Object.assign(target, { write: 1 });
+            class Target {
+                constructor() {
+                    this.run = run;
+                }
+            }
+            Reflect.construct(Target, []);
+            return count;
+        }
+    "#;
+
+    let codes = diagnostic_codes(source);
+    assert!(
+        !codes.iter().any(|code| code == "FICT-R005"),
+        "synchronous user code that does not expose its receiver remains non-retaining: {codes:?}"
+    );
 }
