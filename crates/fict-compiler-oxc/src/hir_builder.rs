@@ -34405,7 +34405,15 @@ impl StaticHookAliasCollector<'_> {
         property: StaticAliasPath,
         target: Option<StaticAliasPath>,
     ) -> bool {
-        self.record_local_getter_read_with_receiver(property, target, None)
+        self.record_local_getter_read_with_options(property, target, None, false)
+    }
+
+    fn record_local_getter_read_before_overwrite(
+        &mut self,
+        property: StaticAliasPath,
+        target: Option<StaticAliasPath>,
+    ) -> bool {
+        self.record_local_getter_read_with_options(property, target, None, true)
     }
 
     fn record_local_getter_read_with_receiver(
@@ -34414,11 +34422,26 @@ impl StaticHookAliasCollector<'_> {
         target: Option<StaticAliasPath>,
         receiver_override: Option<Vec<LocalInvocationArgument>>,
     ) -> bool {
-        let Some((historical, getter_count, invocations)) =
+        self.record_local_getter_read_with_options(property, target, receiver_override, false)
+    }
+
+    fn record_local_getter_read_with_options(
+        &mut self,
+        property: StaticAliasPath,
+        target: Option<StaticAliasPath>,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
+        preserve_callee: bool,
+    ) -> bool {
+        let Some((historical, getter_count, mut invocations)) =
             self.local_getter_read_invocations(&property, receiver_override, target.is_none())
         else {
             return false;
         };
+        if preserve_callee {
+            for invocation in &mut invocations {
+                invocation.historical_callee = true;
+            }
+        }
         self.local_invocations.extend(invocations.iter().cloned());
         if let Some(target) = target {
             self.clear_overlapping_aliases(&target);
@@ -38661,6 +38684,16 @@ impl StaticHookAliasCollector<'_> {
             return true;
         }
 
+        if call.arguments.iter().any(|argument| {
+            argument
+                .as_expression()
+                .is_none_or(structured_control_flow::expression_has_effects)
+        }) {
+            self.clear_overlapping_aliases(target);
+            self.record_opaque_external_storage_result(target.clone());
+            return true;
+        }
+
         let Some(length) = self.known_array_length(&source) else {
             self.clear_overlapping_aliases(target);
             self.record_opaque_external_storage_result(target.clone());
@@ -38672,7 +38705,9 @@ impl StaticHookAliasCollector<'_> {
         }
         let index = if method == "pop" { length - 1 } else { 0 };
         let element = source.clone().with_property(index.to_string());
-        if self.record_local_getter_read(element.clone(), Some(target.clone())) {
+        if self.record_local_getter_read_before_overwrite(element.clone(), Some(target.clone())) {
+            self.handled_local_getter_read_spans
+                .insert((call.span.start, call.span.end));
             return true;
         }
         let resolved_element = resolve_static_alias_path(&self.aliases, &element);
@@ -51460,6 +51495,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let call_span = (call.span.start, call.span.end);
         self.record_local_json_replacer_array_mutation(call);
         let local_array_mutation = self.prepare_local_array_mutation(call);
         if local_array_mutation.as_ref().is_some_and(|plan| {
@@ -51493,7 +51529,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
         self.record_local_define_property_result(call);
         self.record_local_define_properties_result(call);
         self.record_local_set_prototype_of_result(call);
-        let call_span = (call.span.start, call.span.end);
         let generator_advance_invocations = self.precise_generator_advance_invocations(call);
         let local_alias_timing = if self.tracked_generator_invocation_spans.contains(&call_span) {
             LocalAliasInvocationTiming::DeferredGenerator
@@ -51640,6 +51675,28 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
+        let mut array_element_getter_invocations = Vec::new();
+        if let Some(plan) = local_array_mutation.as_ref()
+            && array_mutation_returns_element(&plan.method)
+            && let Some(length) = self
+                .known_array_length(&plan.source)
+                .filter(|length| *length > 0)
+        {
+            let index = if plan.method == "pop" { length - 1 } else { 0 };
+            let element = plan.source.clone().with_property(index.to_string());
+            if let Some((_, _, mut invocations)) =
+                self.local_getter_read_invocations(&element, None, true)
+            {
+                for invocation in &mut invocations {
+                    invocation.historical_callee = true;
+                }
+                if !self.handled_local_getter_read_spans.contains(&call_span) {
+                    self.local_invocations.extend(invocations.iter().cloned());
+                    self.handled_local_getter_read_spans.insert(call_span);
+                }
+                array_element_getter_invocations = invocations;
+            }
+        }
         let mut local_reflect_set_mutates = true;
         if let Some(snapshots) = local_reflect_set_snapshots.as_ref() {
             match self.local_reflect_set_outcome(call, snapshots) {
@@ -51698,6 +51755,10 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 );
             }
         }
+        self.activate_precise_local_alias_invocations(
+            &array_element_getter_invocations,
+            local_alias_timing,
+        );
         self.activate_precise_local_alias_invocations(&local_invocations, local_alias_timing);
         if let Some((generator_advance_invocations, segment)) = generator_advance_invocations {
             let timing = if self.generator_advance_is_segmented(&generator_advance_invocations) {

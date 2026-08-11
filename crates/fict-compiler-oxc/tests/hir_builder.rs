@@ -14658,6 +14658,36 @@ fn define_property_accessors_propagate_read_and_write_effects() {
             "source.nested[0]();",
         ),
         (
+            "pop invokes an indexed getter when its result is discarded",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } });",
+            "source.pop();",
+        ),
+        (
+            "shift invokes an indexed getter when its result is discarded",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } });",
+            "source.shift();",
+        ),
+        (
+            "pop invokes an indexed getter when its result is observed",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } });",
+            "const removed = source.pop(); void removed;",
+        ),
+        (
+            "shift invokes an indexed getter when its result is observed",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } });",
+            "const removed = source.shift(); void removed;",
+        ),
+        (
+            "pop observes a getter installed while evaluating ignored arguments",
+            "const source = [0];",
+            "",
+            "source.pop(Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } }));",
+        ),
+        (
             "Object result preserves target identity",
             "const source = {};",
             "const target = Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
@@ -14800,6 +14830,12 @@ fn unread_define_property_accessors_remain_unexecuted() {
             "const source = {};",
             "Object.defineProperty(source, 'nested', { value: [() => { values.forEach = null; }] });",
             "void source.nested;",
+        ),
+        (
+            "pop skips a getter removed while evaluating ignored arguments",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } });",
+            "const removed = source.pop(delete source[0]); void removed;",
         ),
         (
             "immediate Reflect result remains a boolean",
