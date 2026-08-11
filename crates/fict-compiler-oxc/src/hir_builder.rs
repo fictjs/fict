@@ -2277,18 +2277,20 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         ) {
             Ok(facts) => facts,
             Err(diagnostic) => {
-                self.diagnostics.push(diagnostic);
+                self.diagnostics.push(*diagnostic);
                 storage_origin::StorageOriginFacts::default()
             }
         };
         self.validate_reactive_escapes(
             program,
-            &calls.calls,
-            &known_arrays.symbols,
-            &reactive_symbols,
-            &class_bindings,
-            &static_hook_aliases,
-            &storage_origin,
+            ReactiveEscapeInputs {
+                calls: &calls.calls,
+                known_arrays: &known_arrays.symbols,
+                reactive: &reactive_symbols,
+                classes: &class_bindings,
+                callback_aliases: &static_hook_aliases,
+                storage_origin: &storage_origin,
+            },
         );
         self.validate_component_props_patterns();
         self.validate_macro_placement(&calls.calls);
@@ -2908,13 +2910,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     fn validate_reactive_escapes(
         &mut self,
         program: &Program<'_>,
-        calls: &[CallFact],
-        known_arrays: &BTreeSet<SymbolId>,
-        reactive: &ReactiveSymbolAnalysis,
-        classes: &ClassBindingCollector<'_>,
-        callback_aliases: &StaticHookAliases,
-        storage_origin: &storage_origin::StorageOriginFacts,
+        inputs: ReactiveEscapeInputs<'_, '_>,
     ) {
+        let ReactiveEscapeInputs {
+            calls,
+            known_arrays,
+            reactive,
+            classes,
+            callback_aliases,
+            storage_origin,
+        } = inputs;
         let binding_owners: BTreeMap<_, _> = self
             .frontend
             .bindings
@@ -52072,6 +52077,15 @@ enum EscapeDiagnosticKind {
 struct EscapeDiagnosticFact {
     kind: EscapeDiagnosticKind,
     span: SourceSpan,
+}
+
+struct ReactiveEscapeInputs<'facts, 'ast> {
+    calls: &'facts [CallFact],
+    known_arrays: &'facts BTreeSet<SymbolId>,
+    reactive: &'facts ReactiveSymbolAnalysis,
+    classes: &'facts ClassBindingCollector<'ast>,
+    callback_aliases: &'facts StaticHookAliases,
+    storage_origin: &'facts storage_origin::StorageOriginFacts,
 }
 
 #[derive(Clone, Copy)]

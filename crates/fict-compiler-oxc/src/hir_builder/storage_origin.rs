@@ -12,6 +12,8 @@ pub(super) struct StorageOriginFacts {
     pub external_projected_writes: BTreeSet<(u32, u32)>,
 }
 
+type StorageOriginResult<T> = Result<T, Box<Diagnostic>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum StorageOrigin {
     Unreachable,
@@ -240,7 +242,7 @@ impl FlowState {
 pub(super) fn analyze(
     functions: &[HirFunction],
     max_block_state_visits: u32,
-) -> Result<StorageOriginFacts, Diagnostic> {
+) -> StorageOriginResult<StorageOriginFacts> {
     let mut facts = StorageOriginFacts::default();
     let mut visits = 0_u32;
     for function in functions
@@ -262,7 +264,7 @@ fn analyze_function(
     facts: &mut StorageOriginFacts,
     visits: &mut u32,
     max_visits: u32,
-) -> Result<(), Diagnostic> {
+) -> StorageOriginResult<()> {
     let finally_regions = finally_regions(function);
     let exception_regions = exception_regions(function);
     let optional_argument_writes = optional_argument_writes(function);
@@ -274,7 +276,7 @@ fn analyze_function(
     while let Some((block_id, mut state)) = pending.pop_front() {
         *visits = visits.saturating_add(1);
         if *visits > max_visits {
-            return Err(budget_diagnostic(*visits, max_visits));
+            return Err(Box::new(budget_diagnostic(*visits, max_visits)));
         }
         let block = &function.blocks[block_id.as_usize()];
         let mut optional_snapshots = BTreeMap::new();
@@ -613,7 +615,7 @@ fn execute_finally(
     entry: FlowState,
     visits: &mut u32,
     max_visits: u32,
-) -> Result<Vec<FlowState>, Diagnostic> {
+) -> StorageOriginResult<Vec<FlowState>> {
     let mut completed = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut pending = VecDeque::from([(region.finally, entry)]);
@@ -623,7 +625,7 @@ fn execute_finally(
         }
         *visits = visits.saturating_add(1);
         if *visits > max_visits {
-            return Err(budget_diagnostic(*visits, max_visits));
+            return Err(Box::new(budget_diagnostic(*visits, max_visits)));
         }
         let block = &function.blocks[block_id.as_usize()];
         for instruction in &block.instructions {
