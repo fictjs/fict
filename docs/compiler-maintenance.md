@@ -26,9 +26,9 @@ without an explicit exception. Existing oversized files are named explicitly,
 so splitting one below the default ceiling also requires deleting its stale
 exception.
 
-Budget values live in `scripts/compiler-complexity-report.mjs`; do not copy
-them into docs. Treat the script as the source of truth for large-file budgets,
-the default per-file budget, and the total compiler source budget.
+TypeScript budget values live in `scripts/compiler-complexity-report.mjs`; do
+not copy them into docs. Treat the script as the source of truth for the thin
+host's file and total budgets.
 
 Rust budgets live in
 `.github/rust-compiler-complexity-budget.json`. Budget increases require a
@@ -36,18 +36,20 @@ dedicated, justified commit. New crates must also be approved in
 `scripts/check-rust-crate-boundaries.mjs`; adding a directory alone is not
 enough.
 
-These budgets are not goals. They are ceilings that keep already-large files
-from growing silently while the compiler is split into smaller units.
+These budgets are not line-count snapshots or goals. They are stable policy
+ceilings with a small, finite refactor reserve. Do not synchronize them to the
+current report after each change or set a ceiling to the exact observed line
+count. A ceiling moves only when an architectural review changes the permitted
+size of that ownership boundary.
 
 Treat the checked-in budgets for the largest compiler files and total effective
-LOC as a no-growth policy. Routine bug fixes should stay within the current
+LOC as a no-growth policy. Routine bug fixes must stay within the current
 ceilings by removing dead code, simplifying local structure, or extracting
-cohesive helpers into focused modules. If a change intentionally grows a
-budgeted file or the total compiler source budget, update
-`scripts/compiler-complexity-report.mjs` in a dedicated commit and explain the
-reason in the review; do not hide budget bumps inside unrelated behavior
-changes. New files are allowed, but they still count toward the total compiler
-budget and the default per-file ceiling.
+cohesive helpers into focused modules. If an architectural change genuinely
+requires a higher ceiling, change the relevant source of truth in a dedicated
+commit and record why the ownership boundary must grow; do not hide a budget
+change inside behavior work. New files are allowed, but they still count toward
+the total compiler budget and the default per-file ceiling.
 
 ## Refactor Rule
 
@@ -61,8 +63,8 @@ When touching one of the budgeted files:
    refactor.
 5. Run `pnpm guardrails:rust-crates` after changing Rust compiler sources or
    crate dependencies.
-6. Lower the relevant TypeScript or Rust file/crate budget after an extraction
-   lands; do not leave stale headroom.
+6. After a material extraction, lower the relevant ceiling to the next reviewed
+   stable boundary, not to the exact current line count.
 7. Preserve the pass ownership and invariants in
    `docs/compiler-pass-invariants.md`.
 
