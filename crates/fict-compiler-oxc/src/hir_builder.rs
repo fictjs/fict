@@ -8955,6 +8955,10 @@ fn resolve_historical_alias_paths_with_mode(
     original: &StaticAliasPath,
     allow_exact_alias: bool,
 ) -> BTreeSet<StaticAliasPath> {
+    let has_element_wildcard_aliases = aliases.keys().any(|target| target.element_wildcard);
+    let has_dynamic_property_aliases = aliases
+        .keys()
+        .any(|target| dynamic_property_alias_marker(target).is_some());
     let mut resolved = BTreeSet::new();
     let mut pending = VecDeque::from([original.clone().canonicalized()]);
     while let Some(current) = pending.pop_front() {
@@ -8985,28 +8989,32 @@ fn resolve_historical_alias_paths_with_mode(
                 pending.push_back(candidate.canonicalized());
             }
         }
-        for (target, sources) in aliases {
-            let Some(remaining) =
-                element_wildcard_alias_remainder(target, &current, allow_exact_alias)
-            else {
-                continue;
-            };
-            for source in sources {
-                let mut candidate = source.clone();
-                candidate.properties.extend_from_slice(remaining);
-                pending.push_back(candidate.canonicalized());
+        if has_element_wildcard_aliases {
+            for (target, sources) in aliases {
+                let Some(remaining) =
+                    element_wildcard_alias_remainder(target, &current, allow_exact_alias)
+                else {
+                    continue;
+                };
+                for source in sources {
+                    let mut candidate = source.clone();
+                    candidate.properties.extend_from_slice(remaining);
+                    pending.push_back(candidate.canonicalized());
+                }
             }
         }
-        for (target, sources) in aliases {
-            let Some(remaining) =
-                dynamic_property_alias_remainder(target, &current, allow_exact_alias)
-            else {
-                continue;
-            };
-            for source in sources {
-                let mut candidate = source.clone();
-                candidate.properties.extend_from_slice(remaining);
-                pending.push_back(candidate.canonicalized());
+        if has_dynamic_property_aliases {
+            for (target, sources) in aliases {
+                let Some(remaining) =
+                    dynamic_property_alias_remainder(target, &current, allow_exact_alias)
+                else {
+                    continue;
+                };
+                for source in sources {
+                    let mut candidate = source.clone();
+                    candidate.properties.extend_from_slice(remaining);
+                    pending.push_back(candidate.canonicalized());
+                }
             }
         }
     }
@@ -21050,6 +21058,44 @@ impl ExternalStorageShallowCopy {
 }
 
 impl ExternalStorageFlowState {
+    fn flat_root_alias_candidates(
+        &self,
+        path: &StaticAliasPath,
+    ) -> Option<BTreeSet<StaticAliasPath>> {
+        if !self.shallow_copies.is_empty()
+            || self
+                .aliases
+                .keys()
+                .chain(self.retained_identity_origins.keys())
+                .any(|target| !target.properties.is_empty() || target.element_wildcard)
+        {
+            return None;
+        }
+
+        let path = path.clone().canonicalized();
+        let root = StaticAliasPath {
+            root: path.root.clone(),
+            properties: Vec::new(),
+            element_wildcard: false,
+        };
+        let mut resolved = BTreeSet::from([path.clone()]);
+        for candidates in [
+            self.aliases.get(&root),
+            self.retained_identity_origins.get(&root),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for candidate in candidates {
+                let mut candidate = candidate.clone();
+                candidate.properties.extend_from_slice(&path.properties);
+                candidate.element_wildcard |= path.element_wildcard;
+                resolved.insert(candidate.canonicalized());
+            }
+        }
+        Some(resolved)
+    }
+
     fn rebase_subtree_path(
         path: &StaticAliasPath,
         source: &StaticAliasPath,
@@ -21194,10 +21240,39 @@ impl ExternalStorageFlowState {
     }
 
     fn alias_candidates(&self, path: &StaticAliasPath) -> BTreeSet<StaticAliasPath> {
+        // With root-only aliases there are no projection or copy rules left to interpret.
+        // `insert_alias` stores the complete flow-sensitive source snapshot, so projecting the
+        // requested suffix over that set is both exact and linear in the number of candidates.
+        if let Some(resolved) = self.flat_root_alias_candidates(path) {
+            return resolved;
+        }
         let mut resolved = BTreeSet::new();
         let mut pending = VecDeque::from([path.clone()]);
         while let Some(current) = pending.pop_front() {
             if !resolved.insert(current.clone()) {
+                continue;
+            }
+            // Root aliases are inserted as flow-sensitive transitive snapshots: every source
+            // that was reachable when the assignment executed is already stored on the target.
+            // Looking them up directly avoids re-walking the growing history graph for every
+            // declaration in a long alias chain. Projected sources still enter the general path
+            // below because wildcard and shallow-copy mappings can apply to their suffixes.
+            if current.properties.is_empty() && !current.element_wildcard {
+                for candidates in [
+                    self.aliases.get(&current),
+                    self.retained_identity_origins.get(&current),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    for candidate in candidates {
+                        if candidate.properties.is_empty() && !candidate.element_wildcard {
+                            resolved.insert(candidate.clone());
+                        } else if !resolved.contains(candidate) {
+                            pending.push_back(candidate.clone());
+                        }
+                    }
+                }
                 continue;
             }
             for alias in resolve_historical_alias_paths(&self.aliases, &current) {
