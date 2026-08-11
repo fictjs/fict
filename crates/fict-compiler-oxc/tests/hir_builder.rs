@@ -19658,6 +19658,52 @@ fn reflect_property_access_invokes_local_accessors() {
 }
 
 #[test]
+fn reflect_setter_mutations_follow_call_order() {
+    for (name, helper, first_set) in [
+        ("direct", "", "Reflect.set(source, 'first', 1);"),
+        (
+            "aliased",
+            "const set = Reflect.set;",
+            "set(source, 'first', 1);",
+        ),
+        (
+            "spread receiver",
+            "",
+            "Reflect.set(source, 'first', 1, ...[source]);",
+        ),
+    ] {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict';
+                function App() {{
+                    const count = $state(0);
+                    const values = [];
+                    const source = {{
+                        set first(value) {{ delete source.second; }},
+                        set second(value) {{ values.forEach = null; }},
+                    }};
+                    {helper}
+                    {first_set}
+                    Reflect.set(source, 'second', 1);
+                    values.forEach(() => count);
+                    return count;
+                }}
+            "#
+        );
+        let output = build_hir(
+            &source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.hir.is_some(),
+            "{name}: expected the first setter to delete the second before its Reflect.set call, got {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn object_assign_invokes_local_accessors() {
     for (name, helper, assignment) in [
         (

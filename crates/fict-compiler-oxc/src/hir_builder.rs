@@ -53193,9 +53193,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             false
         };
         let local_reflect_set_snapshots = self.prepare_local_reflect_set_snapshots(call);
+        let local_reflect_setter_invocation_start = self.local_invocations.len();
         if local_reflect_set_snapshots.is_none() {
             self.record_local_reflect_set_fallback(call);
         }
+        let mut local_reflect_setter_invocations =
+            self.local_invocations[local_reflect_setter_invocation_start..].to_vec();
         let unconditional = self
             .function_control_baselines
             .last()
@@ -53367,6 +53370,7 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             }
         }
         let mut local_reflect_set_mutates = true;
+        let local_reflect_setter_invocation_start = self.local_invocations.len();
         if let Some(snapshots) = local_reflect_set_snapshots.as_ref() {
             match self.local_reflect_set_outcome(call, snapshots) {
                 LocalReflectSetOutcome::Data(plan) => {
@@ -53376,6 +53380,12 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 LocalReflectSetOutcome::NoMutation => local_reflect_set_mutates = false,
             }
         }
+        local_reflect_setter_invocations
+            .extend_from_slice(&self.local_invocations[local_reflect_setter_invocation_start..]);
+        self.activate_precise_local_alias_invocations(
+            &local_reflect_setter_invocations,
+            LocalAliasInvocationTiming::Eager,
+        );
         if !local_reflect_set_mutates {
             reflective_mutation = None;
         }
