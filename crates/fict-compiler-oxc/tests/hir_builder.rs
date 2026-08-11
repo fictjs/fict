@@ -2976,6 +2976,20 @@ fn external_property_assignments_reject_reactive_escapes() {
             "FICT-R005",
         ),
         (
+            "wrapped popped getter result callback slot",
+            "const items = []; Object.defineProperty(items, '0', { get: () => holder.item, configurable: true }); const pop = () => items.pop(); const run = () => count;",
+            "pop().run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
+            "stored parameterized shifted getter result callback slot",
+            "const items = []; Object.defineProperty(items, '0', { get: () => holder.item, configurable: true }); const shift = source => source.shift(); const item = shift(items); const run = () => count;",
+            "item.run = run;",
+            "run",
+            "FICT-R005",
+        ),
+        (
             "parameterized popped external array element callback slot",
             "const pop = source => source.pop(); const run = () => count;",
             "pop([holder.item]).run = run;",
@@ -14688,6 +14702,18 @@ fn define_property_accessors_propagate_read_and_write_effects() {
             "source.pop(Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } }));",
         ),
         (
+            "wrapped pop invokes an indexed getter",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } }); const pop = () => source.pop();",
+            "pop();",
+        ),
+        (
+            "wrapped pop preserves a callable indexed getter result",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { return () => { values.forEach = null; }; } }); const pop = () => source.pop();",
+            "pop()();",
+        ),
+        (
             "Object result preserves target identity",
             "const source = {};",
             "const target = Object.defineProperty(source, 'run', { get() { values.forEach = null; return 1; } });",
@@ -14836,6 +14862,12 @@ fn unread_define_property_accessors_remain_unexecuted() {
             "const source = [];",
             "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } });",
             "const removed = source.pop(delete source[0]); void removed;",
+        ),
+        (
+            "uninvoked wrapped pop leaves its indexed getter unexecuted",
+            "const source = [];",
+            "Object.defineProperty(source, '0', { configurable: true, get() { values.forEach = null; return 1; } }); const pop = () => source.pop();",
+            "void pop;",
         ),
         (
             "immediate Reflect result remains a boolean",

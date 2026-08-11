@@ -24464,6 +24464,14 @@ impl StaticHookAliasCollector<'_> {
         }
         let index = if method == "pop" { length - 1 } else { 0 };
         let element = source.clone().with_property(index.to_string());
+        if let Some((_, _, mut invocations)) =
+            self.local_getter_invocation_facts(&element, None, false)
+        {
+            for invocation in &mut invocations {
+                invocation.historical_callee = true;
+            }
+            return vec![LocalCallableResult::Invocation(invocations)];
+        }
         let resolved = resolve_static_alias_path(&self.aliases, &element);
         let mut candidates = self.external_storage_flow.alias_candidates(&element);
         candidates.retain(|candidate| candidate != &element && !candidate.starts_with(source));
@@ -34463,12 +34471,23 @@ impl StaticHookAliasCollector<'_> {
         receiver_override: Option<Vec<LocalInvocationArgument>>,
         result_discarded: bool,
     ) -> Option<(bool, usize, Vec<LocalInvocationFact>)> {
+        let (historical, getters, invocations) =
+            self.local_getter_invocation_facts(property, receiver_override, result_discarded)?;
+        for getter in &getters {
+            self.activate_local_getter(getter);
+        }
+        Some((historical, getters.len(), invocations))
+    }
+
+    fn local_getter_invocation_facts(
+        &self,
+        property: &StaticAliasPath,
+        receiver_override: Option<Vec<LocalInvocationArgument>>,
+        result_discarded: bool,
+    ) -> Option<(bool, BTreeSet<StaticAliasPath>, Vec<LocalInvocationFact>)> {
         let (historical, getters) = self.local_getter_resolution(property, false);
         if getters.is_empty() {
             return None;
-        }
-        for getter in &getters {
-            self.activate_local_getter(getter);
         }
         let mut owner = property.clone();
         owner.properties.pop();
@@ -34505,7 +34524,7 @@ impl StaticHookAliasCollector<'_> {
                 self.with_current_bound_callable(invocation, &callee)
             })
             .collect::<Vec<_>>();
-        Some((historical, getters.len(), invocations))
+        Some((historical, getters, invocations))
     }
 
     fn local_callable_path_effect_spans(&self, callable: &StaticAliasPath) -> BTreeSet<(u32, u32)> {
@@ -35703,6 +35722,7 @@ impl StaticHookAliasCollector<'_> {
     ) -> Vec<LocalCallableResult> {
         let candidates = self.bind_deferred_local_callable_array_receivers(receiver, invocation);
         let mut references = BTreeSet::new();
+        let mut getter_results = Vec::new();
         let mut known_local = false;
         let mut unknown = candidates.is_empty();
         for (source, binding) in candidates {
@@ -35736,6 +35756,9 @@ impl StaticHookAliasCollector<'_> {
                     }
                 }
             };
+            let results = self
+                .resolve_local_callable_result_invocations(results, &mut BTreeSet::new(), None)
+                .0;
             for result in results {
                 match result {
                     LocalCallableResult::Reference(source) => {
@@ -35743,17 +35766,23 @@ impl StaticHookAliasCollector<'_> {
                     }
                     LocalCallableResult::KnownLocal => known_local = true,
                     LocalCallableResult::Unknown => unknown = true,
-                    _ => unreachable!("array element results have scalar provenance"),
+                    LocalCallableResult::Direct { .. }
+                    | LocalCallableResult::Bound { .. }
+                    | LocalCallableResult::Structured { .. }
+                    | LocalCallableResult::KnownLocalArray { .. } => getter_results.push(result),
+                    LocalCallableResult::Invocation(_) => unreachable!(
+                        "getter result invocations must resolve before array element binding"
+                    ),
+                    LocalCallableResult::DeferredLocalArray { .. }
+                    | LocalCallableResult::DeferredLocalArrayElement { .. } => unknown = true,
                 }
             }
         }
-        let mut results = references
-            .into_iter()
-            .map(|source| {
-                self.materialize_local_callable_reference(&source, invocation.function_depth)
-                    .unwrap_or(LocalCallableResult::Reference(source))
-            })
-            .collect::<Vec<_>>();
+        let mut results = getter_results;
+        results.extend(references.into_iter().map(|source| {
+            self.materialize_local_callable_reference(&source, invocation.function_depth)
+                .unwrap_or(LocalCallableResult::Reference(source))
+        }));
         if known_local {
             results.push(LocalCallableResult::KnownLocal);
         }
