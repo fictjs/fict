@@ -21603,6 +21603,7 @@ struct StaticHookAliasCollector<'semantic> {
     local_value_truthiness_history: BTreeMap<StaticAliasPath, BTreeSet<LocalValueTruthiness>>,
     local_getter_call_invocations: BTreeMap<(u32, u32), Vec<LocalInvocationFact>>,
     handled_local_getter_read_spans: BTreeSet<(u32, u32)>,
+    handled_local_array_getter_read_spans: BTreeSet<(u32, u32)>,
     handled_object_spread_getter_spans: BTreeSet<(u32, u32)>,
     local_object_assign_results: BTreeMap<(u32, u32), StaticAliasPath>,
     local_object_value_enumeration_results: BTreeMap<(u32, u32), StaticAliasPath>,
@@ -22890,6 +22891,7 @@ impl<'semantic> StaticHookAliasCollector<'semantic> {
             local_value_truthiness_history: BTreeMap::new(),
             local_getter_call_invocations: BTreeMap::new(),
             handled_local_getter_read_spans: BTreeSet::new(),
+            handled_local_array_getter_read_spans: BTreeSet::new(),
             handled_object_spread_getter_spans: BTreeSet::new(),
             local_object_assign_results: BTreeMap::new(),
             local_object_value_enumeration_results: BTreeMap::new(),
@@ -36666,6 +36668,14 @@ impl StaticHookAliasCollector<'_> {
             "shift" => Some(PreciseArrayMutation::Shift),
             "unshift" => Some(PreciseArrayMutation::Unshift(call.arguments.len())),
             "splice" => {
+                if call
+                    .arguments
+                    .iter()
+                    .skip(2)
+                    .any(|argument| argument.as_expression().is_none())
+                {
+                    return None;
+                }
                 let start = call.arguments.first().map_or(Some(0), |argument| {
                     argument
                         .as_expression()
@@ -36691,6 +36701,369 @@ impl StaticHookAliasCollector<'_> {
             }
             _ => None,
         }
+    }
+
+    fn local_array_mutation_getter_read_ranges(
+        mutation: Option<PreciseArrayMutation>,
+        method: &str,
+        length: usize,
+    ) -> Vec<(usize, usize)> {
+        if length == 0 {
+            return Vec::new();
+        }
+        let Some(mutation) = mutation else {
+            return if matches!(method, "fill" | "push") {
+                Vec::new()
+            } else {
+                vec![(0, length)]
+            };
+        };
+        match mutation {
+            PreciseArrayMutation::Reverse => {
+                let swapped = length / 2;
+                if swapped > 0 {
+                    vec![(0, swapped), (length - swapped, length)]
+                } else {
+                    Vec::new()
+                }
+            }
+            PreciseArrayMutation::Sort | PreciseArrayMutation::Shift => vec![(0, length)],
+            PreciseArrayMutation::CopyWithin { target, start, end } => {
+                let target = Self::normalized_array_start(target, length);
+                let start = Self::normalized_array_start(start, length);
+                let end = Self::normalized_array_start(
+                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
+                    length,
+                );
+                let copied = end.saturating_sub(start).min(length.saturating_sub(target));
+                (copied > 0)
+                    .then_some((start, start.saturating_add(copied)))
+                    .into_iter()
+                    .collect()
+            }
+            PreciseArrayMutation::Fill { .. } | PreciseArrayMutation::Push(_) => Vec::new(),
+            PreciseArrayMutation::Pop => vec![(length - 1, length)],
+            PreciseArrayMutation::Unshift(inserted) => {
+                if inserted == 0 {
+                    Vec::new()
+                } else {
+                    vec![(0, length)]
+                }
+            }
+            PreciseArrayMutation::Splice {
+                start,
+                delete,
+                inserted,
+            } => {
+                let start = Self::normalized_array_start(start, length);
+                let delete = delete.map_or(length.saturating_sub(start), |delete| {
+                    usize::try_from(delete.max(0))
+                        .unwrap_or(usize::MAX)
+                        .min(length.saturating_sub(start))
+                });
+                if inserted != delete {
+                    vec![(start, length)]
+                } else if delete > 0 {
+                    vec![(start, start.saturating_add(delete))]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    fn local_array_mutation_getter_read_indices(
+        &self,
+        mutation: Option<PreciseArrayMutation>,
+        method: &str,
+        length: usize,
+    ) -> BTreeSet<usize> {
+        let ranges = Self::local_array_mutation_getter_read_ranges(mutation, method, length);
+        let reads = |index: usize| {
+            ranges
+                .iter()
+                .any(|(start, end)| *start <= index && index < *end)
+        };
+        let static_index = |property: &str| {
+            let index = property.parse::<usize>().ok()?;
+            (index.to_string() == property && index < length).then_some(index)
+        };
+        let mut indices = self
+            .local_getter_properties
+            .iter()
+            .chain(&self.local_getter_property_history)
+            .filter_map(|getter| getter.properties.last())
+            .filter_map(|property| static_index(property))
+            .filter(|index| reads(*index))
+            .collect::<BTreeSet<_>>();
+        if !self.dynamic_getter_properties.is_empty()
+            || !self.dynamic_getter_property_history.is_empty()
+        {
+            for (start, end) in &ranges {
+                if start < end {
+                    indices.insert(*start);
+                }
+            }
+            for property in self
+                .structured_own_properties
+                .values()
+                .flatten()
+                .chain(self.dynamic_accessor_excluded_properties.values().flatten())
+            {
+                let Some(index) = static_index(property) else {
+                    continue;
+                };
+                if reads(index) {
+                    indices.insert(index);
+                }
+                if let Some(next) = index.checked_add(1)
+                    && reads(next)
+                {
+                    indices.insert(next);
+                }
+            }
+        }
+        indices
+    }
+
+    fn local_array_index_presence(&self, source: &StaticAliasPath, index: usize) -> Option<bool> {
+        let property = index.to_string();
+        let (_, properties) = self.tracked_structured_own_properties(source)?;
+        if properties.contains(&property) {
+            return Some(true);
+        }
+        let element = source.clone().with_property(property.clone());
+        if !self.local_getter_resolution(&element, false).1.is_empty() {
+            return Some(true);
+        }
+        if !self
+            .local_object_prototype_member_paths(&element)
+            .is_empty()
+        {
+            return None;
+        }
+        ["Array", "Object"]
+            .into_iter()
+            .all(|global| {
+                self.path_is_currently_intact(
+                    &StaticAliasPath::unresolved_global(global.to_string())
+                        .with_property("prototype".to_string())
+                        .with_property(property.clone()),
+                )
+            })
+            .then_some(false)
+    }
+
+    fn activate_local_array_getter_read(
+        &mut self,
+        source: &StaticAliasPath,
+        index: usize,
+        recorded_result_index: Option<usize>,
+        timing: LocalAliasInvocationTiming,
+    ) -> bool {
+        let element = source.clone().with_property(index.to_string());
+        let Some((_, _, mut invocations)) =
+            self.local_getter_read_invocations(&element, None, true)
+        else {
+            return false;
+        };
+        for invocation in &mut invocations {
+            invocation.historical_callee = true;
+        }
+        if recorded_result_index != Some(index) {
+            self.local_invocations.extend(invocations.iter().cloned());
+        }
+        self.activate_precise_local_alias_invocations(&invocations, timing);
+        true
+    }
+
+    fn activate_local_array_mutation_getter_reads(
+        &mut self,
+        source: &StaticAliasPath,
+        mutation: Option<PreciseArrayMutation>,
+        method: &str,
+        length: usize,
+        recorded_result_index: Option<usize>,
+        timing: LocalAliasInvocationTiming,
+    ) -> bool {
+        if length == 0 {
+            return false;
+        }
+        let Some(mutation) = mutation.filter(|_| length <= MAX_PRECISE_ARRAY_PROVENANCE_SLOTS)
+        else {
+            let mut activated = false;
+            for index in self.local_array_mutation_getter_read_indices(mutation, method, length) {
+                activated |= self.activate_local_array_getter_read(
+                    source,
+                    index,
+                    recorded_result_index,
+                    timing,
+                );
+            }
+            return activated;
+        };
+        let rejected_write = |collector: &Self, index: usize| {
+            !collector.local_property_is_writable(&source.clone().with_property(index.to_string()))
+        };
+        let rejected_delete = |collector: &Self, index: usize| {
+            !collector.local_reflect_delete_property_is_configurable(
+                &source.clone().with_property(index.to_string()),
+            )
+        };
+        let mut activated = false;
+        macro_rules! read_getter {
+            ($index:expr) => {{
+                activated |= self.activate_local_array_getter_read(
+                    source,
+                    $index,
+                    recorded_result_index,
+                    timing,
+                );
+            }};
+        }
+        match mutation {
+            PreciseArrayMutation::Reverse => {
+                for lower in 0..(length / 2) {
+                    let upper = length - lower - 1;
+                    let lower_present = self.local_array_index_presence(source, lower);
+                    if lower_present != Some(false) {
+                        read_getter!(lower);
+                    }
+                    let upper_present = self.local_array_index_presence(source, upper);
+                    if upper_present != Some(false) {
+                        read_getter!(upper);
+                    }
+                    let rejected = match (lower_present, upper_present) {
+                        (Some(true), Some(true)) => {
+                            rejected_write(self, lower) || rejected_write(self, upper)
+                        }
+                        (Some(false), Some(true)) => {
+                            rejected_write(self, lower) || rejected_delete(self, upper)
+                        }
+                        (Some(true), Some(false)) => {
+                            rejected_delete(self, lower) || rejected_write(self, upper)
+                        }
+                        (Some(false), Some(false)) | (None, _) | (_, None) => false,
+                    };
+                    if rejected {
+                        break;
+                    }
+                }
+            }
+            PreciseArrayMutation::Sort => {
+                for index in 0..length {
+                    if self.local_array_index_presence(source, index) != Some(false) {
+                        read_getter!(index);
+                    }
+                }
+            }
+            PreciseArrayMutation::CopyWithin { target, start, end } => {
+                let target = Self::normalized_array_start(target, length);
+                let start = Self::normalized_array_start(start, length);
+                let end = Self::normalized_array_start(
+                    end.unwrap_or(i64::try_from(length).unwrap_or(i64::MAX)),
+                    length,
+                );
+                let copied = end.saturating_sub(start).min(length.saturating_sub(target));
+                let reverse = start < target && target < start.saturating_add(copied);
+                for offset in 0..copied {
+                    let offset = if reverse { copied - offset - 1 } else { offset };
+                    let source_index = start.saturating_add(offset);
+                    let present = self.local_array_index_presence(source, source_index);
+                    if present != Some(false) {
+                        read_getter!(source_index);
+                    }
+                    let target = target.saturating_add(offset);
+                    if (present == Some(true) && rejected_write(self, target))
+                        || (present == Some(false) && rejected_delete(self, target))
+                    {
+                        break;
+                    }
+                }
+            }
+            PreciseArrayMutation::Fill { .. } | PreciseArrayMutation::Push(_) => {}
+            PreciseArrayMutation::Pop => {
+                read_getter!(length - 1);
+            }
+            PreciseArrayMutation::Shift => {
+                read_getter!(0);
+                for source_index in 1..length {
+                    let present = self.local_array_index_presence(source, source_index);
+                    if present != Some(false) {
+                        read_getter!(source_index);
+                    }
+                    let target = source_index - 1;
+                    if (present == Some(true) && rejected_write(self, target))
+                        || (present == Some(false) && rejected_delete(self, target))
+                    {
+                        break;
+                    }
+                }
+            }
+            PreciseArrayMutation::Unshift(inserted) => {
+                if inserted > 0 {
+                    for source_index in (0..length).rev() {
+                        let present = self.local_array_index_presence(source, source_index);
+                        if present != Some(false) {
+                            read_getter!(source_index);
+                        }
+                        let target = source_index.saturating_add(inserted);
+                        if (present == Some(true) && rejected_write(self, target))
+                            || (present == Some(false) && rejected_delete(self, target))
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            PreciseArrayMutation::Splice {
+                start,
+                delete,
+                inserted,
+            } => {
+                let start = Self::normalized_array_start(start, length);
+                let delete = delete.map_or(length.saturating_sub(start), |delete| {
+                    usize::try_from(delete.max(0))
+                        .unwrap_or(usize::MAX)
+                        .min(length.saturating_sub(start))
+                });
+                for index in start..start.saturating_add(delete) {
+                    if self.local_array_index_presence(source, index) != Some(false) {
+                        read_getter!(index);
+                    }
+                }
+                if inserted < delete {
+                    let shift = delete - inserted;
+                    for source_index in start.saturating_add(delete)..length {
+                        let present = self.local_array_index_presence(source, source_index);
+                        if present != Some(false) {
+                            read_getter!(source_index);
+                        }
+                        let target = source_index - shift;
+                        if (present == Some(true) && rejected_write(self, target))
+                            || (present == Some(false) && rejected_delete(self, target))
+                        {
+                            break;
+                        }
+                    }
+                } else if inserted > delete {
+                    let shift = inserted - delete;
+                    for source_index in (start.saturating_add(delete)..length).rev() {
+                        let present = self.local_array_index_presence(source, source_index);
+                        if present != Some(false) {
+                            read_getter!(source_index);
+                        }
+                        let target = source_index.saturating_add(shift);
+                        if (present == Some(true) && rejected_write(self, target))
+                            || (present == Some(false) && rejected_delete(self, target))
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        activated
     }
 
     fn precise_array_mutation_from_deferred(
@@ -37867,7 +38240,15 @@ impl StaticHookAliasCollector<'_> {
         stable_arguments: bool,
     ) -> Option<((u32, u32), StaticAliasPath, DeferredArrayMutation)> {
         let capture_span = self.deferred_callable_alias_capture_span(raw_source);
-        let effect_span = capture_span.or_else(|| {
+        let parameter_span = raw_source
+            .binding_root()
+            .filter(|root| {
+                self.function_depth > 1
+                    && self.attached_callable_parameters.contains(root)
+                    && self.binding_owner_depths.get(root).copied() == Some(self.function_depth)
+            })
+            .and_then(|_| self.current_callable_effect_span());
+        let effect_span = capture_span.or(parameter_span).or_else(|| {
             self.class_effect_contexts
                 .last()
                 .copied()
@@ -47709,6 +48090,23 @@ impl StaticHookAliasCollector<'_> {
         }
     }
 
+    fn activate_deferred_array_mutation_getter_reads(
+        &mut self,
+        target: &StaticAliasPath,
+        mutation: &DeferredArrayMutation,
+        length: usize,
+    ) {
+        let precise = Self::precise_array_mutation_from_deferred(&mutation.kind);
+        self.activate_local_array_mutation_getter_reads(
+            target,
+            precise,
+            &mutation.method,
+            length,
+            None,
+            LocalAliasInvocationTiming::Eager,
+        );
+    }
+
     fn apply_deferred_array_mutation(
         &mut self,
         raw_target: &StaticAliasPath,
@@ -47729,6 +48127,9 @@ impl StaticHookAliasCollector<'_> {
             .map(|(candidate, properties)| (candidate.clone(), properties.clone()))
             .collect::<Vec<_>>();
         let known_length = self.known_array_length(&target);
+        if let Some(length) = known_length {
+            self.activate_deferred_array_mutation_getter_reads(&target, mutation, length);
+        }
         let old_properties = self
             .structured_own_properties
             .get(&target)
@@ -51704,26 +52105,34 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
             None
         };
         walk_call_expression(self, call);
-        let mut array_element_getter_invocations = Vec::new();
         if let Some(plan) = local_array_mutation.as_ref()
-            && array_mutation_returns_element(&plan.method)
+            && !local_array_mutation_is_deferred
+            && !self
+                .handled_local_array_getter_read_spans
+                .contains(&call_span)
             && let Some(length) = self
                 .known_array_length(&plan.source)
                 .filter(|length| *length > 0)
         {
-            let index = if plan.method == "pop" { length - 1 } else { 0 };
-            let element = plan.source.clone().with_property(index.to_string());
-            if let Some((_, _, mut invocations)) =
-                self.local_getter_read_invocations(&element, None, true)
-            {
-                for invocation in &mut invocations {
-                    invocation.historical_callee = true;
-                }
-                if !self.handled_local_getter_read_spans.contains(&call_span) {
-                    self.local_invocations.extend(invocations.iter().cloned());
-                    self.handled_local_getter_read_spans.insert(call_span);
-                }
-                array_element_getter_invocations = invocations;
+            let returned_index = match plan.method.as_str() {
+                "pop" => Some(length - 1),
+                "shift" => Some(0),
+                _ => None,
+            };
+            let returned_getter_was_recorded =
+                self.handled_local_getter_read_spans.contains(&call_span);
+            let mutation = Self::precise_array_mutation_from_call(call, &plan.method);
+            let activated = self.activate_local_array_mutation_getter_reads(
+                &plan.source,
+                mutation,
+                &plan.method,
+                length,
+                returned_index.filter(|_| returned_getter_was_recorded),
+                local_alias_timing,
+            );
+            if activated {
+                self.handled_local_array_getter_read_spans.insert(call_span);
+                self.handled_local_getter_read_spans.insert(call_span);
             }
         }
         let mut local_reflect_set_mutates = true;
@@ -51784,10 +52193,6 @@ impl<'a> Visit<'a> for StaticHookAliasCollector<'_> {
                 );
             }
         }
-        self.activate_precise_local_alias_invocations(
-            &array_element_getter_invocations,
-            local_alias_timing,
-        );
         self.activate_precise_local_alias_invocations(&local_invocations, local_alias_timing);
         if let Some((generator_advance_invocations, segment)) = generator_advance_invocations {
             let timing = if self.generator_advance_is_segmented(&generator_advance_invocations) {
