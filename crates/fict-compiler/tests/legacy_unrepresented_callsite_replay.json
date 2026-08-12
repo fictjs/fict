@@ -18,7 +18,7 @@
     "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
     "assertionInventorySha256": "96ad04d4812624987fec46895ca7a54c5cc6b8de3f5552252cba4362051eb186",
-    "rustCodegenCorpusSha256": "360dbe3a6a069354347a6d81ff7f24925af952af6800c5bdd057ab6652677910",
+    "rustCodegenCorpusSha256": "26260fa74a68501b9fbfdb29a4c16bccf8f9447b3e3b63f524a488665f7bef36",
     "generatorSha256": "ec50a19976c812c42f62e87fcd3cd57545b1bdbf24039859c9790f864fadaf72",
     "captureConfigSha256": "5b383415eefeff180428cf22bad269597133a0d190ce35a57b4567434113bc65",
     "selectedTestFiles": 29,
@@ -29,8 +29,8 @@
     "zeroInvocationCallsites": 2,
     "matchedCallsiteExecutions": 1444,
     "replayFixtures": 1222,
-    "reviewedRevision": "1bc792aee70d04752ec164817e332a108f8ffdaa",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-3d47d39108e06fd97aa60093efed912abd9f659897b375a9d8807671df612e46"
+    "reviewedRevision": "fcdd653568949db4764eddaa9262be59e0e5fd60",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-3701d4d8e53f97e48754404df601df18ff2ce9b8ff98245c8c791b042ad0fa6a"
   },
   "transitionCounts": {
     "ok-to-error": 3,
@@ -12258,8 +12258,8 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "395c42a19783111b5199215f3376255726c0cd75ed30dcd16fef22453485acda",
-        "deterministicResultSha256": "dd50d6f4ba2b70044ae634fa3da518e3c2cfd6a7d753da73394f34c628f98e7e"
+        "codeSha256": "f0358ba40962e4db28978d4d10d6c44b2b44b683cdf2b4ddac95741ac4b0cf4d",
+        "deterministicResultSha256": "9749c7c6277b290d0c52ed9daddb02824bf34f9fcb87e833b3878ba4b6aa976f"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -13605,8 +13605,8 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "82460f9a74724687ae3a8c55573f6eaf48077f7f352b598053f2b443c4cea01a",
-        "deterministicResultSha256": "e887e7656ab1eb5aebbfb6a5bef25c1a0cad84bc868edd9be2dbee8f28ff7a5a"
+        "codeSha256": "3b8a381f69397f5f22561ab1c5e8e5601af588a070a5edf3c911cf8ed70dbf28",
+        "deterministicResultSha256": "e5643ea5837265c9e75d6ab9b05eee02cccd2e079fe0f385999f78a154e79e4f"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -29574,8 +29574,8 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "558d8c1440aa2cf78e6c30f195ce681c53e6f681b7f1f52c9c514a0abb277166",
-        "deterministicResultSha256": "606f0e310ae73b835a406172089449758aadbf7971c29020b6ef4cccf3ca70db"
+        "codeSha256": "f336622f2bb81ee386cd80784e2187df26e27b5f5b52298d2cd6cce0993ed5ea",
+        "deterministicResultSha256": "10f7482faa8e8b8f788a4097d75d58d492f2dbffcc88dcbe927230e30c5ab3f6"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -39246,8 +39246,8 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "d1b35b8f847982e632944fe428aca64146d27ea989fdb639d8572bff8d61cd5d",
-        "deterministicResultSha256": "286e40f5324f4eb78e06d69ce32a5e3138b9a3701e7fd8bd6449df284f45de4e"
+        "codeSha256": "a17c0a1ff3c2efc7d19bb9fd838f69c2fe1dac87109fcb3b62e6a4d724b7e993",
+        "deterministicResultSha256": "1dba033fff0e8e1d3e86c8fd2912f336757345721c19265fd92565415e555b21"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -53586,8 +53586,8 @@
             "guaranteeClass": "fallback"
           }
         ],
-        "codeSha256": "c0f00661e431cf9cdac094471b1cf8f98fa76a2ae5a5aaca6218d1f489dbef07",
-        "deterministicResultSha256": "9968f1c0c8f5b713b1cdf54a6d4d1762f9c95a06281f55aff407505654d88bab"
+        "codeSha256": "ba7d8fc071995bb05d04a1d1f2ff25f5cce04b3deba409f04da417eebff9738d",
+        "deterministicResultSha256": "88a34cf9caea5369605a9c0739bfe3962d0a585dce9ae648c38ff92fbd5efdb1"
       },
       "statusTransition": null,
       "transitionPolicy": null
