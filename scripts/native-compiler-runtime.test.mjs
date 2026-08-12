@@ -1255,6 +1255,55 @@ test('reactive switch assignments re-execute as one fallback region', async () =
   container.remove()
 })
 
+test('namespace VNode fallbacks keep control-flow region children live', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let increment = () => {}
+
+    function Child() {
+      let count = $state(0)
+      let heading = 'none'
+      if (count > 0) heading = 'many'
+      increment = () => count++
+      return <div data-id="region-namespace-fallback">{heading}</div>
+    }
+
+    function App() {
+      return <svg><Child /></svg>
+    }
+
+    export const mount = container => render(() => <App />, container)
+    export const advance = () => increment()
+  `
+
+  const transformed = binding.transformSync({
+    code: source,
+    filename: '/fixtures/region-namespace-fallback.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.deepEqual(
+    transformed.diagnostics.map(({ code, severity }) => [code, severity]),
+    [['FICT-R006', 'warning']],
+  )
+  assert.match(transformed.code, /children: __fictReactive\(\(\) => __fict_region\(\)\.heading\)/)
+
+  const compiled = await importCompiledModule(transformed.code, 'region-namespace-fallback')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const value = () => container.querySelector('[data-id="region-namespace-fallback"]')?.textContent
+  assert.equal(value(), 'none')
+  compiled.advance()
+  await flushRuntime()
+  assert.equal(value(), 'many')
+
+  dispose()
+  container.remove()
+})
+
 test('reactive hook loop outputs re-execute through a live memo region', async () => {
   const source = `
     import { $state } from 'fict'

@@ -164,7 +164,13 @@ impl<'a> AstRewriter<'a, '_> {
             .reads
             .keys()
             .chain(self.prop_reads.iter())
-            .any(|(start, end)| source_span.start <= *start && *end <= source_span.end);
+            .any(|(start, end)| source_span.start <= *start && *end <= source_span.end)
+            || self.control_flow_outputs.values().any(|(_, output)| {
+                output
+                    .references
+                    .iter()
+                    .any(|(start, end)| source_span.start <= *start && *end <= source_span.end)
+            });
         if !contains_reactive_read {
             return value;
         }

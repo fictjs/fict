@@ -6094,6 +6094,29 @@ mod tests {
     }
 
     #[test]
+    fn wraps_control_flow_region_outputs_in_namespace_vnode_fallbacks() {
+        let mut input = request(
+            "import { $state } from 'fict'; function Child() { let count = $state(0); let heading = 'none'; if (count > 0) heading = 'many'; return <div>{heading}</div>; } export function App() { return <svg><Child /></svg>; }",
+            "region-namespace-fallback.tsx",
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(
+            result
+                .code
+                .contains("children: __fictReactive(() => __fict_region().heading)"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn imports_a_collision_free_runtime_fragment_for_short_syntax() {
         let mut input = request(
             "const Fragment = 'local'; export function App() { return <><span>a</span><span>{Fragment}</span></>; }",
