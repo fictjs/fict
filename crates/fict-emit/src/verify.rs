@@ -1211,6 +1211,10 @@ fn verify_operations(
                                 .references
                                 .iter()
                                 .all(|reference| reference.primary_span.is_some())
+                            && output.owner_references.iter().all(|reference| {
+                                reference.primary_span.is_some()
+                                    && output.references.contains(reference)
+                            })
                             && local.kind == fict_hir::LocalKind::User
                             && matches!(
                                 local.declaration_kind,

@@ -20,7 +20,7 @@ pub(crate) fn reactive_control_flow_diagnostics(
     local_hook_returns: &BTreeMap<BindingId, ImportedHookReturn>,
     emit: Option<&EmitProgram>,
 ) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = hook_owner_region_diagnostics(emit);
     for analysis in &core.functions {
         let function = &core.hir.functions[analysis.function.as_usize()];
         if function.kind != FunctionKind::Component
@@ -214,6 +214,66 @@ pub(crate) fn reactive_control_flow_diagnostics(
             diagnostic = diagnostic.with_primary_span(span);
         }
         diagnostics.push(diagnostic);
+    }
+    diagnostics
+}
+
+fn hook_owner_region_diagnostics(emit: Option<&EmitProgram>) -> Vec<Diagnostic> {
+    let Some(emit) = emit else {
+        return Vec::new();
+    };
+    let mut diagnostics = Vec::new();
+    for function in &emit.functions {
+        if function.kind != FunctionKind::Hook {
+            continue;
+        }
+        for operation in &function.operations {
+            let fict_emit::EmitOperation::ControlFlowRegion {
+                outputs, origin, ..
+            } = operation
+            else {
+                continue;
+            };
+            let eager_outputs: Vec<_> = outputs
+                .iter()
+                .filter(|output| !output.owner_references.is_empty())
+                .collect();
+            if eager_outputs.is_empty() {
+                continue;
+            }
+            let displayed = eager_outputs
+                .iter()
+                .take(5)
+                .map(|output| output.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let remainder = eager_outputs
+                .len()
+                .checked_sub(5)
+                .filter(|remaining| *remaining > 0)
+                .map_or_else(String::new, |remaining| format!(" (+{remaining} more)"));
+            let mut diagnostic = Diagnostic::new(
+                DiagnosticCode::new("FICT-R006").expect("diagnostic literal"),
+                DiagnosticSeverity::Warning,
+                format!(
+                    "Reactive hook control-flow outputs ({displayed}{remainder}) are read directly by the hook body and materialize value snapshots."
+                ),
+            )
+            .with_guarantee_class(GuaranteeClass::Fallback)
+            .with_help(
+                "read the output inside a returned closure/accessor, rewrite the branch as a derived expression, or memoize the returned value explicitly",
+            );
+            if let Some(span) = eager_outputs
+                .iter()
+                .flat_map(|output| &output.owner_references)
+                .filter_map(|reference| reference.primary_span)
+                .min_by_key(|span| (span.start(), span.end()))
+                .or(origin.primary_span)
+            {
+                diagnostic = diagnostic.with_primary_span(span);
+            }
+            diagnostics.push(diagnostic);
+        }
     }
     diagnostics
 }

@@ -1,4 +1,5 @@
 use fict_compiler::{COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerOptions, compile};
+use fict_diagnostics::DiagnosticSeverity;
 
 fn compile_source(source: &str, optimize: bool) -> fict_compiler::CompileResult {
     compile_source_with_strict(source, optimize, false)
@@ -164,6 +165,78 @@ fn lowers_reactive_hook_conditionals_switches_and_loop_forms() {
             }
         }
     }
+}
+
+#[test]
+fn rejects_hook_region_outputs_materialized_as_owner_value_snapshots_in_strict_mode() {
+    let returns = [
+        "return heading",
+        "return { heading, bump: () => n++ }",
+        "return [heading, () => n++]",
+        "const cfg = { heading }; return { cfg, bump: () => n++ }",
+    ];
+
+    for returned in returns {
+        let source = format!(
+            r#"
+                import {{ $state }} from 'fict'
+                export function useHeading() {{
+                    let n = $state(0)
+                    let heading = 'none'
+                    if (n > 0) heading = 'many'
+                    {returned}
+                }}
+            "#
+        );
+        for optimize in [false, true] {
+            let result = compile_source_with_strict(&source, optimize, true);
+            let diagnostic = result
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.code.as_str() == "FICT-R006")
+                .unwrap_or_else(|| {
+                    panic!("missing R006 for {returned}: {:#?}", result.diagnostics)
+                });
+            assert_eq!(diagnostic.severity, DiagnosticSeverity::Error);
+            assert!(
+                diagnostic.message.contains("value snapshots"),
+                "{}",
+                diagnostic.message
+            );
+            assert!(result.code.is_empty(), "{}", result.code);
+        }
+    }
+}
+
+#[test]
+fn warns_for_hook_owner_snapshots_but_keeps_captured_region_reads_live_in_fallback_mode() {
+    let source = r#"
+        import { $state } from 'fict'
+        export function useHeading() {
+            let n = $state(0)
+            let heading = 'none'
+            if (n > 0) heading = 'many'
+            return { heading, view: () => heading, bump: () => n++ }
+        }
+    "#;
+
+    let result = compile_source_with_strict(source, true, false);
+    assert!(!result.has_errors(), "{:#?}", result.diagnostics);
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-R006"
+            && diagnostic.severity == DiagnosticSeverity::Warning
+            && diagnostic.message.contains("value snapshots")
+    }));
+    assert!(
+        result.code.contains("heading: __fict_region().heading"),
+        "{}",
+        result.code
+    );
+    assert!(
+        result.code.contains("view: () => __fict_region().heading"),
+        "{}",
+        result.code
+    );
 }
 
 #[test]

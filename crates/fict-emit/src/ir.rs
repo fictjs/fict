@@ -256,6 +256,10 @@ pub struct ControlFlowRegionOutput {
     /// empty for a region-owned intermediate that is returned only to keep declaration movement
     /// atomic.
     pub references: Vec<Origin>,
+    /// Subset of `references` evaluated directly by the owning component or hook body. Captured
+    /// reads are re-evaluated by their descendant closure, while hook-owner reads materialize a
+    /// one-time value snapshot and therefore require an explicit fallback diagnostic.
+    pub owner_references: Vec<Origin>,
 }
 
 /// Runtime re-execution guarantee materialized by a verified EmitIR operation.

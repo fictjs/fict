@@ -10405,9 +10405,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "7e22cebd13e37f1e2b302efb43a1777cb12830be5462468c1280aefde7ffe9b2",
-        "deterministicResultSha256": "4297045174fec7c1f7eb13e6aa36fa30df47779972c20fa06d75e51154adb46b"
+        "deterministicResultSha256": "2efe35d069a1599f6b4a880df84859ea342ce8dc862aff60963b98f80c34e4de"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -12501,9 +12507,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "036411b2575040b05dddb8676d62889cc9ec2c8a588d40f3d7ad0f4ee5a5e0e0",
-        "deterministicResultSha256": "ddb1b110708cc5505d50ab03395c091a07ddec6231a34bb6160317aa4678b49c"
+        "deterministicResultSha256": "0b52d48f474ce4828decdd907fc50cbeef2f54bd663145e1ad96e11d6ee1f218"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -13450,9 +13462,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "c2b9fdbbe66a9b89cc519181f3aa602d8f55fd0dbe7bce6ef06fb05610a095a2",
-        "deterministicResultSha256": "65675a83c1dfa0169b00847d566ae48dcd147378e5d06b2cf6f6db12c9245ab2"
+        "deterministicResultSha256": "dca8e1555f4b42b26e0a3ed48bb5e24a7fc33d666b1260e218c4f2a6b80a463e"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -15241,9 +15259,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "44db66c0c2ee7156cf1db75084de2830c4d385d12b13bd7f42064e548d2f223f",
-        "deterministicResultSha256": "840fb594f26e834b95dceb6e7a63925b0f0976c46706170abe8207461f84b682"
+        "deterministicResultSha256": "1066b9f6e567c6c117c76736368e19efab3b1d33b58f8239cd2b82f8e3bd142a"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -15871,9 +15895,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "6aea7b9ad539c945eae62c661439a5577948c6a9df5b74da1a657ab590ed3acd",
-        "deterministicResultSha256": "3600201558b62cd430a911c4cbfb531d134bad8a20ab73ad4d661896fb6dd24f"
+        "deterministicResultSha256": "1866ba25e88f00b225dd5c19e45b7d26eddef34d86c6b4c9d95ad0ab87a3494a"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -16301,10 +16331,15 @@
             "code": "FICT-S002",
             "severity": "warning",
             "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
           }
         ],
         "codeSha256": "c4b9f37cceb11341382e219ff32fc95e40d76f330595308371d3889941eda8fd",
-        "deterministicResultSha256": "e56783b3f6aefb93b41ef40c73eaa10a735ff4c01784cc3e64bdd0844df362f2"
+        "deterministicResultSha256": "81b20fc77689c53287d81b5f7bb766dc7ec0024ad4142e5d9c937b53119b59af"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -17005,9 +17040,35 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          },
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "2008323d5ba36874d1c41f6afad067bb9b8b86773ce623ad3371bbc1579f4677",
-        "deterministicResultSha256": "a4f8af090dacf559206b0fb2eeeb612d89e98ee559e770899a3e7eef848a6d2b"
+        "deterministicResultSha256": "d36e53b00acbb231198fbba97c89c8d2ce034ff5be4df20ab5cb597e024118a9"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -33981,9 +34042,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "8fe09c8e066b8d061d872bdfa26dd42cb76efd89633eb1ff43c20eabdccfe276",
-        "deterministicResultSha256": "0b04ec206a568c4781424307e1ef1f5fd58d18ee69db5179de2cdd479790412b"
+        "deterministicResultSha256": "4cc2735e263864c5ecc6d8675d230e9c986df276bcaad9623ba47c60fc6d00a6"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -42527,9 +42594,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "183a732d6591bfcd841668a735b25a72b3ca9c66d9b28df19ea583775f6ae4ce",
-        "deterministicResultSha256": "f96957551590d772f683a8212407645bc664059ec53f1b73ce67f55311d917aa"
+        "deterministicResultSha256": "eee3ad0be7daa7a56fd87d67ef143266cd87525d8a9261a8438c7e996f588256"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -45451,9 +45524,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "852223d8523c175bd94050fdf8ad8dbbb4c9d4fc1d503207d747afce81b1f4c8",
-        "deterministicResultSha256": "cd1b0b41f573ce8a7aab4a26d1582aff753165ec679efc0659a96006ca774419"
+        "deterministicResultSha256": "226bc9ca907a849dd689b896cffa60209c19ac5d2bd0a92e524b3d91a9dd43ef"
       },
       "statusTransition": null,
       "transitionPolicy": null
@@ -48866,9 +48945,15 @@
       },
       "expected": {
         "status": "ok",
-        "diagnostics": [],
+        "diagnostics": [
+          {
+            "code": "FICT-R006",
+            "severity": "warning",
+            "guaranteeClass": "fallback"
+          }
+        ],
         "codeSha256": "71e6390d4d50e1928372196aa611d7979ab5731188cb8eaca39e1a69e7d9865c",
-        "deterministicResultSha256": "38e9a0b3636aed835ad19750208a50ec0ce23c6ae16a084c2f45b64c536c0017"
+        "deterministicResultSha256": "db0a77c2b07112fdaa1be62f8328c7b65c4ddd4783ab709e988355e151615348"
       },
       "statusTransition": null,
       "transitionPolicy": null

@@ -207,6 +207,7 @@ fn output_for_local(
     }
 
     let mut references = Vec::new();
+    let mut owner_references = Vec::new();
     let mut read_inside = false;
     for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
         let span = instruction.origin.primary_span;
@@ -227,6 +228,7 @@ fn output_for_local(
                 return None;
             }
             references.push(instruction.origin);
+            owner_references.push(instruction.origin);
         }
     }
 
@@ -267,6 +269,12 @@ fn output_for_local(
             .map_or((u32::MAX, u32::MAX), |span| (span.start(), span.end()))
     });
     references.dedup();
+    owner_references.sort_by_key(|origin| {
+        origin
+            .primary_span
+            .map_or((u32::MAX, u32::MAX), |span| (span.start(), span.end()))
+    });
+    owner_references.dedup();
     if references.is_empty() && !read_inside {
         return None;
     }
@@ -277,6 +285,7 @@ fn output_for_local(
         name: storage.debug_name.clone()?,
         declaration: storage.origin,
         references,
+        owner_references,
     })
 }
 
