@@ -11,6 +11,7 @@ mod build_id_input;
 mod capabilities;
 mod control_flow_diagnostics;
 mod diagnostic_policy;
+mod effect_diagnostics;
 mod metadata_analysis;
 mod pass_manager;
 mod pipeline;

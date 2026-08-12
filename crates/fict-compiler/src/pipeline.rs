@@ -2,6 +2,7 @@ use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{
     apply_diagnostic_policy, apply_diagnostic_suppressions, configured_diagnostic_severity,
 };
+use crate::effect_diagnostics::suppress_region_backed_effect_advisories;
 use crate::metadata_analysis::generate_module_metadata;
 use crate::result::{INTERNAL_RECOVERY_HELP, failed_result, request_error_result};
 use crate::source_map::compose_source_maps;
@@ -18,7 +19,7 @@ use fict_compiler_oxc::{
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
-use fict_emit::{NoJsxLoweringOptions, lower_core_with_hook_returns};
+use fict_emit::{EmitProgram, NoJsxLoweringOptions, lower_core_with_hook_returns};
 use fict_hir::{
     FictMacroKind, HirFile, HirInstructionKind, ReactiveCallKind, StructuredSourceKind,
 };
@@ -128,7 +129,20 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             analysis_budgets: Default::default(),
         },
     );
-    result.diagnostics.extend(build.diagnostics);
+    let defer_effect_advisories = build.hir.is_some()
+        && build.module_plan.is_some()
+        && build
+            .frontend
+            .as_ref()
+            .is_some_and(|frontend| !frontend.program_compiler_disabled());
+    let mut deferred_effect_advisories = Vec::new();
+    for diagnostic in build.diagnostics {
+        if defer_effect_advisories && diagnostic.code.as_str() == "FICT-E001" {
+            deferred_effect_advisories.push(diagnostic);
+        } else {
+            result.diagnostics.push(diagnostic);
+        }
+    }
     if build
         .frontend
         .as_ref()
@@ -194,6 +208,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     }
     finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
+        finalize_effect_advisories(
+            &mut result,
+            &request,
+            &suppressions,
+            &mut deferred_effect_advisories,
+            None,
+            None,
+        );
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     }
@@ -208,7 +230,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         Ok(core) => core,
         Err(diagnostics) => {
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_source_diagnostics(&mut result, &request, &suppressions);
+            finalize_effect_advisories(
+                &mut result,
+                &request,
+                &suppressions,
+                &mut deferred_effect_advisories,
+                None,
+                None,
+            );
             attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
@@ -216,6 +245,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result.diagnostics.extend(core.diagnostics.iter().cloned());
     finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
+        finalize_effect_advisories(
+            &mut result,
+            &request,
+            &suppressions,
+            &mut deferred_effect_advisories,
+            None,
+            None,
+        );
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     }
@@ -232,6 +269,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result.diagnostics.extend(metadata.diagnostics);
     finalize_source_diagnostics(&mut result, &request, &suppressions);
     if result.has_errors() {
+        finalize_effect_advisories(
+            &mut result,
+            &request,
+            &suppressions,
+            &mut deferred_effect_advisories,
+            None,
+            None,
+        );
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     }
@@ -287,7 +332,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                 None,
             ));
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_source_diagnostics(&mut result, &request, &suppressions);
+            finalize_effect_advisories(
+                &mut result,
+                &request,
+                &suppressions,
+                &mut deferred_effect_advisories,
+                None,
+                None,
+            );
             attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
@@ -299,7 +351,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         &local_hook_returns,
         Some(&emit),
     ));
-    finalize_source_diagnostics(&mut result, &request, &suppressions);
+    finalize_effect_advisories(
+        &mut result,
+        &request,
+        &suppressions,
+        &mut deferred_effect_advisories,
+        Some(&core.hir),
+        Some(&emit),
+    );
     if result.has_errors() {
         attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
@@ -524,6 +583,19 @@ fn finalize_source_diagnostics(
 ) {
     apply_diagnostic_suppressions(&request.code, suppressions, &mut result.diagnostics);
     finalize_diagnostics(result, &request.options);
+}
+
+fn finalize_effect_advisories(
+    result: &mut CompileResult,
+    request: &NormalizedCompileRequest,
+    suppressions: &[FrontendSuppression],
+    deferred: &mut Vec<Diagnostic>,
+    hir: Option<&HirFile>,
+    emit: Option<&EmitProgram>,
+) {
+    suppress_region_backed_effect_advisories(deferred, hir, emit);
+    result.diagnostics.append(deferred);
+    finalize_source_diagnostics(result, request, suppressions);
 }
 
 fn attach_explain_if_requested(

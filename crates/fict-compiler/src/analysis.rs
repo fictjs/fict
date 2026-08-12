@@ -14,6 +14,7 @@ use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{
     apply_diagnostic_policy, apply_diagnostic_suppressions, configured_diagnostic_severity,
 };
+use crate::effect_diagnostics::suppress_region_backed_effect_advisories;
 use crate::metadata_analysis::infer_local_hook_returns;
 use crate::pipeline::{oxc_language, oxc_module_kind};
 use crate::{
@@ -395,6 +396,7 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
         &local_hook_returns,
         emit.as_ref(),
     ));
+    suppress_region_backed_effect_advisories(&mut diagnostics, Some(&core.hir), emit.as_ref());
 
     result.components = core
         .hir
@@ -1154,6 +1156,43 @@ mod tests {
             diagnostic.code == "FICT-R006"
                 && diagnostic.severity == AnalyzeDiagnosticSeverity::Error
         }));
+    }
+
+    #[test]
+    fn suppresses_region_backed_effect_advisories_from_verified_emit_ir() {
+        let mut input = request(
+            r#"
+                import { $effect, $state } from 'fict';
+                export function useProbe() {
+                    let count = $state(0);
+                    let label = 'none';
+                    if (count > 0) label = 'many';
+                    $effect(() => console.log(label));
+                    return { set: (value: number) => { count = value; } };
+                }
+            "#,
+            "region-effect.ts",
+        );
+        input.options.compiler_options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+
+        let result = analyze(input);
+
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "FICT-E001"),
+            "{:?}",
+            result.diagnostics
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity != AnalyzeDiagnosticSeverity::Error),
+            "{:?}",
+            result.diagnostics
+        );
     }
 
     #[test]

@@ -363,6 +363,51 @@ test('Rust compiler output preserves Core reactive runtime behavior', async () =
   })
 })
 
+test('region-backed effect reads do not trigger E001 and rerun at runtime', async () => {
+  const result = binding.transformSync({
+    code: `
+      import { $effect, $state, render } from 'fict'
+
+      export const effects = []
+      let increment = () => {}
+
+      function useProbe() {
+        let count = $state(0)
+        let label = 'none'
+        if (count > 0) label = 'many'
+        $effect(() => effects.push(label))
+        increment = () => count++
+      }
+
+      function App() {
+        useProbe()
+        return <span />
+      }
+
+      export const mount = container => render(() => <App />, container)
+      export const advance = () => increment()
+    `,
+    filename: '/fixtures/region-backed-effect.tsx',
+    options: { warningsAsErrors: true },
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.match(result.code, /effects\.push\(__fict_region\(\)\.label\)/)
+
+  const compiled = await importCompiledModule(result.code, 'region-backed-effect')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+  assert.deepEqual(compiled.effects, ['none'])
+
+  compiled.advance()
+  await flushRuntime()
+  assert.deepEqual(compiled.effects, ['none', 'many'])
+
+  dispose()
+  container.remove()
+})
+
 test('later explicit JSX props keep precedence when an earlier spread reruns', async () => {
   const compiled = await compileAndImport(
     `
