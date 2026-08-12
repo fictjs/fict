@@ -6,8 +6,7 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::HirFile;
-use fict_reactivity::RegionAnalysis;
-use fict_reactivity::{analyze_cfg, verify_structurized_cfg};
+use fict_reactivity::{RegionAnalysis, analyze_cfg, verify_structurized_cfg};
 use std::collections::{BTreeMap, BTreeSet};
 /// Verify EmitIR helper, slot/temp, region/template, cleanup, and rejection invariants.
 pub fn verify_emit_program(
@@ -991,22 +990,9 @@ fn verify_operations(
                 ..
             } => {
                 verify_source_result(hir_function, *source_result, diagnostics);
-                let source = hir_function
-                    .blocks
-                    .iter()
-                    .flat_map(|block| &block.instructions)
-                    .find(|instruction| instruction.result == Some(*source_result));
-                let source_writes = source.and_then(|instruction| {
-                    let fict_hir::HirInstructionKind::PatternAssignment { writes, .. } =
-                        &instruction.kind
-                    else {
-                        return None;
-                    };
-                    (instruction.origin == *origin).then_some(writes.as_slice())
-                });
+                let source = hir_function.instruction_for_result(*source_result);
                 let mut origins = BTreeSet::new();
                 if targets.is_empty()
-                    || source_writes.is_none()
                     || targets.iter().any(|target| {
                         verify_slot(function, target.slot, diagnostics);
                         let slot_binding = function
@@ -1017,15 +1003,29 @@ fn verify_operations(
                             .locals
                             .get(target.local.as_usize())
                             .and_then(|local| local.binding);
+                        let source_matches = source.is_some_and(|instruction| {
+                            let fict_hir::HirInstructionKind::PatternAssignment {
+                                writes,
+                                projected_writes,
+                                ..
+                            } = &instruction.kind
+                            else {
+                                return false;
+                            };
+                            instruction.origin == *origin
+                                && (writes.iter().any(|write| {
+                                    write.local == target.local && write.origin == target.origin
+                                }) || projected_writes.iter().any(|(place, origin)| {
+                                    origin == &target.origin
+                                        && matches!(place.base,
+                                    fict_hir::PlaceBase::Local(local) if local == target.local)
+                                }))
+                        });
                         target.origin.primary_span.is_none()
                             || !origins.insert(target.origin)
                             || slot_binding.is_none()
                             || slot_binding != local_binding
-                            || source_writes.is_none_or(|writes| {
-                                !writes.iter().any(|write| {
-                                    write.local == target.local && write.origin == target.origin
-                                })
-                            })
+                            || !source_matches
                     })
                 {
                     diagnostics.push(emit_error(

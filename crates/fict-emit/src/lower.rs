@@ -464,23 +464,21 @@ fn instruction_reads_local(instruction: &HirInstruction, local: LocalId) -> bool
         _ => false,
     }
 }
-fn place_uses_any_local(place: &fict_hir::Place, locals: &BTreeSet<LocalId>) -> bool {
-    place_local(place.base).is_some_and(|local| locals.contains(&local))
-}
 fn call_callee_uses_any_local(
     function: &HirFunction,
     call: &fict_hir::CallInstruction,
     locals: &BTreeSet<LocalId>,
 ) -> bool {
-    call.callee_reference
-        .as_ref()
-        .is_some_and(|place| place.projections.is_empty() && place_uses_any_local(place, locals))
-        || function
-            .instruction_for_result(call.callee)
-            .is_some_and(|instruction| {
-                matches!(&instruction.kind, HirInstructionKind::Read { place }
-                    if place.projections.is_empty() && place_uses_any_local(place, locals))
-            })
+    call.callee_reference.as_ref().is_some_and(|place| {
+        place.projections.is_empty()
+            && place_local(place.base).is_some_and(|local| locals.contains(&local))
+    }) || function
+        .instruction_for_result(call.callee)
+        .is_some_and(|instruction| {
+            matches!(&instruction.kind, HirInstructionKind::Read { place }
+                    if place.projections.is_empty()
+                        && place_local(place.base).is_some_and(|local| locals.contains(&local)))
+        })
 }
 fn instruction_writes_any_dependency(
     function: &HirFunction,
@@ -489,11 +487,11 @@ fn instruction_writes_any_dependency(
 ) -> bool {
     match &instruction.kind {
         HirInstructionKind::Write { place, .. } | HirInstructionKind::ReadWrite { place, .. } => {
-            place_uses_any_local(place, dependency_locals)
+            place_local(place.base).is_some_and(|local| dependency_locals.contains(&local))
         }
         HirInstructionKind::Delete {
             target: DeleteTarget::Place(place),
-        } => place_uses_any_local(place, dependency_locals),
+        } => place_local(place.base).is_some_and(|local| dependency_locals.contains(&local)),
         HirInstructionKind::PatternAssignment { writes, .. } => writes
             .iter()
             .any(|write| dependency_locals.contains(&write.local)),
@@ -1775,16 +1773,23 @@ fn lower_function(
                         origin: instruction.origin,
                     });
                 }
-                HirInstructionKind::PatternAssignment { value, writes, .. } => {
+                HirInstructionKind::PatternAssignment {
+                    value,
+                    writes,
+                    projected_writes: p,
+                    ..
+                } => {
                     let targets: Vec<_> = writes
                         .iter()
-                        .filter_map(|write| {
-                            slot_by_local.get(&write.local).copied().map(|slot| {
-                                ReactivePatternTarget {
-                                    slot,
-                                    local: write.local,
-                                    origin: write.origin,
-                                }
+                        .map(|w| (w.local, w.origin))
+                        .chain(p.iter().filter_map(|(place, origin)| {
+                            place_local(place.base).map(|local| (local, *origin))
+                        }))
+                        .filter_map(|(local, origin)| {
+                            slot_by_local.get(&local).map(|slot| ReactivePatternTarget {
+                                slot: *slot,
+                                local,
+                                origin,
                             })
                         })
                         .collect();
@@ -1795,13 +1800,7 @@ fn lower_function(
                     for target in &targets {
                         ensure_writable_hook_return(&slots, target.slot)?;
                     }
-                    let Some(source_result) = instruction.result else {
-                        return Err(DiagnosticBundle::new(vec![lower_error(
-                            "FICT-EMIT-PATTERN-RESULT",
-                            "reactive pattern assignment has no HIR result",
-                            GuaranteeClass::Internal,
-                        )]));
-                    };
+                    let source_result = instruction.result.expect("verified pattern result");
                     operations.push(EmitOperation::WriteReactivePattern {
                         source_result,
                         value: lower_value(*value, &value_temporaries),

@@ -8,6 +8,7 @@ use oxc::{
         ast::{AssignmentTarget, Expression, SimpleAssignmentTarget},
     },
     ast_visit::walk_mut,
+    span::GetSpan,
     syntax::number::NumberBase,
 };
 
@@ -209,6 +210,18 @@ fn rewrite_assignment_target_root<'a>(
         AssignmentTarget::AssignmentTargetIdentifier(_)
         | AssignmentTarget::ArrayAssignmentTarget(_)
         | AssignmentTarget::ObjectAssignmentTarget(_) => false,
+    }
+}
+
+pub(super) fn rewrite_pattern_projected_target<'a>(
+    target: &mut AssignmentTarget<'a>,
+    expected: &BTreeSet<(u32, u32)>,
+    matched: &mut BTreeSet<(u32, u32)>,
+    allocator: &'a oxc::allocator::Allocator,
+) {
+    let location = (target.span().start, target.span().end);
+    if expected.contains(&location) && rewrite_assignment_target_root(target, allocator) {
+        matched.insert(location);
     }
 }
 

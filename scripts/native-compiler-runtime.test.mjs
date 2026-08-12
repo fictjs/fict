@@ -933,6 +933,29 @@ test('projected reactive mutations preserve JavaScript evaluation semantics', as
   container.remove()
 })
 
+test('projected assignment patterns rewrite reactive accessor roots', async () => {
+  const source = `
+    import { $state } from 'fict'
+    import { __fictRender } from 'fict/internal'
+
+    function Probe() {
+      const items = $state([1, 2])
+      const shuffled = [...items]
+      ;[shuffled[0], shuffled[1]] = [shuffled[1], shuffled[0]]
+      return [...shuffled]
+    }
+
+    export function probe() {
+      return __fictRender({ slots: [], cursor: 0 }, Probe)
+    }
+  `
+  const compiled = await compileAndImport(source, 'projected-pattern-mutations', {
+    options: { strictGuarantee: false },
+  })
+
+  assert.deepEqual(compiled.probe(), [2, 1])
+})
+
 test('reactive conditional returns preserve branch statements and local scope', async () => {
   const source = `
     import { $state, render } from 'fict'

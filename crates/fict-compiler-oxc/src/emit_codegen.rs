@@ -6955,14 +6955,9 @@ fn rewrite_pattern_assignment_target<'a>(
                 rewrite_pattern_assignment_target(&mut rest.target, expected, matched, allocator);
             }
         }
-        AssignmentTarget::AssignmentTargetIdentifier(_)
-        | AssignmentTarget::TSAsExpression(_)
-        | AssignmentTarget::TSSatisfiesExpression(_)
-        | AssignmentTarget::TSNonNullExpression(_)
-        | AssignmentTarget::TSTypeAssertion(_)
-        | AssignmentTarget::ComputedMemberExpression(_)
-        | AssignmentTarget::StaticMemberExpression(_)
-        | AssignmentTarget::PrivateFieldExpression(_) => {}
+        target => reactive_mutations::rewrite_pattern_projected_target(
+            target, expected, matched, allocator,
+        ),
     }
 }
 fn rewrite_pattern_maybe_default<'a>(
