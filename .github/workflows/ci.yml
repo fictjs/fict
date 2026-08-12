@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install pinned fuzz toolchain
         run: |
@@ -80,7 +80,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -171,7 +171,7 @@ jobs:
           - target: linux-arm64-gnu
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v5
         with:
@@ -198,7 +198,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -247,7 +247,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -284,7 +284,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -321,7 +321,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -356,7 +356,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -414,7 +414,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -467,7 +467,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -502,7 +502,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -538,7 +538,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive

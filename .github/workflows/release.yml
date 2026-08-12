@@ -27,7 +27,7 @@ jobs:
       build: ${{ steps.matrix.outputs.build }}
       runtime: ${{ steps.matrix.outputs.runtime }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Cache pinned Rust advisory auditor
         id: cargo-audit-cache
@@ -61,7 +61,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.native-matrix.outputs.build) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v5
         with:
@@ -147,7 +147,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.native-matrix.outputs.runtime) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Download target platform package
         uses: actions/download-artifact@v7
@@ -212,7 +212,7 @@ jobs:
     needs: [native-build, native-runtime]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v5
         with:
@@ -262,7 +262,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
