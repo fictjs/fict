@@ -4078,14 +4078,12 @@ mod tests {
         assert!(
             result
                 .code
-                .contains("__fictProps.label === void 0 ? String(renamed()) : void 0"),
+                .contains("__fictProps.label === void 0 ? String(renamed()) : __fictProps.label"),
             "{}",
             result.code
         );
         assert!(
-            result
-                .code
-                .contains("__fictProps.label === void 0 ? __fictPropDefault : __fictProps.label"),
+            !result.code.contains("__fictPropDefault"),
             "{}",
             result.code
         );
@@ -4135,9 +4133,9 @@ mod tests {
             result.code
         );
         assert!(
-            result
-                .code
-                .contains("__fictProps.user.profile.age === void 0 ? 18 : void 0"),
+            result.code.contains(
+                "__fictProps.user.profile.age === void 0 ? 18 : __fictProps.user.profile.age"
+            ),
             "{}",
             result.code
         );
@@ -4326,9 +4324,12 @@ mod tests {
         assert!(result.code.contains("insert(__fict_jsx"), "{}", result.code);
         assert!(result.code.contains("() => label()"), "{}", result.code);
         assert!(
-            result.code.contains(
-                "const fallback = prop(() => __fictProps.fallback === void 0 ? __fictPropDefault : __fictProps.fallback);"
-            ),
+            result.code.contains("const fallback = prop(() => __fictProps.fallback === void 0 ? (calls.push(label()),"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("__fictPropDefault"),
             "{}",
             result.code
         );

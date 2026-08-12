@@ -348,7 +348,9 @@ pub fn verify_emit_program(
                                         && planned.default_dependencies
                                             == source.default_dependencies
                                         && planned.default_local.is_some()
-                                            == source.default_value.is_some()
+                                            == (source.default_value.is_some()
+                                                && source.mode
+                                                    == fict_hir::HirObjectParameterMode::Mutable)
                                         && planned.origin == source.origin
                                 })
                         })

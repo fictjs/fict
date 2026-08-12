@@ -1059,11 +1059,13 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
                 }
                 None => None,
             };
-            if default_value.is_some() != binding.default_local.is_some() {
+            if (default_value.is_some() && binding.mode == EmitPropMode::Mutable)
+                != binding.default_local.is_some()
+            {
                 diagnostics.push(
                     emit_error(
                         "FICT-OXC-EMIT-PROPS",
-                        "component prop defaults require a generated snapshot binding",
+                        "mutable component prop defaults require a generated snapshot binding",
                         GuaranteeClass::Internal,
                     )
                     .with_primary_span(origin),
@@ -4561,63 +4563,68 @@ impl<'a> AstRewriter<'a, '_> {
                 insertion_index += 1;
             }
             let mut mutable_default = None;
-            if let (Some(default), Some(default_local)) =
-                (binding.default_value, binding.default_local.as_deref())
-            {
+            let mut accessor_default = None;
+            if let Some(default) = binding.default_value {
                 let default_expression = defaults
                     .remove(&(default.start(), default.end()))
                     .expect("validated component prop default expression");
-                let default_initializer = if binding.mode == EmitPropMode::Mutable {
-                    mutable_default = Some((default_local, default_expression));
-                    self.prop_member(&plan.source, &binding.path, span)
-                } else {
-                    Expression::new_conditional_expression(
-                        span,
-                        self.prop_is_undefined(&plan.source, &binding.path, span),
-                        default_expression,
-                        self.void_zero(span),
-                        &builder,
-                    )
-                };
-                body.statements.insert(
-                    insertion_index,
-                    const_statement(self.allocator, default_local, default_initializer, span),
-                );
-                insertion_index += 1;
-            }
-            let value = match (binding.mode, mutable_default) {
-                (EmitPropMode::Mutable, Some((default_local, default_expression))) => {
-                    let snapshot = || {
-                        Expression::new_identifier(
-                            span,
-                            self.allocator.alloc_str(default_local),
-                            &builder,
-                        )
-                    };
-                    Expression::new_conditional_expression(
-                        span,
-                        Expression::new_binary_expression(
-                            span,
-                            snapshot(),
-                            OxcBinaryOperator::StrictEquality,
-                            self.void_zero(span),
-                            &builder,
-                        ),
-                        default_expression,
-                        snapshot(),
-                        &builder,
-                    )
+                match binding.mode {
+                    EmitPropMode::Mutable => {
+                        let default_local = binding
+                            .default_local
+                            .as_deref()
+                            .expect("validated mutable component prop default snapshot");
+                        body.statements.insert(
+                            insertion_index,
+                            const_statement(
+                                self.allocator,
+                                default_local,
+                                self.prop_member(&plan.source, &binding.path, span),
+                                span,
+                            ),
+                        );
+                        insertion_index += 1;
+                        mutable_default = Some((default_local, default_expression));
+                    }
+                    EmitPropMode::Accessor => accessor_default = Some(default_expression),
+                    EmitPropMode::Value => {
+                        unreachable!("verified value props do not have default expressions")
+                    }
                 }
-                (EmitPropMode::Accessor, _) => {
-                    if let Some(default_local) = binding.default_local.as_deref() {
-                        Expression::new_conditional_expression(
-                            span,
-                            self.prop_is_undefined(&plan.source, &binding.path, span),
+            }
+            let value = match binding.mode {
+                EmitPropMode::Mutable => {
+                    if let Some((default_local, default_expression)) = mutable_default {
+                        let snapshot = || {
                             Expression::new_identifier(
                                 span,
                                 self.allocator.alloc_str(default_local),
                                 &builder,
+                            )
+                        };
+                        Expression::new_conditional_expression(
+                            span,
+                            Expression::new_binary_expression(
+                                span,
+                                snapshot(),
+                                OxcBinaryOperator::StrictEquality,
+                                self.void_zero(span),
+                                &builder,
                             ),
+                            default_expression,
+                            snapshot(),
+                            &builder,
+                        )
+                    } else {
+                        self.prop_member(&plan.source, &binding.path, span)
+                    }
+                }
+                EmitPropMode::Accessor => {
+                    if let Some(default_expression) = accessor_default {
+                        Expression::new_conditional_expression(
+                            span,
+                            self.prop_is_undefined(&plan.source, &binding.path, span),
+                            default_expression,
                             self.prop_member(&plan.source, &binding.path, span),
                             &builder,
                         )
@@ -4625,9 +4632,7 @@ impl<'a> AstRewriter<'a, '_> {
                         self.prop_member(&plan.source, &binding.path, span)
                     }
                 }
-                (EmitPropMode::Value, _) | (EmitPropMode::Mutable, None) => {
-                    self.prop_member(&plan.source, &binding.path, span)
-                }
+                EmitPropMode::Value => self.prop_member(&plan.source, &binding.path, span),
             };
             let initializer = if binding.mode == EmitPropMode::Accessor {
                 let getter = zero_parameter_expression_arrow(self.allocator, value, span);

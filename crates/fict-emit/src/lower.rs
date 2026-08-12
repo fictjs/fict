@@ -2068,15 +2068,16 @@ fn lower_component_props_plan(
                 GuaranteeClass::Internal,
             )]));
         };
+        let mode = match property.mode {
+            fict_hir::HirObjectParameterMode::Accessor => EmitPropMode::Accessor,
+            fict_hir::HirObjectParameterMode::Value => EmitPropMode::Value,
+            fict_hir::HirObjectParameterMode::Mutable => EmitPropMode::Mutable,
+        };
         bindings.push(EmitPropBinding {
             binding: property.binding,
             path: property.path.clone(),
             local: binding.display_name.clone(),
-            mode: match property.mode {
-                fict_hir::HirObjectParameterMode::Accessor => EmitPropMode::Accessor,
-                fict_hir::HirObjectParameterMode::Value => EmitPropMode::Value,
-                fict_hir::HirObjectParameterMode::Mutable => EmitPropMode::Mutable,
-            },
+            mode,
             checks: property
                 .checks
                 .iter()
@@ -2091,6 +2092,7 @@ fn lower_component_props_plan(
             default_dependencies: property.default_dependencies.clone(),
             default_local: property
                 .default_value
+                .filter(|_| mode == EmitPropMode::Mutable)
                 .map(|_| names.allocate("__fictPropDefault")),
             origin: property.origin,
         });

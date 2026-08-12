@@ -39,6 +39,14 @@ function Price({ amount, currency }) {
 }
 ```
 
+Default expressions are lazy and stay reactive too. If an optional prop is `undefined`, the default is recomputed from the current values of any props it reads:
+
+```tsx
+function Total({ price, quantity = price > 100 ? 2 : 1 }) {
+  return <output>{price * quantity}</output>
+}
+```
+
 Avoid copying props into `$state` unless the component intentionally owns an editable local value.
 
 ## Children and fragments

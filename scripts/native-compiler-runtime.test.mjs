@@ -2156,6 +2156,64 @@ test('derived values from destructured component props stay reactive', async () 
   container.remove()
 })
 
+test('destructured prop defaults track current props and undefined transitions', async () => {
+  const result = binding.transformSync({
+    code: `
+      import { $state, render } from 'fict'
+
+      export let api
+
+      function Child({ a, b = a * 2 }) {
+        return <i data-id="prop-default">{b}</i>
+      }
+
+      function App() {
+        let a = $state(5)
+        let provided = $state(true)
+        api = {
+          setA: value => (a = value),
+          setProvided: value => (provided = value),
+        }
+        return <Child a={a} b={provided ? 9 : undefined} />
+      }
+
+      export const mount = container => render(() => <App />, container)
+    `,
+    filename: '/fixtures/reactive-prop-default.tsx',
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.doesNotMatch(result.code, /const __fictPropDefault/)
+
+  const compiled = await importCompiledModule(result.code, 'reactive-prop-default')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  const text = () => container.querySelector('[data-id="prop-default"]')?.textContent
+
+  await flushRuntime()
+  assert.equal(text(), '9')
+
+  compiled.api.setProvided(false)
+  await flushRuntime()
+  assert.equal(text(), '10')
+
+  compiled.api.setA(10)
+  await flushRuntime()
+  assert.equal(text(), '20')
+
+  compiled.api.setProvided(true)
+  compiled.api.setA(20)
+  await flushRuntime()
+  assert.equal(text(), '9')
+
+  compiled.api.setProvided(false)
+  await flushRuntime()
+  assert.equal(text(), '40')
+
+  dispose()
+  container.remove()
+})
+
 test('intrinsic children props become child content without leaking attributes', async () => {
   const compiled = await compileAndImport(
     `

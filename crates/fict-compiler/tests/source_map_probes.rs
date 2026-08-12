@@ -184,7 +184,7 @@ fn maps_reactivity_props_events_and_control_flow_origins() {
     output.assert_maps("__fict_previous + 1", 0, "count++", 0);
     output.assert_maps("count() > 0", 0, "count > 0", 0);
     output.assert_maps("props: { value: count() }", 0, "<Child value={count} />", 0);
-    output.assert_maps("const __fictPropDefault", 0, "label", 0);
+    output.assert_maps("label = prop", 0, "label", 0);
     output.assert_unmapped("createConditional", 0);
 }
 
