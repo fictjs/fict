@@ -15,7 +15,8 @@
   },
   "fileOverrides": {
     "crates/fict-compiler-oxc/src/emit_codegen.rs": 8547,
-    "crates/fict-compiler-oxc/src/hir_builder.rs": 56500,
+    "crates/fict-compiler-oxc/src/hir_builder.rs": 47000,
+    "crates/fict-compiler-oxc/src/hir_builder/execution_state.rs": 10000,
     "crates/fict-compiler-oxc/tests/hir_builder.rs": 36335,
     "crates/fict-compiler-preview/src/lib.rs": 2350,
     "crates/fict-compiler/src/pipeline.rs": 8839,
