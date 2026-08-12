@@ -933,7 +933,7 @@ test('projected reactive mutations preserve JavaScript evaluation semantics', as
   container.remove()
 })
 
-test('projected assignment patterns rewrite reactive accessor roots', async () => {
+test('projected assignment patterns rewrite dynamic reactive accessor roots', async () => {
   const source = `
     import { $state } from 'fict'
     import { __fictRender } from 'fict/internal'
@@ -941,7 +941,9 @@ test('projected assignment patterns rewrite reactive accessor roots', async () =
     function Probe() {
       const items = $state([1, 2])
       const shuffled = [...items]
-      ;[shuffled[0], shuffled[1]] = [shuffled[1], shuffled[0]]
+      const left = 0
+      const right = 1
+      ;[shuffled[left], shuffled[right]] = [shuffled[right], shuffled[left]]
       return [...shuffled]
     }
 
@@ -951,6 +953,7 @@ test('projected assignment patterns rewrite reactive accessor roots', async () =
   `
   const compiled = await compileAndImport(source, 'projected-pattern-mutations', {
     options: { strictGuarantee: false },
+    diagnosticCodes: ['FICT-H', 'FICT-H', 'FICT-H', 'FICT-H'],
   })
 
   assert.deepEqual(compiled.probe(), [2, 1])

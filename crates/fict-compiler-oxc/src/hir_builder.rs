@@ -8969,12 +8969,13 @@ fn resolve_historical_alias_paths_with_mode(
     let has_dynamic_property_aliases = aliases
         .keys()
         .any(|target| dynamic_property_alias_marker(target).is_some());
-    let mut resolved = BTreeSet::new();
-    let mut pending = VecDeque::from([original.clone().canonicalized()]);
-    while let Some(current) = pending.pop_front() {
-        if !resolved.insert(current.clone()) {
+    let (mut resolved, mut visited) = (BTreeSet::new(), BTreeSet::new());
+    let mut pending = VecDeque::from([(original.clone().canonicalized(), BTreeSet::new())]);
+    while let Some((current, traversed)) = pending.pop_front() {
+        if !visited.insert((current.clone(), traversed.clone())) {
             continue;
         }
+        resolved.insert(current.clone());
         let max_length = allow_exact_alias
             .then_some(current.properties.len())
             .or_else(|| current.properties.len().checked_sub(1));
@@ -8990,13 +8991,17 @@ fn resolve_historical_alias_paths_with_mode(
             let Some(sources) = aliases.get(&prefix) else {
                 continue;
             };
+            let mut next_traversed = traversed.clone();
+            if !next_traversed.insert(prefix) {
+                continue;
+            }
             for source in sources {
                 let mut candidate = source.clone();
                 candidate
                     .properties
                     .extend_from_slice(&current.properties[length..]);
                 candidate.element_wildcard |= current.element_wildcard;
-                pending.push_back(candidate.canonicalized());
+                pending.push_back((candidate.canonicalized(), next_traversed.clone()));
             }
         }
         if has_element_wildcard_aliases {
@@ -9006,10 +9011,14 @@ fn resolve_historical_alias_paths_with_mode(
                 else {
                     continue;
                 };
+                let mut next_traversed = traversed.clone();
+                if !next_traversed.insert(target.clone()) {
+                    continue;
+                }
                 for source in sources {
                     let mut candidate = source.clone();
                     candidate.properties.extend_from_slice(remaining);
-                    pending.push_back(candidate.canonicalized());
+                    pending.push_back((candidate.canonicalized(), next_traversed.clone()));
                 }
             }
         }
@@ -9020,10 +9029,14 @@ fn resolve_historical_alias_paths_with_mode(
                 else {
                     continue;
                 };
+                let mut next_traversed = traversed.clone();
+                if !next_traversed.insert(target.clone()) {
+                    continue;
+                }
                 for source in sources {
                     let mut candidate = source.clone();
                     candidate.properties.extend_from_slice(remaining);
-                    pending.push_back(candidate.canonicalized());
+                    pending.push_back((candidate.canonicalized(), next_traversed.clone()));
                 }
             }
         }
@@ -32202,9 +32215,12 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn assignment_alias_target(&self, target: &AssignmentTarget<'_>) -> Option<StaticAliasPath> {
-        planned_assignment_target_place(self.scoping, target)
-            .as_ref()
-            .and_then(static_alias_invalidation_path)
+        self.dynamic_computed_assignment_target_alias_path(target)
+            .or_else(|| {
+                planned_assignment_target_place(self.scoping, target)
+                    .as_ref()
+                    .and_then(static_alias_invalidation_path)
+            })
     }
 
     fn collect_binding_default_initializer(
@@ -32632,10 +32648,7 @@ impl StaticHookAliasCollector<'_> {
             | AssignmentTarget::TSSatisfiesExpression(_)
             | AssignmentTarget::TSNonNullExpression(_)
             | AssignmentTarget::TSTypeAssertion(_) => {
-                if let Some(path) = planned_assignment_target_place(self.scoping, target)
-                    .as_ref()
-                    .and_then(static_alias_invalidation_path)
-                {
+                if let Some(path) = self.assignment_alias_target(target) {
                     let invokes_setter =
                         self.record_local_setter_path_invocations(&path, source.clone());
                     let retains_getter = !self.local_getter_resolution(&path, false).1.is_empty();

@@ -33912,6 +33912,7 @@ fn fails_closed_for_unproven_state_method_calls_across_builtin_receivers() {
             typed.includes(1); typed.slice(0);
             const custom = $state({ mutate() {}, read() {}, get() {}, map() {}, toString() {} });
             custom.mutate(); custom.read(); custom.get(); custom.map(); custom.toString();
+            const items = $state([1, 2]); [items[method]] = [items[1]];
             custom[method]();
             return map.get('x') ?? set.has('x') ?? date.getTime() ?? typed.includes(1);
         }
@@ -33927,7 +33928,7 @@ fn fails_closed_for_unproven_state_method_calls_across_builtin_receivers() {
         .iter()
         .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .collect::<Vec<_>>();
-    assert_eq!(findings.len(), 19, "{:?}", strict.diagnostics);
+    assert_eq!(findings.len(), 20, "{:?}", strict.diagnostics);
     assert!(findings.iter().all(|diagnostic| {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
             && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
@@ -33947,7 +33948,7 @@ fn fails_closed_for_unproven_state_method_calls_across_builtin_receivers() {
         .iter()
         .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .collect::<Vec<_>>();
-    assert_eq!(findings.len(), 19, "{:?}", fallback.diagnostics);
+    assert_eq!(findings.len(), 20, "{:?}", fallback.diagnostics);
     assert!(findings.iter().all(|diagnostic| {
         diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
     }));
