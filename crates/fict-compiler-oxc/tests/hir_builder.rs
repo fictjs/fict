@@ -4380,14 +4380,14 @@ fn array_mutations_respect_descriptors_and_extensibility() {
             false,
         ),
         (
-            "seal blocks push",
-            "const source = []; Object.seal(source); source.push(local); holder.item = source[0];",
-            false,
+            "overridden local push remains conservative",
+            "const source = []; source.push = holder.push; source.push(local); source[0] = {}; holder.item = source[0];",
+            true,
         ),
         (
-            "freeze blocks push",
-            "const source = []; Object.freeze(source); source.push(local); holder.item = source[0];",
-            false,
+            "overridden prototype push remains conservative",
+            "const source = []; Array.prototype.push = holder.push; source.push(local); source[0] = {}; holder.item = source[0];",
+            true,
         ),
         (
             "preventExtensions blocks unshift",
@@ -4530,8 +4530,8 @@ fn array_mutations_respect_descriptors_and_extensibility() {
             true,
         ),
         (
-            "an external array still retains pushed values",
-            "const source = holder.items; source.push(local);",
+            "an exposed local array still retains pushed values",
+            "const source = []; holder.source = source; source.push(local); source[0] = {}; holder.item = source[0];",
             true,
         ),
     ] {
@@ -14086,8 +14086,8 @@ fn precisely_modeled_local_descriptor_calls_do_not_escape_arguments() {
             false,
         ),
         (
-            "already external defineProperty target",
-            "holder.source = source; Object.defineProperty(source, 'item', { value: local });",
+            "conditional descriptor remains conservative",
+            "if (holder.flag) Object.defineProperty(source, 'item', { value: local }); source.item = {}; holder.item = source.item;",
             true,
         ),
         (
@@ -14096,13 +14096,13 @@ fn precisely_modeled_local_descriptor_calls_do_not_escape_arguments() {
             true,
         ),
         (
-            "external Object.create result",
-            "holder.source = Object.create(null, { item: { value: local } });",
+            "shadowed descriptor remains conservative",
+            "const Object = holder.Object; Object.defineProperty(source, 'item', { value: local }); source.item = {}; holder.item = source.item;",
             true,
         ),
         (
-            "unmodeled descriptor remains conservative",
-            "Object.defineProperty(source, 'item', { ...holder.descriptor, value: local }); source.item = {}; holder.item = source.item;",
+            "effectful descriptor target remains conservative",
+            "Object.defineProperty((holder.touch(), source), 'item', { value: local }); source.item = {}; holder.item = source.item;",
             true,
         ),
     ] {
