@@ -1063,18 +1063,15 @@ pub enum HirInstructionKind {
         /// Direct local writes performed by the pattern in source order.
         targets: Vec<LocalId>,
     },
-    /// Apply an object or array assignment pattern and return its right-hand-side value.
-    ///
-    /// The adapter owns computed keys, defaults, rest elements, member targets, and iterator
-    /// protocol details. `writes` exposes every direct local target occurrence to SSA and
-    /// reactive output lowering without embedding an OXC node in core HIR.
+    /// Apply an adapter-owned object or array assignment pattern and return its RHS value.
     PatternAssignment {
         /// Once-evaluated right-hand-side value. This is also the JavaScript expression result.
         value: ValueId,
         /// Exact object or array assignment pattern.
         pattern: SyntaxFragmentId,
-        /// Direct local target occurrences in authored order. Repeated locals are retained.
+        /// Direct local target occurrences in authored order.
         writes: Vec<HirPatternWrite>,
+        projected_writes: Vec<(Place, Origin)>,
     },
     /// Materialize a literal value.
     Literal(LiteralValue),

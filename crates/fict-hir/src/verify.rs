@@ -923,6 +923,7 @@ impl Verifier<'_> {
                 value,
                 pattern,
                 writes,
+                projected_writes,
             } => {
                 self.value(function, *value, instruction.origin);
                 self.fragment(*pattern, instruction.origin);
@@ -973,6 +974,9 @@ impl Verifier<'_> {
                             Some(write.origin),
                         );
                     }
+                }
+                for write in projected_writes {
+                    self.verify_place(function, &write.0, write.1);
                 }
             }
             HirInstructionKind::Literal(_)

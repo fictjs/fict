@@ -591,6 +591,7 @@ pub fn analyze_dependencies(
                 HirInstructionKind::PatternAssignment {
                     value,
                     writes: pattern_writes,
+                    projected_writes,
                     ..
                 } => {
                     add_value_escapes(
@@ -617,6 +618,21 @@ pub fn analyze_dependencies(
                                 },
                                 location,
                                 mutation: MutationEffect::Local,
+                            });
+                        }
+                    }
+                    for write in projected_writes {
+                        if let Some(path) = dependency_path(
+                            &write.0,
+                            block.id,
+                            instruction_index,
+                            SsaUseKind::ProjectedWriteBase,
+                            &use_names,
+                        ) {
+                            writes.push(WriteFact {
+                                path,
+                                location,
+                                mutation: instruction.semantics.mutation,
                             });
                         }
                     }

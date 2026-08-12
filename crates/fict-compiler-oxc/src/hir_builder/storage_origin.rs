@@ -9,14 +9,13 @@ use fict_hir::{
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct StorageOriginFacts {
-    pub classified_projected_writes: BTreeSet<(u32, u32)>,
-    pub external_projected_writes: BTreeSet<(u32, u32)>,
+    pub projected_writes: BTreeMap<(u32, u32), StorageOrigin>,
 }
 
 type StorageOriginResult<T> = Result<T, Box<Diagnostic>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum StorageOrigin {
+pub(super) enum StorageOrigin {
     Unreachable,
     Local,
     External,
@@ -40,31 +39,18 @@ struct AbstractValue {
 }
 
 impl AbstractValue {
-    const UNREACHABLE: Self = Self {
-        origin: StorageOrigin::Unreachable,
-        truthiness: Truthiness::Unreachable,
-        object: None,
-    };
-    const LOCAL_FALSY: Self = Self {
-        origin: StorageOrigin::Local,
-        truthiness: Truthiness::Falsy,
-        object: None,
-    };
-    const LOCAL_TRUTHY: Self = Self {
-        origin: StorageOrigin::Local,
-        truthiness: Truthiness::Truthy,
-        object: None,
-    };
-    const EXTERNAL_UNKNOWN: Self = Self {
-        origin: StorageOrigin::External,
-        truthiness: Truthiness::Unknown,
-        object: None,
-    };
-    const UNKNOWN: Self = Self {
-        origin: StorageOrigin::Unknown,
-        truthiness: Truthiness::Unknown,
-        object: None,
-    };
+    const fn new(origin: StorageOrigin, truthiness: Truthiness) -> Self {
+        Self {
+            origin,
+            truthiness,
+            object: None,
+        }
+    }
+    const UNREACHABLE: Self = Self::new(StorageOrigin::Unreachable, Truthiness::Unreachable);
+    const LOCAL_FALSY: Self = Self::new(StorageOrigin::Local, Truthiness::Falsy);
+    const LOCAL_TRUTHY: Self = Self::new(StorageOrigin::Local, Truthiness::Truthy);
+    const EXTERNAL_UNKNOWN: Self = Self::new(StorageOrigin::External, Truthiness::Unknown);
+    const UNKNOWN: Self = Self::new(StorageOrigin::Unknown, Truthiness::Unknown);
 
     fn join(self, other: Self) -> Self {
         Self {
@@ -165,11 +151,9 @@ impl FlowState {
             value = match value.origin {
                 StorageOrigin::Unreachable => AbstractValue::UNREACHABLE,
                 StorageOrigin::External => AbstractValue::EXTERNAL_UNKNOWN,
-                StorageOrigin::Mixed => AbstractValue {
-                    origin: StorageOrigin::Mixed,
-                    truthiness: Truthiness::Unknown,
-                    object: None,
-                },
+                StorageOrigin::Mixed => {
+                    AbstractValue::new(StorageOrigin::Mixed, Truthiness::Unknown)
+                }
                 StorageOrigin::Unknown => AbstractValue::UNKNOWN,
                 StorageOrigin::Local => value
                     .object
@@ -323,11 +307,18 @@ impl FlowState {
                 }
                 None
             }
-            HirInstructionKind::PatternAssignment { writes, .. } => {
+            HirInstructionKind::PatternAssignment {
+                writes,
+                projected_writes,
+                ..
+            } => {
                 for write in writes {
                     if let Some(slot) = self.locals.get_mut(write.local.as_usize()) {
                         *slot = AbstractValue::UNKNOWN;
                     }
+                }
+                for write in projected_writes {
+                    self.write_projected_property(&write.0, AbstractValue::UNKNOWN);
                 }
                 Some(AbstractValue::UNKNOWN)
             }
@@ -370,6 +361,30 @@ fn analyze_function(
     visits: &mut u32,
     max_visits: u32,
 ) -> StorageOriginResult<()> {
+    for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+        match &instruction.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. }
+                if projected_place_has_stable_base(place) =>
+            {
+                if let Some(span) = instruction.origin.primary_span {
+                    facts
+                        .projected_writes
+                        .insert((span.start(), span.end()), StorageOrigin::Unreachable);
+                }
+            }
+            HirInstructionKind::PatternAssignment {
+                projected_writes, ..
+            } => facts.projected_writes.extend(
+                projected_writes
+                    .iter()
+                    .filter(|write| projected_place_has_stable_base(&write.0))
+                    .filter_map(|write| write.1.primary_span)
+                    .map(|span| ((span.start(), span.end()), StorageOrigin::Unreachable)),
+            ),
+            _ => {}
+        }
+    }
     let finally_regions = finally_regions(function);
     let exception_regions = exception_regions(function);
     let optional_argument_writes = optional_argument_writes(function);
@@ -390,6 +405,29 @@ fn analyze_function(
                 if *plan_block == block_id.as_usize() && plan.start_index == instruction_index {
                     optional_snapshots.insert(*call_index, state.clone());
                 }
+            }
+            match &instruction.kind {
+                HirInstructionKind::Write { place, .. }
+                | HirInstructionKind::ReadWrite { place, .. }
+                    if projected_place_has_stable_base(place) =>
+                {
+                    if let Some(span) = instruction.origin.primary_span {
+                        record_projected_write(facts, place, span, &state);
+                    }
+                }
+                HirInstructionKind::PatternAssignment {
+                    projected_writes: writes,
+                    ..
+                } => {
+                    for write in writes {
+                        if projected_place_has_stable_base(&write.0)
+                            && let Some(span) = write.1.primary_span
+                        {
+                            record_projected_write(facts, &write.0, span, &state);
+                        }
+                    }
+                }
+                _ => {}
             }
             state.transfer_instruction(instruction);
             if let Some(plan) =
@@ -435,52 +473,26 @@ fn analyze_function(
         }
     }
 
-    let mut projected_writes = BTreeMap::<(u32, u32), [bool; 3]>::new();
-    for (block_index, states) in entries.iter().enumerate() {
-        let block = &function.blocks[block_index];
-        for entry in states {
-            let mut state = entry.clone();
-            let mut optional_snapshots = BTreeMap::new();
-            for (instruction_index, instruction) in block.instructions.iter().enumerate() {
-                for ((plan_block, call_index), plan) in &optional_argument_writes {
-                    if *plan_block == block_index && plan.start_index == instruction_index {
-                        optional_snapshots.insert(*call_index, state.clone());
-                    }
-                }
-                if let HirInstructionKind::Write { place, .. } = &instruction.kind
-                    && !place.projections.is_empty()
-                    && let Some(span) = instruction.origin.primary_span
-                {
-                    let key = (span.start(), span.end());
-                    let summary = projected_writes.entry(key).or_default();
-                    match state.write_receiver(place).origin {
-                        StorageOrigin::Local => summary[0] = true,
-                        StorageOrigin::External | StorageOrigin::Mixed => summary[1] = true,
-                        StorageOrigin::Unknown => summary[2] = true,
-                        StorageOrigin::Unreachable => {}
-                    }
-                }
-                state.transfer_instruction(instruction);
-                if let Some(plan) = optional_argument_writes.get(&(block_index, instruction_index))
-                    && let Some(skipped) = optional_snapshots.get(&instruction_index)
-                {
-                    for local in &plan.written_locals {
-                        state.locals[local.as_usize()] =
-                            state.locals[local.as_usize()].join(skipped.locals[local.as_usize()]);
-                    }
-                }
-            }
-        }
-    }
-    for (key, summary) in projected_writes {
-        if summary[1] {
-            facts.classified_projected_writes.insert(key);
-            facts.external_projected_writes.insert(key);
-        } else if summary[0] && !summary[2] {
-            facts.classified_projected_writes.insert(key);
-        }
-    }
     Ok(())
+}
+
+fn record_projected_write(
+    facts: &mut StorageOriginFacts,
+    place: &Place,
+    span: SourceSpan,
+    state: &FlowState,
+) {
+    let origin = state.write_receiver(place).origin;
+    facts
+        .projected_writes
+        .entry((span.start(), span.end()))
+        .and_modify(|current| *current = join_origin(*current, origin))
+        .or_insert(origin);
+}
+
+fn projected_place_has_stable_base(place: &Place) -> bool {
+    !place.projections.is_empty()
+        && matches!(place.base, PlaceBase::Local(_) | PlaceBase::Global(_))
 }
 
 fn optional_argument_writes(

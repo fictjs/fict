@@ -190,3 +190,52 @@ fn external_storage_follows_javascript_control_flow() {
 
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+#[test]
+fn projected_pattern_storage_follows_javascript_control_flow() {
+    let prefix = "import { $state } from 'fict'; function App(holder) { const count = $state(0); const run = () => count; let callbacks = {};";
+    let suffix = "return count; }";
+    let cases = [
+        (
+            "for order",
+            "for (let once = true; once; callbacks = holder.callbacks, once = false) { callbacks = {}; } ({ run: callbacks.run } = { run });",
+            true,
+        ),
+        (
+            "switch fallthrough",
+            "switch (holder.kind) { case 0: callbacks = holder.callbacks; case 1: ({ run: callbacks.run } = { run }); }",
+            true,
+        ),
+        (
+            "labeled break",
+            "outer: while (true) { inner: while (true) { callbacks = holder.callbacks; break inner; } callbacks = {}; break outer; } ({ run: callbacks.run } = { run });",
+            false,
+        ),
+        (
+            "finally",
+            "outer: while (true) { try { callbacks = holder.callbacks; break outer; } finally { callbacks = {}; } } ({ run: callbacks.run } = { run });",
+            false,
+        ),
+        (
+            "continue update",
+            "callbacks = holder.callbacks; for (let once = true; once; callbacks = {}, once = false) { continue; } ({ run: callbacks.run } = { run });",
+            false,
+        ),
+        (
+            "unreachable",
+            "while (true) { break; ({ run: holder.callbacks.run } = { run }); }",
+            false,
+        ),
+    ];
+    let mismatches = cases
+        .into_iter()
+        .filter_map(|(name, body, expected)| {
+            let codes = guarantee_codes(&format!("{prefix}{body}{suffix}"));
+            let actual = codes.iter().any(|code| code == "FICT-R005");
+            (actual != expected || (!expected && !codes.is_empty())).then(|| {
+                format!("{name}: expected R005={expected}, got {actual}; diagnostics={codes:?}")
+            })
+        })
+        .collect::<Vec<_>>();
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}

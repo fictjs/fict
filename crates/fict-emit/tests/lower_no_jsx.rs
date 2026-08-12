@@ -357,6 +357,7 @@ fn lowers_reactive_targets_inside_assignment_patterns() {
                     local: LocalId::new(0),
                     origin: origin(),
                 }],
+                projected_writes: vec![],
             },
             semantics: InstructionSemantics {
                 mutation: MutationEffect::Local,
@@ -365,7 +366,6 @@ fn lowers_reactive_targets_inside_assignment_patterns() {
             origin: origin(),
         },
     );
-
     verify_hir(&hir).expect("valid reactive pattern lowering fixture");
     let (regions, cycles) = analyses(&hir);
     let program = lower_no_jsx!(&hir, &regions, &cycles, NoJsxLoweringOptions::default())

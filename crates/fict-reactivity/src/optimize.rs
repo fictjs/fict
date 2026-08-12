@@ -1184,8 +1184,15 @@ fn rewrite_instruction_values(
             }
         }
         HirInstructionKind::Iteration { source, .. } => rewrite_value(source, replacements),
-        HirInstructionKind::PatternAssignment { value, .. } => {
+        HirInstructionKind::PatternAssignment {
+            value,
+            projected_writes,
+            ..
+        } => {
             rewrite_value(value, replacements);
+            for write in projected_writes {
+                rewrite_place(&mut write.0, replacements);
+            }
         }
         HirInstructionKind::Delete { target } => match target {
             DeleteTarget::Place(place) => rewrite_place(place, replacements),
@@ -1345,7 +1352,16 @@ fn instruction_value_inputs(
             values
         }
         HirInstructionKind::Iteration { source, .. } => vec![*source],
-        HirInstructionKind::PatternAssignment { value, .. } => vec![*value],
+        HirInstructionKind::PatternAssignment {
+            value,
+            projected_writes,
+            ..
+        } => {
+            let inputs = projected_writes
+                .iter()
+                .flat_map(|write| place_value_inputs(&write.0));
+            std::iter::once(*value).chain(inputs).collect()
+        }
         HirInstructionKind::Literal(_)
         | HirInstructionKind::UnresolvedTypeof { .. }
         | HirInstructionKind::Context { .. }
@@ -1548,7 +1564,16 @@ fn remap_instruction_values(
             }
         }
         HirInstructionKind::Iteration { source, .. } => remap_value_id(source, remap)?,
-        HirInstructionKind::PatternAssignment { value, .. } => remap_value_id(value, remap)?,
+        HirInstructionKind::PatternAssignment {
+            value,
+            projected_writes,
+            ..
+        } => {
+            remap_value_id(value, remap)?;
+            for write in projected_writes {
+                remap_place_values(&mut write.0, remap)?;
+            }
+        }
         HirInstructionKind::Delete { target } => match target {
             DeleteTarget::Place(place) => remap_place_values(place, remap)?,
             DeleteTarget::Value(value) => remap_value_id(value, remap)?,

@@ -2246,10 +2246,9 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
             .all(|instruction| instruction.result.is_some())
     );
     let first = assignments[0];
+    #[rustfmt::skip]
     let HirInstructionKind::PatternAssignment {
-        value: first_value,
-        pattern: first_pattern,
-        writes: ref first_writes,
+        value: first_value, pattern: first_pattern, writes: ref first_writes, ..
     } = first.kind
     else {
         unreachable!()
@@ -2299,10 +2298,9 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
         ["key", "fallback"]
     );
     let second = assignments[1];
+    #[rustfmt::skip]
     let HirInstructionKind::PatternAssignment {
-        value: second_value,
-        pattern: second_pattern,
-        writes: ref second_writes,
+        value: second_value, pattern: second_pattern, writes: ref second_writes, ..
     } = second.kind
     else {
         unreachable!()

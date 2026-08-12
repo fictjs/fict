@@ -287,6 +287,7 @@ fn verifier_enforces_pattern_assignment_result_write_and_summary_invariants() {
                     local: LocalId::new(0),
                     origin: write_origin,
                 }],
+                projected_writes: vec![],
             },
             semantics: InstructionSemantics::CONSERVATIVE_EAGER,
             origin: assignment_origin,
@@ -295,9 +296,7 @@ fn verifier_enforces_pattern_assignment_result_write_and_summary_invariants() {
     file.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
         value: Some(ValueId::new(1)),
     };
-
     verify_hir(&file).expect("well-formed pattern assignment");
-
     let mut missing_result = file.clone();
     missing_result.functions[0].blocks[0].instructions[1].result = None;
     let diagnostics = verify_hir(&missing_result).expect_err("pattern result is mandatory");

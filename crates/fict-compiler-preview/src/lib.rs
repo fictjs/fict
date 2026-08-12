@@ -1549,12 +1549,16 @@ impl HandlerBindingCollector<'_> {
                 value,
                 pattern,
                 writes,
+                projected_writes,
             } => {
                 self.value(value);
                 self.fragment(pattern);
                 for write in writes {
                     self.local(write.local);
                 }
+                projected_writes
+                    .iter()
+                    .for_each(|write| self.place(&write.0));
             }
             HirInstructionKind::Delete { target } => match target {
                 fict_hir::DeleteTarget::Place(place) => self.place(&place),

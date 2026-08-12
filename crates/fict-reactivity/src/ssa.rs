@@ -365,7 +365,20 @@ pub fn analyze_ssa(function: &HirFunction) -> Result<SsaAnalysis, DiagnosticBund
                                 );
                             }
                         }
-                        HirInstructionKind::PatternAssignment { writes, .. } => {
+                        HirInstructionKind::PatternAssignment {
+                            writes,
+                            projected_writes,
+                            ..
+                        } => {
+                            for write in projected_writes {
+                                record_place_use(
+                                    &write.0,
+                                    SsaUseKind::ProjectedWriteBase,
+                                    location,
+                                    &stacks,
+                                    &mut uses,
+                                );
+                            }
                             let mut defined = BTreeSet::new();
                             for write in writes {
                                 if !defined.insert(write.local) {
