@@ -141,6 +141,85 @@ test('tracks deep external storage through loop CFG backedges', () => {
   }
 })
 
+test('tracks deep external storage across abrupt CFG edges', () => {
+  const cases = [
+    [
+      'inner-label-break-stays-local',
+      `outer: { inner: { callbacks = holder.callbacks; break inner }
+        callbacks = { nested: {} }
+      }
+      callbacks.nested.run = run`,
+      [],
+    ],
+    [
+      'outer-label-break-stays-external',
+      `outer: { inner: { callbacks = holder.callbacks; break outer }
+        callbacks = { nested: {} }
+      }
+      callbacks.nested.run = run`,
+      ['FICT-R002', 'FICT-R005'],
+    ],
+    [
+      'labeled-continue-runs-update',
+      `callbacks = holder.callbacks
+      outer: for (let once = true; once; callbacks = { nested: {} }, once = false) {
+        while (true) continue outer
+      }
+      callbacks.nested.run = run`,
+      [],
+    ],
+    [
+      'unreachable-assignment-stays-local',
+      `while (true) { break; callbacks = holder.callbacks }
+      callbacks.nested.run = run`,
+      [],
+    ],
+    [
+      'switch-break-isolates-cases',
+      `switch (holder.kind) {
+        case 0: callbacks = holder.callbacks; break
+        case 1: callbacks.nested.run = run; break
+      }`,
+      [],
+    ],
+    [
+      'switch-fallthrough-carries-external-origin',
+      `switch (holder.kind) {
+        case 0: callbacks = holder.callbacks
+        case 1: callbacks.nested.run = run
+      }`,
+      ['FICT-R002', 'FICT-R005'],
+    ],
+    [
+      'finally-transforms-break-origin',
+      `outer: while (true) {
+        try { callbacks = holder.callbacks; break outer }
+        finally { callbacks = { nested: {} } }
+      }
+      callbacks.nested.run = run`,
+      [],
+    ],
+  ]
+  for (const [name, body, diagnosticCodes] of cases) {
+    const result = binding.transformSync({
+      code: `import { $state } from 'fict'
+        export function App(holder) {
+          const count = $state(0), run = () => count
+          let callbacks = { nested: {} }
+          ${body}
+          return count
+        }`,
+      filename: `/fixtures/deep-external-storage-${name}.tsx`,
+      options: { strictGuarantee: true },
+    })
+    assert.deepEqual(
+      result.diagnostics.map(({ code }) => code),
+      diagnosticCodes,
+      name,
+    )
+  }
+})
+
 async function exerciseCoreModule(module) {
   const container = document.createElement('div')
   document.body.append(container)
