@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "totalMaxLines": 183000,
+  "totalMaxLines": 183106,
   "defaultFileMaxLines": 2000,
   "crates": {
     "fict-compiler": 28581,

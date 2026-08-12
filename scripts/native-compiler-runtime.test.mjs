@@ -3222,6 +3222,81 @@ test('getterCache controls safe repeated synchronous accessor reads', async () =
   container.remove()
 })
 
+test('getterCache does not reuse reads assigned inside optional chains', async () => {
+  const source = `
+    import { $state, render } from 'fict'
+
+    let runCase = () => ''
+    let table
+
+    function App() {
+      let index = $state(7)
+      runCase = () => {
+        const view = [index, table?.[index], index]
+        return 'third=' + String(view[2])
+      }
+      return <span />
+    }
+
+    export const mount = container => render(() => <App />, container)
+    export const run = () => runCase()
+  `
+  const result = binding.transformSync({
+    code: source,
+    filename: '/fixtures/getter-cache-optional-chain.tsx',
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.doesNotMatch(result.code, /table\?\.\[__cached_index_\d+ = index\(\)\]/)
+
+  const compiled = await importCompiledModule(result.code, 'getter-cache-optional-chain')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+  assert.equal(compiled.run(), 'third=7')
+  dispose()
+  container.remove()
+})
+
+test('getterCache does not reuse reads assigned inside optional calls', async () => {
+  const result = binding.transformSync({
+    code: `
+      import { $state, render } from 'fict'
+
+      let runCase = () => ''
+      let callback
+
+      function App() {
+        let count = $state(11)
+        runCase = () => {
+          const called = [count, callback?.(count), count]
+          return 'third=' + String(called[2])
+        }
+        return <span />
+      }
+
+      export const mount = container => render(() => <App />, container)
+      export const run = () => runCase()
+    `,
+    filename: '/fixtures/getter-cache-optional-call.tsx',
+    options: { strictGuarantee: false },
+  })
+  assert.deepEqual(
+    result.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [['FICT-S002', 'warning']],
+  )
+  assert.doesNotMatch(result.code, /callback\?\.\(__cached_count_\d+ = count\(\)\)/)
+
+  const compiled = await importCompiledModule(result.code, 'getter-cache-optional-call')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+  assert.equal(compiled.run(), 'third=11')
+  dispose()
+  container.remove()
+})
+
 test('getterCache only materializes cache writes that have a later reuse', () => {
   const result = binding.transformSync({
     code: `

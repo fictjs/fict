@@ -3,8 +3,9 @@ use oxc::{
     ast::{
         AstBuilder, NONE,
         ast::{
-            ArrowFunctionExpression, AssignmentTarget, BindingPattern, Class, Expression, Function,
-            FunctionBody, FunctionType, Program, SpreadElement, Statement, VariableDeclarationKind,
+            ArrowFunctionExpression, AssignmentTarget, BindingPattern, CallExpression,
+            ChainExpression, Class, Expression, Function, FunctionBody, FunctionType,
+            MemberExpression, Program, SpreadElement, Statement, VariableDeclarationKind,
             VariableDeclarator,
         },
     },
@@ -243,6 +244,45 @@ impl<'plan> CacheSafetyAnalysis<'plan> {
     }
 }
 
+fn member_contains_optional_chain(member: &MemberExpression<'_>) -> bool {
+    member.optional() || expression_contains_optional_chain(member.object())
+}
+
+fn call_contains_optional_chain(call: &CallExpression<'_>) -> bool {
+    call.optional || expression_contains_optional_chain(&call.callee)
+}
+
+fn expression_contains_optional_chain(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ChainExpression(_) => true,
+        Expression::CallExpression(call) => call_contains_optional_chain(call),
+        Expression::ComputedMemberExpression(_)
+        | Expression::PrivateFieldExpression(_)
+        | Expression::StaticMemberExpression(_) => {
+            member_contains_optional_chain(expression.to_member_expression())
+        }
+        Expression::ParenthesizedExpression(expression) => {
+            expression_contains_optional_chain(&expression.expression)
+        }
+        Expression::TSAsExpression(expression) => {
+            expression_contains_optional_chain(&expression.expression)
+        }
+        Expression::TSInstantiationExpression(expression) => {
+            expression_contains_optional_chain(&expression.expression)
+        }
+        Expression::TSNonNullExpression(expression) => {
+            expression_contains_optional_chain(&expression.expression)
+        }
+        Expression::TSSatisfiesExpression(expression) => {
+            expression_contains_optional_chain(&expression.expression)
+        }
+        Expression::TSTypeAssertion(expression) => {
+            expression_contains_optional_chain(&expression.expression)
+        }
+        _ => false,
+    }
+}
+
 impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
     fn visit_expression(&mut self, expression: &Expression<'a>) {
         if let Some(name) = cacheable_call_name(expression, self.cacheable_calls) {
@@ -251,6 +291,7 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
         }
         match expression {
             Expression::AssignmentExpression(_)
+            | Expression::ChainExpression(_)
             | Expression::ConditionalExpression(_)
             | Expression::LogicalExpression(_)
             | Expression::ObjectExpression(_)
@@ -332,8 +373,43 @@ impl<'a> Visit<'a> for CacheSafetyAnalysis<'_> {
 
     fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
 
+    fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+        if call_contains_optional_chain(expression) {
+            let previous = self.disabled;
+            self.disabled = true;
+            self.reset_segment();
+            walk::walk_call_expression(self, expression);
+            self.disabled = previous;
+            self.reset_segment();
+            return;
+        }
+        walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_chain_expression(&mut self, expression: &ChainExpression<'a>) {
+        let previous = self.disabled;
+        self.disabled = true;
+        self.reset_segment();
+        walk::walk_chain_expression(self, expression);
+        self.disabled = previous;
+        self.reset_segment();
+    }
+
     fn visit_class(&mut self, class: &Class<'a>) {
         self.visit_disabled_class(class);
+    }
+
+    fn visit_member_expression(&mut self, expression: &MemberExpression<'a>) {
+        if member_contains_optional_chain(expression) {
+            let previous = self.disabled;
+            self.disabled = true;
+            self.reset_segment();
+            walk::walk_member_expression(self, expression);
+            self.disabled = previous;
+            self.reset_segment();
+            return;
+        }
+        walk::walk_member_expression(self, expression);
     }
 
     fn visit_spread_element(&mut self, spread: &SpreadElement<'a>) {
@@ -379,6 +455,7 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
         if matches!(
             expression,
             Expression::AssignmentExpression(_)
+                | Expression::ChainExpression(_)
                 | Expression::ConditionalExpression(_)
                 | Expression::LogicalExpression(_)
                 | Expression::ObjectExpression(_)
@@ -439,8 +516,37 @@ impl<'a> VisitMut<'a> for AccessorCacheReplacer<'a, '_> {
 
     fn visit_arrow_function_expression(&mut self, _function: &mut ArrowFunctionExpression<'a>) {}
 
+    fn visit_call_expression(&mut self, expression: &mut CallExpression<'a>) {
+        if call_contains_optional_chain(expression) {
+            let previous = self.disabled;
+            self.disabled = true;
+            walk_mut::walk_call_expression(self, expression);
+            self.disabled = previous;
+            return;
+        }
+        walk_mut::walk_call_expression(self, expression);
+    }
+
+    fn visit_chain_expression(&mut self, expression: &mut ChainExpression<'a>) {
+        let previous = self.disabled;
+        self.disabled = true;
+        walk_mut::walk_chain_expression(self, expression);
+        self.disabled = previous;
+    }
+
     fn visit_class(&mut self, class: &mut Class<'a>) {
         self.visit_disabled_class(class);
+    }
+
+    fn visit_member_expression(&mut self, expression: &mut MemberExpression<'a>) {
+        if member_contains_optional_chain(expression) {
+            let previous = self.disabled;
+            self.disabled = true;
+            walk_mut::walk_member_expression(self, expression);
+            self.disabled = previous;
+            return;
+        }
+        walk_mut::walk_member_expression(self, expression);
     }
 
     fn visit_statement(&mut self, statement: &mut Statement<'a>) {
