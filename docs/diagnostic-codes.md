@@ -440,8 +440,11 @@ call-based predicates (`if (state > 0 && maybe())`) and loop/branch shapes that 
 as a supported branch binding. Same-module hook-return accessors inferred after core region
 planning also fail closed here when the surrounding control flow is not a supported branch return.
 Structured synchronous hook `if`/`switch`/loop forms that assign observable locals are instead
-lowered into one live memo region when their declarations can move atomically and the construct
-contains no authored `return` or `throw`.
+lowered into one live memo region when their declarations can move atomically, the construct
+contains no authored `return` or `throw`, and the outputs are read inside returned
+closures/accessors. Reading a region output directly in the hook owner (for example,
+`return { heading }`) would materialize a one-time value snapshot, so that shape also reports
+`FICT-R006`.
 The diagnostic is also required when `lazyConditional: false` disables the EmitIR
 `ConditionalReturn` capability for an otherwise supported reactive return.
 
@@ -450,11 +453,13 @@ code paths than supported branch-return or story-block regions. For active branc
 output can be remounted to keep events, refs, style/class object handling, prop removal, and
 cleanup semantics correct. DOM identity inside that remounted branch is not guaranteed.
 
-**Fix:** Use supported `if-return` / `switch-return` / equivalent `try` return shapes, a memoized
-story block that assigns locals consumed by JSX, or expression-only branching in JSX
-(`cond ? <A/> : <B/>`, logical expressions). Keep arbitrary calls out of control-flow predicates
-unless you intentionally compile that boundary with non-production `strictGuarantee: false`.
-Keep `lazyConditional` enabled when branch returns must update after mount.
+**Fix:** Use supported `if-return` / `switch-return` / equivalent `try` return shapes, or
+expression-only branching in JSX (`cond ? <A/> : <B/>`, logical expressions). In hooks, read a
+region output inside a returned closure/accessor or rewrite the branch as a derived expression;
+do not return the region output as an immediate object, array, or scalar value. Keep arbitrary
+calls out of control-flow predicates unless you intentionally compile that boundary with
+non-production `strictGuarantee: false`. Keep `lazyConditional` enabled when branch returns must
+update after mount.
 
 **Strict mode:** Set compiler `strictReactivity: true` to treat `FICT-R006` as a build error by
 default. You can still override it with `warningLevels`.

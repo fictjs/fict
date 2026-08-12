@@ -7,7 +7,7 @@ must have an explicit default behavior plus a diagnostic that is blocked by
 `strictGuarantee`.
 
 - `Guaranteed`: expected to remain reactive and predictable under `strictGuarantee`.
-- `Fallback`: behavior is still correctness-first reactive, but not guaranteed fine-grained; these diagnostics are errors by default under `strictGuarantee`.
+- `Fallback`: non-production opt-out builds may emit migration output whose update semantics or granularity are not guaranteed; these diagnostics are errors by default under `strictGuarantee`.
 - `Unsupported`: compile-time rejected patterns.
 - `Out of model`: runtime/external behavior outside compiler guarantees.
 
@@ -30,9 +30,10 @@ dev/test migration experiments may opt out only outside production.
 | Guaranteed   | JSX event handlers capturing reactive values                                               | Supported (non-escaping closure)                                                                            | N/A                          |
 | Guaranteed   | Common synchronous iterator callbacks (`map`/`filter`/`forEach`) capturing reactive values | Supported (non-escaping callback host)                                                                      | N/A                          |
 | Guaranteed   | Supported branch returns (`if-return` / `switch-return` / equivalent `try` returns)        | Reactive branch bindings under default `strictGuarantee`                                                    | N/A                          |
-| Guaranteed   | Memoized control-flow story blocks assigning locals consumed by JSX                        | Reactive region memo under default `strictGuarantee`                                                        | N/A                          |
-| Guaranteed   | Story blocks containing `try`/`catch` (including throws caught by the block's own handler) | Reactive region memo under default `strictGuarantee`                                                        | N/A                          |
-| Guaranteed   | Structured hook control flow assigning observable locals (`if`/`switch`/loop forms)        | Declarations and control flow execute together in one live memo region; captured reads stay current         | N/A                          |
+| Guaranteed   | Structured hook control flow whose outputs are read by returned closures/accessors         | Declarations and control flow execute together in one live memo region; captured reads stay current         | N/A                          |
+| Fallback     | Component control-flow story blocks assigning locals consumed by JSX                       | Blocked by default; opt-out builds emit a reactive region memo                                              | `FICT-R006`                  |
+| Fallback     | Component story blocks containing `try`/`catch`                                            | Blocked by default; closed opt-out shapes emit a reactive region memo                                       | `FICT-R006`                  |
+| Fallback     | Hook control-flow outputs read directly by the hook owner                                  | Blocked by default; opt-out output materializes a one-time value snapshot                                   | `FICT-R006`                  |
 | Fallback     | Props destructuring fallback shapes (rest/computed/nested dynamic)                         | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-P001` - `FICT-P005`    |
 | Fallback     | JSX built imperatively inside loop bodies                                                  | Blocked by default; opt-out builds render the loop once as a static fallback (no reactive updates) and warn | `FICT-R006`                  |
 | Fallback     | Reactive value escape to unknown call boundary                                             | Blocked by default; allowed only in non-production opt-out builds                                           | `FICT-R002`                  |
@@ -53,9 +54,9 @@ dev/test migration experiments may opt out only outside production.
 - `strictReactivity` is narrower than `strictGuarantee`; it focuses on the `FICT-R006` control-flow fallback.
 - `strictGuarantee` blocks suppression and downgrade for covered guarantee diagnostics.
 - Set `strictGuarantee: false` only when intentionally opting out of fail-closed guarantees outside production.
-- Control-flow fallback remains semantic-first when explicitly allowed: tracked active branch reads remount branch output instead of attempting partial DOM patching. DOM identity inside that branch is not guaranteed.
-- Structured synchronous hook control flow can export mutable locals through a live memo region when every declaration can move with the dispatcher and the construct contains no authored `return` or `throw`. Loop accumulators and loop-local counters are recomputed atomically, so captured reads cannot retain a first-call snapshot.
-- Exception to the "correctness-first reactive" fallback wording: JSX built imperatively inside loop bodies cannot be re-executed per iteration, so opt-out builds lower it as a one-shot static render. Every iteration paints correctly on mount, the section never updates afterwards, and the compiler emits a loop-specific `FICT-R006` warning. Use a list expression (`items.map(...)` inside JSX) for reactive lists.
+- Where a fallback has reactive lowering, tracked active branch reads remount branch output instead of attempting partial DOM patching. DOM identity inside that branch is not guaranteed.
+- Structured synchronous hook control flow can export mutable locals through a live memo region when every declaration can move with the dispatcher and the construct contains no authored `return` or `throw`. Loop accumulators and loop-local counters are recomputed atomically. Reads inside returned closures/accessors stay current; an immediate hook-owner read such as `return { heading }` or `const cfg = { heading }` materializes a one-time snapshot and emits `FICT-R006`.
+- JSX built imperatively inside loop bodies cannot be re-executed per iteration, so opt-out builds lower it as a one-shot static render. Every iteration paints correctly on mount, the section never updates afterwards, and the compiler emits a loop-specific `FICT-R006` warning. Use a list expression (`items.map(...)` inside JSX) for reactive lists.
 - A `return` inside a story block (or a throw not caught within the block itself) still disqualifies region memoization; only throws caught by the block's own `catch` handler are contained.
 - Runtime no longer treats plain zero-argument functions as reactive getters. Compiler-generated getters are explicitly marked; hand-authored low-level getters must use `reactive(fn)`.
 - `Promise.then` / `catch` / `finally` callbacks are async host boundaries, not guaranteed synchronous iterator callbacks.

@@ -36,7 +36,7 @@ replacement.
 - **Fict**:
   - **Automatic Derivation**: Derived values are memoized by default (unless `"use no memo"` disables it); events/plain closures read live values through getter rewrites.
   - **Control Flow Detection**: For supported control-flow return shapes (`if-return` / `switch-return` / equivalent `try` returns), the compiler emits reactive branch bindings. Simply defining a derived (`const x = signal * 2`) doesn't create branch bindings by itself.
-  - **Control Flow Regions**: Compiles `if/for` blocks into a _single_ memoized "Region" that returns multiple values. This avoids the overhead of creating thousands of tiny memos for complex logic (a common issue in fine-grained reactivity).
+  - **Control Flow Regions**: Eligible hook `if`/`for` blocks whose outputs are consumed through returned accessors compile into a _single_ memoized "Region" that returns multiple values. Statement-level component regions remain an explicit `FICT-R006` fallback rather than a default strict guarantee.
 - **React Compiler**: Automatically memoizes (`useMemo`/`useCallback`) to prevent unnecessary re-renders. It preserves the VDOM and component re-execution model.
 - **Svelte 5**: Compiles `.svelte` files. Handles reactivity at the statement level. Components run once.
 - **Vue Vapor**: Compiles templates into direct DOM manipulation code, bypassing the VDOM.

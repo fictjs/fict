@@ -584,17 +584,11 @@ const $viewState = createMemo(() => {
 })
 ```
 
-The JSX part becomes:
+Conceptually, reactive consumers read through the memo accessor:
 
-```tsx
-const { heading, extra } = $viewState()
-
-return (
-  <>
-    <h1>{heading}</h1>
-    <h2>{extra}</h2>
-  </>
-)
+```ts
+insert(headingNode, () => $viewState().heading)
+insert(extraNode, () => $viewState().extra)
 ```
 
 This way:
@@ -602,6 +596,11 @@ This way:
 - Complex logic retains original structure (readable)
 - Only one memo node established (maintainable)
 - Accurately recalculates this block when dependencies change (performance controllable)
+
+The current guarantee boundary is narrower than this lowering strategy: statement-level component
+story blocks emit `FICT-R006` under default `strictGuarantee` and only produce the region in an
+explicit non-production opt-out build. Hook regions are guaranteed when their outputs are consumed
+inside returned closures/accessors; an immediate hook-owner value read is a diagnosed snapshot.
 
 ---
 

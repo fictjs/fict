@@ -494,7 +494,7 @@ jobs:
 
       - run: pnpm install
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
-      - run: FICT_OPT_CROSS_BLOCK_CONST=0 pnpm test
+      - run: pnpm test
 
   test-ssr-edge:
     name: Test SSR Edge Runtime

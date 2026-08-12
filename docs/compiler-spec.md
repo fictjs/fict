@@ -279,7 +279,8 @@ const $viewState = createMemo(() => {
   return { heading, extra }
 })
 
-const { heading, extra } = $viewState()
+insert(headingNode, () => $viewState().heading)
+insert(extraNode, () => $viewState().extra)
 ```
 
 This way:
@@ -287,6 +288,14 @@ This way:
 - Logic stays together (readable)
 - Only one memo (maintainable)
 - Reasonable performance (avoids duplicate calculation)
+
+This illustration describes the region plan, not an unconditional strict-mode guarantee.
+Statement-level component story blocks currently report `FICT-R006` under the default
+`strictGuarantee`; the region is emitted only in a non-production opt-out build. Rewrite component
+branches as expression-only JSX or a supported branch-return shape for guaranteed output. A hook
+region is guaranteed when consumers read its outputs inside returned closures/accessors. Reading
+an output immediately in the hook owner, such as `return { heading }`, would create a one-time
+snapshot; that shape therefore also reports `FICT-R006`.
 
 ---
 
@@ -566,8 +575,7 @@ Optimization Strategy (Optional):
 This is a "good but not mandatory" optimization, which can be part of subsequent iterations.
 
 Implementation note: The compiler performs conservative cross-block constant propagation for
-compiler-generated temporaries by default. Set `FICT_OPT_CROSS_BLOCK_CONST=0` to disable it
-for troubleshooting or bisecting optimizer behavior.
+compiler-generated temporaries by default.
 Inlining note: Single-use derived values are inlined by default (including user-named ones).
 Use `$memo` to keep a user-named derived value as an explicit memo.
 Hook note: Hook-like functions (explicit `useX` or inferred hooks using `$state`/`$store`)
@@ -761,9 +769,9 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
     - **Implementation**: The compiler ensures `count` inside the closure becomes `count()` (getter), not a captured variable.
     - **Snapshot**: Use an explicit snapshot: `const snap = count(); const fn = () => snap`.
 4.  **Control Flow Branch Reactivity**: When a signal or derived value is **read at runtime** in supported control-flow return shapes (e.g. sequential `if-return`, `switch-return`, and equivalent `try` return branches), the compiler emits reactive branch bindings so branch output updates without full component re-execution. If the branch body itself must be re-executed because of active branch reads, the runtime remounts that branch output instead of performing a partial DOM patch. Note: simply defining a derived (`const x = signal * 2`) does not trigger this; runtime reads in control flow do.
-5.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
+5.  **Control Flow Regions**: Eligible values assigned across `if`/`switch`/loop paths without authored exits can be grouped into a single region memo. Component statement-level regions remain a `FICT-R006` fallback and are rejected by default. Hook regions are guaranteed only when outward-facing reads occur inside returned closures/accessors; direct hook-owner reads would snapshot and report `FICT-R006`.
 6.  **DX Notes (control flow + closures)**:
-    - Branch-local bindings stay branch-local: SSA + structurize restore `let`/assignments at merge points, so JSX/effects read the live value for the active path; no “wrong branch” capture.
+    - Branch-local bindings stay branch-local: SSA + structurize restore `let`/assignments at merge points. In supported branch returns and accessor/callback consumers of a live region, reads observe the active path; direct hook-owner snapshots are diagnosed instead of being claimed as live.
     - Render memos are invoked (`__fictUseMemo(...)()`) to build DOM with the current branch values; slot ordering is stable as long as hooks stay top-level (compiler errors on conditional hooks).
     - Region grouping may be broader for perf heuristics, but it does not change semantics—at worst it recomputes more than necessary; it will not mix distinct branch locals.
 
