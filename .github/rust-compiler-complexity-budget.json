@@ -14,7 +14,7 @@
     "fict-reactivity": 13000
   },
   "fileOverrides": {
-    "crates/fict-compiler-oxc/src/emit_codegen.rs": 8547,
+    "crates/fict-compiler-oxc/src/emit_codegen.rs": 8560,
     "crates/fict-compiler-oxc/src/hir_builder.rs": 47000,
     "crates/fict-compiler-oxc/src/hir_builder/execution_state.rs": 10000,
     "crates/fict-compiler-oxc/tests/hir_builder.rs": 36335,

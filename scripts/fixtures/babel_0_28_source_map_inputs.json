@@ -52,7 +52,7 @@
           "disposition": "exact-parity",
           "source": { "needle": "count++" },
           "babel": { "needle": "count(__prev_13)" },
-          "rust": { "needle": "count(__fict_previous + 1)" }
+          "rust": { "needle": "count(__fict_value)" }
         },
         {
           "id": "conditional-test",
@@ -300,7 +300,7 @@
           "disposition": "exact-parity",
           "source": { "sourceIndex": 1, "needle": "count++" },
           "babel": { "needle": "count(__prev_4)" },
-          "rust": { "needle": "count(__fict_previous + 1)" }
+          "rust": { "needle": "count(__fict_value)" }
         }
       ]
     }

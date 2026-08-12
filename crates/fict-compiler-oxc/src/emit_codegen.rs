@@ -47,7 +47,7 @@ use oxc::{
         number::NumberBase,
         operator::{
             BinaryOperator as OxcBinaryOperator, LogicalOperator as OxcLogicalOperator,
-            UnaryOperator as OxcUnaryOperator,
+            UnaryOperator as OxcUnaryOperator, UpdateOperator as OxcUpdateOperator,
         },
         scope::ScopeFlags,
     },
@@ -7857,12 +7857,6 @@ fn compound_logical_operator(operator: CompoundAssignmentOperator) -> Option<Oxc
         _ => None,
     }
 }
-fn update_binary_operator(operator: UpdateOperator) -> OxcBinaryOperator {
-    match operator {
-        UpdateOperator::Increment => OxcBinaryOperator::Addition,
-        UpdateOperator::Decrement => OxcBinaryOperator::Subtraction,
-    }
-}
 fn getter_call<'a>(allocator: &'a Allocator, signal: &str, span: Span) -> Expression<'a> {
     let builder = AstBuilder::new(allocator);
     let callee = Expression::new_identifier(span, allocator.alloc_str(signal), &builder);
@@ -8292,30 +8286,49 @@ fn logical_compound_update<'a>(
     arguments.push(Argument::from(current));
     Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
 }
-fn postfix_update<'a>(
+fn reactive_update<'a>(
     allocator: &'a Allocator,
     signal: &str,
     operator: UpdateOperator,
+    prefix: bool,
     span: Span,
 ) -> Expression<'a> {
-    let parameter = generated_parameter_name(allocator, signal, "__fict_previous", None);
+    let parameter = generated_parameter_name(allocator, signal, "__fict_value", None);
     let parameter_value = || {
         let builder = AstBuilder::new(allocator);
         Expression::new_identifier(span, parameter, &builder)
     };
     let builder = AstBuilder::new(allocator);
-    let one = Expression::new_numeric_literal(span, 1.0, None, NumberBase::Decimal, &builder);
-    let next = Expression::new_binary_expression(
+    let updated = Expression::new_update_expression(
         span,
-        parameter_value(),
-        update_binary_operator(operator),
-        one,
+        match operator {
+            UpdateOperator::Increment => OxcUpdateOperator::Increment,
+            UpdateOperator::Decrement => OxcUpdateOperator::Decrement,
+        },
+        prefix,
+        SimpleAssignmentTarget::new_assignment_target_identifier(span, parameter, &builder),
         &builder,
     );
-    let setter = setter_call(allocator, signal, next, span);
-    let mut sequence = ArenaVec::new_in(&allocator);
-    sequence.extend([setter, parameter_value()]);
-    let body = Expression::new_sequence_expression(span, sequence, &builder);
+    let body = if prefix {
+        let setter = setter_call(allocator, signal, updated, span);
+        let mut sequence = ArenaVec::new_in(&allocator);
+        sequence.extend([setter, parameter_value()]);
+        Expression::new_sequence_expression(span, sequence, &builder)
+    } else {
+        let previous = generated_parameter_name(allocator, signal, "__fict_previous", None);
+        let previous_value = || {
+            let builder = AstBuilder::new(allocator);
+            Expression::new_identifier(span, previous, &builder)
+        };
+        let setter = setter_call(allocator, signal, parameter_value(), span);
+        let mut sequence = ArenaVec::new_in(&allocator);
+        sequence.extend([setter, previous_value()]);
+        let inner_body = Expression::new_sequence_expression(span, sequence, &builder);
+        let inner_arrow = expression_arrow(allocator, previous, inner_body, span);
+        let mut inner_arguments = ArenaVec::new_in(&allocator);
+        inner_arguments.push(Argument::from(updated));
+        Expression::new_call_expression(span, inner_arrow, NONE, inner_arguments, false, &builder)
+    };
     let arrow = expression_arrow(allocator, parameter, body, span);
     let current = getter_call(allocator, signal, span);
     let mut arguments = ArenaVec::new_in(&allocator);

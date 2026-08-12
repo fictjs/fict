@@ -933,6 +933,76 @@ test('projected reactive mutations preserve JavaScript evaluation semantics', as
   container.remove()
 })
 
+test('direct reactive updates preserve ToNumeric and prefix/postfix semantics', async () => {
+  const result = binding.transformSync({
+    code: `
+      import { $state, render } from 'fict'
+
+      let runCase = () => null
+
+      function App() {
+        let bigint = $state(1n)
+        let bigintDown = $state(3n)
+        let text = $state<any>('5')
+        let prefix = $state<any>('5')
+        let object = $state<any>({
+          [Symbol.toPrimitive]() { return 8 },
+        })
+
+        runCase = () => {
+          const bigintPrevious = bigint++
+          const bigintDownNext = --bigintDown
+          const textPrevious = text++
+          const prefixNext = ++prefix
+          const objectPrevious = object++
+          return {
+            bigintPrevious,
+            bigintNext: bigint,
+            bigintDownNext,
+            bigintDownValue: bigintDown,
+            textPrevious,
+            textNext: text,
+            prefixNext,
+            prefixValue: prefix,
+            objectPrevious,
+            objectNext: object,
+          }
+        }
+        return <span />
+      }
+
+      export const mount = container => render(() => <App />, container)
+      export const run = () => runCase()
+    `,
+    filename: '/fixtures/reactive-update-to-numeric.tsx',
+  })
+  assert.deepEqual(result.diagnostics, [])
+  assert.match(result.code, /__fict_value\+\+/)
+  assert.match(result.code, /--__fict_value/)
+
+  const compiled = await importCompiledModule(result.code, 'reactive-update-to-numeric')
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  assert.deepEqual(compiled.run(), {
+    bigintPrevious: 1n,
+    bigintNext: 2n,
+    bigintDownNext: 2n,
+    bigintDownValue: 2n,
+    textPrevious: 5,
+    textNext: 6,
+    prefixNext: 6,
+    prefixValue: 6,
+    objectPrevious: 8,
+    objectNext: 9,
+  })
+
+  dispose()
+  container.remove()
+})
+
 test('projected assignment patterns rewrite dynamic reactive accessor roots', async () => {
   const source = `
     import { $state } from 'fict'

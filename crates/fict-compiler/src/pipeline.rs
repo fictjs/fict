@@ -2753,7 +2753,7 @@ mod tests {
         );
         assert!(state.code.contains("name: \"count\""), "{}", state.code);
         assert!(state.code.contains("count(__fict_value)"));
-        assert!(state.code.contains("count(__fict_previous + 1)"));
+        assert!(state.code.contains("__fict_value++"));
         assert!(state.code.contains("count(),"), "{}", state.code);
 
         let var_state = compile(request(
@@ -3392,11 +3392,7 @@ mod tests {
             result.code
         );
         assert!(result.code.contains(", handler, true)"), "{}", result.code);
-        assert!(
-            result.code.contains("count(__fict_previous + 1)"),
-            "{}",
-            result.code
-        );
+        assert!(result.code.contains("__fict_value++"), "{}", result.code);
         assert!(result.code.contains("bindRef("), "{}", result.code);
         assert!(result.code.contains("seen = node"), "{}", result.code);
     }
@@ -5548,11 +5544,7 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(
-            result.code.contains("__fict_previous + 1"),
-            "{}",
-            result.code
-        );
+        assert!(result.code.contains("__fict_value++"), "{}", result.code);
         assert!(result.code.contains("count() + index"), "{}", result.code);
     }
 
@@ -5879,11 +5871,7 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(
-            result.code.contains("count(__fict_previous + 1)"),
-            "{}",
-            result.code
-        );
+        assert!(result.code.contains("__fict_value++"), "{}", result.code);
     }
 
     #[test]
@@ -5997,11 +5985,7 @@ mod tests {
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(result.code.contains("onClick: () =>"), "{}", result.code);
-        assert!(
-            result.code.contains("count(__fict_previous + 1)"),
-            "{}",
-            result.code
-        );
+        assert!(result.code.contains("__fict_value++"), "{}", result.code);
         assert!(
             result
                 .code

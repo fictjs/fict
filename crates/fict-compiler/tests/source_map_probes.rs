@@ -181,7 +181,7 @@ fn maps_reactivity_props_events_and_control_flow_origins() {
     output.assert_maps("const value = prop", 0, "value", 0);
     output.assert_maps("String(value())", 0, "String(value)", 0);
     output.assert_maps("value()", 1, "value", 2);
-    output.assert_maps("__fict_previous + 1", 0, "count++", 0);
+    output.assert_maps("__fict_value++", 0, "count++", 0);
     output.assert_maps("count() > 0", 0, "count > 0", 0);
     output.assert_maps("props: { value: count() }", 0, "<Child value={count} />", 0);
     output.assert_maps("label = prop", 0, "label", 0);
@@ -250,7 +250,7 @@ fn maps_memos_runtime_primitives_and_async_handler_origins() {
     output.assert_maps("$store({", 0, "$store({", 0);
     output.assert_maps("createSelector", 1, "createSelector", 1);
     output.assert_maps("resource(async", 0, "resource(async", 0);
-    output.assert_maps("price(__fict_previous + 1)", 0, "price++", 0);
+    output.assert_maps("__fict_value++", 0, "price++", 0);
     output.assert_maps("await data.read", 0, "await data.read", 0);
     output.assert_maps("selected(\"a\")", 0, "selected('a')", 0);
     output.assert_maps("store.selected", 1, "store.selected", 1);

@@ -403,8 +403,19 @@ fn materializes_value_preserving_reactive_writes_and_updates() {
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(output.code.contains("count(__fict_value)"));
     assert!(output.code.contains("count() + 2"));
-    assert!(output.code.contains("count(__fict_previous + 1)"));
-    assert!(output.code.contains("count() - 1"));
+    assert!(output.code.contains("__fict_value++"), "{}", output.code);
+    assert!(
+        output
+            .code
+            .contains("(count(__fict_value), __fict_previous)"),
+        "{}",
+        output.code
+    );
+    assert!(
+        output.code.contains("count(--__fict_value)"),
+        "{}",
+        output.code
+    );
     assert!(output.code.contains("__fict_previous &&"));
     assert!(output.code.contains("__fict_previous ||"));
     assert!(output.code.contains("__fict_previous ??"));

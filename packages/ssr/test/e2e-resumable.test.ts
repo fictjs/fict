@@ -389,7 +389,8 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
       // Verify the standalone handler restores and writes the captured signal.
       expect(compiled.handlerModules[0]?.code).toContain('__fictUseLexicalScope')
-      expect(compiled.handlerModules[0]?.code).toContain('count(__fict_previous + 1)')
+      expect(compiled.handlerModules[0]?.code).toContain('count(__fict_value)')
+      expect(compiled.handlerModules[0]?.code).toContain('__fict_value++')
       // console.log('=== Handler Code ===')
       // console.log(handlerMatch?.[0])
     } finally {

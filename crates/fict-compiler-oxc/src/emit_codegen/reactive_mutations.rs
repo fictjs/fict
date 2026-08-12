@@ -9,14 +9,13 @@ use oxc::{
     },
     ast_visit::walk_mut,
     span::GetSpan,
-    syntax::number::NumberBase,
 };
 
 use super::{
     AstRewriter, MutationRewrite, assignment_target_name, compound_binary_operator,
-    compound_logical_operator, emit_error, getter_call, logical_compound_update, postfix_update,
+    compound_logical_operator, emit_error, getter_call, logical_compound_update, reactive_update,
     rewrite_pattern_assignment_target, rewrite_reactive_root, simple_assignment_target_name,
-    update_binary_operator, value_preserving_setter,
+    value_preserving_setter,
 };
 
 impl<'a> AstRewriter<'a, '_> {
@@ -108,27 +107,8 @@ impl<'a> AstRewriter<'a, '_> {
                     return false;
                 };
                 walk_mut::walk_update_expression(self, update);
-                *expression = if prefix {
-                    let builder = AstBuilder::new(self.allocator);
-                    let current = getter_call(self.allocator, &signal, update.span);
-                    let one = Expression::new_numeric_literal(
-                        update.span,
-                        1.0,
-                        None,
-                        NumberBase::Decimal,
-                        &builder,
-                    );
-                    let next = Expression::new_binary_expression(
-                        update.span,
-                        current,
-                        update_binary_operator(operator),
-                        one,
-                        &builder,
-                    );
-                    value_preserving_setter(self.allocator, &signal, next, update.span)
-                } else {
-                    postfix_update(self.allocator, &signal, operator, update.span)
-                };
+                *expression =
+                    reactive_update(self.allocator, &signal, operator, prefix, update.span);
                 true
             }
             MutationRewrite::Delete => {
