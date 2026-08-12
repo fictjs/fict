@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
 use fict_hir::{
-    BlockId, FunctionKind, HirFunction, HirInstruction, HirInstructionKind, LiteralValue, Place,
-    PlaceBase, SourceSpan, TerminatorKind, UnaryOperator,
+    BlockId, FunctionKind, HirFunction, HirInstruction, HirInstructionKind, LiteralValue,
+    ObjectEntry, ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey, SourceSpan,
+    TerminatorKind, UnaryOperator, ValueId,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -35,42 +36,56 @@ enum Truthiness {
 struct AbstractValue {
     origin: StorageOrigin,
     truthiness: Truthiness,
+    object: Option<ValueId>,
 }
 
 impl AbstractValue {
     const UNREACHABLE: Self = Self {
         origin: StorageOrigin::Unreachable,
         truthiness: Truthiness::Unreachable,
+        object: None,
     };
     const LOCAL_FALSY: Self = Self {
         origin: StorageOrigin::Local,
         truthiness: Truthiness::Falsy,
+        object: None,
     };
     const LOCAL_TRUTHY: Self = Self {
         origin: StorageOrigin::Local,
         truthiness: Truthiness::Truthy,
+        object: None,
     };
     const EXTERNAL_UNKNOWN: Self = Self {
         origin: StorageOrigin::External,
         truthiness: Truthiness::Unknown,
+        object: None,
     };
     const UNKNOWN: Self = Self {
         origin: StorageOrigin::Unknown,
         truthiness: Truthiness::Unknown,
+        object: None,
     };
 
     fn join(self, other: Self) -> Self {
         Self {
             origin: join_origin(self.origin, other.origin),
             truthiness: join_truthiness(self.truthiness, other.truthiness),
+            object: if self.object == other.object {
+                self.object
+            } else {
+                None
+            },
         }
     }
 }
+
+type AbstractObject = BTreeMap<String, AbstractValue>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct FlowState {
     locals: Vec<AbstractValue>,
     values: Vec<AbstractValue>,
+    objects: BTreeMap<ValueId, AbstractObject>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +113,7 @@ impl FlowState {
         let mut state = Self {
             locals: vec![AbstractValue::UNREACHABLE; function.locals.len()],
             values: vec![AbstractValue::UNREACHABLE; function.values.len()],
+            objects: BTreeMap::new(),
         };
         for parameter in &function.parameters {
             state.locals[parameter.local.as_usize()] = AbstractValue::EXTERNAL_UNKNOWN;
@@ -137,19 +153,90 @@ impl FlowState {
     }
 
     fn read_place(&self, place: &Place) -> AbstractValue {
-        let base = self.place_base(place);
-        if place.projections.is_empty() {
-            return base;
+        self.read_projections(self.place_base(place), &place.projections)
+    }
+
+    fn read_projections(
+        &self,
+        mut value: AbstractValue,
+        projections: &[Projection],
+    ) -> AbstractValue {
+        for projection in projections {
+            value = match value.origin {
+                StorageOrigin::Unreachable => AbstractValue::UNREACHABLE,
+                StorageOrigin::External => AbstractValue::EXTERNAL_UNKNOWN,
+                StorageOrigin::Mixed => AbstractValue {
+                    origin: StorageOrigin::Mixed,
+                    truthiness: Truthiness::Unknown,
+                    object: None,
+                },
+                StorageOrigin::Unknown => AbstractValue::UNKNOWN,
+                StorageOrigin::Local => value
+                    .object
+                    .and_then(|object| self.objects.get(&object))
+                    .and_then(|object| {
+                        abstract_property(projection)
+                            .and_then(|property| object.get(&property).copied())
+                    })
+                    .unwrap_or(AbstractValue::UNKNOWN),
+            };
         }
-        match base.origin {
-            StorageOrigin::Unreachable => AbstractValue::UNREACHABLE,
-            StorageOrigin::External => AbstractValue::EXTERNAL_UNKNOWN,
-            StorageOrigin::Mixed => AbstractValue {
-                origin: StorageOrigin::Mixed,
-                truthiness: Truthiness::Unknown,
-            },
-            StorageOrigin::Local | StorageOrigin::Unknown => AbstractValue::UNKNOWN,
+        value
+    }
+
+    fn write_receiver(&self, place: &Place) -> AbstractValue {
+        let Some((_, receiver)) = place.projections.split_last() else {
+            return self.place_base(place);
+        };
+        self.read_projections(self.place_base(place), receiver)
+    }
+
+    fn write_projected_property(&mut self, place: &Place, value: AbstractValue) {
+        let Some((property, receiver)) = place.projections.split_last() else {
+            return;
+        };
+        let Some(property) = abstract_property(property) else {
+            return;
+        };
+        let receiver = self.read_projections(self.place_base(place), receiver);
+        let Some(object) = receiver.object else {
+            return;
+        };
+        if let Some(object) = self.objects.get_mut(&object) {
+            object.insert(property, value);
         }
+    }
+
+    fn materialize_object(&self, entries: &[ObjectEntry]) -> AbstractObject {
+        let mut object = AbstractObject::default();
+        for entry in entries {
+            match entry {
+                ObjectEntry::Property {
+                    key,
+                    value,
+                    kind,
+                    prototype_setter,
+                    ..
+                } => {
+                    if *prototype_setter {
+                        continue;
+                    }
+                    let Some(property) = abstract_property_key(key) else {
+                        object.clear();
+                        continue;
+                    };
+                    let value =
+                        if matches!(kind, ObjectPropertyKind::Init | ObjectPropertyKind::Method) {
+                            self.value(*value)
+                        } else {
+                            AbstractValue::UNKNOWN
+                        };
+                    object.insert(property, value);
+                }
+                ObjectEntry::Spread { .. } => object.clear(),
+            }
+        }
+        object
     }
 
     fn transfer_instruction(&mut self, instruction: &HirInstruction) {
@@ -172,6 +259,8 @@ impl FlowState {
                     && let Some(slot) = self.locals.get_mut(local.as_usize())
                 {
                     *slot = value;
+                } else {
+                    self.write_projected_property(place, value);
                 }
                 Some(value)
             }
@@ -183,13 +272,28 @@ impl FlowState {
                     && let Some(slot) = self.locals.get_mut(local.as_usize())
                 {
                     *slot = value;
+                } else if !place.projections.is_empty() {
+                    self.write_projected_property(place, AbstractValue::UNKNOWN);
                 }
                 Some(value)
             }
             HirInstructionKind::Literal(literal) => Some(literal_value(literal)),
-            HirInstructionKind::Object { .. }
-            | HirInstructionKind::Array { .. }
-            | HirInstructionKind::Function { .. } => Some(AbstractValue::LOCAL_TRUTHY),
+            HirInstructionKind::Object { entries } => {
+                instruction
+                    .result
+                    .map_or(Some(AbstractValue::LOCAL_TRUTHY), |result| {
+                        self.objects
+                            .insert(result, self.materialize_object(entries));
+                        Some(AbstractValue {
+                            origin: StorageOrigin::Local,
+                            truthiness: Truthiness::Truthy,
+                            object: Some(result),
+                        })
+                    })
+            }
+            HirInstructionKind::Array { .. } | HirInstructionKind::Function { .. } => {
+                Some(AbstractValue::LOCAL_TRUTHY)
+            }
             HirInstructionKind::Sequence { values } => {
                 values.last().map(|value| self.value(*value))
             }
@@ -209,6 +313,7 @@ impl FlowState {
                     Truthiness::Unreachable => Truthiness::Unreachable,
                     Truthiness::Unknown => Truthiness::Unknown,
                 },
+                object: None,
             }),
             HirInstructionKind::Iteration { targets, .. } => {
                 for target in targets {
@@ -330,6 +435,7 @@ fn analyze_function(
         }
     }
 
+    let mut projected_writes = BTreeMap::<(u32, u32), [bool; 3]>::new();
     for (block_index, states) in entries.iter().enumerate() {
         let block = &function.blocks[block_index];
         for entry in states {
@@ -342,22 +448,16 @@ fn analyze_function(
                     }
                 }
                 if let HirInstructionKind::Write { place, .. } = &instruction.kind
-                    // This pass currently proves the identity of the base object, not the
-                    // contents reached through multiple heap projections. Deeper writes stay
-                    // with the legacy heap-shape analysis until ValueIdentity owns path facts.
-                    && place.projections.len() == 1
+                    && !place.projections.is_empty()
                     && let Some(span) = instruction.origin.primary_span
                 {
                     let key = (span.start(), span.end());
-                    match state.place_base(place).origin {
-                        StorageOrigin::Local => {
-                            facts.classified_projected_writes.insert(key);
-                        }
-                        StorageOrigin::External | StorageOrigin::Mixed => {
-                            facts.classified_projected_writes.insert(key);
-                            facts.external_projected_writes.insert(key);
-                        }
-                        StorageOrigin::Unreachable | StorageOrigin::Unknown => {}
+                    let summary = projected_writes.entry(key).or_default();
+                    match state.write_receiver(place).origin {
+                        StorageOrigin::Local => summary[0] = true,
+                        StorageOrigin::External | StorageOrigin::Mixed => summary[1] = true,
+                        StorageOrigin::Unknown => summary[2] = true,
+                        StorageOrigin::Unreachable => {}
                     }
                 }
                 state.transfer_instruction(instruction);
@@ -370,6 +470,14 @@ fn analyze_function(
                     }
                 }
             }
+        }
+    }
+    for (key, summary) in projected_writes {
+        if summary[1] {
+            facts.classified_projected_writes.insert(key);
+            facts.external_projected_writes.insert(key);
+        } else if summary[0] && !summary[2] {
+            facts.classified_projected_writes.insert(key);
         }
     }
     Ok(())
@@ -691,6 +799,22 @@ fn literal_value(literal: &LiteralValue) -> AbstractValue {
             }
         }
         LiteralValue::RegExp { .. } => AbstractValue::LOCAL_TRUTHY,
+    }
+}
+
+fn abstract_property(projection: &Projection) -> Option<String> {
+    match projection {
+        Projection::StaticProperty { name, .. } => Some(name.to_string()),
+        Projection::Index { index, .. } => Some(index.to_string()),
+        Projection::ComputedProperty { .. } => None,
+    }
+}
+
+fn abstract_property_key(key: &PropertyKey) -> Option<String> {
+    match key {
+        PropertyKey::Static(name) => Some(name.clone()),
+        PropertyKey::Index(index) => Some(index.to_string()),
+        PropertyKey::Computed(_) => None,
     }
 }
 

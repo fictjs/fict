@@ -103,6 +103,44 @@ async function compileAndImport(source, name, settings = {}) {
   return importCompiledModule(result.code, name)
 }
 
+test('tracks deep external storage through loop CFG backedges', () => {
+  const cases = [
+    [
+      'classic-for-order',
+      `for (let once = true; once; callbacks = holder.callbacks, once = false) {
+        callbacks = { nested: {} }
+      }
+      callbacks.nested.run = run`,
+    ],
+    [
+      'while-backedge',
+      `const next = holder.callbacks
+      while (holder.more()) {
+        callbacks.nested.run = run
+        callbacks = next
+      }`,
+    ],
+  ]
+  for (const [name, loop] of cases) {
+    const result = binding.transformSync({
+      code: `import { $state } from 'fict'
+        export function App(holder) {
+          const count = $state(0), run = () => count
+          let callbacks = { nested: {} }
+          ${loop}
+          return count
+        }`,
+      filename: `/fixtures/deep-external-storage-${name}.tsx`,
+      options: { strictGuarantee: true },
+    })
+    assert.deepEqual(
+      result.diagnostics.map(({ code }) => code),
+      ['FICT-R002', 'FICT-R005'],
+      name,
+    )
+  }
+})
+
 async function exerciseCoreModule(module) {
   const container = document.createElement('div')
   document.body.append(container)
