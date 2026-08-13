@@ -546,6 +546,127 @@ describe('Context', () => {
       expect(destroyed).toBe(1)
     })
 
+    it('does not treat callback ref context reads inside ErrorBoundary as setup snapshots', async () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      const theme = createSignal('light')
+      let refTheme: string | undefined
+      let childRuns = 0
+      let destroyed = 0
+
+      const Child = () => {
+        childRuns++
+        const currentTheme = useContextAccessor(ThemeContext)
+        onDestroy(() => {
+          destroyed++
+        })
+        return {
+          type: 'span',
+          props: {
+            ref: (element: Element | null) => {
+              if (element) refTheme = useContext(ThemeContext)
+            },
+            children: currentTheme,
+          },
+        }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: {
+              type: ErrorBoundary,
+              props: {
+                fallback: 'fallback',
+                children: { type: Child, props: {} },
+              },
+            },
+          },
+        }),
+        container,
+      )
+
+      const span = container.querySelector('span')!
+      expect(refTheme).toBe('light')
+
+      theme('dark')
+      await tick()
+
+      expect(container.querySelector('span')).toBe(span)
+      expect(span.textContent).toBe('dark')
+      expect(childRuns).toBe(1)
+      expect(destroyed).toBe(0)
+
+      dispose()
+      expect(destroyed).toBe(1)
+    })
+
+    it('does not treat ErrorBoundary onError context reads as setup snapshots', async () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      const theme = createSignal('light')
+      let errorTheme: string | undefined
+      let childRuns = 0
+      let destroyed = 0
+
+      const Child = () => {
+        childRuns++
+        const currentTheme = useContextAccessor(ThemeContext)
+        onDestroy(() => {
+          destroyed++
+        })
+        return { type: 'span', props: { children: currentTheme } }
+      }
+      const Broken = () => {
+        throw new Error('context boundary failure')
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: {
+              type: Fragment,
+              props: {
+                children: [
+                  { type: Child, props: {} },
+                  {
+                    type: ErrorBoundary,
+                    props: {
+                      fallback: 'fallback',
+                      onError: () => {
+                        errorTheme = useContext(ThemeContext)
+                      },
+                      children: { type: Broken, props: {} },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        container,
+      )
+
+      const span = container.querySelector('span')!
+      expect(errorTheme).toBe('light')
+      expect(container.textContent).toBe('lightfallback')
+
+      theme('dark')
+      await tick()
+
+      expect(container.querySelector('span')).toBe(span)
+      expect(container.textContent).toBe('darkfallback')
+      expect(childRuns).toBe(1)
+      expect(destroyed).toBe(0)
+
+      dispose()
+      expect(destroyed).toBe(1)
+    })
+
     it('keeps legacy setup-time useContext consumers updating through compatibility replay', async () => {
       const ThemeContext = createContext('light')
       const container = document.createElement('div')

@@ -14,6 +14,7 @@ import {
   withRootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
+import { runOutsideComponentRender } from './render-phase'
 import { resetKeysChanged } from './reset-keys'
 import { untrack } from './signal'
 import { __fictGetSSRStreamHooks, __fictPopSSRBoundary, __fictPushSSRBoundary } from './ssr-stream'
@@ -53,6 +54,8 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   }
 
   let reset = () => {}
+  const notifyError = (err: unknown) =>
+    runOutsideComponentRender(() => untrack(() => props.onError?.(err)))
   const toFallback = (err: unknown): FictNode =>
     typeof props.fallback === 'function'
       ? (props.fallback as (e: unknown, reset?: () => void) => FictNode)(err, reset)
@@ -159,7 +162,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   const captureError = (err: unknown) => {
     if (disposed) return
     if (disposing) {
-      untrack(() => props.onError?.(err))
+      notifyError(err)
       return
     }
     if (!streamPending && streamBoundaryId && streamHooks?.boundaryPending) {
@@ -184,7 +187,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     // A successfully mounted fallback is protected by its parent root. Keep
     // the synchronous guard set only when fallback rendering failed.
     if (rendered) renderingFallback = false
-    untrack(() => props.onError?.(err))
+    notifyError(err)
     if (!rendered) throw fallbackError
     if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
       streamPending = false

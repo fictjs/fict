@@ -2171,6 +2171,17 @@ export function bindEvent(
 // Ref Binding
 // ============================================================================
 
+function applyRefValue(refValue: unknown, value: Element | null): void {
+  if (refValue == null) return
+  if (typeof refValue === 'function') {
+    runOutsideComponentRender(() => {
+      ;(refValue as (el: Element | null) => void)(value)
+    })
+  } else if (typeof refValue === 'object' && 'current' in refValue) {
+    ;(refValue as { current: Element | null }).current = value
+  }
+}
+
 /**
  * Bind a ref to an element.
  * Supports both callback refs and ref objects.
@@ -2197,15 +2208,6 @@ export function bindRef(el: Element, ref: unknown, registerCleanup = true): Clea
 
   const getRef = isReactive(ref) ? (ref as () => unknown) : () => ref
   let currentRef: unknown
-
-  const applyRefValue = (refValue: unknown, value: Element | null) => {
-    if (refValue == null) return
-    if (typeof refValue === 'function') {
-      ;(refValue as (el: Element | null) => void)(value)
-    } else if (typeof refValue === 'object' && 'current' in refValue) {
-      ;(refValue as { current: Element | null }).current = value
-    }
-  }
 
   const clearCurrentRef = () => {
     if (currentRef == null) return
@@ -2272,15 +2274,6 @@ function createAssignedRefState(
 ): AssignedRefState {
   const valueSignal = signal<unknown>(initialValue)
   let currentRef: unknown
-
-  const applyRefValue = (refValue: unknown, value: Element | null) => {
-    if (refValue == null) return
-    if (typeof refValue === 'function') {
-      ;(refValue as (el: Element | null) => void)(value)
-    } else if (typeof refValue === 'object' && 'current' in refValue) {
-      ;(refValue as { current: Element | null }).current = value
-    }
-  }
 
   const clearCurrentRef = () => {
     if (currentRef == null) return
