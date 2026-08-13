@@ -44,7 +44,7 @@ describe('lazy', () => {
     const LazyComponent = lazy(loader)
     await LazyComponent.preload()
 
-    expect(LazyComponent()).toBeNull()
+    expect(LazyComponent()).toEqual({ type: MockComponent, props: undefined })
   })
 
   it('normalizes synchronous loader failures and can retry after reset', async () => {

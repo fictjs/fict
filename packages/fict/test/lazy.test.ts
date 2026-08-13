@@ -1,4 +1,9 @@
 import { Suspense, render } from '@fictjs/runtime'
+import {
+  __fictDisableResumable,
+  __fictEnableResumable,
+  __fictSetComponentMeta,
+} from '@fictjs/runtime/internal'
 import { describe, it, expect, vi } from 'vitest'
 
 import { lazy } from '../src/lazy'
@@ -7,6 +12,15 @@ const tick = () => Promise.resolve()
 const flushPromises = async () => {
   await tick()
   await tick()
+}
+
+function expectLoadedOutput(rendered: unknown, output: unknown): void {
+  const vnode = rendered as {
+    props: Record<string, unknown>
+    type: (props: Record<string, unknown>) => unknown
+  }
+  expect(typeof vnode.type).toBe('function')
+  expect(vnode.type(vnode.props)).toBe(output)
 }
 
 describe('lazy', () => {
@@ -58,7 +72,30 @@ describe('lazy', () => {
     const LazyComp = lazy(() => Promise.resolve(Loaded))
 
     await expect(LazyComp.preload()).resolves.toBeUndefined()
-    expect(LazyComp({})).toBe('ready')
+    expectLoadedOutput(LazyComp({}), 'ready')
+  })
+
+  it('keeps the loaded export as a resumable component boundary', async () => {
+    function Loaded() {
+      return { type: 'span', props: { children: 'ready' } }
+    }
+    __fictSetComponentMeta(Loaded, { id: 'Loaded@test', resume: '/loaded.js#resume' })
+    const LazyComp = lazy(() => Promise.resolve({ default: Loaded }))
+    await LazyComp.preload()
+
+    const container = document.createElement('div')
+    __fictEnableResumable()
+    try {
+      const dispose = render(() => ({ type: LazyComp, props: {} }), container)
+      try {
+        expect(container.querySelector('[data-fict-t="Loaded@test"]')).not.toBeNull()
+        expect(container.querySelector('[data-fict-h="/loaded.js#resume"]')).not.toBeNull()
+      } finally {
+        dispose()
+      }
+    } finally {
+      __fictDisableResumable()
+    }
   })
 
   it.each([undefined, null, false, 0, ''])(
@@ -121,7 +158,7 @@ describe('lazy', () => {
     await expect(LazyComp.preload()).resolves.toBeUndefined()
 
     expect(loader).toHaveBeenCalledTimes(2)
-    expect(LazyComp({})).toBe('ready')
+    expectLoadedOutput(LazyComp({}), 'ready')
   })
 
   it('rejects preload after retries are exhausted', async () => {
@@ -154,7 +191,7 @@ describe('lazy', () => {
     await expect(LazyComp.preload()).resolves.toBeUndefined()
 
     expect(loader).toHaveBeenCalledTimes(2)
-    expect(LazyComp({})).toBe('ready')
+    expectLoadedOutput(LazyComp({}), 'ready')
   })
 
   it('suspends render against an in-flight preload', async () => {
@@ -216,12 +253,12 @@ describe('lazy', () => {
 
     pending[1]!.resolve({ default: () => 'new' })
     await flushPromises()
-    expect(LazyComp({})).toBe('new')
+    expectLoadedOutput(LazyComp({}), 'new')
 
     pending[0]!.resolve({ default: () => 'old' })
     await flushPromises()
 
-    expect(LazyComp({})).toBe('new')
+    expectLoadedOutput(LazyComp({}), 'new')
     expect(loader).toHaveBeenCalledTimes(2)
   })
 
@@ -292,12 +329,12 @@ describe('lazy', () => {
 
     pending[1]!.resolve({ default: () => 'new' })
     await flushPromises()
-    expect(LazyComp({})).toBe('new')
+    expectLoadedOutput(LazyComp({}), 'new')
 
     pending[0]!.reject(new Error('old failed'))
     await flushPromises()
 
-    expect(LazyComp({})).toBe('new')
+    expectLoadedOutput(LazyComp({}), 'new')
     expect(loader).toHaveBeenCalledTimes(2)
   })
 
@@ -323,13 +360,13 @@ describe('lazy', () => {
 
     pending[1]!.resolve({ default: () => 'render' })
     await flushPromises()
-    expect(LazyComp({})).toBe('render')
+    expectLoadedOutput(LazyComp({}), 'render')
 
     pending[0]!.resolve({ default: () => 'preload' })
     await stalePreload
     await flushPromises()
 
-    expect(LazyComp({})).toBe('render')
+    expectLoadedOutput(LazyComp({}), 'render')
     expect(loader).toHaveBeenCalledTimes(2)
   })
 
@@ -364,7 +401,7 @@ describe('lazy', () => {
       await stalePreload
 
       expect(loader).toHaveBeenCalledTimes(2)
-      expect(LazyComp({})).toBe('new')
+      expectLoadedOutput(LazyComp({}), 'new')
     } finally {
       vi.useRealTimers()
     }
@@ -380,7 +417,7 @@ describe('lazy', () => {
     await LazyComp.preload()
     LazyComp.reset()
 
-    expect(LazyComp({})).toBe('ready')
+    expectLoadedOutput(LazyComp({}), 'ready')
     expect(loader).toHaveBeenCalledTimes(1)
   })
 })

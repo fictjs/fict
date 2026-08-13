@@ -1,5 +1,5 @@
 import { createSuspenseToken } from './suspense'
-import type { Component } from './types'
+import type { Component, FictNode } from './types'
 
 /** Shared lazy-component options used by first-party packages. */
 export interface FictLazyOptions {
@@ -127,7 +127,15 @@ export function __fictCreateLazyComponent<
   }
 
   const component = ((props: TProps) => {
-    if (loaded) return loaded(props)
+    if (loaded) {
+      // Preserve the resolved function as a real component boundary. Calling
+      // it directly would bypass hook/devtools ownership and resumable
+      // component metadata registered on the loaded export.
+      return {
+        type: loaded as unknown as (props: Record<string, unknown>) => FictNode,
+        props,
+      }
+    }
     if (hasLoadError) throw loadError
     pendingToken ??= createSuspenseToken()
     if (!loadingPromise) startLoad()
