@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { lazy as frameworkLazy } from 'fict/plus'
-import { lazy, preloadLazy, isLazyComponent, lazyRoute, createLazyRoutes } from '../src/lazy'
+import {
+  lazy,
+  preloadLazy,
+  retryPreloadLazy,
+  isLazyComponent,
+  lazyRoute,
+  createLazyRoutes,
+} from '../src/lazy'
 
 // Mock component for testing
 const MockComponent = () => null as any
@@ -113,6 +120,23 @@ describe('preloadLazy', () => {
     expect(isLazyComponent(compatibleComponent)).toBe(true)
     await preloadLazy(compatibleComponent)
     expect(preload).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a failed compatible lazy component without private markers', async () => {
+    const failure = new Error('temporary compatible lazy failure')
+    const loader = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined)
+    let cachedPreload: Promise<void> | undefined
+    const compatibleComponent: any = () => null
+    compatibleComponent.preload = vi.fn(() => (cachedPreload ??= loader()))
+    compatibleComponent.reset = vi.fn(() => {
+      cachedPreload = undefined
+    })
+
+    await expect(retryPreloadLazy(compatibleComponent)).rejects.toBe(failure)
+    await expect(retryPreloadLazy(compatibleComponent)).resolves.toBeUndefined()
+
+    expect(loader).toHaveBeenCalledTimes(2)
+    expect(compatibleComponent.reset).toHaveBeenCalledTimes(1)
   })
 
   it('should return resolved promise for non-lazy components', async () => {

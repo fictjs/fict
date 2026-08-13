@@ -28,6 +28,7 @@ export interface FictLazyComponent<
 
 const LAZY_COMPONENT_MARKER = Symbol.for('fict.lazy-component')
 const LAZY_COMPONENT_RETRY_PRELOAD = Symbol.for('fict.lazy-component.retry-preload.v1')
+const failedCompatiblePreloads = new WeakSet<object>()
 
 interface LazyCandidate {
   [LAZY_COMPONENT_MARKER]?: boolean
@@ -220,15 +221,36 @@ export function __fictPreloadLazyComponent(component: unknown): Promise<void> {
   }
 }
 
-/** @internal Retry a cached first-party failure, otherwise preserve normal preload deduplication. */
+/** @internal Retry cached first-party and compatible public-protocol failures. */
 export function __fictRetryLazyComponent(component: unknown): Promise<void> {
   if (typeof component !== 'function') return Promise.resolve()
   try {
-    const retryPreload = (component as LazyCandidate)[LAZY_COMPONENT_RETRY_PRELOAD]
+    const candidate = component as LazyCandidate
+    const retryPreload = candidate[LAZY_COMPONENT_RETRY_PRELOAD]
     if (typeof retryPreload === 'function') {
       return Promise.resolve(retryPreload.call(component)).then(() => undefined)
     }
-    return __fictPreloadLazyComponent(component)
+
+    const preload = candidate.preload
+    const reset = candidate.reset
+    if (typeof preload !== 'function' || typeof reset !== 'function') {
+      return __fictPreloadLazyComponent(component)
+    }
+
+    if (failedCompatiblePreloads.has(component)) {
+      reset.call(component)
+      failedCompatiblePreloads.delete(component)
+    }
+
+    return __fictPreloadLazyComponent(component).then(
+      () => {
+        failedCompatiblePreloads.delete(component)
+      },
+      error => {
+        failedCompatiblePreloads.add(component)
+        throw error
+      },
+    )
   } catch (error) {
     return Promise.reject(error)
   }
