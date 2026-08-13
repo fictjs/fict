@@ -51,6 +51,23 @@ function isExactDependencyRange(versionRange) {
   return /^=?\s*v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(range)
 }
 
+function resolveDependencyTarget(dependencyName, versionRange) {
+  if (typeof versionRange !== 'string') {
+    return { name: dependencyName, range: versionRange }
+  }
+
+  const trimmed = versionRange.trim()
+  const alias = trimmed.startsWith('npm:@')
+    ? /^npm:(@[^/]+\/[^@]+)(?:@(.+))?$/.exec(trimmed)
+    : /^npm:([^@]+)(?:@(.+))?$/.exec(trimmed)
+  if (!alias) return { name: dependencyName, range: trimmed }
+
+  return {
+    name: alias[1],
+    range: alias[2] ?? '*',
+  }
+}
+
 function precedingJsdoc(source, index) {
   return source.slice(0, index).match(/\/\*\*[\s\S]*?\*\/\s*$/)?.[0] ?? ''
 }
@@ -105,13 +122,17 @@ for (const packageName of satellitePackages) {
   const packageJsonPath = satellitePackageJsonPaths.get(packageName)
   if (!packageJsonPath) continue
   const packageJson = readJson(packageJsonPath)
-  for (const dependencyType of ['dependencies', 'optionalDependencies']) {
+  for (const dependencyType of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
     for (const [dependencyName, versionRange] of Object.entries(
       packageJson[dependencyType] ?? {},
     )) {
-      if (fixedPackages.includes(dependencyName) && isExactDependencyRange(versionRange)) {
+      const dependencyTarget = resolveDependencyTarget(dependencyName, versionRange)
+      if (
+        fixedPackages.includes(dependencyTarget.name) &&
+        isExactDependencyRange(dependencyTarget.range)
+      ) {
         fail(
-          `${packageName} must not exact-pin Core dependency ${dependencyName} with ${versionRange}`,
+          `${packageName} must not exact-pin Core dependency ${dependencyTarget.name} with ${versionRange}`,
         )
       }
     }

@@ -143,3 +143,41 @@ test('scope boundary check rejects exact Core dependency pins from Satellite pac
     }
   }
 })
+
+test('scope boundary check rejects exact Core peer dependency pins from Satellite packages', () => {
+  const root = createSourceArchiveFixture()
+  try {
+    const manifestPath = path.join(root, 'packages', 'testing-library', 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.peerDependencies['@fictjs/runtime'] = '0.32.0'
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const result = runPreviewCheck(root)
+    assert.equal(result.status, 1)
+    assert.match(
+      result.stderr,
+      /@fictjs\/testing-library must not exact-pin Core dependency @fictjs\/runtime/,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('scope boundary check resolves exact npm aliases that target Core packages', () => {
+  const root = createSourceArchiveFixture()
+  try {
+    const manifestPath = path.join(root, 'packages', 'webpack-plugin', 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies['compiler-alias'] = 'npm:@fictjs/compiler@0.32.0'
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const result = runPreviewCheck(root)
+    assert.equal(result.status, 1)
+    assert.match(
+      result.stderr,
+      /@fictjs\/webpack-plugin must not exact-pin Core dependency @fictjs\/compiler/,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
