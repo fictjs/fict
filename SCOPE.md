@@ -87,7 +87,9 @@ machine-readable boundary is [maturity.json](./maturity.json).
    "Independent" describes the release decision and bump train, not a rule
    that Satellite and Core version strings must always differ. A Satellite may
    have the same numeric version when its own changes warrant that release; it
-   must not be bumped merely because Core moves.
+   must not be bumped merely because Core moves. Production dependencies from
+   Satellites to Core therefore use compatible `workspace:` ranges rather than
+   the exact-version `workspace:*` protocol.
 2. **Guarantee bar applies to Core only.** `strictGuarantee`, the guarantee
    matrix, and API-freeze cover Core packages. Satellites/Preview document their
    own, weaker, contract.

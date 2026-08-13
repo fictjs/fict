@@ -75,18 +75,32 @@ assertSet(
 )
 
 const satellitePackages = maturity.satellitePackages ?? []
-assertSet('Satellite package registry', satellitePackages, [
-  '@fictjs/router',
-  '@fictjs/ssr',
-  '@fictjs/testing-library',
-  '@fictjs/webpack-plugin',
+const satellitePackageJsonPaths = new Map([
+  ['@fictjs/router', 'packages/router/package.json'],
+  ['@fictjs/ssr', 'packages/ssr/package.json'],
+  ['@fictjs/testing-library', 'packages/testing-library/package.json'],
+  ['@fictjs/webpack-plugin', 'packages/webpack-plugin/package.json'],
 ])
+assertSet('Satellite package registry', satellitePackages, [...satellitePackageJsonPaths.keys()])
 for (const packageName of satellitePackages) {
   if (fixedPackages.includes(packageName)) {
     fail(`${packageName} is Satellite and must not enter the Changesets fixed group`)
   }
   if ((changesets.ignore ?? []).includes(packageName)) {
     fail(`${packageName} is a published Satellite and must not enter Changesets ignore`)
+  }
+
+  const packageJsonPath = satellitePackageJsonPaths.get(packageName)
+  if (!packageJsonPath) continue
+  const packageJson = readJson(packageJsonPath)
+  for (const dependencyType of ['dependencies', 'optionalDependencies']) {
+    for (const [dependencyName, versionRange] of Object.entries(
+      packageJson[dependencyType] ?? {},
+    )) {
+      if (fixedPackages.includes(dependencyName) && versionRange === 'workspace:*') {
+        fail(`${packageName} must not exact-pin Core dependency ${dependencyName} with workspace:*`)
+      }
+    }
   }
 }
 

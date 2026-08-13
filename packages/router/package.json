@@ -46,7 +46,7 @@
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
-    "@fictjs/runtime": "workspace:*"
+    "@fictjs/runtime": "workspace:^"
   },
   "devDependencies": {
     "@fictjs/testing-library": "workspace:*",

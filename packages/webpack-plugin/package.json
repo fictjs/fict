@@ -54,7 +54,7 @@
     "webpack": ">=5.61.0"
   },
   "dependencies": {
-    "@fictjs/compiler": "workspace:*"
+    "@fictjs/compiler": "workspace:^"
   },
   "devDependencies": {
     "@jridgewell/trace-mapping": "^0.3.31",

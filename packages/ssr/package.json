@@ -60,7 +60,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@fictjs/runtime": "workspace:*",
+    "@fictjs/runtime": "workspace:^",
     "linkedom": "^0.18.12"
   },
   "devDependencies": {

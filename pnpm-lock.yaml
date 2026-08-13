@@ -480,7 +480,7 @@ importers:
   packages/router:
     dependencies:
       '@fictjs/runtime':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../runtime
     devDependencies:
       '@fictjs/testing-library':
@@ -511,7 +511,7 @@ importers:
   packages/ssr:
     dependencies:
       '@fictjs/runtime':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../runtime
       linkedom:
         specifier: ^0.18.12
@@ -605,7 +605,7 @@ importers:
   packages/webpack-plugin:
     dependencies:
       '@fictjs/compiler':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../compiler
     devDependencies:
       '@jridgewell/trace-mapping':
