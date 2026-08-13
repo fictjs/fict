@@ -44,6 +44,10 @@ runtime transport keeps working. Public Vite options are applied as follows:
 fictDevTools({
   port: 5180,
   openInBrowser: true,
+  openInEditor: {
+    // The Vite root is always allowed; opt in linked source roots explicitly.
+    additionalRoots: ['../shared-ui'],
+  },
   componentNameTransformer: name => `MyApp/${name}`,
 })
 ```
@@ -51,6 +55,10 @@ fictDevTools({
 - `port` selects the standalone launcher port (`0` requests an available port).
 - `openInBrowser` opens the launcher and reports launch failures through the
   Vite logger.
+- `openInEditor` is protected by a per-server token and same-origin POST check.
+  It accepts files under the Vite root by default. Add trusted monorepo or linked
+  source directories through `additionalRoots`, or set it to `false` to disable
+  the endpoint.
 - `componentNameTransformer` runs inside the browser before the debugger is
   attached. It must be a synchronous, self-contained function and cannot
   capture variables from `vite.config.ts`.

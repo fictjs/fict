@@ -554,7 +554,18 @@ function openInEditor(file: string, line: number, column: number): void {
   const location = `${file}:${line}:${column}`
   console.debug('[Fict DevTools Panel] Opening in editor:', location)
 
-  fetch(`/__open-in-editor?file=${encodeURIComponent(location)}`).catch(err => {
+  const token = document
+    .querySelector<HTMLMetaElement>('meta[name="fict-devtools-token"]')
+    ?.getAttribute('content')
+  if (!token) {
+    console.error('[Fict DevTools] Open in editor is unavailable outside Vite DevTools mode')
+    return
+  }
+
+  fetch(`/__open-in-editor?file=${encodeURIComponent(location)}`, {
+    method: 'POST',
+    headers: { 'X-Fict-DevTools-Token': token },
+  }).catch(err => {
     console.error('[Fict DevTools] Failed to open in editor:', err)
   })
 }

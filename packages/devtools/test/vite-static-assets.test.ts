@@ -33,14 +33,15 @@ type DevToolsMiddleware = (req: { url?: string }, res: MockResponse, next: () =>
 
 function createStaticAssetMiddleware(): DevToolsMiddleware {
   const middlewares = new Map<string, DevToolsMiddleware>()
-  const plugin = fictDevTools({ enabled: true })[0]!
+  const plugin = fictDevTools({ enabled: true, openInEditor: false })[0]!
   const configureServer = plugin.configureServer as (server: unknown) => void
 
   configureServer({
     config: {
       base: '/',
       logger: { info: vi.fn(), warn: vi.fn() },
-      server: { host: 'localhost', port: 5173 },
+      root: process.cwd(),
+      server: { host: 'localhost', https: false, port: 5173 },
     },
     httpServer: undefined,
     middlewares: {

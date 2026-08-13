@@ -5,6 +5,7 @@
  * providing a standalone DevTools UI without requiring a browser extension.
  */
 
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +14,7 @@ import type { Plugin, ViteDevServer } from 'vite'
 
 import { serializeComponentNameTransformer } from './component-name-transformer'
 import { installLiveTraceBridge, LIVE_TRACE_EVENT } from './live-trace-bridge'
+import { EditorPathError, openInEditor, resolveEditorRoots } from './open-in-editor'
 import {
   startStandaloneDevToolsServer,
   type StandaloneDevToolsServer,
@@ -73,6 +75,18 @@ export interface FictDevToolsOptions {
   launchEditor?: 'code' | 'code-insiders' | 'webstorm' | 'atom' | string
 
   /**
+   * Configure or disable the open-in-editor endpoint. Files are restricted to
+   * the Vite root by default. Additional roots are resolved relative to it.
+   *
+   * @default {}
+   */
+  openInEditor?:
+    | false
+    | {
+        additionalRoots?: string[]
+      }
+
+  /**
    * Component name transformer for display. The function runs in the browser
    * and must be synchronous and self-contained (it cannot capture Vite config locals).
    */
@@ -98,6 +112,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const packageRoot = __dirname.includes('dist')
   ? resolve(__dirname, '..')
   : resolve(__dirname, '../..')
+
+const OPEN_IN_EDITOR_TOKEN_HEADER = 'x-fict-devtools-token'
 
 type ParsedAssetRequest = { pathname: string } | { statusCode: 400 | 403; message: string }
 
@@ -162,6 +178,7 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
     openInBrowser = false,
     port = 5175,
     launchEditor = 'code',
+    openInEditor: openInEditorOption = {},
     componentNameTransformer,
     liveTrace = true,
   } = options
@@ -206,6 +223,13 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
         if (!resolvedEnabled) return
 
         server = _server
+        const projectRoot = server.config.root
+        const openInEditorToken =
+          openInEditorOption === false ? undefined : randomBytes(32).toString('base64url')
+        const editorRoots =
+          openInEditorOption === false
+            ? []
+            : resolveEditorRoots(projectRoot, openInEditorOption.additionalRoots ?? [])
         const generation = ++serverGeneration
         if (standaloneServer) {
           void standaloneServer.close()
@@ -234,8 +258,10 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
 
           // Serve panel HTML
           if (pathname === '/' || pathname === '/index.html') {
+            res.setHeader('Cache-Control', 'no-store')
             res.setHeader('Content-Type', 'text/html')
-            res.end(getDevToolsHtml(server.config.base))
+            res.setHeader('X-Content-Type-Options', 'nosniff')
+            res.end(getDevToolsHtml(server.config.base, openInEditorToken))
             return
           }
 
@@ -266,26 +292,47 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
           next()
         })
 
-        // Handle open-in-editor requests
-        server.middlewares.use('/__open-in-editor', async (req, res) => {
-          const url = new URL(req.url || '', `http://${req.headers.host}`)
-          const file = url.searchParams.get('file')
+        // Handle authenticated, same-origin open-in-editor requests.
+        if (openInEditorToken) {
+          server.middlewares.use('/__open-in-editor', async (req, res) => {
+            res.setHeader('Cache-Control', 'no-store')
+            if (req.method !== 'POST') {
+              res.statusCode = 405
+              res.setHeader('Allow', 'POST')
+              res.end('Method Not Allowed')
+              return
+            }
 
-          if (!file) {
-            res.statusCode = 400
-            res.end('Missing file parameter')
-            return
-          }
+            if (
+              !isTrustedEditorRequest(req, openInEditorToken, Boolean(server.config.server.https))
+            ) {
+              res.statusCode = 403
+              res.end('Forbidden')
+              return
+            }
 
-          try {
-            await openInEditor(file, launchEditor)
-            res.statusCode = 200
-            res.end('OK')
-          } catch (e) {
-            res.statusCode = 500
-            res.end(String(e))
-          }
-        })
+            const url = new URL(
+              req.url || '',
+              `${server.config.server.https ? 'https' : 'http'}://${req.headers.host}`,
+            )
+            const file = url.searchParams.get('file')
+
+            if (!file) {
+              res.statusCode = 400
+              res.end('Missing file parameter')
+              return
+            }
+
+            try {
+              await openInEditor(file, launchEditor, projectRoot, editorRoots)
+              res.statusCode = 200
+              res.end('OK')
+            } catch (e) {
+              res.statusCode = e instanceof EditorPathError ? 403 : 500
+              res.end(e instanceof EditorPathError ? 'Forbidden' : String(e))
+            }
+          })
+        }
 
         // Print DevTools URL when server starts
         server.httpServer?.once('listening', () => {
@@ -569,12 +616,23 @@ async function openDevToolsInBrowser(url: string, server: ViteDevServer): Promis
 /**
  * Generate DevTools HTML page
  */
-function getDevToolsHtml(base: string): string {
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function getDevToolsHtml(base: string, openInEditorToken: string | undefined): string {
+  const tokenMeta = openInEditorToken
+    ? `\n  <meta name="fict-devtools-token" content="${escapeHtmlAttribute(openInEditorToken)}">`
+    : ''
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">${tokenMeta}
   <title>Fict DevTools</title>
   <link rel="stylesheet" href="${base}__fict-devtools__/styles.css">
   <style>
@@ -614,6 +672,34 @@ function getDevToolsHtml(base: string): string {
 </html>`
 }
 
+function hasValidToken(actual: string | string[] | undefined, expected: string): boolean {
+  if (typeof actual !== 'string') return false
+  const actualBuffer = Buffer.from(actual)
+  const expectedBuffer = Buffer.from(expected)
+  return (
+    actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
+  )
+}
+
+function isTrustedEditorRequest(
+  req: { headers: Record<string, string | string[] | undefined> },
+  token: string,
+  https: boolean,
+): boolean {
+  if (!hasValidToken(req.headers[OPEN_IN_EDITOR_TOKEN_HEADER], token)) return false
+  if (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'same-origin') return false
+
+  const host = req.headers.host
+  const origin = req.headers.origin
+  if (typeof host !== 'string' || typeof origin !== 'string') return false
+
+  try {
+    return new URL(origin).origin === `${https ? 'https' : 'http'}://${host}`
+  } catch {
+    return false
+  }
+}
+
 /**
  * Get content type for file extension
  */
@@ -628,45 +714,6 @@ function getContentType(ext: string): string {
     ico: 'image/x-icon',
   }
   return types[ext] || 'application/octet-stream'
-}
-
-/**
- * Open file in editor
- */
-async function openInEditor(file: string, editor: string): Promise<void> {
-  const [filePath, line, column] = file.split(':')
-  const resolvedPath = resolve(filePath!)
-
-  let command: string
-  let args: string[]
-
-  switch (editor) {
-    case 'code':
-    case 'code-insiders':
-      command = editor
-      args = ['--goto', `${resolvedPath}:${line || 1}:${column || 1}`]
-      break
-    case 'webstorm':
-      command = 'webstorm'
-      args = ['--line', line || '1', '--column', column || '1', resolvedPath]
-      break
-    case 'atom':
-      command = 'atom'
-      args = [`${resolvedPath}:${line || 1}:${column || 1}`]
-      break
-    default:
-      // Custom editor command
-      command = editor
-      args = [resolvedPath]
-  }
-
-  const { spawn } = await import('node:child_process')
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore', detached: true })
-    child.on('error', reject)
-    child.unref()
-    resolve()
-  })
 }
 
 export { fictDevTools }
