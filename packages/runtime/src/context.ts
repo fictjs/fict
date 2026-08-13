@@ -58,6 +58,7 @@ import {
   type RootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
+import { isComponentRenderActive } from './render-phase'
 import { untrack } from './scheduler'
 import { computed, createSignal, getActiveSub } from './signal'
 import type { BaseProps, FictNode } from './types'
@@ -106,7 +107,7 @@ export type ContextAccessor<T> = () => T
  * Using WeakMap ensures proper garbage collection when roots are destroyed.
  */
 interface ContextCell {
-  markSnapshotConsumer: () => void
+  markSnapshotConsumer: (root: RootContext) => void
   read: () => unknown
   write: (value: unknown) => void
 }
@@ -198,7 +199,8 @@ export function createContext<T>(defaultValue: T): Context<T> {
 
     const initialValue = untrack(() => props.value)
     const valueSignal = createSignal(initialValue)
-    let hasSnapshotConsumer = false
+    const snapshotConsumerRoots = new WeakSet<RootContext>()
+    let snapshotConsumerRootCount = 0
     const providerRoot = createRootContext(hostRoot)
     providerRoot.renderNamespace = callSiteRenderNamespace
     providerRoot.ownerDocument = resolveParentOwnerDocument(
@@ -206,8 +208,14 @@ export function createContext<T>(defaultValue: T): Context<T> {
       providerRoot.ownerDocument ?? marker.ownerDocument ?? markerOwnerDocument,
     )
     getContextMap(providerRoot).set(id, {
-      markSnapshotConsumer: () => {
-        hasSnapshotConsumer = true
+      markSnapshotConsumer: root => {
+        if (snapshotConsumerRoots.has(root)) return
+        snapshotConsumerRoots.add(root)
+        snapshotConsumerRootCount++
+        root.cleanups.push(() => {
+          if (!snapshotConsumerRoots.delete(root)) return
+          snapshotConsumerRootCount--
+        })
       },
       read: () => valueSignal(),
       write: value => valueSignal(value as T),
@@ -305,7 +313,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
       // `useContext()` historically returned a setup-time snapshot and relied
       // on Provider replay for updates. Keep that behavior for existing
       // consumers, while accessor/effect-only trees retain their identity.
-      if (!childrenChanged && !(valueChanged && hasSnapshotConsumer)) return
+      if (!childrenChanged && !(valueChanged && snapshotConsumerRootCount > 0)) return
 
       // Rendering descendants must not make this effect subscribe to their
       // signals or to the context value they consume.
@@ -343,7 +351,10 @@ export function useContext<T>(context: Context<T>): T {
   if (!cell) return context.defaultValue
 
   const value = cell.read() as T
-  if (!getActiveSub()) cell.markSnapshotConsumer()
+  const root = getCurrentRoot()
+  if (isComponentRenderActive() && !getActiveSub() && root) {
+    cell.markSnapshotConsumer(root)
+  }
   return value
 }
 

@@ -9,6 +9,7 @@ import {
   withRootContext,
   type RootContext,
 } from './lifecycle'
+import { runOutsideComponentRender } from './render-phase'
 import type { SuspenseToken } from './types'
 
 const isDev =
@@ -1741,7 +1742,7 @@ export function untrack<T>(fn: () => T): T {
   const prev = activeSub
   activeSub = undefined
   try {
-    return fn()
+    return prev === undefined ? fn() : runOutsideComponentRender(fn)
   } finally {
     activeSub = prev
   }

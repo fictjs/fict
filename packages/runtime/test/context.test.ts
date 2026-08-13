@@ -10,6 +10,8 @@ import {
   ErrorBoundary,
   createEffect,
   createMemo,
+  untrack,
+  onMount,
   onDestroy,
 } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
@@ -475,6 +477,75 @@ describe('Context', () => {
       dispose()
     })
 
+    it('does not treat nested callback context reads as setup snapshots', async () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      const theme = createSignal('light')
+      const effectTrigger = createSignal(0)
+      let eventTheme: string | undefined
+      let mountedTheme: string | undefined
+      let untrackedEffectTheme: string | undefined
+      let childRuns = 0
+      let destroyed = 0
+
+      const Child = () => {
+        childRuns++
+        const currentTheme = useContextAccessor(ThemeContext)
+        onMount(() => {
+          mountedTheme = useContext(ThemeContext)
+        })
+        createEffect(() => {
+          effectTrigger()
+          untrackedEffectTheme = untrack(() => useContext(ThemeContext))
+        })
+        onDestroy(() => {
+          destroyed++
+        })
+        return {
+          type: 'button',
+          props: {
+            'on:click': () => {
+              eventTheme = useContext(ThemeContext)
+            },
+            children: currentTheme,
+          },
+        }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      const button = container.querySelector('button')!
+      button.click()
+      expect(mountedTheme).toBe('light')
+      expect(eventTheme).toBe('light')
+      expect(untrackedEffectTheme).toBe('light')
+
+      theme('dark')
+      await tick()
+
+      expect(container.querySelector('button')).toBe(button)
+      expect(button.textContent).toBe('dark')
+      expect(childRuns).toBe(1)
+      expect(destroyed).toBe(0)
+
+      effectTrigger(1)
+      await tick()
+      expect(untrackedEffectTheme).toBe('dark')
+      expect(container.querySelector('button')).toBe(button)
+
+      dispose()
+      expect(destroyed).toBe(1)
+    })
+
     it('keeps legacy setup-time useContext consumers updating through compatibility replay', async () => {
       const ThemeContext = createContext('light')
       const container = document.createElement('div')
@@ -506,6 +577,66 @@ describe('Context', () => {
 
       expect(container.textContent).toBe('dark')
       expect(childRuns).toBe(2)
+      dispose()
+    })
+
+    it('drops setup snapshot registrations when their reactive branch unmounts', async () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      const theme = createSignal('light')
+      const showLegacy = createSignal(true)
+      let legacyDestroyed = 0
+      let accessorRuns = 0
+
+      const LegacyChild = () => {
+        const currentTheme = useContext(ThemeContext)
+        onDestroy(() => {
+          legacyDestroyed++
+        })
+        return { type: 'span', props: { id: 'legacy', children: currentTheme } }
+      }
+
+      const AccessorChild = () => {
+        accessorRuns++
+        const currentTheme = useContextAccessor(ThemeContext)
+        return { type: 'span', props: { id: 'accessor', children: currentTheme } }
+      }
+
+      const Switcher = () => ({
+        type: Fragment,
+        props: {
+          children: reactive(() =>
+            showLegacy() ? { type: LegacyChild, props: {} } : { type: AccessorChild, props: {} },
+          ),
+        },
+      })
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: { type: Switcher, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(container.querySelector('#legacy')?.textContent).toBe('light')
+      showLegacy(false)
+      await tick()
+
+      const accessor = container.querySelector('#accessor')!
+      expect(legacyDestroyed).toBe(1)
+      expect(accessorRuns).toBe(1)
+
+      theme('dark')
+      await tick()
+
+      expect(container.querySelector('#accessor')).toBe(accessor)
+      expect(accessor.textContent).toBe('dark')
+      expect(accessorRuns).toBe(1)
+
       dispose()
     })
 

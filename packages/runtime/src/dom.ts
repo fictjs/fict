@@ -71,6 +71,7 @@ import {
 } from './lifecycle'
 import { toNodeArray } from './node-ops'
 import { createPropsProxy, unwrapProps } from './props'
+import { runComponentRender } from './render-phase'
 import {
   __fictIsHydrating,
   __fictIsResumable,
@@ -346,7 +347,7 @@ export function hydrateComponent(
       withHydration(
         container,
         () => {
-          view()
+          runComponentRender(view)
         },
         {
           onHydrationIssue: options.onHydrationIssue,
@@ -617,7 +618,8 @@ function createElementWithContext(
 
   // Function component
   if (typeof vnode.type === 'function') {
-    const componentMeta = __fictGetComponentMeta(vnode.type)
+    const component = vnode.type
+    const componentMeta = __fictGetComponentMeta(component)
     let hydrationRepairToken: object | null = null
     if (isHydratingActive() && componentMeta?.id) {
       const scopeHost = claimResumableScopeHost(componentMeta.id)
@@ -633,11 +635,11 @@ function createElementWithContext(
       vnode.key === undefined ? rawProps : createKeyedComponentProps(rawProps, vnode.key)
 
     const props = createPropsProxy(baseProps)
-    const componentType = (componentMeta?.id ?? vnode.type.name) || 'Anonymous'
+    const componentType = (componentMeta?.id ?? component.name) || 'Anonymous'
     // Create a fresh hook context for this component instance.
     // This preserves slot state across re-renders driven by __fictRender.
     const hook = isDev ? getDevtoolsHook() : undefined
-    const componentName = vnode.type.name || 'Anonymous'
+    const componentName = component.name || 'Anonymous'
     const parentId = hook ? __fictGetCurrentComponentId() : undefined
     const componentId = hook ? nextComponentId++ : undefined
 
@@ -660,7 +662,7 @@ function createElementWithContext(
       if (renderRoot) renderRoot.renderNamespace = namespace
       let rendered: FictNode
       try {
-        rendered = vnode.type(props)
+        rendered = runComponentRender(() => component(props))
       } finally {
         if (renderRoot) renderRoot.renderNamespace = previousRenderNamespace
       }

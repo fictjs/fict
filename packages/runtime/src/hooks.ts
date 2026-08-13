@@ -8,6 +8,7 @@ import {
   type MemoOptions,
   type SignalOptions,
 } from './signal'
+import { resetComponentRenderPhase, runComponentRender } from './render-phase'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -81,6 +82,7 @@ export function __fictPopContext(): void {
 
 export function __fictResetContext(): void {
   ctxStack.length = 0
+  resetComponentRenderPhase()
 }
 
 export function __fictUseSignal<T>(
@@ -158,7 +160,7 @@ export function __fictRender<T>(ctx: HookContext, fn: () => T): T {
   ctx.cursor = 0
   ctx.rendering = true
   try {
-    return fn()
+    return runComponentRender(fn)
   } finally {
     ctx.rendering = false
     ctxStack.pop()

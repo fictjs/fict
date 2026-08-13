@@ -1,5 +1,6 @@
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
 import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
+import { runOutsideComponentRender } from './render-phase'
 import { untrack } from './signal'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
@@ -184,7 +185,7 @@ export function flushOnMount(root: RootContext): void {
   try {
     withRootContext(root, () => {
       for (let i = 0; i < cbs.length; i++) {
-        const cleanup = untrack(cbs[i]!)
+        const cleanup = runOutsideComponentRender(() => untrack(cbs[i]!))
         if (typeof cleanup === 'function') {
           if (root.destroying || root.destroyed) untrack(cleanup)
           else root.cleanups.push(cleanup)
@@ -351,7 +352,7 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
     while (list.length > 0) {
       try {
         const cleanup = list.pop()
-        if (cleanup) cleanup()
+        if (cleanup) runOutsideComponentRender(cleanup)
       } catch (err) {
         if (!didThrow) {
           error = err
@@ -366,9 +367,9 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
 }
 
 function runLifecycle(fn: LifecycleFn): void {
-  const cleanup = fn()
+  const cleanup = runOutsideComponentRender(fn)
   if (typeof cleanup === 'function') {
-    cleanup()
+    runOutsideComponentRender(cleanup)
   }
 }
 
