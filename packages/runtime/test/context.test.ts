@@ -475,13 +475,49 @@ describe('Context', () => {
       dispose()
     })
 
+    it('keeps legacy setup-time useContext consumers updating through compatibility replay', async () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      const theme = createSignal('light')
+      let childRuns = 0
+
+      const Child = () => {
+        childRuns++
+        const currentTheme = useContext(ThemeContext)
+        return { type: 'span', props: { children: currentTheme } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(container.textContent).toBe('light')
+      expect(childRuns).toBe(1)
+
+      theme('dark')
+      await tick()
+
+      expect(container.textContent).toBe('dark')
+      expect(childRuns).toBe(2)
+      dispose()
+    })
+
     it('updates useContext reads made inside descendant effects', async () => {
       const ThemeContext = createContext('light')
       const theme = createSignal('light')
       const container = document.createElement('div')
       const seen: string[] = []
+      let childRuns = 0
 
       const Child = () => {
+        childRuns++
         createEffect(() => {
           seen.push(useContext(ThemeContext))
         })
@@ -503,6 +539,7 @@ describe('Context', () => {
       theme('dark')
       await tick()
       expect(seen).toEqual(['light', 'dark'])
+      expect(childRuns).toBe(1)
       dispose()
     })
 

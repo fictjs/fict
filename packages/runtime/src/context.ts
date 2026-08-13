@@ -59,7 +59,7 @@ import {
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import { untrack } from './scheduler'
-import { computed, createSignal } from './signal'
+import { computed, createSignal, getActiveSub } from './signal'
 import type { BaseProps, FictNode } from './types'
 
 // ============================================================================
@@ -106,6 +106,7 @@ export type ContextAccessor<T> = () => T
  * Using WeakMap ensures proper garbage collection when roots are destroyed.
  */
 interface ContextCell {
+  markSnapshotConsumer: () => void
   read: () => unknown
   write: (value: unknown) => void
 }
@@ -197,6 +198,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
 
     const initialValue = untrack(() => props.value)
     const valueSignal = createSignal(initialValue)
+    let hasSnapshotConsumer = false
     const providerRoot = createRootContext(hostRoot)
     providerRoot.renderNamespace = callSiteRenderNamespace
     providerRoot.ownerDocument = resolveParentOwnerDocument(
@@ -204,6 +206,9 @@ export function createContext<T>(defaultValue: T): Context<T> {
       providerRoot.ownerDocument ?? marker.ownerDocument ?? markerOwnerDocument,
     )
     getContextMap(providerRoot).set(id, {
+      markSnapshotConsumer: () => {
+        hasSnapshotConsumer = true
+      },
       read: () => valueSignal(),
       write: value => valueSignal(value as T),
     })
@@ -283,20 +288,24 @@ export function createContext<T>(defaultValue: T): Context<T> {
       }
     })
 
-    // Value updates publish through the stable context cell. Descendants that
-    // use useContextAccessor (or call useContext inside an effect) update
-    // without rebuilding the provider subtree.
-    createRenderEffect(() => {
-      const cell = getContextMap(providerRoot).get(id)
-      cell?.write(props.value)
-    })
-
     const unsetChildren = Symbol('fict.context.unset-children')
     let previousChildren: FictNode | typeof unsetChildren = unsetChildren
+    let previousValue = initialValue
     createRenderEffect(() => {
+      const nextValue = props.value
       const children = props.children
-      if (previousChildren !== unsetChildren && Object.is(previousChildren, children)) return
+      const valueChanged = !Object.is(previousValue, nextValue)
+      const childrenChanged =
+        previousChildren === unsetChildren || !Object.is(previousChildren, children)
+
+      previousValue = nextValue
       previousChildren = children
+      getContextMap(providerRoot).get(id)?.write(nextValue)
+
+      // `useContext()` historically returned a setup-time snapshot and relied
+      // on Provider replay for updates. Keep that behavior for existing
+      // consumers, while accessor/effect-only trees retain their identity.
+      if (!childrenChanged && !(valueChanged && hasSnapshotConsumer)) return
 
       // Rendering descendants must not make this effect subscribe to their
       // signals or to the context value they consume.
@@ -331,7 +340,11 @@ export function createContext<T>(defaultValue: T): Context<T> {
  */
 export function useContext<T>(context: Context<T>): T {
   const cell = findContextCell(context.id)
-  return cell ? (cell.read() as T) : context.defaultValue
+  if (!cell) return context.defaultValue
+
+  const value = cell.read() as T
+  if (!getActiveSub()) cell.markSnapshotConsumer()
+  return value
 }
 
 /**

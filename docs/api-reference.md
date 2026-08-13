@@ -1138,7 +1138,9 @@ function App() {
 
 `useContext()` participates in tracking when it is called inside an effect,
 memo, or reactive binding. A primitive stored during one-time component setup is
-a snapshot; use `useContextAccessor()` when the Provider's `value` prop changes.
+a snapshot; for backward compatibility, Providers replay subtrees containing
+such snapshots when `value` changes. Use `useContextAccessor()` to update the
+value without remounting that subtree.
 
 ---
 
