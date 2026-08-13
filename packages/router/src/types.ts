@@ -402,6 +402,33 @@ export type QueryFunction<T = unknown, Args extends unknown[] = unknown[]> = (
   ...args: Args
 ) => T | Promise<T>
 
+/** Observable lifecycle state for a cached query invocation. */
+export type QueryStatus = 'pending' | 'success' | 'error'
+
+/**
+ * Reactive accessor returned by a query invocation.
+ *
+ * Calling the accessor throws a settled query error so the nearest
+ * ErrorBoundary can handle it. Read `error()` first when rendering errors
+ * inline instead.
+ */
+export interface QueryAccessor<T = unknown> {
+  (): T | undefined
+  /** Whether this invocation is waiting for its current request. */
+  loading: () => boolean
+  /** The rejection reason, or undefined when the query has not failed. */
+  error: () => unknown
+  /** Current lifecycle state; distinguishes successful undefined values. */
+  status: () => QueryStatus
+  /** Latest successful value, including stale data retained during refresh. */
+  latest: () => T | undefined
+}
+
+/** Cached query function returned by `query()`. */
+export type Query<T = unknown, Args extends unknown[] = unknown[]> = (
+  ...args: Args
+) => QueryAccessor<T>
+
 /**
  * Query cache entry
  */

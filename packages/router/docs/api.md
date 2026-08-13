@@ -755,6 +755,8 @@ const getUser = query(
 function UserProfile({ id }: { id: string }) {
   const user = getUser(id) // Returns reactive accessor
 
+  if (user.loading()) return <p>Loading...</p>
+  if (user.status() === 'error') return <p>Could not load the user.</p>
   return <h1>{user()?.name}</h1>
 }
 ```
@@ -766,7 +768,23 @@ function UserProfile({ id }: { id: string }) {
 | `fn`   | `QueryFunction<T, Args>` | Async function to execute |
 | `name` | `string`                 | Cache key prefix          |
 
-**Returns:** `(...args: Args) => () => T | undefined`
+**Returns:** `Query<T, Args>`. Each invocation returns a `QueryAccessor<T>`:
+
+```typescript
+interface QueryAccessor<T> {
+  (): T | undefined
+  loading(): boolean
+  error(): unknown
+  status(): 'pending' | 'success' | 'error'
+  latest(): T | undefined
+}
+```
+
+Calling the main accessor after a rejected request throws the rejection reason,
+so reads rendered beneath an `ErrorBoundary` enter its fallback. Check
+`error()` first to render failures inline. `status()` distinguishes a successful
+`undefined` result from pending and failed requests; `latest()` retains stale
+successful data while an expired query refreshes.
 
 ---
 

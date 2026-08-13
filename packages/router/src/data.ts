@@ -6,11 +6,14 @@
  */
 
 import { createEffect, batch, createSuspenseToken } from '@fictjs/runtime'
-import { createSignal, type Signal } from '@fictjs/runtime/advanced'
+import { createSignal, reactive, type Signal } from '@fictjs/runtime/advanced'
 import { __fictGetCurrentSSRSession, __fictIsSSRSessionActive } from '@fictjs/runtime/internal'
 
 import type {
   QueryFunction,
+  Query,
+  QueryAccessor,
+  QueryStatus,
   QueryCacheEntry,
   ActionFunction,
   Action,
@@ -42,6 +45,12 @@ const FAST_CLEANUP_INTERVAL = 10 * 1000
 type QueryCache = Map<string, QueryCacheEntry<unknown>>
 type SSRSession = NonNullable<ReturnType<typeof __fictGetCurrentSSRSession>>
 type QueryInvocationIntent = Extract<NavigationIntent, 'navigate' | 'preload'>
+
+interface QueryObserver<T> {
+  accessor: QueryAccessor<T>
+  reject: (error: unknown) => void
+  resolve: (result: T) => void
+}
 
 /** Shared browser cache. SSR requests use isolated caches below. */
 const sharedQueryCache: QueryCache = new Map()
@@ -143,6 +152,47 @@ function stopCacheCleanup() {
 // Query Function
 // ============================================================================
 
+function createQueryObserver<T>(
+  initialResult: T | undefined,
+  initialStatus: QueryStatus,
+): QueryObserver<T> {
+  const resultSignal = createSignal<T | undefined>(initialResult)
+  const errorSignal = createSignal<unknown>(undefined)
+  const statusSignal = createSignal<QueryStatus>(initialStatus)
+
+  const accessor = reactive(() => {
+    const status = statusSignal()
+    if (status === 'error') throw errorSignal()
+    return resultSignal()
+  }) as QueryAccessor<T>
+
+  accessor.loading = reactive(() => statusSignal() === 'pending')
+  accessor.error = reactive(() => (statusSignal() === 'error' ? errorSignal() : undefined))
+  accessor.status = reactive(() => statusSignal())
+  accessor.latest = reactive(() => resultSignal())
+
+  return {
+    accessor,
+    resolve(result) {
+      batch(() => {
+        resultSignal(result)
+        errorSignal(undefined)
+        statusSignal('success')
+      })
+    },
+    reject(error) {
+      batch(() => {
+        errorSignal(error)
+        statusSignal('error')
+      })
+    },
+  }
+}
+
+function observeQueryPromise<T>(promise: Promise<T>, observer: QueryObserver<T>): void {
+  void promise.then(observer.resolve, observer.reject)
+}
+
 /**
  * Create a cached query function
  *
@@ -166,10 +216,10 @@ function stopCacheCleanup() {
 export function query<T, Args extends unknown[]>(
   fn: QueryFunction<T, Args>,
   name: string,
-): (...args: Args) => () => T | undefined {
+): Query<T, Args> {
   startCacheCleanup()
 
-  const invoke = (intent: QueryInvocationIntent, args: Args): (() => T | undefined) => {
+  const invoke = (intent: QueryInvocationIntent, args: Args): QueryAccessor<T> => {
     // Capture the request cache before starting asynchronous work. Promise
     // callbacks run after the synchronous SSR session stack has unwound.
     const queryCache = resolveQueryCache()
@@ -183,24 +233,16 @@ export function query<T, Args extends unknown[]>(
 
       if (Date.now() - cached.timestamp < maxAge) {
         if (intent === 'navigate') cached.intent = 'navigate'
-        return () => cached.result
+        return createQueryObserver(cached.result, 'success').accessor
       }
     }
 
-    // Create reactive signal for the result
-    const resultSignal = createSignal<T | undefined>(cached?.result)
-    const errorSignal = createSignal<unknown>(undefined)
-    const loadingSignal = createSignal<boolean>(true)
+    const observer = createQueryObserver(cached?.result, 'pending')
 
     if (cached && !cached.settled) {
       if (intent === 'navigate') cached.intent = 'navigate'
-      void cached.promise.then(result => {
-        batch(() => {
-          resultSignal(result)
-          loadingSignal(false)
-        })
-      })
-      return () => resultSignal()
+      observeQueryPromise(cached.promise, observer)
+      return observer.accessor
     }
 
     // Fetch the data. Query functions may throw before returning a promise;
@@ -212,54 +254,49 @@ export function query<T, Args extends unknown[]>(
       fetchResult = Promise.reject(error)
     }
     const promise = Promise.resolve(fetchResult)
-      .then(result => {
-        // Update cache
-        const entry: QueryCacheEntry<T> = {
-          timestamp: Date.now(),
-          promise: promise as Promise<T>,
-          settled: true,
-          result,
-          hasResult: true,
-          intent,
-        }
-        const currentEntry = queryCache.get(cacheKey)
-        if (currentEntry?.promise === (promise as Promise<T>)) {
-          entry.intent = currentEntry.intent
-          queryCache.set(cacheKey, entry)
-          evictOldestEntries(queryCache)
-        }
 
-        // Update signals
-        batch(() => {
-          resultSignal(result)
-          loadingSignal(false)
-        })
-
-        return result
-      })
-      .catch(error => {
-        batch(() => {
-          errorSignal(error)
-          loadingSignal(false)
-        })
-        const entry = queryCache.get(cacheKey) as QueryCacheEntry<T> | undefined
-        if (entry?.promise === (promise as Promise<T>)) {
-          queryCache.delete(cacheKey)
-        }
-        return undefined
-      })
-
-    // Store promise in cache immediately for deduplication
+    // Store the raw promise immediately for deduplication. Rejections stay
+    // observable to every query accessor while the handlers below prevent an
+    // unhandled rejection when the request originated from preloading.
     const pendingEntry: QueryCacheEntry<T> = {
       timestamp: Date.now(),
-      promise: promise as Promise<T>,
+      promise,
       settled: false,
       intent,
       ...(cached?.hasResult ? { result: cached.result as T, hasResult: true } : {}),
     }
     queryCache.set(cacheKey, pendingEntry)
 
-    return () => resultSignal()
+    void promise.then(
+      result => {
+        // Update cache
+        const entry: QueryCacheEntry<T> = {
+          timestamp: Date.now(),
+          promise,
+          settled: true,
+          result,
+          hasResult: true,
+          intent,
+        }
+        const currentEntry = queryCache.get(cacheKey)
+        if (currentEntry?.promise === promise) {
+          entry.intent = currentEntry.intent
+          queryCache.set(cacheKey, entry)
+          evictOldestEntries(queryCache)
+        }
+
+        observer.resolve(result)
+      },
+      error => {
+        const entry = queryCache.get(cacheKey) as QueryCacheEntry<T> | undefined
+        if (entry?.promise === promise) {
+          queryCache.delete(cacheKey)
+        }
+        observer.reject(error)
+      },
+    )
+
+    return observer.accessor
   }
 
   const queryFn = (...args: Args) => invoke('navigate', args)
@@ -613,7 +650,7 @@ export function submitActionFromForm<T>(
  * Preload a query for faster navigation
  */
 export function preloadQuery<T, Args extends unknown[]>(
-  queryFn: (...args: Args) => () => T | undefined,
+  queryFn: Query<T, Args>,
   ...args: Args
 ): void {
   const preload = queryPreloaders.get(queryFn)

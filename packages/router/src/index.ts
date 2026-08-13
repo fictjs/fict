@@ -205,6 +205,9 @@ export type {
   ActionFunction,
   Action,
   QueryFunction,
+  Query,
+  QueryAccessor,
+  QueryStatus,
   QueryCacheEntry,
 
   // Router options

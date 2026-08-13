@@ -230,15 +230,17 @@ const getUser = query(
 )
 
 // Usage: returns reactive accessor
-const user = getUser('123') // () => User | undefined
+const user = getUser('123') // QueryAccessor<User>
 ```
 
 **Cache behavior:**
 
 - Queries are cached by key (`name + serialized args`)
-- Stale entries expire after 30 seconds
-- Maximum 100 entries (LRU eviction)
+- Navigation entries expire after 3 minutes; unused preloads expire after 5 seconds
+- The cache is bounded to 500 entries and evicts the oldest entries first
 - `revalidate()` clears matching cache entries
+- Accessors expose reactive `loading()`, `error()`, `status()`, and `latest()` state
+- Reading a failed accessor throws to the nearest ErrorBoundary
 
 ### 6.2 Action System
 

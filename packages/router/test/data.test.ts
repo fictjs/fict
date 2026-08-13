@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { ErrorBoundary, render } from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
 import {
   __fictCreateSSRSession,
@@ -225,12 +226,18 @@ describe('query', () => {
     const fetchValue = query(fetcher, 'undefinedResult')
 
     const first = fetchValue('key')
+    expect(first.loading()).toBe(true)
+    expect(first.status()).toBe('pending')
     await Promise.resolve()
     await Promise.resolve()
     const second = fetchValue('key')
 
     expect(first()).toBeUndefined()
+    expect(first.loading()).toBe(false)
+    expect(first.status()).toBe('success')
+    expect(first.error()).toBeUndefined()
     expect(second()).toBeUndefined()
+    expect(second.status()).toBe('success')
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
@@ -251,7 +258,7 @@ describe('query', () => {
     expect(callCount).toBe(2)
   })
 
-  it('should keep rejected query failures internal', async () => {
+  it('exposes rejected query failures and throws them from the main accessor', async () => {
     const error = new Error('query failed')
     const fetchUser = query(async () => {
       throw error
@@ -261,15 +268,19 @@ describe('query', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(accessor()).toBe(undefined)
+    expect(accessor.loading()).toBe(false)
+    expect(accessor.status()).toBe('error')
+    expect(accessor.error()).toBe(error)
+    expect(accessor.latest()).toBe(undefined)
+    expect(() => accessor()).toThrow(error)
   })
 
-  it('normalizes synchronous query failures into the internal error path', async () => {
+  it('normalizes synchronous query failures into the observable error path', async () => {
     const error = new Error('synchronous query failure')
     const fetchValue = query(() => {
       throw error
     }, 'syncFailureQuery')
-    let accessor: (() => undefined) | undefined
+    let accessor: ReturnType<typeof fetchValue> | undefined
 
     expect(() => {
       accessor = fetchValue()
@@ -277,7 +288,48 @@ describe('query', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(accessor?.()).toBeUndefined()
+    expect(accessor?.status()).toBe('error')
+    expect(accessor?.error()).toBe(error)
+    expect(() => accessor?.()).toThrow(error)
+  })
+
+  it('routes asynchronous query failures through ErrorBoundary', async () => {
+    const error = new Error('boundary query failure')
+    let rejectFetch!: (reason: unknown) => void
+    const fetchValue = query(
+      () =>
+        new Promise<string>((_, reject) => {
+          rejectFetch = reject
+        }),
+      'boundaryFailureQuery',
+    )
+    const accessor = fetchValue()
+    const container = document.createElement('div')
+    let captured: unknown
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary as any,
+        props: {
+          fallback: 'query error',
+          onError: (caught: unknown) => {
+            captured = caught
+          },
+          children: { type: 'span', props: { children: accessor } },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('')
+    rejectFetch(error)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(captured).toBe(error)
+    expect(container.textContent).toBe('query error')
+    dispose()
   })
 
   it('should retry successfully after a rejected query', async () => {
@@ -289,7 +341,7 @@ describe('query', () => {
     const first = fetchUser('123')
     await Promise.resolve()
     await Promise.resolve()
-    expect(first()).toBe(undefined)
+    expect(() => first()).toThrow('query failed')
 
     const second = fetchUser('123')
     await Promise.resolve()
@@ -427,13 +479,16 @@ describe('query', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1)
 
-    rejectFetch?.(new Error('failed'))
+    const failure = new Error('failed')
+    rejectFetch?.(failure)
     await Promise.resolve()
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(first()).toBe(undefined)
-    expect(second()).toBe(undefined)
+    expect(first.error()).toBe(failure)
+    expect(second.error()).toBe(failure)
+    expect(() => first()).toThrow('failed')
+    expect(() => second()).toThrow('failed')
   })
 
   it('should keep null and undefined query args separate', async () => {
