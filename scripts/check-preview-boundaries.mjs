@@ -39,6 +39,18 @@ function assertSet(label, actual, expected) {
   }
 }
 
+function isExactDependencyRange(versionRange) {
+  if (typeof versionRange !== 'string') return false
+  const trimmed = versionRange.trim()
+  const isWorkspaceRange = trimmed.startsWith('workspace:')
+  const range = (isWorkspaceRange ? trimmed.slice('workspace:'.length) : trimmed).trim()
+
+  // pnpm publishes workspace:* as the current exact version. Explicit numeric
+  // workspace and registry specs are exact pins as well.
+  if (isWorkspaceRange && range === '*') return true
+  return /^=?\s*v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(range)
+}
+
 function precedingJsdoc(source, index) {
   return source.slice(0, index).match(/\/\*\*[\s\S]*?\*\/\s*$/)?.[0] ?? ''
 }
@@ -97,8 +109,10 @@ for (const packageName of satellitePackages) {
     for (const [dependencyName, versionRange] of Object.entries(
       packageJson[dependencyType] ?? {},
     )) {
-      if (fixedPackages.includes(dependencyName) && versionRange === 'workspace:*') {
-        fail(`${packageName} must not exact-pin Core dependency ${dependencyName} with workspace:*`)
+      if (fixedPackages.includes(dependencyName) && isExactDependencyRange(versionRange)) {
+        fail(
+          `${packageName} must not exact-pin Core dependency ${dependencyName} with ${versionRange}`,
+        )
       }
     }
   }

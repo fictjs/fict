@@ -117,20 +117,29 @@ test('scope boundary check rejects Satellite packages in fixed or ignore release
 })
 
 test('scope boundary check rejects exact Core dependency pins from Satellite packages', () => {
-  const root = createSourceArchiveFixture()
-  try {
-    const manifestPath = path.join(root, 'packages', 'webpack-plugin', 'package.json')
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    manifest.dependencies['@fictjs/compiler'] = 'workspace:*'
-    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  for (const exactRange of [
+    'workspace:*',
+    'workspace:0.32.0',
+    'workspace:=0.32.0',
+    '0.32.0',
+    'workspace:0.32.0-next.0',
+    '0.32.0-next.0',
+  ]) {
+    const root = createSourceArchiveFixture()
+    try {
+      const manifestPath = path.join(root, 'packages', 'webpack-plugin', 'package.json')
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+      manifest.dependencies['@fictjs/compiler'] = exactRange
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
-    const result = runPreviewCheck(root)
-    assert.equal(result.status, 1)
-    assert.match(
-      result.stderr,
-      /@fictjs\/webpack-plugin must not exact-pin Core dependency @fictjs\/compiler/,
-    )
-  } finally {
-    rmSync(root, { recursive: true, force: true })
+      const result = runPreviewCheck(root)
+      assert.equal(result.status, 1, `expected ${exactRange} to fail`)
+      assert.match(
+        result.stderr,
+        /@fictjs\/webpack-plugin must not exact-pin Core dependency @fictjs\/compiler/,
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   }
 })
