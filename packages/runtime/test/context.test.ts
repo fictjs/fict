@@ -603,6 +603,72 @@ describe('Context', () => {
       expect(destroyed).toBe(1)
     })
 
+    it('does not treat object ref setter context reads as setup snapshots', async () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      const theme = createSignal('light')
+      let currentElement: Element | null = null
+      let refTheme: string | undefined
+      let childRuns = 0
+      let destroyed = 0
+      const refObject = {
+        get current() {
+          return currentElement
+        },
+        set current(element: Element | null) {
+          currentElement = element
+          if (element) refTheme = useContext(ThemeContext)
+        },
+      }
+
+      const Child = () => {
+        childRuns++
+        const currentTheme = useContextAccessor(ThemeContext)
+        onDestroy(() => {
+          destroyed++
+        })
+        return {
+          type: 'span',
+          props: {
+            ref: refObject,
+            children: currentTheme,
+          },
+        }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: {
+              type: ErrorBoundary,
+              props: {
+                fallback: 'fallback',
+                children: { type: Child, props: {} },
+              },
+            },
+          },
+        }),
+        container,
+      )
+
+      const span = container.querySelector('span')!
+      expect(refTheme).toBe('light')
+
+      theme('dark')
+      await tick()
+
+      expect(container.querySelector('span')).toBe(span)
+      expect(span.textContent).toBe('dark')
+      expect(childRuns).toBe(1)
+      expect(destroyed).toBe(0)
+
+      dispose()
+      expect(currentElement).toBeNull()
+      expect(destroyed).toBe(1)
+    })
+
     it('does not treat ErrorBoundary onError context reads as setup snapshots', async () => {
       const ThemeContext = createContext('light')
       const container = document.createElement('div')

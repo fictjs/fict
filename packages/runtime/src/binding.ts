@@ -2173,13 +2173,13 @@ export function bindEvent(
 
 function applyRefValue(refValue: unknown, value: Element | null): void {
   if (refValue == null) return
-  if (typeof refValue === 'function') {
-    runOutsideComponentRender(() => {
+  runOutsideComponentRender(() => {
+    if (typeof refValue === 'function') {
       ;(refValue as (el: Element | null) => void)(value)
-    })
-  } else if (typeof refValue === 'object' && 'current' in refValue) {
-    ;(refValue as { current: Element | null }).current = value
-  }
+    } else if (typeof refValue === 'object' && 'current' in refValue) {
+      ;(refValue as { current: Element | null }).current = value
+    }
+  })
 }
 
 /**
