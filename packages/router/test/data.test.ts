@@ -144,6 +144,28 @@ describe('query', () => {
     expect(settled).toBe(true)
   })
 
+  it('keeps wrapped query preloads on the short preload cache window', async () => {
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const fetcher = vi.fn(async (id: string) => `value:${id}`)
+      const fetchValue = query(fetcher, 'expiringWrappedPreload')
+      const wrapped: typeof fetchValue = (...args) => fetchValue(...args)
+
+      await preloadQuery(wrapped, 'first')
+
+      now += 4_999
+      await preloadQuery(wrapped, 'first')
+      expect(fetcher).toHaveBeenCalledTimes(1)
+
+      now += 2
+      await preloadQuery(wrapped, 'first')
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
   it('preserves wrapped query preload failures', async () => {
     const failure = new Error('wrapped preload failed')
     let rejectFetch!: (reason: unknown) => void
@@ -174,6 +196,29 @@ describe('query', () => {
       await expect(secondRouter.preloadQuery(fetchValue)).resolves.toBe('shared')
       expect(fetcher).toHaveBeenCalledTimes(1)
     } finally {
+      firstRouter.cleanupDataUtilities()
+      secondRouter.cleanupDataUtilities()
+    }
+  })
+
+  it('shares wrapped preload intent across router module instances', async () => {
+    vi.resetModules()
+    const firstRouter = await import('../src/data')
+    vi.resetModules()
+    const secondRouter = await import('../src/data')
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const fetcher = vi.fn(async () => 'shared wrapped')
+    const fetchValue = firstRouter.query(fetcher, 'crossInstanceWrappedPreload')
+    const wrapped: typeof fetchValue = (...args) => fetchValue(...args)
+
+    try {
+      await secondRouter.preloadQuery(wrapped)
+      now += 5_001
+      await secondRouter.preloadQuery(wrapped)
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      nowSpy.mockRestore()
       firstRouter.cleanupDataUtilities()
       secondRouter.cleanupDataUtilities()
     }

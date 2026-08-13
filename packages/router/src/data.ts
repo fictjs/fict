@@ -49,6 +49,17 @@ type QueryPreloader = (args: unknown[]) => Promise<unknown>
 
 const QUERY_PRELOADER = Symbol.for('fict.router.query-preloader.v1')
 const QUERY_INVOCATION_PROMISE = Symbol.for('fict.router.query-invocation-promise.v1')
+const QUERY_PRELOAD_INTENT_STATE = Symbol.for('fict.router.query-preload-intent-state.v1')
+
+interface QueryPreloadIntentState {
+  depth: number
+}
+
+type QueryPreloadIntentHost = typeof globalThis & {
+  [QUERY_PRELOAD_INTENT_STATE]?: QueryPreloadIntentState
+}
+
+const localQueryPreloadIntentState: QueryPreloadIntentState = { depth: 0 }
 
 interface QueryObserver<T> {
   accessor: QueryAccessor<T>
@@ -69,6 +80,35 @@ let requestQueryCaches = new WeakMap<SSRSession, QueryCache>()
 
 /** Internal preload entry points keyed by the public query function. */
 const queryPreloaders = new WeakMap<object, QueryPreloader>()
+
+function getQueryPreloadIntentState(): QueryPreloadIntentState {
+  const host = globalThis as QueryPreloadIntentHost
+  const shared = host[QUERY_PRELOAD_INTENT_STATE]
+  if (shared) return shared
+
+  try {
+    host[QUERY_PRELOAD_INTENT_STATE] = localQueryPreloadIntentState
+    return host[QUERY_PRELOAD_INTENT_STATE] ?? localQueryPreloadIntentState
+  } catch {
+    // Hardened realms may reject additions to globalThis. Same-instance
+    // wrappers still retain preload semantics through the module-local state.
+    return localQueryPreloadIntentState
+  }
+}
+
+function runWithQueryPreloadIntent<T>(fn: () => T): T {
+  const state = getQueryPreloadIntentState()
+  state.depth++
+  try {
+    return fn()
+  } finally {
+    state.depth--
+  }
+}
+
+function getQueryInvocationIntent(): QueryInvocationIntent {
+  return getQueryPreloadIntentState().depth > 0 ? 'preload' : 'navigate'
+}
 
 function defineQueryProtocol(target: object, key: symbol, value: unknown): void {
   Object.defineProperty(target, key, {
@@ -345,7 +385,7 @@ export function query<T, Args extends unknown[]>(
     return attachQueryInvocationPromise(observer.accessor, promise)
   }
 
-  const queryFn = (...args: Args) => invoke('navigate', args).accessor
+  const queryFn = (...args: Args) => invoke(getQueryInvocationIntent(), args).accessor
   const preloader: QueryPreloader = args => {
     return invoke('preload', args as Args).promise
   }
@@ -707,7 +747,10 @@ export function preloadQuery<T, Args extends unknown[]>(
     if (preload) {
       task = preload(args) as Promise<T>
     } else {
-      const accessor = queryFn(...args)
+      // A wrapper hides the base query's preloader protocol. Keep the intent
+      // synchronous and realm-shared so duplicated router copies can still
+      // classify every base query invoked by the wrapper as speculative.
+      const accessor = runWithQueryPreloadIntent(() => queryFn(...args))
       const invocationPromise = readQueryInvocationPromise(accessor)
       if (!invocationPromise) {
         throw new TypeError(
