@@ -171,20 +171,17 @@ export function __fictCreateLazyComponent<
   return component
 }
 
-/** @internal Recognize current and legacy Fict lazy-component contracts. */
+/** @internal Recognize lazy components with the public preload/reset contract. */
 export function __fictIsLazyComponent(
   component: unknown,
-): component is FictLazyComponent<Record<string, unknown>> {
+): component is Component<Record<string, unknown>> &
+  Pick<FictLazyComponent<Record<string, unknown>>, 'preload' | 'reset'> {
   if (typeof component !== 'function') return false
   try {
     const candidate = component as LazyCandidate
     const preload = candidate.preload
     const reset = candidate.reset
-    return (
-      candidate[LAZY_COMPONENT_MARKER] === true ||
-      candidate.__lazy === true ||
-      (typeof preload === 'function' && typeof reset === 'function')
-    )
+    return typeof preload === 'function' && typeof reset === 'function'
   } catch {
     return false
   }

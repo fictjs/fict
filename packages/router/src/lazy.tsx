@@ -49,7 +49,7 @@ export function preloadLazy(component: AnyComponent): Promise<void> {
   return __fictPreloadLazyComponent(component)
 }
 
-/** Check current, framework, and legacy router lazy-component contracts. */
+/** Check for the public lazy-component preload/reset contract. */
 export function isLazyComponent(component: unknown): component is LazyComponent {
   return __fictIsLazyComponent(component)
 }

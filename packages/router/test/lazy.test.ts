@@ -88,6 +88,7 @@ describe('preloadLazy', () => {
     lazyComp.__lazy = true
     lazyComp.__preload = preloadFn
 
+    expect(isLazyComponent(lazyComp)).toBe(false)
     await preloadLazy(lazyComp)
 
     expect(preloadFn).toHaveBeenCalledTimes(1)

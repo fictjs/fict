@@ -1105,7 +1105,9 @@ const UserProfile = lazy(() => import('./pages/UserProfile'))
 `preloadLazy` also accepts lazy components created by `fict/plus`. Both lazy
 entry points expose the same `preload()`, `reset()`, retry, and Suspense
 contract; router-created components retain the legacy `__preload` marker for
-cross-version compatibility.
+cross-version compatibility. Older router lazy values that expose only
+`__lazy`/`__preload` can still be preloaded, but do not satisfy the public
+`LazyComponent` contract.
 
 ---
 
@@ -1117,9 +1119,14 @@ Check if a component is lazy-loaded.
 import { isLazyComponent } from '@fictjs/router'
 
 if (isLazyComponent(Component)) {
-  // Handle lazy component
+  Component.preload()
+  Component.reset()
 }
 ```
+
+The guard returns `true` only when both public methods are present. Legacy
+`__lazy`/`__preload` markers remain supported by `preloadLazy`, but are not
+enough to narrow a value to `LazyComponent`.
 
 ---
 
