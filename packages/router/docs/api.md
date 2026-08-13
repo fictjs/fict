@@ -912,14 +912,35 @@ function SubmissionMonitor() {
 
 ### `createResource`
 
-Create an async resource with Suspense integration.
+> **Deprecated:** use the canonical `resource` API from `fict/plus`. It adds
+> request cancellation, cache policy, invalidation, mutation, and SSR-aware
+> cache ownership. The router helper remains temporarily for compatibility.
+
+Canonical usage:
+
+```tsx
+import { resource } from 'fict/plus'
+import { reactive } from 'fict/advanced'
+
+const users = resource(async ({ signal }, id: string) => {
+  const response = await fetch(`/api/users/${id}`, { signal })
+  return response.json()
+})
+
+function UserProfile(props: { id: string }) {
+  const user = users.read(reactive(() => props.id))
+  return <h1>{user.data?.name}</h1>
+}
+```
+
+Legacy router compatibility usage:
 
 ```tsx
 import { createResource } from '@fictjs/router'
 
 const userResource = createResource(
   () => userId, // Source signal
-  async id => fetch(`/api/users/${id}`).then(r => r.json()),
+  async (id, { signal }) => fetch(`/api/users/${id}`, { signal }).then(r => r.json()),
   { suspense: true },
 )
 
@@ -943,7 +964,8 @@ interface Resource<T> {
 Pass `{ suspense: true }` to throw a request token while loading so the nearest
 `Suspense` boundary can render its fallback. Without this option, the main
 accessor returns `undefined` while loading. In both modes, `latest()` retains
-the last successful value during refreshes.
+the last successful value during refreshes. Owned requests are aborted when
+their component root is destroyed.
 
 ---
 
@@ -990,7 +1012,10 @@ Create a lazy-loaded component.
 ```tsx
 import { lazy } from '@fictjs/router'
 
-const UserProfile = lazy(() => import('./pages/UserProfile'))
+const UserProfile = lazy(() => import('./pages/UserProfile'), {
+  maxRetries: 2,
+  retryDelay: 250,
+})
 
 // Use in routes
 <Route path="/users/:id" component={UserProfile} />
@@ -1000,6 +1025,10 @@ const UserProfile = lazy(() => import('./pages/UserProfile'))
   <UserProfile />
 </Suspense>
 ```
+
+Router lazy components use the same contract as `lazy` from `fict/plus`:
+`preload()` starts loading without rendering, and `reset()` clears a cached
+failure so an ErrorBoundary retry can start a new load.
 
 ---
 
@@ -1016,6 +1045,7 @@ const routes = [
     component: () => import('./pages/UserProfile'),
     loadingElement: <Spinner />,
     errorElement: <ErrorPage />,
+    lazyOptions: { maxRetries: 2, retryDelay: 250 },
     preload: ({ params }) => fetchUser(params.id),
   }),
 ]
@@ -1037,6 +1067,7 @@ const routes = createLazyRoutes(pages, {
   pathTransform: path => path.replace('./pages', '').replace('.tsx', '').toLowerCase(),
   loadingElement: <Spinner />,
   errorElement: <ErrorPage />,
+  lazyOptions: { maxRetries: 2, retryDelay: 250 },
 })
 ```
 
@@ -1056,6 +1087,11 @@ const UserProfile = lazy(() => import('./pages/UserProfile'))
   Load Profile
 </button>
 ```
+
+`preloadLazy` also accepts lazy components created by `fict/plus`. Both lazy
+entry points expose the same `preload()`, `reset()`, retry, and Suspense
+contract; router-created components retain the legacy `__preload` marker for
+cross-version compatibility.
 
 ---
 

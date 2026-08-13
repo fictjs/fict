@@ -1,227 +1,55 @@
 /**
  * @fileoverview Lazy component loading with Suspense support.
  *
- * Creates a component that loads its implementation asynchronously,
- * suspending rendering until the module is loaded.
+ * The implementation lives in the runtime's first-party internal protocol so
+ * framework and router lazy components share preload, reset, retry, and
+ * Suspense semantics.
  */
 
-import { createSuspenseToken } from '@fictjs/runtime'
 import type { Component } from '@fictjs/runtime'
+import { __fictCreateLazyComponent } from '@fictjs/runtime/internal'
 
-/** Module shape expected from dynamic imports */
+/** Module shape produced by a typical dynamic import. */
 export interface LazyModule<TProps extends Record<string, unknown>> {
   default: Component<TProps>
 }
 
-/** Options for lazy loading behavior */
+/** Options for lazy loading behavior. */
 export interface LazyOptions {
-  /**
-   * Maximum number of retry attempts on load failure.
-   * Set to 0 to disable retries (default behavior).
-   * @default 0
-   */
+  /** Maximum retry attempts after the initial load. Defaults to `0`. */
   maxRetries?: number
-
-  /**
-   * Delay in milliseconds between retry attempts.
-   * Uses exponential backoff: delay * 2^(attempt - 1)
-   * @default 1000
-   */
+  /** Initial exponential-backoff delay in milliseconds. Defaults to `1000`. */
   retryDelay?: number
 }
 
-/** Extended component with retry capability */
+/** Component with explicit preload and retry-reset controls. */
 export interface LazyComponent<TProps extends Record<string, unknown>> extends Component<TProps> {
-  /**
-   * Reset the lazy component state, allowing it to retry loading.
-   * Useful when used with ErrorBoundary reset functionality.
-   */
+  /** Clear a cached failure so the next render or preload starts a new load. */
   reset: () => void
-
-  /**
-   * Preload the component without rendering it.
-   * Returns a promise that resolves when the component is loaded and rejects
-   * when the loader exhausts its retries.
-   */
+  /** Load the component without rendering it. */
   preload: () => Promise<void>
 }
 
 /**
  * Create a lazy component that suspends while loading.
  *
- * @param loader - Function that returns a promise resolving to the component module
- * @param options - Optional configuration for retry behavior
- * @returns A component that suspends during loading and supports retry on failure
+ * The loader may resolve to a dynamic-import module or directly to a
+ * component. Failed loads stay observable until `reset()` is called; optional
+ * automatic retries use exponential backoff.
  *
  * @example
  * ```tsx
- * import { lazy, Suspense } from 'fict'
- *
- * // Basic usage
- * const LazyChart = lazy(() => import('./Chart'))
- *
- * // With retry options
  * const LazyDashboard = lazy(() => import('./Dashboard'), {
- *   maxRetries: 3,
- *   retryDelay: 1000
+ *   maxRetries: 2,
+ *   retryDelay: 250,
  * })
- *
- * function App() {
- *   return (
- *     <Suspense fallback={<Loading />}>
- *       <LazyChart />
- *     </Suspense>
- *   )
- * }
- *
- * // Reset on error (with ErrorBoundary)
- * <ErrorBoundary fallback={(err, reset) => (
- *   <button onClick={() => { LazyChart.reset(); reset(); }}>Retry</button>
- * )}>
- *   <LazyChart />
- * </ErrorBoundary>
  * ```
  *
  * @public
  */
 export function lazy<TProps extends Record<string, unknown> = Record<string, unknown>>(
-  loader: () => Promise<LazyModule<TProps> | { default: Component<TProps> }>,
+  loader: () => Promise<LazyModule<TProps> | Component<TProps>>,
   options: LazyOptions = {},
 ): LazyComponent<TProps> {
-  const { maxRetries = 0, retryDelay = 1000 } = options
-
-  let loaded: Component<TProps> | null = null
-  let loadError: unknown = null
-  let hasLoadError = false
-  let loadingPromise: Promise<void> | null = null
-  let pendingToken: ReturnType<typeof createSuspenseToken> | null = null
-  let retryCount = 0
-  let loadGeneration = 0
-
-  const isCurrentLoad = (generation: number): boolean => generation === loadGeneration
-
-  const attemptLoad = (generation: number): Promise<void> => {
-    let loadedModule: Promise<LazyModule<TProps> | { default: Component<TProps> }>
-    try {
-      loadedModule = Promise.resolve(loader())
-    } catch (err) {
-      // Keep synchronous loader failures on the same retry/preload contract as
-      // rejected dynamic imports.
-      loadedModule = Promise.reject(err)
-    }
-
-    return loadedModule
-      .then(mod => {
-        if (!isCurrentLoad(generation)) return
-        const resolved = (mod as LazyModule<TProps> | null | undefined)?.default
-        if (typeof resolved !== 'function') {
-          throw new TypeError(
-            '[fict] lazy() loader must resolve to a module with a default component.',
-          )
-        }
-        loaded = resolved
-        loadError = null
-        hasLoadError = false
-        retryCount = 0
-        pendingToken?.resolve()
-      })
-      .catch((err: unknown) => {
-        if (!isCurrentLoad(generation)) {
-          throw err
-        }
-        if (retryCount < maxRetries) {
-          retryCount++
-          const delay = retryDelay * Math.pow(2, retryCount - 1)
-          return new Promise<void>((resolve, reject) => {
-            setTimeout(() => {
-              if (!isCurrentLoad(generation)) {
-                resolve()
-                return
-              }
-              attemptLoad(generation).then(resolve, reject)
-            }, delay)
-          })
-        }
-        if (!isCurrentLoad(generation)) {
-          throw err
-        }
-        loadError = err
-        hasLoadError = true
-        pendingToken?.reject(err)
-        throw err
-      })
-      .finally(() => {
-        if (isCurrentLoad(generation)) {
-          loadingPromise = null
-          pendingToken = null
-        }
-      })
-  }
-
-  const startLoad = (): Promise<void> => {
-    const generation = ++loadGeneration
-    loadingPromise = attemptLoad(generation)
-    void loadingPromise.catch(() => {
-      // Render-driven loads are observed through the Suspense token. Keep the
-      // public promise rejected for preload callers without leaking internals.
-    })
-    return loadingPromise
-  }
-
-  const component = ((props: TProps) => {
-    if (loaded) {
-      return loaded(props)
-    }
-    if (hasLoadError) {
-      throw loadError
-    }
-    if (!pendingToken) {
-      pendingToken = createSuspenseToken()
-    }
-    if (!loadingPromise) {
-      startLoad()
-    }
-    if (pendingToken) {
-      throw pendingToken.token
-    }
-    // Should never hit if pendingToken exists, but fallback for type safety.
-    throw new Error('Lazy component failed to start loading')
-  }) as LazyComponent<TProps>
-
-  /**
-   * Reset the lazy component state, clearing any cached error.
-   * Call this before triggering a re-render to retry loading.
-   */
-  component.reset = () => {
-    loadGeneration++
-    const suspendedToken = pendingToken
-    loadError = null
-    hasLoadError = false
-    loadingPromise = null
-    pendingToken = null
-    retryCount = 0
-    // Wake an already rendered Suspense boundary so it retries against the
-    // new generation. The stale loader can no longer settle this token.
-    suspendedToken?.resolve()
-    // Note: we don't clear `loaded` - if it was successfully loaded, keep it
-  }
-
-  /**
-   * Preload the component without rendering.
-   * Useful for eager loading on route prefetch.
-   */
-  component.preload = (): Promise<void> => {
-    if (loaded) {
-      return Promise.resolve()
-    }
-    if (hasLoadError) {
-      return Promise.reject(loadError)
-    }
-    if (loadingPromise) {
-      return loadingPromise
-    }
-    return startLoad()
-  }
-
-  return component
+  return __fictCreateLazyComponent(loader, options)
 }

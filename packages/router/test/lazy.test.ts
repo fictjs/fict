@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { lazy as frameworkLazy } from 'fict/plus'
 import { lazy, preloadLazy, isLazyComponent, lazyRoute, createLazyRoutes } from '../src/lazy'
 
 // Mock component for testing
@@ -11,9 +12,11 @@ describe('lazy', () => {
     expect((LazyComponent as any).__lazy).toBe(true)
   })
 
-  it('should have a __preload method', () => {
+  it('exposes the shared preload/reset contract and legacy router markers', () => {
     const LazyComponent = lazy(() => Promise.resolve({ default: MockComponent }))
 
+    expect(typeof LazyComponent.preload).toBe('function')
+    expect(typeof LazyComponent.reset).toBe('function')
     expect(typeof (LazyComponent as any).__preload).toBe('function')
   })
 
@@ -27,11 +30,11 @@ describe('lazy', () => {
     const LazyComponent = lazy(loader)
 
     // First preload
-    await (LazyComponent as any).__preload()
+    await LazyComponent.preload()
     expect(loadCount).toBe(1)
 
     // Second preload should use cache
-    await (LazyComponent as any).__preload()
+    await LazyComponent.preload()
     expect(loadCount).toBe(1)
   })
 
@@ -39,9 +42,42 @@ describe('lazy', () => {
     const loader = () => Promise.resolve(MockComponent as any)
 
     const LazyComponent = lazy(loader)
-    const result = await (LazyComponent as any).__preload()
+    await LazyComponent.preload()
 
-    expect(result).toBe(MockComponent)
+    expect(LazyComponent()).toBeNull()
+  })
+
+  it('normalizes synchronous loader failures and can retry after reset', async () => {
+    const error = new Error('first load failed')
+    const loader = vi
+      .fn<() => Promise<{ default: typeof MockComponent }>>()
+      .mockImplementationOnce(() => {
+        throw error
+      })
+      .mockResolvedValueOnce({ default: MockComponent })
+    const LazyComponent = lazy(loader)
+
+    let preload: Promise<void> | undefined
+    expect(() => {
+      preload = LazyComponent.preload()
+    }).not.toThrow()
+    await expect(preload).rejects.toBe(error)
+    expect(() => LazyComponent()).toThrow(error)
+
+    LazyComponent.reset()
+    await expect(LazyComponent.preload()).resolves.toBeUndefined()
+    expect(loader).toHaveBeenCalledTimes(2)
+  })
+
+  it('supports the framework retry options', async () => {
+    const loader = vi
+      .fn<() => Promise<{ default: typeof MockComponent }>>()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValueOnce({ default: MockComponent })
+    const LazyComponent = lazy(loader, { maxRetries: 1, retryDelay: 0 })
+
+    await expect(LazyComponent.preload()).resolves.toBeUndefined()
+    expect(loader).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -55,6 +91,27 @@ describe('preloadLazy', () => {
     await preloadLazy(lazyComp)
 
     expect(preloadFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('preloads and recognizes lazy components created by fict/plus', async () => {
+    const loader = vi.fn(() => Promise.resolve({ default: MockComponent }))
+    const LazyComponent = frameworkLazy(loader)
+
+    expect(isLazyComponent(LazyComponent)).toBe(true)
+    await preloadLazy(LazyComponent)
+
+    expect(loader).toHaveBeenCalledTimes(1)
+  })
+
+  it('recognizes the public preload/reset protocol without private markers', async () => {
+    const preload = vi.fn().mockResolvedValue(undefined)
+    const compatibleComponent: any = () => null
+    compatibleComponent.preload = preload
+    compatibleComponent.reset = () => {}
+
+    expect(isLazyComponent(compatibleComponent)).toBe(true)
+    await preloadLazy(compatibleComponent)
+    expect(preload).toHaveBeenCalledTimes(1)
   })
 
   it('should return resolved promise for non-lazy components', async () => {
@@ -119,6 +176,7 @@ describe('lazyRoute', () => {
       component: () => Promise.resolve({ default: MockComponent }),
       loadingElement,
       errorElement,
+      lazyOptions: { maxRetries: 2, retryDelay: 0 },
       preload: preloadFn,
       children,
       index: true,
@@ -147,6 +205,20 @@ describe('lazyRoute', () => {
     expect('children' in route).toBe(false)
     expect('index' in route).toBe(false)
     expect('key' in route).toBe(false)
+  })
+
+  it('passes retry options to the generated lazy route component', async () => {
+    const loader = vi
+      .fn<() => Promise<{ default: typeof MockComponent }>>()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValueOnce({ default: MockComponent })
+    const route = lazyRoute({
+      component: loader,
+      lazyOptions: { maxRetries: 1, retryDelay: 0 },
+    })
+
+    await preloadLazy(route.component!)
+    expect(loader).toHaveBeenCalledTimes(2)
   })
 })
 

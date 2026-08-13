@@ -1,5 +1,6 @@
 import { $state, $store, ErrorBoundary, render, type FictNode } from 'fict'
-import { createResource, Link, NavLink, Route, Router } from '@fictjs/router'
+import { resource } from 'fict/plus'
+import { Link, NavLink, Route, Router } from '@fictjs/router'
 import './styles.css'
 
 type View = 'dashboard' | 'intake' | 'router' | 'resources' | 'auth'
@@ -56,12 +57,15 @@ const serviceSnapshots = [
 
 let serviceSnapshotRequest = 0
 
-async function loadServiceSnapshot() {
+async function loadServiceSnapshot(signal: AbortSignal) {
   await new Promise(resolve => setTimeout(resolve, 60))
+  if (signal.aborted) throw signal.reason
   const snapshot = serviceSnapshots[serviceSnapshotRequest % serviceSnapshots.length]!
   serviceSnapshotRequest += 1
   return snapshot
 }
+
+const serviceHealthResource = resource(({ signal }) => loadServiceSnapshot(signal))
 
 function App() {
   let activeView = $state<View>('dashboard')
@@ -535,7 +539,7 @@ function AccountSettings() {
 }
 
 function ResourceMonitor() {
-  const health = createResource(() => 'service-fleet', loadServiceSnapshot)
+  const health = serviceHealthResource.read()
 
   return (
     <article class="surface">
@@ -547,14 +551,14 @@ function ResourceMonitor() {
         <button
           class="secondary-action"
           data-testid="resource-refresh"
-          disabled={health.loading()}
-          onClick={() => void health.refetch()}
+          disabled={health.loading}
+          onClick={health.refresh}
         >
-          {health.loading() ? 'Refreshing' : 'Refresh snapshot'}
+          {health.loading ? 'Refreshing' : 'Refresh snapshot'}
         </button>
       </header>
 
-      {health.loading() ? (
+      {health.loading ? (
         <section class="panel resource-state" data-testid="resource-loading">
           <span class="loader" />
           <div>
@@ -562,27 +566,25 @@ function ResourceMonitor() {
             <p class="muted">Aggregating regional service checks.</p>
           </div>
         </section>
-      ) : health.error() ? (
+      ) : health.error ? (
         <section class="panel error-panel" data-testid="resource-error">
           <h2>Fleet telemetry unavailable</h2>
-          <p>{String(health.error())}</p>
+          <p>{String(health.error)}</p>
         </section>
-      ) : health() ? (
+      ) : health.data ? (
         <section class="panel" data-testid="resource-ready">
           <div class="resource-summary">
             <div>
               <span>Snapshot</span>
-              <strong data-testid="resource-revision">
-                {(health() ?? health.latest())?.revision ?? ''}
-              </strong>
+              <strong data-testid="resource-revision">{health.data?.revision ?? ''}</strong>
             </div>
             <div>
               <span>Generated</span>
-              <strong>{(health() ?? health.latest())?.generatedAt ?? ''}</strong>
+              <strong>{health.data?.generatedAt ?? ''}</strong>
             </div>
             <div>
               <span>Services</span>
-              <strong>{(health() ?? health.latest())?.services.length ?? 0}</strong>
+              <strong>{health.data?.services.length ?? 0}</strong>
             </div>
           </div>
           <table>
@@ -595,7 +597,7 @@ function ResourceMonitor() {
               </tr>
             </thead>
             <tbody>
-              {(health() ?? health.latest())?.services.map(service => (
+              {health.data?.services.map(service => (
                 <tr key={service.name}>
                   <td>{service.name}</td>
                   <td>{service.region}</td>

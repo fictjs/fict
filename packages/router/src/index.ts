@@ -152,6 +152,7 @@ export type { ScrollRestorationOptions } from './scroll'
 // ============================================================================
 
 export { lazy, preloadLazy, isLazyComponent, lazyRoute, createLazyRoutes } from './lazy'
+export type { LazyComponent, LazyOptions } from './lazy'
 
 // ============================================================================
 // Types

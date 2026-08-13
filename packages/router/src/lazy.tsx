@@ -1,174 +1,60 @@
 /**
- * @fileoverview Lazy loading utilities for @fictjs/router
+ * @fileoverview Lazy loading utilities for @fictjs/router.
  *
- * This module provides code splitting support via lazy loading of route components.
- * Works with Fict's Suspense for loading states.
+ * Router lazy components use the same internal runtime protocol as
+ * `fict/plus`, so preload, reset, retry, and Suspense behavior interoperate.
  */
 
-import { type FictNode, type Component, onCleanup } from '@fictjs/runtime'
-import { createSignal } from '@fictjs/runtime/advanced'
+import { type FictNode, type Component } from '@fictjs/runtime'
+import {
+  __fictCreateLazyComponent,
+  __fictIsLazyComponent,
+  __fictPreloadLazyComponent,
+} from '@fictjs/runtime/internal'
 
 import type { RouteComponentProps, RouteDefinition } from './types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyComponent = Component<any>
 
-// ============================================================================
-// Lazy Component
-// ============================================================================
+/** Retry behavior shared with `lazy` from `fict/plus`. */
+export interface LazyOptions {
+  /** Maximum retry attempts after the initial load. Defaults to `0`. */
+  maxRetries?: number
+  /** Initial exponential-backoff delay in milliseconds. Defaults to `1000`. */
+  retryDelay?: number
+}
 
-/**
- * State for lazy-loaded component
- */
-interface LazyState<T> {
-  component: T | null
-  error: unknown
-  loading: boolean
+/** A lazy component with explicit preload and retry-reset controls. */
+export type LazyComponent<T extends AnyComponent = AnyComponent> = T & {
+  reset: () => void
+  preload: () => Promise<void>
 }
 
 /**
- * Create a lazy-loaded component
+ * Create a lazy-loaded component with Suspense support.
  *
- * @example
- * ```tsx
- * // Create a lazy component
- * const LazyUserProfile = lazy(() => import('./pages/UserProfile'))
- *
- * // Use in routes
- * <Route path="/users/:id" component={LazyUserProfile} />
- *
- * // Or with Suspense fallback
- * <Suspense fallback={<Loading />}>
- *   <LazyUserProfile />
- * </Suspense>
- * ```
+ * Failed loads remain observable until `reset()` is called. `maxRetries` and
+ * `retryDelay` can be used for automatic exponential-backoff retries.
  */
 export function lazy<T extends AnyComponent>(
   loader: () => Promise<{ default: T } | T>,
-): AnyComponent {
-  let cachedComponent: T | null = null
-  let loadPromise: Promise<T> | null = null
-
-  // Create a wrapper component that handles lazy loading
-  const LazyComponent: AnyComponent = props => {
-    // Track if component is still mounted to prevent state updates after unmount
-    let isMounted = true
-    onCleanup(() => {
-      isMounted = false
-    })
-
-    const state = createSignal<LazyState<T>>({
-      component: cachedComponent,
-      error: null,
-      loading: !cachedComponent,
-    })
-
-    // If already cached, render immediately
-    if (cachedComponent) {
-      const CachedComponent = cachedComponent
-      return <CachedComponent {...props} />
-    }
-
-    // Start loading if not already in progress
-    if (!loadPromise) {
-      loadPromise = loader().then(module => {
-        // Handle both { default: Component } and direct Component exports
-        const component = 'default' in module ? module.default : module
-        cachedComponent = component
-        return component
-      })
-    }
-
-    // Load the component with mounted check
-    loadPromise
-      .then(component => {
-        if (isMounted) {
-          state({ component, error: null, loading: false })
-        }
-      })
-      .catch(error => {
-        if (isMounted) {
-          state({ component: null, error, loading: false })
-        }
-      })
-
-    // Render based on state
-    const currentState = state()
-
-    if (currentState.error) {
-      throw currentState.error
-    }
-
-    if (currentState.loading || !currentState.component) {
-      // Return null while loading - Suspense will handle the fallback
-      // For this to work properly with Suspense, we need to throw a promise
-      throw loadPromise
-    }
-
-    const LoadedComponent = currentState.component
-    return <LoadedComponent {...props} />
-  }
-
-  // Mark as lazy for identification
-  const lazyComp = LazyComponent as AnyComponent & { __lazy: boolean; __preload: () => Promise<T> }
-  lazyComp.__lazy = true
-  lazyComp.__preload = () => {
-    if (!loadPromise) {
-      loadPromise = loader().then(module => {
-        const component = 'default' in module ? module.default : module
-        cachedComponent = component
-        return component
-      })
-    }
-    return loadPromise
-  }
-
-  return LazyComponent
+  options: LazyOptions = {},
+): LazyComponent<T> {
+  return __fictCreateLazyComponent(loader, options) as unknown as LazyComponent<T>
 }
 
-/**
- * Preload a lazy component
- * Useful for preloading on hover/focus
- */
+/** Preload router lazy components, `fict/plus` lazy components, and legacy router lazy values. */
 export function preloadLazy(component: AnyComponent): Promise<void> {
-  const lazyComp = component as AnyComponent & { __lazy?: boolean; __preload?: () => Promise<void> }
-  if (lazyComp.__lazy && lazyComp.__preload) {
-    return lazyComp.__preload()
-  }
-  return Promise.resolve()
+  return __fictPreloadLazyComponent(component)
 }
 
-/**
- * Check if a component is a lazy component
- */
-export function isLazyComponent(component: unknown): component is AnyComponent {
-  const comp = component as AnyComponent & { __lazy?: boolean }
-  return !!(comp && typeof comp === 'function' && comp.__lazy)
+/** Check current, framework, and legacy router lazy-component contracts. */
+export function isLazyComponent(component: unknown): component is LazyComponent {
+  return __fictIsLazyComponent(component)
 }
 
-// ============================================================================
-// Lazy Route
-// ============================================================================
-
-/**
- * Create a lazy route definition
- *
- * @example
- * ```tsx
- * const routes = [
- *   lazyRoute({
- *     path: '/users/:id',
- *     component: () => import('./pages/UserProfile'),
- *   }),
- *   lazyRoute({
- *     path: '/settings',
- *     component: () => import('./pages/Settings'),
- *     loadingElement: <Loading />,
- *     errorElement: <Error />,
- *   }),
- * ]
- * ```
- */
+/** Create a lazy route definition. */
 export function lazyRoute<P extends string = string>(config: {
   path?: string
   component: () => Promise<
@@ -176,61 +62,36 @@ export function lazyRoute<P extends string = string>(config: {
   >
   loadingElement?: FictNode
   errorElement?: FictNode
+  lazyOptions?: LazyOptions | undefined
   preload?: RouteDefinition<P>['preload']
   children?: RouteDefinition[]
   index?: boolean
   key?: string
 }): RouteDefinition<P> {
-  const LazyComponent = lazy(config.component)
-
-  // Build the route definition, only including defined properties
-  const routeDef: RouteDefinition<P> = {
-    component: LazyComponent as Component<RouteComponentProps<P>>,
+  const LazyRouteComponent = lazy(config.component, config.lazyOptions)
+  const routeDefinition: RouteDefinition<P> = {
+    component: LazyRouteComponent as Component<RouteComponentProps<P>>,
   }
 
-  if (config.path !== undefined) routeDef.path = config.path
-  if (config.loadingElement !== undefined) routeDef.loadingElement = config.loadingElement
-  if (config.errorElement !== undefined) routeDef.errorElement = config.errorElement
-  if (config.preload !== undefined) routeDef.preload = config.preload
-  if (config.children !== undefined) routeDef.children = config.children
-  if (config.index !== undefined) routeDef.index = config.index
-  if (config.key !== undefined) routeDef.key = config.key
+  if (config.path !== undefined) routeDefinition.path = config.path
+  if (config.loadingElement !== undefined) routeDefinition.loadingElement = config.loadingElement
+  if (config.errorElement !== undefined) routeDefinition.errorElement = config.errorElement
+  if (config.preload !== undefined) routeDefinition.preload = config.preload
+  if (config.children !== undefined) routeDefinition.children = config.children
+  if (config.index !== undefined) routeDefinition.index = config.index
+  if (config.key !== undefined) routeDefinition.key = config.key
 
-  return routeDef
+  return routeDefinition
 }
 
-// ============================================================================
-// Lazy Loading Helpers
-// ============================================================================
-
-/**
- * Create multiple lazy routes from a glob import pattern
- * Useful for file-system based routing
- *
- * @example
- * ```tsx
- * // In a Vite project
- * const pages = import.meta.glob('./pages/*.tsx')
- *
- * const routes = createLazyRoutes(pages, {
- *   // Map file path to route path
- *   pathTransform: (filePath) => {
- *     // ./pages/UserProfile.tsx -> /user-profile
- *     return filePath
- *       .replace('./pages/', '/')
- *       .replace('.tsx', '')
- *       .toLowerCase()
- *       .replace(/([A-Z])/g, '-$1')
- *   },
- * })
- * ```
- */
+/** Create lazy route definitions from a glob-import module map. */
 export function createLazyRoutes(
   modules: Record<string, () => Promise<{ default: AnyComponent }>>,
   options: {
     pathTransform?: (filePath: string) => string
     loadingElement?: FictNode
     errorElement?: FictNode
+    lazyOptions?: LazyOptions
   } = {},
 ): RouteDefinition[] {
   const routes: RouteDefinition[] = []
@@ -249,6 +110,7 @@ export function createLazyRoutes(
         component: loader,
         loadingElement: options.loadingElement,
         errorElement: options.errorElement,
+        lazyOptions: options.lazyOptions,
       }),
     )
   }

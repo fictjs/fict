@@ -5,7 +5,7 @@
  * including query caching, actions, and preloading.
  */
 
-import { createEffect, batch, createSuspenseToken } from '@fictjs/runtime'
+import { createEffect, batch, createSuspenseToken, onCleanup } from '@fictjs/runtime'
 import { createSignal, reactive, type Signal } from '@fictjs/runtime/advanced'
 import { __fictGetCurrentSSRSession, __fictIsSSRSessionActive } from '@fictjs/runtime/internal'
 
@@ -678,6 +678,9 @@ export function createPreload<T>(
 
 /**
  * Resource state
+ *
+ * @deprecated Use `resource` from `fict/plus` for caching, cancellation,
+ * invalidation, mutation, and SSR-aware resource ownership.
  */
 export interface Resource<T> {
   /** Get current data (undefined during loading or on error) */
@@ -692,7 +695,10 @@ export interface Resource<T> {
   refetch: () => Promise<T | undefined>
 }
 
-/** Resource behavior options. */
+/**
+ * Resource behavior options.
+ * @deprecated Use `ResourceOptions` from `fict/plus`.
+ */
 export interface ResourceOptions {
   /** Throw a Suspense token while the current request is loading. */
   suspense?: boolean
@@ -702,11 +708,15 @@ export interface ResourceOptions {
  * Create a resource for async data loading
  * Integrates with Suspense for loading states
  *
+ * @deprecated Use `resource` from `fict/plus`. This compatibility helper is
+ * retained for existing router applications but is no longer the canonical
+ * Fict resource API.
+ *
  * @example
  * ```tsx
  * const userResource = createResource(
  *   () => userId,
- *   async (id) => fetch(`/api/users/${id}`).then(r => r.json()),
+ *   async (id, { signal }) => fetch(`/api/users/${id}`, { signal }).then(r => r.json()),
  *   { suspense: true }
  * )
  *
@@ -718,7 +728,7 @@ export interface ResourceOptions {
  */
 export function createResource<T, S = unknown>(
   source: () => S,
-  fetcher: (source: S) => T | Promise<T>,
+  fetcher: (source: S, context: { signal: AbortSignal }) => T | Promise<T>,
   options: ResourceOptions = {},
 ): Resource<T> {
   const dataSignal = createSignal<T | undefined>(undefined)
@@ -730,6 +740,8 @@ export function createResource<T, S = unknown>(
   let hasCurrentSource = false
   let fetchId = 0 // Used to prevent race conditions
   let pendingToken: ReturnType<typeof createSuspenseToken> | null = null
+  let activeController: AbortController | null = null
+  let disposed = false
 
   const resolvePendingToken = () => {
     const token = pendingToken
@@ -742,9 +754,13 @@ export function createResource<T, S = unknown>(
    * Returns T on success, undefined on error (error is stored in errorSignal)
    */
   const doFetch = async (s: S, id: number): Promise<T | undefined> => {
+    if (disposed) return undefined
     // Wake a boundary waiting on the superseded request. Its retry will attach
     // to this request's token if the new request is still loading.
     resolvePendingToken()
+    activeController?.abort()
+    const controller = new AbortController()
+    activeController = controller
     batch(() => {
       dataSignal(undefined)
       loadingSignal(true)
@@ -752,11 +768,11 @@ export function createResource<T, S = unknown>(
     })
 
     try {
-      const result = await fetcher(s)
+      const result = await fetcher(s, { signal: controller.signal })
 
       // Only apply results if this fetch is still current
       // (prevents race conditions when source changes rapidly)
-      if (id === fetchId) {
+      if (!disposed && !controller.signal.aborted && id === fetchId) {
         batch(() => {
           dataSignal(result)
           latestSignal(result)
@@ -770,7 +786,7 @@ export function createResource<T, S = unknown>(
       return undefined
     } catch (err) {
       // Only apply error if this fetch is still current
-      if (id === fetchId) {
+      if (!disposed && !controller.signal.aborted && id === fetchId) {
         batch(() => {
           dataSignal(undefined)
           errorSignal(err)
@@ -783,6 +799,8 @@ export function createResource<T, S = unknown>(
 
       // Return undefined on error - error is accessible via resource.error()
       return undefined
+    } finally {
+      if (activeController === controller) activeController = null
     }
   }
 
@@ -800,6 +818,19 @@ export function createResource<T, S = unknown>(
     }
   })
 
+  onCleanup(() => {
+    disposed = true
+    fetchId++
+    activeController?.abort()
+    activeController = null
+    resolvePendingToken()
+    batch(() => {
+      dataSignal(undefined)
+      loadingSignal(false)
+      errorSignal(undefined)
+    })
+  })
+
   const resource = (() => {
     const loading = loadingSignal()
     const data = dataSignal()
@@ -814,6 +845,7 @@ export function createResource<T, S = unknown>(
   resource.error = () => errorSignal()
   resource.latest = () => latestSignal()
   resource.refetch = () => {
+    if (disposed) return Promise.resolve(undefined)
     const currentFetchId = ++fetchId
     return doFetch(currentSource, currentFetchId)
   }

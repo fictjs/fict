@@ -16,6 +16,7 @@ import {
   submitAction,
   createResource,
   cleanupDataUtilities,
+  type Resource,
 } from '../src/data'
 
 describe('query', () => {
@@ -1441,5 +1442,38 @@ describe('createResource', () => {
 
     expect(resource()).toBe('ready')
     expect(resource.latest()).toBe('ready')
+  })
+
+  it('aborts an owned request and ignores its completion after disposal', async () => {
+    let resolveRequest!: (value: string) => void
+    let requestSignal: AbortSignal | undefined
+    let ownedResource!: Resource<string>
+    const container = document.createElement('div')
+    const dispose = render(() => {
+      ownedResource = createResource(
+        () => 'key',
+        (_source, { signal }) => {
+          requestSignal = signal
+          return new Promise<string>(resolve => {
+            resolveRequest = resolve
+          })
+        },
+      )
+      return null
+    }, container)
+
+    expect(requestSignal?.aborted).toBe(false)
+    expect(ownedResource.loading()).toBe(true)
+
+    dispose()
+    expect(requestSignal?.aborted).toBe(true)
+
+    resolveRequest('late result')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(ownedResource()).toBeUndefined()
+    expect(ownedResource.latest()).toBeUndefined()
+    expect(ownedResource.loading()).toBe(false)
   })
 })

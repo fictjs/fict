@@ -54,7 +54,7 @@ The suite MUST keep all of these paths active:
 
 1. Submit a form whose validation changes its approval branch.
 2. Navigate a nested route and resolve a parameterized detail screen.
-3. Load and refetch a `createResource` value through visible loading and ready states.
+3. Load and refresh a canonical `fict/plus` `resource` value through visible loading and ready states.
 4. Trigger and recover an `ErrorBoundary` while preserving surrounding state.
 5. Fetch SSR output directly, then exercise the delivered page in a browser.
 6. Send concurrent streaming SSR requests and verify complete deferred content.

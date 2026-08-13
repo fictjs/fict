@@ -53,6 +53,14 @@ describe('lazy', () => {
     expect(() => LazyComp({})).toThrow(error)
   })
 
+  it('accepts a direct component export for router interoperability', async () => {
+    const Loaded = () => 'ready'
+    const LazyComp = lazy(() => Promise.resolve(Loaded))
+
+    await expect(LazyComp.preload()).resolves.toBeUndefined()
+    expect(LazyComp({})).toBe('ready')
+  })
+
   it.each([undefined, null, false, 0, ''])(
     'caches a falsy loader rejection until reset: %j',
     async reason => {

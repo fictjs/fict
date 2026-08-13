@@ -29,4 +29,4 @@ export type { ResourceResult, ResourceOptions, ResourceCacheOptions } from './re
 // ============================================================================
 
 export { lazy } from './lazy'
-export type { LazyModule } from './lazy'
+export type { LazyComponent, LazyModule, LazyOptions } from './lazy'

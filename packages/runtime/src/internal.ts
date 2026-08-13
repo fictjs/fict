@@ -217,6 +217,19 @@ export { onDestroy } from './lifecycle'
 export { runInScope } from './scope'
 
 // ============================================================================
+// First-party async component protocol (Internal)
+// ============================================================================
+
+export {
+  __fictCreateLazyComponent,
+  __fictIsLazyComponent,
+  __fictPreloadLazyComponent,
+  type FictLazyComponent,
+  type FictLazyLoadResult,
+  type FictLazyOptions,
+} from './lazy-component'
+
+// ============================================================================
 // Constants (Compiler/Runtime shared)
 // ============================================================================
 
