@@ -201,7 +201,15 @@ describe('query', () => {
     }
   })
 
-  it('shares wrapped preload intent across router module instances', async () => {
+  it('shares wrapped preload intent across router instances with a hardened global', async () => {
+    const intentStateKey = Symbol.for('fict.router.query-preload-intent-state.v1')
+    const intentStateDescriptor = Object.getOwnPropertyDescriptor(globalThis, intentStateKey)
+    Object.defineProperty(globalThis, intentStateKey, {
+      configurable: true,
+      value: undefined,
+      writable: false,
+    })
+
     vi.resetModules()
     const firstRouter = await import('../src/data')
     vi.resetModules()
@@ -221,6 +229,11 @@ describe('query', () => {
       nowSpy.mockRestore()
       firstRouter.cleanupDataUtilities()
       secondRouter.cleanupDataUtilities()
+      if (intentStateDescriptor) {
+        Object.defineProperty(globalThis, intentStateKey, intentStateDescriptor)
+      } else {
+        Reflect.deleteProperty(globalThis, intentStateKey)
+      }
     }
   })
 

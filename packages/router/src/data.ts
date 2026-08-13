@@ -49,6 +49,7 @@ type QueryPreloader = (args: unknown[]) => Promise<unknown>
 
 const QUERY_PRELOADER = Symbol.for('fict.router.query-preloader.v1')
 const QUERY_INVOCATION_PROMISE = Symbol.for('fict.router.query-invocation-promise.v1')
+const QUERY_INVOCATION_MARK_PRELOAD = Symbol.for('fict.router.query-invocation-mark-preload.v1')
 const QUERY_PRELOAD_INTENT_STATE = Symbol.for('fict.router.query-preload-intent-state.v1')
 
 interface QueryPreloadIntentState {
@@ -127,8 +128,12 @@ function readQueryPreloader(queryFn: object): QueryPreloader | undefined {
 function attachQueryInvocationPromise<T>(
   accessor: QueryAccessor<T>,
   promise: Promise<T>,
+  markPreload?: () => void,
 ): QueryInvocation<T> {
   defineQueryProtocol(accessor, QUERY_INVOCATION_PROMISE, promise)
+  if (markPreload) {
+    defineQueryProtocol(accessor, QUERY_INVOCATION_MARK_PRELOAD, markPreload)
+  }
   return { accessor, promise }
 }
 
@@ -142,6 +147,13 @@ function readQueryInvocationPromise<T>(accessor: QueryAccessor<T>): Promise<T> |
     return undefined
   }
   return Promise.resolve(value as PromiseLike<T>)
+}
+
+function markQueryInvocationAsPreload<T>(accessor: QueryAccessor<T>): void {
+  const value = (accessor as QueryAccessor<T> & Record<symbol, unknown>)[
+    QUERY_INVOCATION_MARK_PRELOAD
+  ]
+  if (typeof value === 'function') value()
 }
 
 function resolveQueryCache(): QueryCache {
@@ -315,10 +327,16 @@ export function query<T, Args extends unknown[]>(
       const maxAge = cached.intent === 'preload' ? PRELOAD_CACHE_DURATION : CACHE_DURATION
 
       if (Date.now() - cached.timestamp < maxAge) {
+        const previousIntent = cached.intent
         if (intent === 'navigate') cached.intent = 'navigate'
         return attachQueryInvocationPromise(
           createQueryObserver(cached.result, 'success').accessor,
           Promise.resolve(cached.result as T),
+          intent === 'navigate' && previousIntent === 'preload'
+            ? () => {
+                if (queryCache.get(cacheKey) === cached) cached.intent = 'preload'
+              }
+            : undefined,
         )
       }
     }
@@ -326,9 +344,18 @@ export function query<T, Args extends unknown[]>(
     const observer = createQueryObserver(cached?.result, 'pending')
 
     if (cached && !cached.settled) {
+      const previousIntent = cached.intent
       if (intent === 'navigate') cached.intent = 'navigate'
       observeQueryPromise(cached.promise, observer)
-      return attachQueryInvocationPromise(observer.accessor, cached.promise)
+      return attachQueryInvocationPromise(
+        observer.accessor,
+        cached.promise,
+        intent === 'navigate' && previousIntent === 'preload'
+          ? () => {
+              if (queryCache.get(cacheKey) === cached) cached.intent = 'preload'
+            }
+          : undefined,
+      )
     }
 
     // Fetch the data. Query functions may throw before returning a promise;
@@ -382,7 +409,15 @@ export function query<T, Args extends unknown[]>(
       },
     )
 
-    return attachQueryInvocationPromise(observer.accessor, promise)
+    return attachQueryInvocationPromise(
+      observer.accessor,
+      promise,
+      intent === 'navigate'
+        ? () => {
+            if (queryCache.get(cacheKey) === pendingEntry) pendingEntry.intent = 'preload'
+          }
+        : undefined,
+    )
   }
 
   const queryFn = (...args: Args) => invoke(getQueryInvocationIntent(), args).accessor
@@ -748,8 +783,8 @@ export function preloadQuery<T, Args extends unknown[]>(
       task = preload(args) as Promise<T>
     } else {
       // A wrapper hides the base query's preloader protocol. Keep the intent
-      // synchronous and realm-shared so duplicated router copies can still
-      // classify every base query invoked by the wrapper as speculative.
+      // synchronous and realm-shared, then explicitly mark the returned
+      // invocation so duplicated copies also work when globalThis is hardened.
       const accessor = runWithQueryPreloadIntent(() => queryFn(...args))
       const invocationPromise = readQueryInvocationPromise(accessor)
       if (!invocationPromise) {
@@ -757,6 +792,7 @@ export function preloadQuery<T, Args extends unknown[]>(
           '[fict-router] preloadQuery() expects a Query created by query(); wrappers must return its QueryAccessor unchanged.',
         )
       }
+      markQueryInvocationAsPreload(accessor)
       task = invocationPromise
     }
   } catch (error) {
