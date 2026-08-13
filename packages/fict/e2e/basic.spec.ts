@@ -197,8 +197,16 @@ test.describe('Context API', () => {
   })
 
   test('context updates propagate to consumers', async ({ page }) => {
+    const draft = page.locator('#context-draft')
+    await page.click('#context-local-count')
+    await page.click('#context-local-count')
+    await draft.fill('preserved draft')
+    await draft.focus()
+
     await page.click('#toggle-theme')
     await expect(page.locator('#themed-button')).toContainText('Theme: dark')
+    await expect(page.locator('#context-local-count')).toContainText('Local: 2')
+    await expect(draft).toHaveValue('preserved draft')
 
     await page.click('#toggle-theme')
     await expect(page.locator('#themed-button')).toContainText('Theme: light')

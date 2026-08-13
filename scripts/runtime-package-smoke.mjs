@@ -40,10 +40,10 @@ const requiredDistFiles = [
 const forbiddenDistFiles = ['index.dev.js', 'index.dev.js.map']
 
 const exportChecks = [
-  ['.', ['render', 'createEffect']],
+  ['.', ['render', 'createEffect', 'useContextAccessor']],
   ['./internal', ['insertBetween', 'hydrateComponent', '__fictRunWithSSRSession']],
   ['./internal/list', ['createKeyedList', 'toNodeArray']],
-  ['./advanced', ['createRenderEffect', 'createContext']],
+  ['./advanced', ['createRenderEffect', 'createContext', 'useContextAccessor']],
   ['./experimental/loader', ['installResumableLoader', 'waitForPendingHandlers']],
   ['./jsx-runtime', ['jsx', 'jsxs', 'Fragment']],
   ['./jsx-dev-runtime', ['jsxDEV', 'Fragment']],

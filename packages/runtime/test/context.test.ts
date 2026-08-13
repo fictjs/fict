@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import {
   createContext,
   useContext,
+  useContextAccessor,
   hasContext,
   render,
   Fragment,
@@ -32,6 +33,23 @@ describe('Context', () => {
   })
 
   describe('useContext', () => {
+    it('returns a reactive default accessor outside a provider', () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      let theme!: () => string
+
+      const Child = () => {
+        theme = useContextAccessor(ThemeContext)
+        return { type: 'span', props: { children: theme } }
+      }
+
+      const dispose = render(() => ({ type: Child, props: {} }), container)
+
+      expect(theme()).toBe('light')
+      expect(container.textContent).toBe('light')
+      dispose()
+    })
+
     it('returns default value when no provider exists', () => {
       const ThemeContext = createContext('light')
       const container = document.createElement('div')
@@ -419,15 +437,17 @@ describe('Context', () => {
       dispose()
     })
 
-    it('updates consumers when a reactive provider prop changes', async () => {
+    it('updates accessor consumers without rerunning the component', async () => {
       const ThemeContext = createContext('light')
       const container = document.createElement('div')
       const theme = createSignal('light')
-      let capturedTheme: string | undefined
+      let currentTheme!: () => string
+      let childRuns = 0
 
       const Child = () => {
-        capturedTheme = useContext(ThemeContext)
-        return { type: 'span', props: { children: capturedTheme } }
+        childRuns++
+        currentTheme = useContextAccessor(ThemeContext)
+        return { type: 'span', props: { children: currentTheme } }
       }
 
       const dispose = render(
@@ -441,16 +461,119 @@ describe('Context', () => {
         container,
       )
 
-      expect(capturedTheme).toBe('light')
+      expect(currentTheme()).toBe('light')
       expect(container.textContent).toBe('light')
+      expect(childRuns).toBe(1)
 
       theme('dark')
       await tick()
 
-      expect(capturedTheme).toBe('dark')
+      expect(currentTheme()).toBe('dark')
       expect(container.textContent).toBe('dark')
+      expect(childRuns).toBe(1)
 
       dispose()
+    })
+
+    it('updates useContext reads made inside descendant effects', async () => {
+      const ThemeContext = createContext('light')
+      const theme = createSignal('light')
+      const container = document.createElement('div')
+      const seen: string[] = []
+
+      const Child = () => {
+        createEffect(() => {
+          seen.push(useContext(ThemeContext))
+        })
+        return { type: 'span', props: { children: 'child' } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(seen).toEqual(['light'])
+      theme('dark')
+      await tick()
+      expect(seen).toEqual(['light', 'dark'])
+      dispose()
+    })
+
+    it('preserves descendant state, DOM identity, focus, and scroll on value changes', async () => {
+      const ThemeContext = createContext('light')
+      const theme = createSignal('light')
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      let setLocal!: (value: number) => void
+      let childRuns = 0
+      let destroyed = 0
+
+      const Child = () => {
+        childRuns++
+        const currentTheme = useContextAccessor(ThemeContext)
+        const local = createSignal(0)
+        setLocal = value => local(value)
+        onDestroy(() => {
+          destroyed++
+        })
+        return {
+          type: 'section',
+          props: {
+            children: [
+              { type: 'span', props: { id: 'theme-value', children: currentTheme } },
+              { type: 'span', props: { id: 'local-value', children: local } },
+              { type: 'input', props: { id: 'draft' } },
+              { type: 'div', props: { id: 'scroller', children: 'content' } },
+            ],
+          },
+        }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      try {
+        const input = container.querySelector<HTMLInputElement>('#draft')!
+        const scroller = container.querySelector<HTMLElement>('#scroller')!
+        input.value = 'draft text'
+        input.focus()
+        scroller.scrollTop = 24
+        setLocal(7)
+        await tick()
+
+        theme('dark')
+        await tick()
+
+        expect(container.querySelector('#theme-value')?.textContent).toBe('dark')
+        expect(container.querySelector('#local-value')?.textContent).toBe('7')
+        expect(container.querySelector('#draft')).toBe(input)
+        expect(container.querySelector('#scroller')).toBe(scroller)
+        expect(input.value).toBe('draft text')
+        expect(document.activeElement).toBe(input)
+        expect(scroller.scrollTop).toBe(24)
+        expect(childRuns).toBe(1)
+        expect(destroyed).toBe(0)
+      } finally {
+        dispose()
+        container.remove()
+      }
+
+      expect(destroyed).toBe(1)
     })
 
     it('supports reactive context value using store pattern', async () => {

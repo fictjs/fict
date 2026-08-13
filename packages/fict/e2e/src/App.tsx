@@ -1,6 +1,6 @@
 import {
   createContext,
-  useContext,
+  useContextAccessor,
   ErrorBoundary,
   Suspense,
   $memo,
@@ -286,17 +286,24 @@ function StoreTest() {
 const ThemeContext = createContext<'light' | 'dark'>('light')
 
 function ThemedButton() {
-  const theme = useContext(ThemeContext)
+  const theme = useContextAccessor(ThemeContext)
+  let localCount = $state(0)
   return (
-    <button
-      id="themed-button"
-      style={{
-        background: theme === 'dark' ? '#333' : '#fff',
-        color: theme === 'dark' ? '#fff' : '#333',
-      }}
-    >
-      Theme: {theme}
-    </button>
+    <div>
+      <button
+        id="themed-button"
+        style={{
+          background: theme() === 'dark' ? '#333' : '#fff',
+          color: theme() === 'dark' ? '#fff' : '#333',
+        }}
+      >
+        Theme: {theme()}
+      </button>
+      <button id="context-local-count" onClick={() => localCount++}>
+        Local: {localCount}
+      </button>
+      <input id="context-draft" aria-label="Context draft" />
+    </div>
   )
 }
 

@@ -46101,6 +46101,14 @@ fn runtime_reactive_call_classification(
                 Some(RuntimeReactiveCreationKind::Memo),
             ))
         }
+        "useContextAccessor"
+            if matches!(
+                source,
+                "fict" | "fict/advanced" | "@fictjs/runtime" | "@fictjs/runtime/advanced"
+            ) =>
+        {
+            Some(classified(Some(ReactiveCallKind::Memo), None))
+        }
         "createEffect"
             if matches!(
                 source,

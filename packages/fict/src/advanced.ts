@@ -53,8 +53,10 @@ export {
   // Context API (for subtree scoping / SSR isolation / multi-instance)
   createContext,
   useContext,
+  useContextAccessor,
   hasContext,
   type Context,
+  type ContextAccessor,
   type ProviderProps,
 
   // Cross-component Signal (escape hatch for scalar/lightweight values)

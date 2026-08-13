@@ -635,7 +635,7 @@ describe('namespace handling in createElement', () => {
     }
   })
 
-  it('preserves a Context Provider call-site namespace across reactive replays', async () => {
+  it('preserves a Context Provider node and call-site namespace across value updates', async () => {
     const ValueContext = createContext(0)
     const value = createSignal(0)
     const container = document.createElement('div')
@@ -667,9 +667,9 @@ describe('namespace handling in createElement', () => {
       value(1)
       await nextTick()
 
-      const replayed = container.querySelector('#provider-mi')
-      expect(replayed).not.toBe(initial)
-      expect(replayed?.namespaceURI).toBe(MATH_NS)
+      const retained = container.querySelector('#provider-mi')
+      expect(retained).toBe(initial)
+      expect(retained?.namespaceURI).toBe(MATH_NS)
     } finally {
       dispose()
     }

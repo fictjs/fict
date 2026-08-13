@@ -245,6 +245,12 @@ Fict uses a compiler-first fine-grained model:
 - Branch returns (`if-return` / `switch-return` / equivalent `try` returns) are lowered to reactive conditionals
 - Unlike React: No full component re-renders on each state update
 
+Context Providers follow the same identity rule: changing only `value` updates
+a stable context cell and does not rebuild descendants. Consumers use
+`useContextAccessor()` for a changing Provider value, or place signals/stores in
+a stable value object. Changing the Provider's children still replaces that
+content subtree.
+
 ---
 
 ## 2.3 Error Handling

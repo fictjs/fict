@@ -1462,6 +1462,25 @@ mod tests {
     }
 
     #[test]
+    fn treats_context_accessors_as_read_only_reactive_values() {
+        let result = compile(request(
+            r#"
+                import { createContext, useContextAccessor } from 'fict';
+                const ThemeContext = createContext('light');
+                export function ThemeLabel() {
+                    const theme = useContextAccessor(ThemeContext);
+                    return <span>{theme}</span>;
+                }
+            "#,
+            "context-accessor.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("() => theme()"), "{}", result.code);
+        assert!(!result.code.contains("theme()()"), "{}", result.code);
+    }
+
+    #[test]
     fn generates_binding_aware_local_reactive_metadata() {
         let result = compile(request(
             r#"

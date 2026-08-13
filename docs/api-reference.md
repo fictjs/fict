@@ -39,6 +39,7 @@ Fict is a compiler-first, fine-grained reactive UI framework. This document cove
 - [Context](#context)
   - [createContext](#createcontext)
   - [useContext](#usecontext)
+  - [useContextAccessor](#usecontextaccessor)
   - [hasContext](#hascontext)
 - [Extended API (fict/plus)](#extended-api-fictplus)
   - [resource](#resource)
@@ -1107,7 +1108,7 @@ const UserContext = createContext<{ name: string; role: string } | null>(null)
 
 ### useContext
 
-Read the nearest Provider value.
+Read the current nearest Provider value.
 
 ```typescript
 function useContext<T>(context: Context<T>): T
@@ -1134,6 +1135,23 @@ function App() {
   )
 }
 ```
+
+`useContext()` participates in tracking when it is called inside an effect,
+memo, or reactive binding. A primitive stored during one-time component setup is
+a snapshot; use `useContextAccessor()` when the Provider's `value` prop changes.
+
+---
+
+### useContextAccessor
+
+Return a read-only reactive accessor for the nearest Provider value.
+
+```typescript
+function useContextAccessor<T>(context: Context<T>): () => T
+```
+
+Provider value updates publish through this accessor without remounting the
+subtree, so descendant state, DOM identity, focus, and scroll are preserved.
 
 ---
 
@@ -1187,40 +1205,33 @@ function App() {
 
 ### Reactive Context Values
 
-Because Fict components run once, pass a signal or store to make context values reactive:
+Use `useContextAccessor()` when the Provider value itself changes:
 
 ```tsx
-import { createContext, useContext } from 'fict'
-import { createSignal } from 'fict/advanced'
+import { $state, createContext, useContextAccessor } from 'fict'
 
-// Context value contains getters
-const CounterContext = createContext({
-  count: () => 0,
-  increment: () => {},
-})
+const ThemeContext = createContext<'light' | 'dark'>('light')
 
-function CounterProvider(props: { children: any }) {
-  const count = createSignal(0)
-  const setCount = (next: number) => count(next)
+function ThemeLabel() {
+  const theme = useContextAccessor(ThemeContext)
+  return <span data-theme={theme()}>{theme()}</span>
+}
+
+function App() {
+  let theme = $state<'light' | 'dark'>('light')
 
   return (
-    <CounterContext.Provider
-      value={{
-        count,
-        increment: () => count(count() + 1),
-      }}
-    >
-      {props.children}
-    </CounterContext.Provider>
+    <ThemeContext.Provider value={theme}>
+      <button onClick={() => (theme = theme === 'light' ? 'dark' : 'light')}>Toggle</button>
+      <ThemeLabel />
+    </ThemeContext.Provider>
   )
 }
-
-function Counter() {
-  const { count, increment } = useContext(CounterContext)
-
-  return <button onClick={increment}>Count: {count()}</button>
-}
 ```
+
+For service objects, passing a stable signal or store inside the context value
+remains useful: consumers can call those getters directly and avoid replacing
+the Provider value object.
 
 ---
 

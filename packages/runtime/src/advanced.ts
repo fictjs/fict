@@ -69,7 +69,15 @@ export { registerErrorHandler } from './lifecycle'
 // Context API (for subtree scoping / SSR isolation / multi-instance)
 // ============================================================================
 
-export { createContext, useContext, hasContext, type Context, type ProviderProps } from './context'
+export {
+  createContext,
+  useContext,
+  useContextAccessor,
+  hasContext,
+  type Context,
+  type ContextAccessor,
+  type ProviderProps,
+} from './context'
 
 // ============================================================================
 // Low-level Primitives (for library authors)

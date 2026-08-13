@@ -66,7 +66,15 @@ export { createElement, render } from './dom'
 export { createPortal } from './binding'
 export { ErrorBoundary } from './error-boundary'
 export { Suspense, createSuspenseToken } from './suspense'
-export { createContext, useContext, hasContext, type Context, type ProviderProps } from './context'
+export {
+  createContext,
+  useContext,
+  useContextAccessor,
+  hasContext,
+  type Context,
+  type ContextAccessor,
+  type ProviderProps,
+} from './context'
 
 // ============================================================================
 // Props Utilities (Public)

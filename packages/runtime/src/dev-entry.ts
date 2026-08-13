@@ -17,6 +17,7 @@ export {
   createSuspenseToken,
   untrack,
   useContext,
+  useContextAccessor,
   useDeferredValue,
   useTransition,
 } from './index'

@@ -13,8 +13,8 @@
  * 1. **Reuses existing RootContext hierarchy** - Uses parent chain for value lookup,
  *    consistent with handleError/handleSuspend mechanisms.
  *
- * 2. **Zero extra root creation overhead** - Provider doesn't create new root,
- *    only mounts value on current root.
+ * 2. **Stable provider boundary** - Provider creates one root for context
+ *    ownership and preserves its child tree when only the value changes.
  *
  * 3. **Auto-aligned with insert/suspense boundaries** - Because they create child
  *    roots that inherit parent, context values propagate correctly.
@@ -53,11 +53,13 @@ import {
   getCurrentRoot,
   popRoot,
   pushRoot,
+  registerRootCleanup,
   resolveParentOwnerDocument,
   type RootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
-import { untrack } from './signal'
+import { untrack } from './scheduler'
+import { computed, createSignal } from './signal'
 import type { BaseProps, FictNode } from './types'
 
 // ============================================================================
@@ -92,6 +94,9 @@ export interface ProviderProps<T> extends BaseProps {
  */
 export type ContextProvider<T> = (props: ProviderProps<T>) => FictNode
 
+/** Read-only reactive accessor for the nearest context value. */
+export type ContextAccessor<T> = () => T
+
 // ============================================================================
 // Internal Context Storage
 // ============================================================================
@@ -100,18 +105,34 @@ export type ContextProvider<T> = (props: ProviderProps<T>) => FictNode
  * WeakMap to store context values per RootContext.
  * Using WeakMap ensures proper garbage collection when roots are destroyed.
  */
-const contextStorage = new WeakMap<RootContext, Map<symbol, unknown>>()
+interface ContextCell {
+  read: () => unknown
+  write: (value: unknown) => void
+}
+
+const contextStorage = new WeakMap<RootContext, Map<symbol, ContextCell>>()
 
 /**
  * Get the context map for a root, creating it if needed
  */
-function getContextMap(root: RootContext): Map<symbol, unknown> {
+function getContextMap(root: RootContext): Map<symbol, ContextCell> {
   let map = contextStorage.get(root)
   if (!map) {
     map = new Map()
     contextStorage.set(root, map)
   }
   return map
+}
+
+function findContextCell(id: symbol): ContextCell | undefined {
+  let root = getCurrentRoot()
+  while (root) {
+    const contextMap = contextStorage.get(root)
+    const cell = contextMap?.get(id)
+    if (cell) return cell
+    root = root.parent
+  }
+  return undefined
 }
 
 // ============================================================================
@@ -174,14 +195,29 @@ export function createContext<T>(defaultValue: T): Context<T> {
     const marker = markerOwnerDocument.createComment('fict:ctx')
     fragment.appendChild(marker)
 
-    let cleanup: (() => void) | undefined
+    const initialValue = untrack(() => props.value)
+    const valueSignal = createSignal(initialValue)
+    const providerRoot = createRootContext(hostRoot)
+    providerRoot.renderNamespace = callSiteRenderNamespace
+    providerRoot.ownerDocument = resolveParentOwnerDocument(
+      marker.parentNode,
+      providerRoot.ownerDocument ?? marker.ownerDocument ?? markerOwnerDocument,
+    )
+    getContextMap(providerRoot).set(id, {
+      read: () => valueSignal(),
+      write: value => valueSignal(value as T),
+    })
+
+    let contentRoot: RootContext | undefined
     let activeNodes: Node[] = []
 
     const cleanupActive = () => {
-      const currentCleanup = cleanup
-      cleanup = undefined
       try {
-        currentCleanup?.()
+        if (contentRoot) {
+          const currentRoot = contentRoot
+          contentRoot = undefined
+          destroyRoot(currentRoot)
+        }
       } finally {
         if (activeNodes.length) {
           removeNodes(activeNodes)
@@ -190,27 +226,24 @@ export function createContext<T>(defaultValue: T): Context<T> {
       }
     }
 
-    const renderChildren = (children: FictNode, value: T) => {
-      // Cleanup previous render
+    const renderChildren = (children: FictNode) => {
       cleanupActive()
 
       if (children == null || children === false) {
         return
       }
 
-      // Create a child root for this provider render. This establishes the
-      // provider boundary; children will look up from here.
-      const providerRoot = createRootContext(hostRoot)
-      providerRoot.renderNamespace = callSiteRenderNamespace
+      // Child identity changes receive a fresh content root, while value-only
+      // changes retain this root and all descendant DOM/lifecycle state.
+      const nextContentRoot = createRootContext(providerRoot)
+      nextContentRoot.renderNamespace = callSiteRenderNamespace
       const markerParent = marker.parentNode
-      providerRoot.ownerDocument = resolveParentOwnerDocument(
+      nextContentRoot.ownerDocument = resolveParentOwnerDocument(
         markerParent,
-        providerRoot.ownerDocument ?? marker.ownerDocument ?? markerOwnerDocument,
+        nextContentRoot.ownerDocument ?? marker.ownerDocument ?? markerOwnerDocument,
       )
-      const contextMap = getContextMap(providerRoot)
-      contextMap.set(id, value)
 
-      const prev = pushRoot(providerRoot)
+      const prev = pushRoot(nextContentRoot)
       let nodes: Node[] = []
       let didPopRoot = false
       const restoreRoot = () => {
@@ -220,46 +253,54 @@ export function createContext<T>(defaultValue: T): Context<T> {
       }
       try {
         const output = createElement(children)
-        nodes = toNodeArray(output, providerRoot.ownerDocument ?? markerOwnerDocument)
+        nodes = toNodeArray(output, nextContentRoot.ownerDocument ?? markerOwnerDocument)
         const parentNode = marker.parentNode as (ParentNode & Node) | null
         if (parentNode) {
           nodes = insertNodesBefore(parentNode, nodes, marker)
         }
         restoreRoot()
-        flushOnMount(providerRoot)
+        flushOnMount(nextContentRoot)
       } catch (err) {
         restoreRoot()
         try {
-          destroyRoot(providerRoot)
+          destroyRoot(nextContentRoot)
         } finally {
           removeNodes(nodes)
         }
         throw err
       }
 
-      cleanup = () => {
-        try {
-          destroyRoot(providerRoot)
-        } finally {
-          removeNodes(nodes)
-        }
-      }
+      contentRoot = nextContentRoot
       activeNodes = nodes
     }
 
-    // Initial render
+    registerRootCleanup(() => {
+      try {
+        cleanupActive()
+      } finally {
+        contextStorage.delete(providerRoot)
+        destroyRoot(providerRoot)
+      }
+    })
+
+    // Value updates publish through the stable context cell. Descendants that
+    // use useContextAccessor (or call useContext inside an effect) update
+    // without rebuilding the provider subtree.
     createRenderEffect(() => {
-      const value = props.value
+      const cell = getContextMap(providerRoot).get(id)
+      cell?.write(props.value)
+    })
+
+    const unsetChildren = Symbol('fict.context.unset-children')
+    let previousChildren: FictNode | typeof unsetChildren = unsetChildren
+    createRenderEffect(() => {
       const children = props.children
+      if (previousChildren !== unsetChildren && Object.is(previousChildren, children)) return
+      previousChildren = children
 
-      // Provider value updates should not subscribe this effect to arbitrary
-      // signal reads that happen while rendering descendants. Child trees own
-      // their own reactivity; the provider only needs to react to its props.
-      untrack(() => {
-        renderChildren(children, value)
-      })
-
-      return cleanupActive
+      // Rendering descendants must not make this effect subscribe to their
+      // signals or to the context value they consume.
+      untrack(() => renderChildren(children))
     })
 
     return fragment
@@ -289,19 +330,22 @@ export function createContext<T>(defaultValue: T): Context<T> {
  * ```
  */
 export function useContext<T>(context: Context<T>): T {
-  let root = getCurrentRoot()
+  const cell = findContextCell(context.id)
+  return cell ? (cell.read() as T) : context.defaultValue
+}
 
-  // Walk up the parent chain looking for the context value
-  while (root) {
-    const contextMap = contextStorage.get(root)
-    if (contextMap && contextMap.has(context.id)) {
-      return contextMap.get(context.id) as T
-    }
-    root = root.parent
-  }
-
-  // No provider found, return default value
-  return context.defaultValue
+/**
+ * Returns a read-only reactive accessor for the nearest Provider value.
+ *
+ * Use this when the Provider's `value` prop itself changes. The accessor keeps
+ * descendant component, DOM, focus, and scroll identity intact while bindings
+ * react to the new value.
+ */
+export function useContextAccessor<T>(context: Context<T>): ContextAccessor<T> {
+  const cell = findContextCell(context.id)
+  return computed(() => (cell ? (cell.read() as T) : context.defaultValue), {
+    internal: true,
+  })
 }
 
 /**
