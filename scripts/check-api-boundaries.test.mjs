@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -17,6 +17,7 @@ const fixtureFiles = [
   'packages/fict/package.json',
   'packages/fict/src/advanced.ts',
   'packages/fict/src/index.ts',
+  'packages/fict/src/lazy.ts',
   'packages/runtime/package.json',
   'packages/runtime/src/effect.ts',
   'packages/runtime/src/index.ts',
@@ -82,6 +83,24 @@ test('API boundary check rejects violations in a source archive without .git', (
     assert.equal(result.status, 1)
     assert.match(result.stderr, /runtime browser graph must not import node:async_hooks/)
     assert.match(result.stderr, /archive-violation\.ts/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('API boundary check rejects drift in frozen context signatures', () => {
+  const root = createSourceArchiveFixture()
+  try {
+    const freezePath = path.join(root, 'docs/api-freeze-v1.md')
+    const freeze = readFileSync(freezePath, 'utf8').replace(
+      'export function useContextAccessor<T>(context: Context<T>): ContextAccessor<T>',
+      'export function useContextAccessor<T>(context: Context<T>): T',
+    )
+    writeFileSync(freezePath, freeze)
+
+    const result = runBoundaryCheck(root)
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /missing required boundary phrase.*useContextAccessor/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

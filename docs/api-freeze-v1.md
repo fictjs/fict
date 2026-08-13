@@ -208,6 +208,10 @@ export function createContext<T>(defaultValue: T): Context<T>
 // Get context value
 export function useContext<T>(context: Context<T>): T
 
+// Get context value through a read-only reactive accessor
+export type ContextAccessor<T> = () => T
+export function useContextAccessor<T>(context: Context<T>): ContextAccessor<T>
+
 // Check whether a context exists
 export function hasContext<T>(context: Context<T>): boolean
 
@@ -223,7 +227,10 @@ export interface ProviderProps<T> extends BaseProps {
 }
 ```
 
-> **Purpose**: The Context API passes data across component trees, supporting SSR isolation, multiple instances, and subtree overrides.
+> **Purpose**: The Context API passes data across component trees, supporting
+> SSR isolation, multiple instances, and subtree overrides. `useContext`
+> preserves setup-time snapshot compatibility, while `useContextAccessor` is
+> the identity-preserving choice when a Provider value changes reactively.
 
 ### 1.10 Versioned Signals
 
@@ -789,6 +796,7 @@ export const $memo = createMemo
 | `createSuspenseToken`                | Component  | 1    | No                 |
 | `createContext`                      | Context    | 1    | No                 |
 | `useContext`                         | Context    | 1    | No                 |
+| `useContextAccessor`                 | Context    | 1    | No                 |
 | `hasContext`                         | Context    | 1    | No                 |
 | `mergeProps`                         | Props      | 1    | Yes                |
 | `prop`                               | Props      | 1    | Yes                |
@@ -845,6 +853,7 @@ export const $memo = createMemo
 | `effectScope`                        | Scope      | 3    | Returns disposer                |
 | `createContext`                      | Context    | 3    | Also in main entry              |
 | `useContext`                         | Context    | 3    | Also in main entry              |
+| `useContextAccessor`                 | Context    | 3    | Also in main entry              |
 | `hasContext`                         | Context    | 3    | Also in main entry              |
 | `createVersionedSignal`              | Reactivity | 3    | Versioned signal                |
 | `createTextBinding`                  | Binding    | 3    | Advanced binding                |
@@ -1016,7 +1025,7 @@ export interface LazyComponent<TProps extends Record<string, unknown>> extends C
  * Create a lazy-loaded component (used with Suspense)
  */
 export function lazy<TProps extends Record<string, unknown> = Record<string, unknown>>(
-  loader: () => Promise<LazyModule<TProps> | { default: Component<TProps> }>,
+  loader: () => Promise<LazyModule<TProps> | Component<TProps>>,
   options?: LazyOptions,
 ): LazyComponent<TProps>
 ```
@@ -1025,6 +1034,9 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
 
 ## Changelog
 
+- **2026-08-13**: Synchronized the freeze with shipped context and lazy APIs
+  - Added `useContextAccessor` and `ContextAccessor`
+  - Documented direct component results accepted by `lazy()` loaders
 - **2026-01-11**: API tier adjustments
   - `createSignal` moved to `@fictjs/runtime/advanced` (escape hatch)
   - Added Context API (`createContext`, `useContext`, `hasContext`)

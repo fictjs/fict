@@ -411,10 +411,29 @@ for (const requiredPhrase of [
   'Tier 2 compiler ABI, not user API',
   'Manual getter markers such as `reactive`',
   '`fict/internal` mirrors this surface',
+  'export type ContextAccessor<T> = () => T',
+  'export function useContextAccessor<T>(context: Context<T>): ContextAccessor<T>',
+  'Promise<LazyModule<TProps> | Component<TProps>>',
 ]) {
   if (!apiFreeze.includes(requiredPhrase)) {
     fail(`docs/api-freeze-v1.md missing required boundary phrase: ${requiredPhrase}`)
   }
+}
+
+for (const contextExport of ['useContextAccessor', 'ContextAccessor']) {
+  if (!containsStandaloneToken(runtimeMain, contextExport)) {
+    fail(`@fictjs/runtime main entrypoint missing frozen context API: ${contextExport}`)
+  }
+}
+
+const contextAccessorTableRows = apiFreeze.match(/^\|\s*`useContextAccessor`/gm)?.length ?? 0
+if (contextAccessorTableRows < 2) {
+  fail('docs/api-freeze-v1.md must list useContextAccessor in runtime and advanced matrices')
+}
+
+const fictLazy = readText('packages/fict/src/lazy.ts')
+if (!fictLazy.includes('Promise<LazyModule<TProps> | Component<TProps>>')) {
+  fail('fict/plus lazy loader must retain direct component result support')
 }
 
 const migrationGuide = readText('docs/migration-guide.md')
