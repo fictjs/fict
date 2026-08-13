@@ -224,6 +224,7 @@ export {
   __fictCreateLazyComponent,
   __fictIsLazyComponent,
   __fictPreloadLazyComponent,
+  __fictRetryLazyComponent,
   type FictLazyComponent,
   type FictLazyLoadResult,
   type FictLazyOptions,

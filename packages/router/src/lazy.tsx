@@ -10,6 +10,7 @@ import {
   __fictCreateLazyComponent,
   __fictIsLazyComponent,
   __fictPreloadLazyComponent,
+  __fictRetryLazyComponent,
 } from '@fictjs/runtime/internal'
 
 import type { RouteComponentProps, RouteDefinition } from './types'
@@ -47,6 +48,11 @@ export function lazy<T extends AnyComponent>(
 /** Preload router lazy components, `fict/plus` lazy components, and legacy router lazy values. */
 export function preloadLazy(component: AnyComponent): Promise<void> {
   return __fictPreloadLazyComponent(component)
+}
+
+/** Retry a cached first-party lazy failure for a new route preload intent. */
+export function retryPreloadLazy(component: AnyComponent): Promise<void> {
+  return __fictRetryLazyComponent(component)
 }
 
 /** Check for the public lazy-component preload/reset contract. */

@@ -27,9 +27,11 @@ export interface FictLazyComponent<
 }
 
 const LAZY_COMPONENT_MARKER = Symbol.for('fict.lazy-component')
+const LAZY_COMPONENT_RETRY_PRELOAD = Symbol.for('fict.lazy-component.retry-preload.v1')
 
 interface LazyCandidate {
   [LAZY_COMPONENT_MARKER]?: boolean
+  [LAZY_COMPONENT_RETRY_PRELOAD]?: () => unknown
   __lazy?: boolean
   __preload?: () => unknown
   preload?: () => unknown
@@ -160,12 +162,18 @@ export function __fictCreateLazyComponent<
     return startLoad()
   }
 
+  const retryPreload = (): Promise<void> => {
+    if (hasLoadError) reset()
+    return preload()
+  }
+
   Object.defineProperties(component, {
     reset: { value: reset, writable: true, enumerable: true, configurable: true },
     preload: { value: preload, writable: true, enumerable: true, configurable: true },
     __lazy: { value: true, writable: true, enumerable: true, configurable: true },
     __preload: { value: preload, writable: true, enumerable: true, configurable: true },
     [LAZY_COMPONENT_MARKER]: { value: true },
+    [LAZY_COMPONENT_RETRY_PRELOAD]: { value: retryPreload },
   })
 
   return component
@@ -207,6 +215,20 @@ export function __fictPreloadLazyComponent(component: unknown): Promise<void> {
       return Promise.resolve(legacyPreload.call(component)).then(() => undefined)
     }
     return Promise.resolve()
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
+/** @internal Retry a cached first-party failure, otherwise preserve normal preload deduplication. */
+export function __fictRetryLazyComponent(component: unknown): Promise<void> {
+  if (typeof component !== 'function') return Promise.resolve()
+  try {
+    const retryPreload = (component as LazyCandidate)[LAZY_COMPONENT_RETRY_PRELOAD]
+    if (typeof retryPreload === 'function') {
+      return Promise.resolve(retryPreload.call(component)).then(() => undefined)
+    }
+    return __fictPreloadLazyComponent(component)
   } catch (error) {
     return Promise.reject(error)
   }

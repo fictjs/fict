@@ -3417,6 +3417,39 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('retries a failed lazy route component on the next Link preload intent', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/current'] })
+    const lazyLoader = vi
+      .fn<() => Promise<{ default: () => null }>>()
+      .mockRejectedValueOnce(new Error('temporary chunk failure'))
+      .mockResolvedValueOnce({ default: () => null })
+    const LazyRetryRoute = lazy(lazyLoader)
+    const routes: RouteDefinition[] = [{ path: '/lazy-retry', component: LazyRetryRoute }]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes}>
+          <Link to="/lazy-retry" prefetch="intent" data-testid="lazy-retry-preload">
+            retry lazy route
+          </Link>
+        </RouterProvider>
+      ))
+
+      const link = screen.getByTestId('lazy-retry-preload')
+      link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await vi.waitFor(() => expect(lazyLoader).toHaveBeenCalledTimes(1))
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await vi.waitFor(() => expect(lazyLoader).toHaveBeenCalledTimes(2))
+    } finally {
+      history.destroy?.()
+    }
+  })
+
   it('deduplicates only concurrent Link preloads and allows a later successful intent', async () => {
     const history = createMemoryHistory({ initialEntries: ['/current'] })
     const repeatPreload = vi

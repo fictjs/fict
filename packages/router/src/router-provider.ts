@@ -4,7 +4,7 @@ import { jsx } from '@fictjs/runtime/jsx-runtime'
 
 import { wrapAccessor, wrapValue } from './accessor-utils'
 import { BeforeLeaveContext, type BeforeLeaveContextValue, RouterContext } from './context'
-import { preloadLazy } from './lazy'
+import { retryPreloadLazy } from './lazy'
 import { stripBaseIfPresent, stripBaseOrWarn } from './router-internals'
 import { getScrollRestoration } from './scroll'
 import type {
@@ -229,7 +229,7 @@ function createRouterState(
         const operations: Promise<unknown>[] = []
         const component = match.route.component
         if (component) {
-          operations.push(Promise.resolve().then(() => preloadLazy(component)))
+          operations.push(Promise.resolve().then(() => retryPreloadLazy(component)))
         }
         const routePreload = match.route.preload
         if (routePreload) {
