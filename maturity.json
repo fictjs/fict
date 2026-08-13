@@ -20,6 +20,12 @@
     "previewBlocksRelease": false,
     "stablePromiseExcludesPreview": true
   },
+  "satellitePackages": [
+    "@fictjs/router",
+    "@fictjs/ssr",
+    "@fictjs/testing-library",
+    "@fictjs/webpack-plugin"
+  ],
   "previewSurfaces": [
     {
       "id": "resumability",

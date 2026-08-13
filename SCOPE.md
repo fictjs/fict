@@ -84,6 +84,10 @@ machine-readable boundary is [maturity.json](./maturity.json).
    [.changeset/config.json](./.changeset/config.json) **is** the Core list.
    Satellites are absent from both `fixed` and `ignore` (independent). Internal
    packages are in `ignore` and/or `"private": true`.
+   "Independent" describes the release decision and bump train, not a rule
+   that Satellite and Core version strings must always differ. A Satellite may
+   have the same numeric version when its own changes warrant that release; it
+   must not be bumped merely because Core moves.
 2. **Guarantee bar applies to Core only.** `strictGuarantee`, the guarantee
    matrix, and API-freeze cover Core packages. Satellites/Preview document their
    own, weaker, contract.

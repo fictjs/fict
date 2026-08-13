@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -87,5 +88,27 @@ test('Preview boundary check rejects legacy loader references without .git', () 
     assert.match(result.stderr, /stable-looking legacy resumability entrypoint/)
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('scope boundary check rejects Satellite packages in fixed or ignore release groups', () => {
+  for (const releaseGroup of ['fixed', 'ignore']) {
+    const root = createSourceArchiveFixture()
+    try {
+      const configPath = path.join(root, '.changeset', 'config.json')
+      const config = JSON.parse(readFileSync(configPath, 'utf8'))
+      if (releaseGroup === 'fixed') {
+        config.fixed[0].push('@fictjs/webpack-plugin')
+      } else {
+        config.ignore.push('@fictjs/webpack-plugin')
+      }
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
+
+      const result = runPreviewCheck(root)
+      assert.equal(result.status, 1)
+      assert.match(result.stderr, /@fictjs\/webpack-plugin is (?:Satellite|a published Satellite)/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   }
 })

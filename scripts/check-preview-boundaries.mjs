@@ -74,6 +74,22 @@ assertSet(
   fixedPackages,
 )
 
+const satellitePackages = maturity.satellitePackages ?? []
+assertSet('Satellite package registry', satellitePackages, [
+  '@fictjs/router',
+  '@fictjs/ssr',
+  '@fictjs/testing-library',
+  '@fictjs/webpack-plugin',
+])
+for (const packageName of satellitePackages) {
+  if (fixedPackages.includes(packageName)) {
+    fail(`${packageName} is Satellite and must not enter the Changesets fixed group`)
+  }
+  if ((changesets.ignore ?? []).includes(packageName)) {
+    fail(`${packageName} is a published Satellite and must not enter Changesets ignore`)
+  }
+}
+
 const previewSurfaces = maturity.previewSurfaces ?? []
 assertSet(
   'Preview surface registry',
@@ -180,7 +196,12 @@ for (const path of filesToScan) {
 for (const [path, phrases] of [
   [
     'SCOPE.md',
-    ['does not block Core 1.0', 'fict/experimental/loader', 'default-off Preview options'],
+    [
+      'does not block Core 1.0',
+      'fict/experimental/loader',
+      'default-off Preview options',
+      'release decision and bump train',
+    ],
   ],
   [
     'docs/PREVIEW.md',
