@@ -3417,6 +3417,38 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('deduplicates only concurrent Link preloads and allows a later successful intent', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/current'] })
+    const repeatPreload = vi
+      .fn<NonNullable<RouteDefinition['preload']>>()
+      .mockResolvedValue('ready')
+    const routes: RouteDefinition[] = [{ path: '/repeat', preload: repeatPreload }]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes}>
+          <Link to="/repeat" prefetch="intent" data-testid="repeat-preload">
+            repeat
+          </Link>
+        </RouterProvider>
+      ))
+
+      const link = screen.getByTestId('repeat-preload')
+      link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      link.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
+      await vi.waitFor(() => expect(repeatPreload).toHaveBeenCalledTimes(1))
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await vi.waitFor(() => expect(repeatPreload).toHaveBeenCalledTimes(2))
+    } finally {
+      history.destroy?.()
+    }
+  })
+
   it('keeps NavLink target, presentation, pending class, children, and disabled state reactive', async () => {
     const history = createMemoryHistory({ initialEntries: ['/current'] })
     let cancelNavigation: (() => void) | undefined

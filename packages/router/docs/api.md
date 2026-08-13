@@ -987,7 +987,10 @@ const routes = [{ path: '/users/:id', component: UserProfile, preload: preloadUs
 
 ### `preloadQuery`
 
-Preload a query for faster navigation.
+Preload a query for faster navigation. The returned promise resolves with the
+query result and preserves failures, allowing a route preloader to propagate a
+speculative failure so the next Link intent can retry it. Fire-and-forget calls
+remain safe from unhandled rejections.
 
 ```tsx
 import { preloadQuery } from '@fictjs/router'
@@ -999,6 +1002,17 @@ function UserLink({ id }: { id: string }) {
     </Link>
   )
 }
+```
+
+Route integration can return the promise directly:
+
+```tsx
+const routes = [
+  {
+    path: '/users/:id',
+    preload: ({ params }) => preloadQuery(getUser, params.id),
+  },
+]
 ```
 
 ---

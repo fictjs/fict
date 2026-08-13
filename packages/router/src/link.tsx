@@ -165,9 +165,10 @@ function createPreloadBehavior(
     if (lastPreload?.href === href && Object.is(lastPreload.state, state)) return
     const currentPreload = { href, state }
     lastPreload = currentPreload
-    void router.preload(href, state).catch(() => {
+    const releasePreload = () => {
       if (lastPreload === currentPreload) lastPreload = undefined
-    })
+    }
+    void router.preload(href, state).then(releasePreload, releasePreload)
   }
 
   createEffect(() => {

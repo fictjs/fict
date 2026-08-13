@@ -107,6 +107,19 @@ describe('query', () => {
     }
   })
 
+  it('returns the preload request promise and preserves failures for retry coordination', async () => {
+    const failure = new Error('preload failed')
+    const fetcher = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce('ready')
+    const fetchValue = query(fetcher, 'observablePreloadFailure')
+
+    await expect(preloadQuery(fetchValue)).rejects.toBe(failure)
+    await expect(preloadQuery(fetchValue)).resolves.toBe('ready')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
   it('does not shorten an existing navigation cache when preloading it', async () => {
     let now = 1_000
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)

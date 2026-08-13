@@ -52,6 +52,11 @@ interface QueryObserver<T> {
   resolve: (result: T) => void
 }
 
+interface QueryInvocation<T> {
+  accessor: QueryAccessor<T>
+  promise: Promise<T>
+}
+
 /** Shared browser cache. SSR requests use isolated caches below. */
 const sharedQueryCache: QueryCache = new Map()
 
@@ -59,7 +64,7 @@ const sharedQueryCache: QueryCache = new Map()
 let requestQueryCaches = new WeakMap<SSRSession, QueryCache>()
 
 /** Internal preload entry points keyed by the public query function. */
-const queryPreloaders = new WeakMap<object, (args: unknown[]) => void>()
+const queryPreloaders = new WeakMap<object, (args: unknown[]) => Promise<unknown>>()
 
 function resolveQueryCache(): QueryCache {
   const session = __fictGetCurrentSSRSession()
@@ -219,7 +224,7 @@ export function query<T, Args extends unknown[]>(
 ): Query<T, Args> {
   startCacheCleanup()
 
-  const invoke = (intent: QueryInvocationIntent, args: Args): QueryAccessor<T> => {
+  const invoke = (intent: QueryInvocationIntent, args: Args): QueryInvocation<T> => {
     // Capture the request cache before starting asynchronous work. Promise
     // callbacks run after the synchronous SSR session stack has unwound.
     const queryCache = resolveQueryCache()
@@ -233,7 +238,10 @@ export function query<T, Args extends unknown[]>(
 
       if (Date.now() - cached.timestamp < maxAge) {
         if (intent === 'navigate') cached.intent = 'navigate'
-        return createQueryObserver(cached.result, 'success').accessor
+        return {
+          accessor: createQueryObserver(cached.result, 'success').accessor,
+          promise: Promise.resolve(cached.result as T),
+        }
       }
     }
 
@@ -242,7 +250,7 @@ export function query<T, Args extends unknown[]>(
     if (cached && !cached.settled) {
       if (intent === 'navigate') cached.intent = 'navigate'
       observeQueryPromise(cached.promise, observer)
-      return observer.accessor
+      return { accessor: observer.accessor, promise: cached.promise }
     }
 
     // Fetch the data. Query functions may throw before returning a promise;
@@ -296,12 +304,12 @@ export function query<T, Args extends unknown[]>(
       },
     )
 
-    return observer.accessor
+    return { accessor: observer.accessor, promise }
   }
 
-  const queryFn = (...args: Args) => invoke('navigate', args)
+  const queryFn = (...args: Args) => invoke('navigate', args).accessor
   queryPreloaders.set(queryFn, args => {
-    invoke('preload', args as Args)
+    return invoke('preload', args as Args).promise
   })
   return queryFn
 }
@@ -652,13 +660,25 @@ export function submitActionFromForm<T>(
 export function preloadQuery<T, Args extends unknown[]>(
   queryFn: Query<T, Args>,
   ...args: Args
-): void {
+): Promise<T | undefined> {
   const preload = queryPreloaders.get(queryFn)
+  let task: Promise<T | undefined>
   if (preload) {
-    preload(args)
-    return
+    task = preload(args) as Promise<T>
+  } else {
+    try {
+      task = Promise.resolve(queryFn(...args)())
+    } catch (error) {
+      task = Promise.reject(error)
+    }
   }
-  queryFn(...args)
+
+  // Callers may intentionally fire-and-forget speculative work. Attach a
+  // rejection observer without changing the promise returned to route
+  // preloaders, which need the failure to decide whether a later intent may
+  // retry.
+  void task.catch(() => undefined)
+  return task
 }
 
 /**
