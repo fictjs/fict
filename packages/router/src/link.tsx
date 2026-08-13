@@ -137,22 +137,37 @@ function readLinkClick(
   return snapshot
 }
 
-function createPreloadBehavior(props: LinkBehaviorProps, getHrefValue: () => string) {
-  let lastPreloadedHref: string | undefined
+function createPreloadBehavior(
+  router: RouterContextValue,
+  props: LinkBehaviorProps,
+  getHrefValue: () => string,
+) {
+  let lastPreload: { href: string; state: unknown } | undefined
 
   const trigger = (snapshot: LinkBehaviorSnapshot) => {
-    if (snapshot.disabled || snapshot.externalHref || snapshot.prefetch === 'none') return
-    const href = getHrefValue()
-    if (lastPreloadedHref === href) return
-    lastPreloadedHref = href
-
-    if (typeof window !== 'undefined' && window.dispatchEvent) {
-      window.dispatchEvent(
-        new CustomEvent('fict-router:preload', {
-          detail: { href, to: snapshot.to },
-        }),
-      )
+    if (typeof window === 'undefined') return
+    if (
+      snapshot.disabled ||
+      snapshot.reloadDocument ||
+      snapshot.externalHref ||
+      snapshot.prefetch === 'none' ||
+      snapshot.prefetch === undefined
+    ) {
+      return
     }
+    const href = getHrefValue()
+    const state =
+      snapshot.state !== undefined
+        ? snapshot.state
+        : typeof snapshot.to === 'object'
+          ? snapshot.to.state
+          : undefined
+    if (lastPreload?.href === href && Object.is(lastPreload.state, state)) return
+    const currentPreload = { href, state }
+    lastPreload = currentPreload
+    void router.preload(href, state).catch(() => {
+      if (lastPreload === currentPreload) lastPreload = undefined
+    })
   }
 
   createEffect(() => {
@@ -164,14 +179,14 @@ function createPreloadBehavior(props: LinkBehaviorProps, getHrefValue: () => str
     handleMouseEnter(event: MouseEvent) {
       untrack(() => {
         const snapshot = readLinkBehavior(props)
-        if (snapshot.prefetch === 'intent' || snapshot.prefetch === undefined) trigger(snapshot)
+        if (snapshot.prefetch === 'intent') trigger(snapshot)
         props.onMouseEnter?.(event)
       })
     },
     handleFocus(event: FocusEvent) {
       untrack(() => {
         const snapshot = readLinkBehavior(props)
-        if (snapshot.prefetch === 'intent' || snapshot.prefetch === undefined) trigger(snapshot)
+        if (snapshot.prefetch === 'intent') trigger(snapshot)
         props.onFocus?.(event)
       })
     },
@@ -251,7 +266,7 @@ export function Link(props: LinkProps): FictNode {
     const externalHref = getExternalHref(props.to)
     return externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   }
-  const { handleMouseEnter, handleFocus } = createPreloadBehavior(props, getHrefValue)
+  const { handleMouseEnter, handleFocus } = createPreloadBehavior(router, props, getHrefValue)
 
   const handleClick = (event: MouseEvent) => {
     const snapshot = readLinkClick(props, event)
@@ -374,7 +389,7 @@ export function NavLink(props: NavLinkProps): FictNode {
     const externalHref = getExternalHref(props.to)
     return externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   }
-  const { handleMouseEnter, handleFocus } = createPreloadBehavior(props, getHrefValue)
+  const { handleMouseEnter, handleFocus } = createPreloadBehavior(router, props, getHrefValue)
   const pendingLocation = usePendingLocation()
 
   // Compute isPending by comparing pending location with this link's target

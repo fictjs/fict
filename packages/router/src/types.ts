@@ -252,6 +252,8 @@ export interface RouterContextValue {
   base: string
   /** Resolve a path relative to the current route */
   resolvePath: (to: To) => string
+  /** Preload the routes and lazy components matching an already-resolved href */
+  preload: (href: string, state?: unknown) => Promise<void>
 }
 
 /**

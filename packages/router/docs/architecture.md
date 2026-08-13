@@ -431,6 +431,10 @@ function renderToString(url: string) {
 | `intent` | Prefetch on hover/focus    |
 | `render` | Prefetch when link renders |
 
+Prefetching resolves the link against the router base, matches the destination route branch,
+loads each lazy route component, and calls each matched route's `preload` function with
+`intent: 'preload'`. Speculative failures are ignored by the link and retried on the next intent.
+
 ### 11.2 NavLink Active State
 
 ```typescript

@@ -19,6 +19,7 @@ import {
   useIsActive,
   NavLink,
   Link,
+  lazy,
   Form,
   action,
   useSubmission,
@@ -3226,15 +3227,21 @@ describe('Router integration (MemoryRouter)', () => {
     firstReactiveLinkClick.mockClear()
     secondReactiveLinkClick.mockClear()
     const history = createMemoryHistory({ initialEntries: ['/start', '/current'] })
-    const preloads: Array<{ href: string; to: string }> = []
-    const onPreload = (event: Event) => {
-      preloads.push((event as CustomEvent<{ href: string; to: string }>).detail)
+    const preloadArgs: Array<{
+      pathname: string
+      intent: string
+    }> = []
+    const routePreload: NonNullable<RouteDefinition['preload']> = args => {
+      preloadArgs.push({ pathname: args.location.pathname, intent: args.intent })
     }
-    window.addEventListener('fict-router:preload', onPreload)
+    const routes: RouteDefinition[] = ['/second', '/third', '/rendered'].map(path => ({
+      path,
+      preload: routePreload,
+    }))
 
     try {
       render(() => (
-        <RouterProvider history={history} routes={[]}>
+        <RouterProvider history={history} routes={routes}>
           <ReactiveLinkFixture />
         </RouterProvider>
       ))
@@ -3260,7 +3267,9 @@ describe('Router integration (MemoryRouter)', () => {
 
       let link = screen.getByTestId('reactive-link') as HTMLAnchorElement
       link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
-      expect(preloads).toEqual([{ href: '/second', to: '/second' }])
+      await vi.waitFor(() =>
+        expect(preloadArgs).toEqual([{ pathname: '/second', intent: 'preload' }]),
+      )
 
       await act(async () => {
         reactiveLinkControls.setTo('/third')
@@ -3268,20 +3277,22 @@ describe('Router integration (MemoryRouter)', () => {
       link = screen.getByTestId('reactive-link') as HTMLAnchorElement
       expect(link.getAttribute('href')).toBe('/third')
       link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
-      expect(preloads).toEqual([
-        { href: '/second', to: '/second' },
-        { href: '/third', to: '/third' },
-      ])
+      await vi.waitFor(() =>
+        expect(preloadArgs).toEqual([
+          { pathname: '/second', intent: 'preload' },
+          { pathname: '/third', intent: 'preload' },
+        ]),
+      )
 
       await act(async () => {
         reactiveLinkControls.setTo('/rendered')
         reactiveLinkControls.setPrefetch('render')
       })
       await vi.waitFor(() =>
-        expect(preloads).toEqual([
-          { href: '/second', to: '/second' },
-          { href: '/third', to: '/third' },
-          { href: '/rendered', to: '/rendered' },
+        expect(preloadArgs).toEqual([
+          { pathname: '/second', intent: 'preload' },
+          { pathname: '/third', intent: 'preload' },
+          { pathname: '/rendered', intent: 'preload' },
         ]),
       )
 
@@ -3293,7 +3304,115 @@ describe('Router integration (MemoryRouter)', () => {
       expect(firstReactiveLinkClick).not.toHaveBeenCalled()
       expect(secondReactiveLinkClick).toHaveBeenCalledTimes(1)
     } finally {
-      window.removeEventListener('fict-router:preload', onPreload)
+      history.destroy?.()
+    }
+  })
+
+  it('preloads matched nested route data and lazy components with the resolved href', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/app/current'] })
+    const parentPreload = vi.fn<NonNullable<RouteDefinition['preload']>>()
+    const childPreload = vi.fn<NonNullable<RouteDefinition['preload']>>()
+    const lazyLoader = vi.fn(async () => ({ default: () => null }))
+    const LazyUser = lazy(lazyLoader)
+    const routes: RouteDefinition[] = [
+      {
+        path: '/users',
+        preload: parentPreload,
+        children: [{ path: ':id', component: LazyUser, preload: childPreload }],
+      },
+    ]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Link
+            to="/users/42?tab=activity#details"
+            state={{ source: 'link-prefetch' }}
+            prefetch="intent"
+            data-testid="preload-link"
+          >
+            user
+          </Link>
+        </RouterProvider>
+      ))
+
+      const link = screen.getByTestId('preload-link') as HTMLAnchorElement
+      expect(link.getAttribute('href')).toBe('/app/users/42?tab=activity#details')
+      link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      link.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
+
+      await vi.waitFor(() => {
+        expect(parentPreload).toHaveBeenCalledTimes(1)
+        expect(childPreload).toHaveBeenCalledTimes(1)
+        expect(lazyLoader).toHaveBeenCalledTimes(1)
+      })
+      const expectedLocation = expect.objectContaining({
+        pathname: '/app/users/42',
+        search: '?tab=activity',
+        hash: '#details',
+        state: { source: 'link-prefetch' },
+      })
+      expect(parentPreload).toHaveBeenCalledWith({
+        params: {},
+        location: expectedLocation,
+        intent: 'preload',
+      })
+      expect(childPreload).toHaveBeenCalledWith({
+        params: { id: '42' },
+        location: expectedLocation,
+        intent: 'preload',
+      })
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('defaults Link prefetch to none, skips document reloads, and retries failures', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/current'] })
+    const skippedPreload = vi.fn<NonNullable<RouteDefinition['preload']>>()
+    const retryPreload = vi
+      .fn<NonNullable<RouteDefinition['preload']>>()
+      .mockRejectedValueOnce(new Error('temporary preload failure'))
+      .mockResolvedValue(undefined)
+    const routes: RouteDefinition[] = [
+      { path: '/default', preload: skippedPreload },
+      { path: '/reload', preload: skippedPreload },
+      { path: '/retry', preload: retryPreload },
+    ]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes}>
+          <Link to="/default" data-testid="default-preload">
+            default
+          </Link>
+          <Link to="/reload" prefetch="intent" reloadDocument data-testid="reload-preload">
+            reload
+          </Link>
+          <Link to="/retry" prefetch="intent" data-testid="retry-preload">
+            retry
+          </Link>
+        </RouterProvider>
+      ))
+
+      screen
+        .getByTestId('default-preload')
+        .dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      screen
+        .getByTestId('reload-preload')
+        .dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await Promise.resolve()
+      expect(skippedPreload).not.toHaveBeenCalled()
+
+      const retryLink = screen.getByTestId('retry-preload')
+      retryLink.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await vi.waitFor(() => expect(retryPreload).toHaveBeenCalledTimes(1))
+      await act(async () => {
+        await Promise.resolve()
+      })
+      retryLink.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await vi.waitFor(() => expect(retryPreload).toHaveBeenCalledTimes(2))
+    } finally {
       history.destroy?.()
     }
   })

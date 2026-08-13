@@ -4,6 +4,7 @@ import { jsx } from '@fictjs/runtime/jsx-runtime'
 
 import { wrapAccessor, wrapValue } from './accessor-utils'
 import { BeforeLeaveContext, type BeforeLeaveContextValue, RouterContext } from './context'
+import { preloadLazy } from './lazy'
 import { stripBaseIfPresent, stripBaseOrWarn } from './router-internals'
 import { getScrollRestoration } from './scroll'
 import type {
@@ -49,6 +50,7 @@ function createRouterState(
 ): {
   state: () => RouterState
   navigate: NavigateFunction
+  preload: (href: string, state?: unknown) => Promise<void>
   beforeLeave: BeforeLeaveContextValue
   cleanup: () => void
   normalizedBase: string
@@ -77,6 +79,7 @@ function createRouterState(
   const matchesSignal = createSignal<RouteMatch[]>(initialMatches)
   const isRoutingSignal = createSignal<boolean>(false)
   const pendingLocationSignal = createSignal<Location | null>(null)
+  const pendingPreloads = new Map<string, Map<unknown, Promise<void>>>()
 
   // BeforeLeave handlers and navigation token for async ordering
   const beforeLeaveHandlers = new Set<BeforeLeaveHandler>()
@@ -211,6 +214,52 @@ function createRouterState(
 
       return !defaultPrevented
     },
+  }
+
+  const preload = (href: string, state?: unknown): Promise<void> => {
+    const targetLocation = createLocation(href, state)
+    const preloadKey = `${targetLocation.pathname}${targetLocation.search}${targetLocation.hash}`
+    let preloadsForHref = pendingPreloads.get(preloadKey)
+    const pending = preloadsForHref?.get(targetLocation.state)
+    if (pending) return pending
+
+    const matches = matchWithBase(targetLocation.pathname)
+    const task = Promise.all(
+      matches.flatMap(match => {
+        const operations: Promise<unknown>[] = []
+        const component = match.route.component
+        if (component) {
+          operations.push(Promise.resolve().then(() => preloadLazy(component)))
+        }
+        const routePreload = match.route.preload
+        if (routePreload) {
+          operations.push(
+            Promise.resolve().then(() =>
+              routePreload({
+                params: match.params,
+                location: targetLocation,
+                intent: 'preload',
+              }),
+            ),
+          )
+        }
+        return operations
+      }),
+    ).then(() => undefined)
+
+    if (!preloadsForHref) {
+      preloadsForHref = new Map()
+      pendingPreloads.set(preloadKey, preloadsForHref)
+    }
+    preloadsForHref.set(targetLocation.state, task)
+    const releasePendingPreload = () => {
+      if (preloadsForHref?.get(targetLocation.state) === task) {
+        preloadsForHref.delete(targetLocation.state)
+        if (preloadsForHref.size === 0) pendingPreloads.delete(preloadKey)
+      }
+    }
+    void task.then(releasePendingPreload, releasePendingPreload)
+    return task
   }
 
   // Navigation function
@@ -376,6 +425,7 @@ function createRouterState(
   return {
     state,
     navigate,
+    preload,
     beforeLeave,
     cleanup: () => {
       navigationToken++
@@ -393,7 +443,7 @@ export function RouterProvider(props: {
   base?: string | undefined
   children?: FictNode
 }) {
-  const { state, navigate, beforeLeave, cleanup, normalizedBase } = createRouterState(
+  const { state, navigate, preload, beforeLeave, cleanup, normalizedBase } = createRouterState(
     props.history,
     props.routes,
     props.base,
@@ -432,6 +482,7 @@ export function RouterProvider(props: {
     pendingLocation: () => state().pendingLocation,
     base: wrapValue(normalizedBase),
     resolvePath: wrapAccessor(resolvePathFn),
+    preload: wrapAccessor(preload),
   }
 
   const RouterContextProvider = RouterContext.Provider as unknown as (

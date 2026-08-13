@@ -50,6 +50,8 @@ const defaultResolvePath = wrapAccessor((to: To) => {
   return typeof to === 'string' ? to : to.pathname || '/'
 })
 
+const defaultPreload = wrapAccessor((_href: string, _state?: unknown) => Promise.resolve())
+
 const defaultRouterContext: RouterContextValue = {
   location: () => defaultLocation,
   params: () => ({}),
@@ -59,6 +61,7 @@ const defaultRouterContext: RouterContextValue = {
   pendingLocation: () => null,
   base: wrapValue(''),
   resolvePath: defaultResolvePath,
+  preload: defaultPreload,
 }
 
 /**
