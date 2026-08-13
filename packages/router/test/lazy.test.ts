@@ -139,6 +139,27 @@ describe('preloadLazy', () => {
     expect(compatibleComponent.reset).toHaveBeenCalledTimes(1)
   })
 
+  it('shares compatible lazy retry state across runtime module instances', async () => {
+    vi.resetModules()
+    const firstRouter = await import('../src/lazy')
+    vi.resetModules()
+    const secondRouter = await import('../src/lazy')
+    const failure = new Error('temporary cross-instance lazy failure')
+    const loader = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined)
+    let cachedPreload: Promise<void> | undefined
+    const compatibleComponent: any = () => null
+    compatibleComponent.preload = vi.fn(() => (cachedPreload ??= loader()))
+    compatibleComponent.reset = vi.fn(() => {
+      cachedPreload = undefined
+    })
+
+    await expect(firstRouter.retryPreloadLazy(compatibleComponent)).rejects.toBe(failure)
+    await expect(secondRouter.retryPreloadLazy(compatibleComponent)).resolves.toBeUndefined()
+
+    expect(loader).toHaveBeenCalledTimes(2)
+    expect(compatibleComponent.reset).toHaveBeenCalledTimes(1)
+  })
+
   it('should return resolved promise for non-lazy components', async () => {
     const normalComponent = () => null
 

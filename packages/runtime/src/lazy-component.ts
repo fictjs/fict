@@ -28,7 +28,7 @@ export interface FictLazyComponent<
 
 const LAZY_COMPONENT_MARKER = Symbol.for('fict.lazy-component')
 const LAZY_COMPONENT_RETRY_PRELOAD = Symbol.for('fict.lazy-component.retry-preload.v1')
-const failedCompatiblePreloads = new WeakSet<object>()
+const localCompatibleRetryPreloads = new WeakMap<object, () => Promise<void>>()
 
 interface LazyCandidate {
   [LAZY_COMPONENT_MARKER]?: boolean
@@ -37,6 +37,61 @@ interface LazyCandidate {
   __preload?: () => unknown
   preload?: () => unknown
   reset?: () => void
+}
+
+function createCompatibleRetryPreload(component: object): () => Promise<void> {
+  let failed = false
+
+  return () => {
+    const candidate = component as LazyCandidate
+    const preload = candidate.preload
+    const reset = candidate.reset
+    if (typeof preload !== 'function' || typeof reset !== 'function') {
+      return __fictPreloadLazyComponent(component)
+    }
+
+    try {
+      if (failed) {
+        reset.call(component)
+        failed = false
+      }
+
+      return __fictPreloadLazyComponent(component).then(
+        () => {
+          failed = false
+        },
+        error => {
+          failed = true
+          throw error
+        },
+      )
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
+}
+
+function installCompatibleRetryPreload(
+  component: object,
+  candidate: LazyCandidate,
+): () => Promise<void> {
+  const localRetry = localCompatibleRetryPreloads.get(component)
+  if (localRetry) return localRetry
+
+  const retryPreload = createCompatibleRetryPreload(component)
+  try {
+    Object.defineProperty(component, LAZY_COMPONENT_RETRY_PRELOAD, {
+      configurable: true,
+      value: retryPreload,
+    })
+    const installedRetry = candidate[LAZY_COMPONENT_RETRY_PRELOAD]
+    if (typeof installedRetry === 'function') return installedRetry as () => Promise<void>
+  } catch {
+    // Non-extensible compatible components retain same-runtime retry support.
+  }
+
+  localCompatibleRetryPreloads.set(component, retryPreload)
+  return retryPreload
 }
 
 function resolveLazyComponent<TProps extends Record<string, unknown>>(
@@ -237,20 +292,7 @@ export function __fictRetryLazyComponent(component: unknown): Promise<void> {
       return __fictPreloadLazyComponent(component)
     }
 
-    if (failedCompatiblePreloads.has(component)) {
-      reset.call(component)
-      failedCompatiblePreloads.delete(component)
-    }
-
-    return __fictPreloadLazyComponent(component).then(
-      () => {
-        failedCompatiblePreloads.delete(component)
-      },
-      error => {
-        failedCompatiblePreloads.add(component)
-        throw error
-      },
-    )
+    return installCompatibleRetryPreload(component, candidate).call(component)
   } catch (error) {
     return Promise.reject(error)
   }
