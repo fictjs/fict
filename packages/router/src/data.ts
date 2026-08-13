@@ -45,6 +45,10 @@ const FAST_CLEANUP_INTERVAL = 10 * 1000
 type QueryCache = Map<string, QueryCacheEntry<unknown>>
 type SSRSession = NonNullable<ReturnType<typeof __fictGetCurrentSSRSession>>
 type QueryInvocationIntent = Extract<NavigationIntent, 'navigate' | 'preload'>
+type QueryPreloader = (args: unknown[]) => Promise<unknown>
+
+const QUERY_PRELOADER = Symbol.for('fict.router.query-preloader.v1')
+const QUERY_INVOCATION_PROMISE = Symbol.for('fict.router.query-invocation-promise.v1')
 
 interface QueryObserver<T> {
   accessor: QueryAccessor<T>
@@ -64,7 +68,41 @@ const sharedQueryCache: QueryCache = new Map()
 let requestQueryCaches = new WeakMap<SSRSession, QueryCache>()
 
 /** Internal preload entry points keyed by the public query function. */
-const queryPreloaders = new WeakMap<object, (args: unknown[]) => Promise<unknown>>()
+const queryPreloaders = new WeakMap<object, QueryPreloader>()
+
+function defineQueryProtocol(target: object, key: symbol, value: unknown): void {
+  Object.defineProperty(target, key, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value,
+  })
+}
+
+function readQueryPreloader(queryFn: object): QueryPreloader | undefined {
+  const value = (queryFn as Record<symbol, unknown>)[QUERY_PRELOADER]
+  return typeof value === 'function' ? (value as QueryPreloader) : undefined
+}
+
+function attachQueryInvocationPromise<T>(
+  accessor: QueryAccessor<T>,
+  promise: Promise<T>,
+): QueryInvocation<T> {
+  defineQueryProtocol(accessor, QUERY_INVOCATION_PROMISE, promise)
+  return { accessor, promise }
+}
+
+function readQueryInvocationPromise<T>(accessor: QueryAccessor<T>): Promise<T> | undefined {
+  const value = (accessor as QueryAccessor<T> & Record<symbol, unknown>)[QUERY_INVOCATION_PROMISE]
+  if (
+    (typeof value !== 'object' && typeof value !== 'function') ||
+    value === null ||
+    typeof (value as PromiseLike<T>).then !== 'function'
+  ) {
+    return undefined
+  }
+  return Promise.resolve(value as PromiseLike<T>)
+}
 
 function resolveQueryCache(): QueryCache {
   const session = __fictGetCurrentSSRSession()
@@ -238,10 +276,10 @@ export function query<T, Args extends unknown[]>(
 
       if (Date.now() - cached.timestamp < maxAge) {
         if (intent === 'navigate') cached.intent = 'navigate'
-        return {
-          accessor: createQueryObserver(cached.result, 'success').accessor,
-          promise: Promise.resolve(cached.result as T),
-        }
+        return attachQueryInvocationPromise(
+          createQueryObserver(cached.result, 'success').accessor,
+          Promise.resolve(cached.result as T),
+        )
       }
     }
 
@@ -250,7 +288,7 @@ export function query<T, Args extends unknown[]>(
     if (cached && !cached.settled) {
       if (intent === 'navigate') cached.intent = 'navigate'
       observeQueryPromise(cached.promise, observer)
-      return { accessor: observer.accessor, promise: cached.promise }
+      return attachQueryInvocationPromise(observer.accessor, cached.promise)
     }
 
     // Fetch the data. Query functions may throw before returning a promise;
@@ -304,13 +342,15 @@ export function query<T, Args extends unknown[]>(
       },
     )
 
-    return { accessor: observer.accessor, promise }
+    return attachQueryInvocationPromise(observer.accessor, promise)
   }
 
   const queryFn = (...args: Args) => invoke('navigate', args).accessor
-  queryPreloaders.set(queryFn, args => {
+  const preloader: QueryPreloader = args => {
     return invoke('preload', args as Args).promise
-  })
+  }
+  queryPreloaders.set(queryFn, preloader)
+  defineQueryProtocol(queryFn, QUERY_PRELOADER, preloader)
   return queryFn
 }
 
@@ -661,16 +701,23 @@ export function preloadQuery<T, Args extends unknown[]>(
   queryFn: Query<T, Args>,
   ...args: Args
 ): Promise<T | undefined> {
-  const preload = queryPreloaders.get(queryFn)
   let task: Promise<T | undefined>
-  if (preload) {
-    task = preload(args) as Promise<T>
-  } else {
-    try {
-      task = Promise.resolve(queryFn(...args)())
-    } catch (error) {
-      task = Promise.reject(error)
+  try {
+    const preload = queryPreloaders.get(queryFn) ?? readQueryPreloader(queryFn)
+    if (preload) {
+      task = preload(args) as Promise<T>
+    } else {
+      const accessor = queryFn(...args)
+      const invocationPromise = readQueryInvocationPromise(accessor)
+      if (!invocationPromise) {
+        throw new TypeError(
+          '[fict-router] preloadQuery() expects a Query created by query(); wrappers must return its QueryAccessor unchanged.',
+        )
+      }
+      task = invocationPromise
     }
+  } catch (error) {
+    task = Promise.reject(error)
   }
 
   // Callers may intentionally fire-and-forget speculative work. Attach a

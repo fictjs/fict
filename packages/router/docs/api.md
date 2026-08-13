@@ -992,6 +992,11 @@ query result and preserves failures, allowing a route preloader to propagate a
 speculative failure so the next Link intent can retry it. Fire-and-forget calls
 remain safe from unhandled rejections.
 
+Higher-order queries are supported when the wrapper returns the original
+`QueryAccessor` unchanged. The accessor carries the pending request across
+router package instances; structurally fabricated query lookalikes are rejected
+instead of being mistaken for an already-resolved `undefined` result.
+
 ```tsx
 import { preloadQuery } from '@fictjs/router'
 

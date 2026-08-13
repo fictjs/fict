@@ -120,6 +120,77 @@ describe('query', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
+  it('waits for the raw request when preloading a wrapped query', async () => {
+    let resolveFetch!: (value: string) => void
+    const fetchValue = query(
+      () =>
+        new Promise<string>(resolve => {
+          resolveFetch = resolve
+        }),
+      'wrappedPreload',
+    )
+    const wrapped: typeof fetchValue = (...args) => fetchValue(...args)
+    let settled = false
+
+    const task = preloadQuery(wrapped).then(value => {
+      settled = true
+      return value
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolveFetch('ready')
+    await expect(task).resolves.toBe('ready')
+    expect(settled).toBe(true)
+  })
+
+  it('preserves wrapped query preload failures', async () => {
+    const failure = new Error('wrapped preload failed')
+    let rejectFetch!: (reason: unknown) => void
+    const fetchValue = query(
+      () =>
+        new Promise<string>((_, reject) => {
+          rejectFetch = reject
+        }),
+      'wrappedPreloadFailure',
+    )
+    const wrapped: typeof fetchValue = (...args) => fetchValue(...args)
+
+    const task = preloadQuery(wrapped)
+    rejectFetch(failure)
+    await expect(task).rejects.toBe(failure)
+  })
+
+  it('shares the preload protocol across router module instances', async () => {
+    vi.resetModules()
+    const firstRouter = await import('../src/data')
+    vi.resetModules()
+    const secondRouter = await import('../src/data')
+    const fetcher = vi.fn(async () => 'shared')
+    const fetchValue = firstRouter.query(fetcher, 'crossInstancePreload')
+
+    try {
+      expect(firstRouter).not.toBe(secondRouter)
+      await expect(secondRouter.preloadQuery(fetchValue)).resolves.toBe('shared')
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    } finally {
+      firstRouter.cleanupDataUtilities()
+      secondRouter.cleanupDataUtilities()
+    }
+  })
+
+  it('rejects structural query lookalikes without an invocation promise', async () => {
+    const accessor = Object.assign(() => undefined, {
+      loading: () => true,
+      error: () => undefined,
+      status: () => 'pending' as const,
+      latest: () => undefined,
+    })
+    const lookalike = () => accessor
+
+    await expect(preloadQuery(lookalike)).rejects.toThrow('expects a Query created by query()')
+  })
+
   it('does not shorten an existing navigation cache when preloading it', async () => {
     let now = 1_000
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
