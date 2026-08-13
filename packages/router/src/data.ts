@@ -88,11 +88,17 @@ function getQueryPreloadIntentState(): QueryPreloadIntentState {
   if (shared) return shared
 
   try {
-    host[QUERY_PRELOAD_INTENT_STATE] = localQueryPreloadIntentState
+    Object.defineProperty(host, QUERY_PRELOAD_INTENT_STATE, {
+      configurable: true,
+      enumerable: false,
+      value: localQueryPreloadIntentState,
+      writable: false,
+    })
     return host[QUERY_PRELOAD_INTENT_STATE] ?? localQueryPreloadIntentState
   } catch {
-    // Hardened realms may reject additions to globalThis. Same-instance
-    // wrappers still retain preload semantics through the module-local state.
+    // Fully non-extensible realms may reject additions to globalThis.
+    // Same-instance wrappers retain the module-local intent, while the
+    // accessor protocol below repairs the returned cross-instance invocation.
     return localQueryPreloadIntentState
   }
 }

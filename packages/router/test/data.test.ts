@@ -237,6 +237,48 @@ describe('query', () => {
     }
   })
 
+  it('shares preload intent for every wrapped query when the global slot rejects writes', async () => {
+    const intentStateKey = Symbol.for('fict.router.query-preload-intent-state.v1')
+    const intentStateDescriptor = Object.getOwnPropertyDescriptor(globalThis, intentStateKey)
+    Object.defineProperty(globalThis, intentStateKey, {
+      configurable: true,
+      value: undefined,
+      writable: false,
+    })
+
+    vi.resetModules()
+    const firstRouter = await import('../src/data')
+    vi.resetModules()
+    const secondRouter = await import('../src/data')
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const sideFetcher = vi.fn(async () => 'side')
+    const mainFetcher = vi.fn(async () => 'main')
+    const sideQuery = firstRouter.query(sideFetcher, 'crossInstanceWrappedSidePreload')
+    const mainQuery = firstRouter.query(mainFetcher, 'crossInstanceWrappedMainPreload')
+    const wrapped: typeof mainQuery = (...args) => {
+      sideQuery()
+      return mainQuery(...args)
+    }
+
+    try {
+      await secondRouter.preloadQuery(wrapped)
+      now += 5_001
+      await secondRouter.preloadQuery(wrapped)
+      expect(sideFetcher).toHaveBeenCalledTimes(2)
+      expect(mainFetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      nowSpy.mockRestore()
+      firstRouter.cleanupDataUtilities()
+      secondRouter.cleanupDataUtilities()
+      if (intentStateDescriptor) {
+        Object.defineProperty(globalThis, intentStateKey, intentStateDescriptor)
+      } else {
+        Reflect.deleteProperty(globalThis, intentStateKey)
+      }
+    }
+  })
+
   it('rejects structural query lookalikes without an invocation promise', async () => {
     const accessor = Object.assign(() => undefined, {
       loading: () => true,
