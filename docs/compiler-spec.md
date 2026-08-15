@@ -582,11 +582,11 @@ Hook note: Hook-like functions (explicit `useX` or inferred hooks using `$state`
 do not inline user-named derived values by default, to preserve accessor return shapes.
 `optimizeLevel: 'safe'` is the default and leaves authored algebraic expressions
 unchanged. The opt-in `'full'` profile propagates proven local constants, folds
-supported literal expressions, and applies the legacy logical, conditional, comparison,
-and double-negation identities. It preserves unknown arithmetic such as
+supported literal expressions, and applies proven logical, conditional, comparison,
+and strictly semantics-preserving identities. It preserves unknown arithmetic such as
 `value + 0` and `value * 0`, and preserves evaluation of identical conditional
-branches. Because the legacy `- -value` identity can remove JavaScript numeric
-coercion, use `'full'` only where that aggressive contract is intended.
+branches. Coercive expressions such as `- -value` remain authored because removing
+their `ToNumeric` operations would change values, types, exceptions, or user-visible effects.
 Benchmarking and optimizer evidence are owned by the Rust compiler crates and
 the release-native evidence pipeline. Run `pnpm guardrails:rust-crates` for
 crate/largest-file budgets and `pnpm release:compiler:verify` for native

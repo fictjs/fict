@@ -287,17 +287,6 @@ impl<'a> AlgebraicRewriter<'a, '_> {
                     LogicalOperator::And | LogicalOperator::Or => None,
                 }
             }
-            Expression::UnaryExpression(unary)
-                if unary.operator == UnaryOperator::UnaryNegation =>
-            {
-                // This intentionally retains the aggressive Babel 0.28 `- -value` contract.
-                let Expression::UnaryExpression(inner) = unary.argument.get_inner_expression()
-                else {
-                    return None;
-                };
-                (inner.operator == UnaryOperator::UnaryNegation)
-                    .then(|| inner.argument.clone_in(self.allocator))
-            }
             Expression::ConditionalExpression(conditional) => {
                 if let Some(test) = evaluate_literal_expression(
                     &conditional.test,

@@ -3929,7 +3929,7 @@ test('every runtime helper and compiler temporary family preserves authored free
   for (const name of previewNames) assert.match(artifact, new RegExp(`typeof ${name}\\b`))
 })
 
-test('optimizeLevel full applies opt-in authored algebraic folding safely', async () => {
+test('optimizeLevel full folds proven expressions and preserves JavaScript coercion', async () => {
   const source = `
     export function probe(x, check) {
       const a = 2 + 3
@@ -3949,6 +3949,10 @@ test('optimizeLevel full applies opt-in authored algebraic folding safely', asyn
         Object.is(product, -0),
         Object.is(positive, -0),
       ]
+    }
+
+    export function coerce(value) {
+      return - -value
     }
 
     export function shorthand() {
@@ -4000,7 +4004,7 @@ test('optimizeLevel full applies opt-in authored algebraic folding safely', asyn
   assert.match(full.code, /x \+ 0/)
   assert.match(full.code, /x \* 0/)
   assert.doesNotMatch(full.code, /true && x/)
-  assert.doesNotMatch(full.code, /- -x/)
+  assert.match(full.code, /- -x/)
   assert.match(full.code, /return \{\s*value\s*\}/)
   assert.match(full.code, /return undefined \?\? 9/)
   assert.match(full.code, /select \? \(left\(\), 7\) : \(right\(\), 7\)/)
@@ -4023,6 +4027,31 @@ test('optimizeLevel full applies opt-in authored algebraic folding safely', asyn
     [5, 4, 4, 4, 0, 7, true],
   )
   assert.equal(checks, 1)
+  assert.equal(runtime.coerce('4'), 4)
+  assert.equal(typeof runtime.coerce('4'), 'number')
+  assert.equal(runtime.coerce(true), 1)
+  assert.equal(runtime.coerce(null), 0)
+  assert.equal(runtime.coerce(1n), 1n)
+  assert.throws(() => runtime.coerce(Symbol('value')), TypeError)
+  let coercions = 0
+  const coercible = {
+    valueOf() {
+      coercions++
+      return 3
+    },
+  }
+  assert.equal(runtime.coerce(coercible), 3)
+  assert.equal(coercions, 1)
+  const coercionError = new Error('coercion failed')
+  assert.throws(
+    () =>
+      runtime.coerce({
+        valueOf() {
+          throw coercionError
+        },
+      }),
+    error => error === coercionError,
+  )
   assert.deepEqual(runtime.negativeZero(), [true, true, -Infinity, true, false])
   assert.deepEqual(runtime.shorthand(), { value: 5 })
   assert.equal(runtime.shadowedUndefined(3), 3)

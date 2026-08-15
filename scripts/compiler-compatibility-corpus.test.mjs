@@ -1917,7 +1917,7 @@ test('retains native runtime and option compatibility outcomes', () => {
     'intrinsic children props become child content without leaking attributes',
     'raw-text and RCDATA expressions bind literal textContent',
     'dynamic annotation-xml children use the final live encoding namespace',
-    'optimizeLevel full applies opt-in authored algebraic folding safely',
+    'optimizeLevel full folds proven expressions and preserves JavaScript coercion',
     'native binding honors derived memo inline policy',
   ]) {
     assert.ok(runtime.includes(`test('${name}'`), name)

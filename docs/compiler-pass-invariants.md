@@ -52,9 +52,9 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 - Constant propagation, CSE, inlining, DCE, and Phi elimination require proven
   purity/ownership and preserve evaluation count and order.
 - `safe` mode avoids authored algebraic rewrites. Opt-in `full` mode is limited
-  to binding-identified local constants and the documented legacy identities;
-  rewrites that discard an expression must prove it side-effect free, except
-  for the explicitly aggressive `- -value` compatibility identity.
+  to binding-identified local constants and documented proven identities;
+  rewrites that discard an expression must prove it side-effect free and preserve
+  JavaScript coercion, result types, exceptions, and evaluation count.
 - A pass that does not converge within its budget is an internal compiler error,
   not best-effort output.
 

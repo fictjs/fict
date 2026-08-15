@@ -132,7 +132,7 @@ export interface NativeCompilerOptions {
   getterCache?: boolean
   fineGrainedDom?: boolean
   optimize?: boolean
-  /** Select conservative output or opt-in legacy-compatible algebraic folding. */
+  /** Select conservative output or opt-in proven algebraic and constant folding. */
   optimizeLevel?: NativeOptimizeLevel
   /** Inline eligible single-use derived memos with user-authored names. */
   inlineDerivedMemos?: boolean
