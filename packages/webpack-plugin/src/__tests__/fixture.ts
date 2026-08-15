@@ -110,6 +110,13 @@ export function createWebpackConfiguration(
   }
 }
 
+// These fixtures verify dependency registration and rebuild semantics, not the host fs.watch
+// implementation. Polling avoids platform watcher-registration races under parallel test load.
+export const fixtureWatchOptions = {
+  aggregateTimeout: 5,
+  poll: 20,
+} satisfies NonNullable<Configuration['watchOptions']>
+
 function validateStats(error: Error | null | undefined, stats: Stats | undefined): Stats {
   if (error) throw error
   if (!stats) throw new Error('Webpack returned no stats.')

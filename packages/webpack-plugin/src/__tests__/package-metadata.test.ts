@@ -11,6 +11,7 @@ import {
   createBuildQueue,
   createFixture,
   createWebpackConfiguration,
+  fixtureWatchOptions,
   runCompiler,
   waitForWatchingReady,
 } from './fixture'
@@ -168,7 +169,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     const compiler = webpack(excludeHookPackage(createWebpackConfiguration(root)))
     const builds = createBuildQueue()
     const firstBuild = builds.next()
-    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+    const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
       builds.push(error, stats)
     })!
 
@@ -312,7 +313,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     )
     const builds = createBuildQueue()
     const firstBuild = builds.next()
-    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+    const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
       builds.push(error, stats)
     })!
 

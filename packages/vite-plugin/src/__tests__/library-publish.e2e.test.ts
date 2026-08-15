@@ -79,11 +79,17 @@ describe('vite-plugin library publishing e2e', () => {
     const libraryRoot = path.join(root, 'library')
     const consumerRoot = path.join(root, 'consumer')
     const packDir = path.join(root, 'pack')
+    const npmUserConfig = path.join(root, 'npm-userconfig')
+    const npmEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.toLowerCase().startsWith('npm_config_')),
+    )
+    npmEnvironment.NPM_CONFIG_USERCONFIG = npmUserConfig
 
     try {
       await mkdir(path.join(libraryRoot, 'src'), { recursive: true })
       await mkdir(path.join(consumerRoot, 'src'), { recursive: true })
       await mkdir(packDir, { recursive: true })
+      await writeFile(npmUserConfig, '')
 
       await writeFile(
         path.join(libraryRoot, 'package.json'),
@@ -134,13 +140,13 @@ describe('vite-plugin library publishing e2e', () => {
       const libraryPkg = JSON.parse(await readFile(path.join(libraryRoot, 'package.json'), 'utf8'))
       expect(libraryPkg.fict).toEqual({ metadata: './dist/index.fict.meta.json' })
 
-      const packResult = await execFileAsync('npm', [
-        'pack',
-        libraryRoot,
-        '--json',
-        '--pack-destination',
-        packDir,
-      ])
+      const packResult = await execFileAsync(
+        'npm',
+        ['pack', libraryRoot, '--json', '--pack-destination', packDir],
+        {
+          env: npmEnvironment,
+        },
+      )
       const packedPackage = parseNpmPackEntry(packResult.stdout)
       expect(packedPackage.files.map(file => file.path).sort()).toEqual(
         expect.arrayContaining([
@@ -172,6 +178,7 @@ describe('vite-plugin library publishing e2e', () => {
         ],
         {
           cwd: consumerRoot,
+          env: npmEnvironment,
         },
       )
 

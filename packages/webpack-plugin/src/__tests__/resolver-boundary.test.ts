@@ -16,6 +16,7 @@ import {
   createBuildQueue,
   createFixture,
   createWebpackConfiguration,
+  fixtureWatchOptions,
   runApp,
   runCompiler,
   waitForWatchingReady,
@@ -1768,7 +1769,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     )
     const builds = createBuildQueue()
     const firstBuild = builds.next()
-    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+    const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
       builds.push(error, stats)
     })!
 
@@ -1959,7 +1960,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     )
     const builds = createBuildQueue()
     const firstBuild = builds.next()
-    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+    const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
       builds.push(error, stats)
     })!
 
@@ -3053,7 +3054,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     const compiler = webpack(excludeNodeModules(createWebpackConfiguration(root)))
     const builds = createBuildQueue()
     const firstBuild = builds.next()
-    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+    const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
       builds.push(error, stats)
     })!
 

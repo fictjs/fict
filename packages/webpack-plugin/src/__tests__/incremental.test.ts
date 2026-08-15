@@ -12,6 +12,7 @@ import {
   createBuildQueue,
   createFixture,
   createWebpackConfiguration,
+  fixtureWatchOptions,
   runApp,
   runCompiler,
   waitForWatchingReady,
@@ -49,7 +50,7 @@ describe('@fictjs/webpack-plugin incremental metadata', () => {
     const compiler = webpack(createWebpackConfiguration(root))
     const builds = createBuildQueue()
     const firstBuild = builds.next()
-    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+    const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
       builds.push(error, stats)
       // Model a trailing duplicate callback so each transition must select its own build result.
       builds.push(error, stats)
@@ -128,7 +129,7 @@ describe('@fictjs/webpack-plugin incremental metadata', () => {
     const compiler = webpack(createWebpackConfiguration(root, { devtool: 'source-map' }))
     const builds = createBuildQueue()
     const firstBuild = builds.next()
-    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+    const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
       builds.push(error, stats)
     })!
 
