@@ -258,6 +258,12 @@ pnpm changeset version
 NPM publishing uses Trusted Publishing through GitHub Actions OIDC. Do not add a
 long-lived NPM publishing token to the workflow.
 
+Every external GitHub Action in CI and release is pinned to a reviewed full
+commit SHA; the adjacent exact-version comment is required for auditability.
+Dependabot may propose upgrades, but both the SHA and version comment must move
+together. `pnpm test:release-verification` rejects mutable, unknown, mismatched,
+or unannotated action references.
+
 Rust dependency auditing uses pinned `cargo-audit 0.22.2` and scans both the
 root `Cargo.lock` and the independent `fuzz/Cargo.lock` with `--deny warnings`.
 The workflows cache only the version-checked auditor binary; every invocation

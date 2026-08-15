@@ -27,11 +27,11 @@ jobs:
       build: ${{ steps.matrix.outputs.build }}
       runtime: ${{ steps.matrix.outputs.runtime }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Cache pinned Rust advisory auditor
         id: cargo-audit-cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_AUDIT_VERSION }}
@@ -61,13 +61,13 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.native-matrix.outputs.build) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -91,7 +91,7 @@ jobs:
       - name: Cache pinned cargo-zigbuild for musl targets
         if: matrix.musl
         id: cargo-zigbuild-cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.cargo/bin/cargo-zigbuild
           key: cargo-zigbuild-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_ZIGBUILD_VERSION }}
@@ -132,7 +132,7 @@ jobs:
           --bundle "${{ runner.temp }}/native-package"
 
       - name: Upload native platform package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: fict-native-package-${{ matrix.target }}
           path: ${{ runner.temp }}/native-package
@@ -147,20 +147,20 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.native-matrix.outputs.runtime) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Download target platform package
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: fict-native-package-${{ matrix.target }}
           path: ${{ runner.temp }}/native-package
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         if: ${{ !matrix.musl }}
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: ${{ !matrix.musl }}
         with:
           node-version: ${{ matrix.node }}
@@ -200,7 +200,7 @@ jobs:
             sh -lc 'corepack enable && corepack prepare pnpm@9.1.1 --activate && pnpm install --frozen-lockfile && pnpm --filter @fictjs/compiler build && node scripts/native-compiler-package-smoke.mjs --target "${{ matrix.target }}" --bundle /native-package --node-lane "${{ matrix.node }}" --expected-revision "${{ github.sha }}" --evidence "/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"'
 
       - name: Upload native runtime evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: fict-native-evidence-${{ matrix.target }}-node-${{ matrix.node }}
           path: ${{ runner.temp }}/native-evidence/*.json
@@ -212,24 +212,24 @@ jobs:
     needs: [native-build, native-runtime]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
 
       - name: Download all certified native packages
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: fict-native-package-*
           path: ${{ runner.temp }}/native-packages
 
       - name: Download all native runtime evidence
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: fict-native-evidence-*
           path: ${{ runner.temp }}/native-evidence
@@ -245,7 +245,7 @@ jobs:
           --output "${RUNNER_TEMP}/native-certification.json"
 
       - name: Upload native release certification
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: fict-native-certification-${{ github.sha }}
           path: ${{ runner.temp }}/native-certification.json
@@ -262,15 +262,15 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -278,7 +278,7 @@ jobs:
 
       - name: Restore pinned Rust advisory auditor
         id: cargo-audit-cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_AUDIT_VERSION }}
@@ -310,7 +310,7 @@ jobs:
 
       - name: Upload NPM release plan
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: npm-publish-plan-${{ github.ref_name }}
           path: ${{ runner.temp }}/npm-publish-plan.json
@@ -318,13 +318,13 @@ jobs:
           retention-days: 90
 
       - name: Download all certified native packages
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: fict-native-package-*
           path: ${{ runner.temp }}/native-packages
 
       - name: Download native release certification
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: fict-native-certification-${{ github.sha }}
           path: ${{ runner.temp }}/native-certification
@@ -358,7 +358,7 @@ jobs:
           --output "${RUNNER_TEMP}/npm-publish-plan.json"
 
       - name: Upload final NPM release plan
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: npm-final-publish-plan-${{ github.ref_name }}
           path: ${{ runner.temp }}/npm-publish-plan.json
@@ -381,7 +381,7 @@ jobs:
 
       - name: Upload checksummed release tarballs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: npm-release-tarballs-${{ github.ref_name }}
           path: ${{ runner.temp }}/release-tarballs

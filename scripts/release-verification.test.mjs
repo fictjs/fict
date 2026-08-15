@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -67,6 +67,40 @@ const zigRequirements = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const workflowsDirectory = new URL('../.github/workflows/', import.meta.url)
+const workflowSources = readdirSync(workflowsDirectory)
+  .filter(file => file.endsWith('.yml') || file.endsWith('.yaml'))
+  .map(file => [file, readFileSync(new URL(file, workflowsDirectory), 'utf8')])
+const reviewedActionPins = new Map([
+  [
+    'actions/cache',
+    { sha: 'caa296126883cff596d87d8935842f9db880ef25', version: 'v5.1.0', minimumMajor: 5 },
+  ],
+  [
+    'actions/checkout',
+    { sha: 'fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09', version: 'v5.1.0', minimumMajor: 5 },
+  ],
+  [
+    'actions/download-artifact',
+    { sha: '37930b1c2abaa49bbe596cd826c3c89aef350131', version: 'v7.0.0', minimumMajor: 7 },
+  ],
+  [
+    'actions/setup-node',
+    { sha: 'a0853c24544627f65ddf259abe73b1d18a591444', version: 'v5.0.0', minimumMajor: 5 },
+  ],
+  [
+    'actions/upload-artifact',
+    { sha: 'b7c566a772e6b6bfb58ed0dc250532a479d7789f', version: 'v6.0.0', minimumMajor: 6 },
+  ],
+  [
+    'codecov/codecov-action',
+    { sha: 'fb8b3582c8e4def4969c97caa2f19720cb33a72f', version: 'v6.0.2', minimumMajor: 6 },
+  ],
+  [
+    'pnpm/action-setup',
+    { sha: 'fc06bc1257f339d1d5d8b3a19a8cae5388b55320', version: 'v5.0.0', minimumMajor: 5 },
+  ],
+])
 const realAppE2eRunner = readFileSync(new URL('./run-real-app-e2e.mjs', import.meta.url), 'utf8')
 const productionAudit = readFileSync(
   new URL('./audit-production-dependencies.mjs', import.meta.url),
@@ -229,32 +263,35 @@ test('production audit uses the supported npm bulk advisory endpoint', () => {
   )
 })
 
-test('CI and release use Node 24-compatible action majors', () => {
-  const minimumMajors = new Map([
-    ['actions/cache', 5],
-    ['actions/checkout', 5],
-    ['actions/download-artifact', 7],
-    ['actions/setup-node', 5],
-    ['actions/upload-artifact', 6],
-    ['codecov/codecov-action', 6],
-    ['pnpm/action-setup', 5],
-  ])
+test('CI and release pin reviewed Node 24-compatible actions to full commit SHAs', () => {
   const seen = new Set()
 
-  for (const workflow of [ciWorkflow, releaseWorkflow]) {
-    for (const match of workflow.matchAll(/uses:\s+([^@\s]+)@v(\d+)/g)) {
-      const [, action, majorText] = match
-      const minimum = minimumMajors.get(action)
-      if (minimum === undefined) continue
+  for (const [workflowName, workflow] of workflowSources) {
+    const usesLines = workflow.match(/^\s*(?:-\s+)?uses:\s+.*$/gm) ?? []
+    for (const line of usesLines) {
+      const match = /^\s*(?:-\s+)?uses:\s+([^\s#]+)(?:\s+#\s*(.+?))?\s*$/.exec(line)
+      assert.ok(match, `${workflowName} contains a malformed action reference: ${line.trim()}`)
+      const [, actionReference, version] = match
+      if (actionReference.startsWith('./')) continue
+      const separator = actionReference.lastIndexOf('@')
+      assert.ok(separator > 0, `${workflowName} action must include an immutable reference`)
+      const action = actionReference.slice(0, separator)
+      const sha = actionReference.slice(separator + 1)
+      const expected = reviewedActionPins.get(action)
+      assert.ok(expected, `${workflowName} uses unreviewed external action ${action}`)
+      assert.match(sha, /^[a-f0-9]{40}$/, `${action} must use a full lowercase commit SHA`)
+      assert.equal(sha, expected.sha, `${action} must use its reviewed commit`)
+      assert.equal(version, expected.version, `${action} must retain its exact version comment`)
+      const major = Number(/^v(\d+)/.exec(version)?.[1])
       seen.add(action)
       assert.ok(
-        Number(majorText) >= minimum,
-        `${action}@v${majorText} must use Node 24-compatible major v${minimum} or newer`,
+        major >= expected.minimumMajor,
+        `${action}@${version} must use Node 24-compatible major v${expected.minimumMajor} or newer`,
       )
     }
   }
 
-  assert.deepEqual([...seen].sort(), [...minimumMajors.keys()].sort())
+  assert.deepEqual([...seen].sort(), [...reviewedActionPins.keys()].sort())
 })
 
 test('musl native releases use a pinned Zig cdylib build path', () => {
@@ -347,12 +384,21 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
 
   const certificationSource = releaseWorkflow.slice(certificationJob, releaseJob)
   const releaseSource = releaseWorkflow.slice(releaseJob)
-  const certificationPnpmSetup = certificationSource.indexOf('uses: pnpm/action-setup@v5')
-  const certificationNodeSetup = certificationSource.indexOf('uses: actions/setup-node@v5')
+  const pnpmPin = reviewedActionPins.get('pnpm/action-setup')
+  const nodePin = reviewedActionPins.get('actions/setup-node')
+  const certificationPnpmSetup = certificationSource.indexOf(
+    `uses: pnpm/action-setup@${pnpmPin.sha} # ${pnpmPin.version}`,
+  )
+  const certificationNodeSetup = certificationSource.indexOf(
+    `uses: actions/setup-node@${nodePin.sha} # ${nodePin.version}`,
+  )
   assert.match(certificationSource, /needs: \[native-build, native-runtime\]/)
   assert.doesNotMatch(certificationSource, /github\.event_name == 'push'/)
   assert.ok(certificationPnpmSetup >= 0 && certificationPnpmSetup < certificationNodeSetup)
-  assert.match(certificationSource, /uses: pnpm\/action-setup@v5[\s\S]*?version: 9\.1\.1/)
+  assert.match(
+    certificationSource,
+    new RegExp(`uses: pnpm/action-setup@${pnpmPin.sha}[^\\n]*[\\s\\S]*?version: 9\\.1\\.1`),
+  )
   assert.match(releaseSource, /needs: native-certification/)
   assert.doesNotMatch(releaseSource, /Download all native runtime evidence/)
 })
