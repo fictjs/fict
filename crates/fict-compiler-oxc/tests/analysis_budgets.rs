@@ -13,6 +13,49 @@ fn options() -> OxcCompileOptions {
 }
 
 #[test]
+fn frontend_semantic_limits_stop_before_hir_construction() {
+    for (budgets, setting) in [
+        (
+            HirAnalysisBudgets {
+                max_frontend_nodes: 1,
+                ..HirAnalysisBudgets::default()
+            },
+            "maxAstNodes",
+        ),
+        (
+            HirAnalysisBudgets {
+                max_frontend_scopes: 1,
+                ..HirAnalysisBudgets::default()
+            },
+            "maxScopes",
+        ),
+        (
+            HirAnalysisBudgets {
+                max_frontend_symbols: 1,
+                ..HirAnalysisBudgets::default()
+            },
+            "maxSymbols",
+        ),
+    ] {
+        let output = build_hir(
+            "export function App(first, second) { const value = first + second; return value; }",
+            options(),
+            &HirBuildOptions {
+                analysis_budgets: budgets,
+                ..HirBuildOptions::default()
+            },
+        );
+        assert!(output.hir.is_none(), "{setting} must fail before HIR");
+        assert!(
+            output.frontend.is_none(),
+            "limited frontend must be released"
+        );
+        assert_eq!(output.diagnostics[0].code.as_str(), "FICT-REQUEST");
+        assert!(output.diagnostics[0].message.contains(setting));
+    }
+}
+
+#[test]
 fn static_hook_alias_analysis_fails_closed_when_its_budget_is_exhausted() {
     let output = build_hir(
         r#"

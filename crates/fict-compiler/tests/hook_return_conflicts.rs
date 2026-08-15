@@ -15,6 +15,7 @@ fn request(code: &str) -> CompileRequest {
         options: CompilerOptions::default(),
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     }
 }
 

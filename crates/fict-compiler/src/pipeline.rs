@@ -9,8 +9,8 @@ use crate::source_map::compose_source_maps;
 use crate::{
     CompileRequest, CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
     CompilerExplainEvent, CompilerExplainEventKind, CompilerStats, CorePassOptions,
-    HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap, SourceLanguage,
-    run_core_passes,
+    HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap, RequestLimits,
+    SourceLanguage, run_core_passes,
 };
 use fict_compiler_oxc::{
     FrontendSuppression, HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage,
@@ -45,6 +45,12 @@ pub fn internal_error_result() -> CompileResult {
     )
 }
 fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
+    let limits = request.limits;
+    let result = compile_normalized_inner(request);
+    enforce_compile_result_limits(result, limits)
+}
+
+fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult {
     let mut result = CompileResult::empty();
     result.diagnostics = request.integration_diagnostics.clone();
     #[cfg(not(feature = "preview"))]
@@ -127,9 +133,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                 GuaranteeClass::Fallback,
             ),
             resolved_metadata: request.metadata.clone(),
-            analysis_budgets: Default::default(),
+            analysis_budgets: request.limits.hir_analysis_budgets(),
         },
     );
+    if let Some(hir) = &build.hir
+        && let Err(error) = request.limits.check_hir(hir)
+    {
+        return resource_limit_result(error.to_string());
+    }
     let defer_effect_advisories = build.hir.is_some()
         && build.module_plan.is_some()
         && build
@@ -465,6 +476,42 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     result
 }
 
+fn enforce_compile_result_limits(result: CompileResult, limits: RequestLimits) -> CompileResult {
+    let maps = result
+        .map
+        .iter()
+        .chain(
+            result
+                .artifacts
+                .iter()
+                .filter_map(|artifact| artifact.map.as_ref()),
+        )
+        .collect::<Vec<_>>();
+    let violation = limits
+        .check_diagnostics(result.diagnostics.len())
+        .and_then(|()| {
+            if maps.is_empty() {
+                Ok(())
+            } else {
+                limits.check_source_map(&maps)
+            }
+        })
+        .and_then(|()| limits.check_output(&result));
+    match violation {
+        Ok(()) => result,
+        Err(error) => resource_limit_result(error.to_string()),
+    }
+}
+
+fn resource_limit_result(message: impl Into<String>) -> CompileResult {
+    failed_result(
+        "FICT-REQUEST",
+        message,
+        GuaranteeClass::Unsupported,
+        Some("lower request complexity or raise limits within the documented hard ceilings"),
+    )
+}
+
 fn emit_disabled_result(
     mut result: CompileResult,
     request: &NormalizedCompileRequest,
@@ -780,6 +827,7 @@ mod tests {
             options: CompilerOptions::default(),
             metadata: Vec::new(),
             integration_diagnostics: Vec::new(),
+            limits: Default::default(),
         }
     }
 

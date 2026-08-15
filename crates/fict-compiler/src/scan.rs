@@ -9,8 +9,8 @@ use fict_diagnostics::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, ModuleKind, NormalizedScanRequest, ScanRequest,
-    SourceLanguage, result::INTERNAL_RECOVERY_HELP,
+    COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, ModuleKind, NormalizedScanRequest, RequestLimits,
+    ScanRequest, SourceLanguage, result::INTERNAL_RECOVERY_HELP,
 };
 
 /// Static module-request category returned to bundler graph hosts.
@@ -109,6 +109,7 @@ pub fn internal_scan_error_result() -> ScanResult {
 }
 
 fn scan_normalized(request: NormalizedScanRequest) -> ScanResult {
+    let limits = request.limits;
     let output = scan_static_module_requests(
         &request.code,
         OxcCompileOptions {
@@ -119,7 +120,7 @@ fn scan_normalized(request: NormalizedScanRequest) -> ScanResult {
         },
     );
 
-    ScanResult {
+    let result = ScanResult {
         protocol_version: request.protocol_version,
         module_requests: output
             .module_requests
@@ -129,6 +130,22 @@ fn scan_normalized(request: NormalizedScanRequest) -> ScanResult {
         has_module_syntax: output.has_module_syntax,
         diagnostics: output.diagnostics,
         compiler_build_id: COMPILER_BUILD_ID.to_owned(),
+    };
+    enforce_scan_result_limits(result, limits)
+}
+
+fn enforce_scan_result_limits(result: ScanResult, limits: RequestLimits) -> ScanResult {
+    let violation = limits
+        .check_diagnostics(result.diagnostics.len())
+        .and_then(|()| limits.check_output(&result));
+    match violation {
+        Ok(()) => result,
+        Err(error) => failed_scan_result(
+            "FICT-REQUEST",
+            error.to_string(),
+            GuaranteeClass::Unsupported,
+            Some("lower request complexity or raise limits within the documented hard ceilings"),
+        ),
     }
 }
 
@@ -198,6 +215,7 @@ mod tests {
             module_id: None,
             language: None,
             module_kind: None,
+            limits: Default::default(),
         }
     }
 

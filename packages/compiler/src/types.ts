@@ -162,6 +162,30 @@ export interface RawSourceMap {
   x_google_ignoreList?: number[]
 }
 
+/** Native per-request ceilings. Values may be lowered but cannot exceed the documented hard cap. */
+export interface RequestLimits {
+  /** Default 16 MiB; hard cap 64 MiB. Checked before parsing. */
+  maxSourceBytes?: number
+  /** Default 64 MiB; hard cap 256 MiB. Counts the complete decoded JSON request. */
+  maxRequestBytes?: number
+  /** Default 32 MiB; hard cap 128 MiB. Applies to input and aggregate generated maps. */
+  maxSourceMapBytes?: number
+  /** Default 16 MiB; hard cap 64 MiB. */
+  maxMetadataBytes?: number
+  /** Default 1,000,000; hard cap 8,000,000. Checked before HIR construction. */
+  maxAstNodes?: number
+  /** Default 250,000; hard cap 1,000,000. Checked before HIR construction. */
+  maxScopes?: number
+  /** Default 500,000; hard cap 2,000,000. Checked before HIR construction. */
+  maxSymbols?: number
+  /** Default 2,000,000; hard cap 8,000,000. Checked before compiler passes. */
+  maxHirNodes?: number
+  /** Default 2,048; hard cap 16,384. */
+  maxDiagnostics?: number
+  /** Default 64 MiB; hard cap 256 MiB. Counts the complete result JSON. */
+  maxOutputBytes?: number
+}
+
 export interface CompileRequest {
   protocolVersion?: CompilerProtocolVersion
   code: string
@@ -177,6 +201,8 @@ export interface CompileRequest {
   options?: NativeCompilerOptions
   metadata?: ResolvedMetadataInput[]
   integrationDiagnostics?: FictDiagnostic[]
+  /** Native limits only; deadlines, cancellation, queueing, and isolation are host-owned. */
+  limits?: RequestLimits
 }
 
 export type ScanModuleRequestKind = 'import' | 'reExport' | 'importEquals'
@@ -190,6 +216,7 @@ export interface ScanRequest {
   moduleId?: string | null
   language?: SourceLanguage | null
   moduleKind?: ModuleKind | null
+  limits?: RequestLimits
 }
 
 /** One static import, re-export, or TypeScript import-equals edge. */
@@ -234,6 +261,8 @@ export interface AnalyzeRequest {
   /** Diagnostics produced by the official host before native analysis. */
   integrationDiagnostics?: FictDiagnostic[]
   options?: NativeAnalyzeOptions
+  /** Native limits only; deadlines, cancellation, queueing, and isolation are host-owned. */
+  limits?: RequestLimits
 }
 
 export type CompilerArtifactKind = 'handlerModule' | 'auxiliaryModule'

@@ -12,6 +12,7 @@ mod capabilities;
 mod control_flow_diagnostics;
 mod diagnostic_policy;
 mod effect_diagnostics;
+mod limits;
 mod metadata_analysis;
 mod pass_manager;
 mod pipeline;
@@ -32,6 +33,7 @@ pub use capabilities::{
 };
 pub use fict_compiler_oxc::{OXC_VERSION, ParseProbe};
 pub use fict_metadata::MODULE_REACTIVE_METADATA_VERSION;
+pub use limits::RequestLimits;
 pub use pass_manager::{
     CompilerPass, CorePassBudgets, CorePassOptions, CorePassOutput, CorePassStats,
     FunctionPassAnalysis, PassContext, run_core_passes,

@@ -26,6 +26,7 @@ fn compile_source_with_strict(
         },
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     })
 }
 

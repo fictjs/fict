@@ -75,6 +75,21 @@ native boundary. Hosts scan imports, resolve their own graph, and pass a
 Diagnostics, source maps, compiler artifacts, stats, and module metadata are
 returned as structured data.
 
+Every compile, scan, and analyze request accepts an optional `limits` object.
+The native boundary checks source bytes before parsing, the complete request,
+input metadata and source maps, HIR nodes before compiler passes, retained
+diagnostics, aggregate generated maps, and the complete serialized result.
+Semantic AST-node, scope, and symbol ceilings stop a request after the first
+frontend analysis and before the second parse and HIR construction.
+Defaults and non-disableable hard caps are declared on `RequestLimits` in the
+package types; an exceeded limit returns a fail-closed `FICT-REQUEST` result.
+
+Deadlines, cancellation, concurrency limits, queue backpressure, and
+per-request process or worker isolation are deliberately host responsibilities.
+An online compiler that accepts untrusted source must enforce those controls
+outside the native library; `RequestLimits` does not make an in-process service
+safe against OOM, abort, or stack exhaustion.
+
 Compiler timing and counter stats always cross N-API as non-negative JavaScript
 `number` safe integers. Values above `Number.MAX_SAFE_INTEGER` saturate at that
 maximum instead of becoming `bigint` or losing precision.

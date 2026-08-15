@@ -20,6 +20,7 @@ fn compile_source(code: &str, strict_guarantee: bool) -> fict_compiler::CompileR
         },
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     })
 }
 

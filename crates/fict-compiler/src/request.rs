@@ -5,7 +5,7 @@ use fict_metadata::{MetadataValidationError, ResolvedMetadataInput};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    COMPILER_PROTOCOL_VERSION, RawSourceMap, SourceMapValidationError,
+    COMPILER_PROTOCOL_VERSION, RawSourceMap, RequestLimits, SourceMapValidationError,
     diagnostic_policy::strict_guarantee_pattern_overlaps,
 };
 
@@ -234,6 +234,9 @@ pub struct CompileRequest {
     /// Diagnostics supplied by an official integration before traversal.
     #[serde(default)]
     pub integration_diagnostics: Vec<Diagnostic>,
+    /// Per-request native resource ceilings. Service-level deadlines and queueing stay host-owned.
+    #[serde(default, skip_serializing_if = "RequestLimits::is_default")]
+    pub limits: RequestLimits,
 }
 
 /// Serializable parse-only request used by module-graph hosts.
@@ -256,6 +259,9 @@ pub struct ScanRequest {
     /// Explicit module grammar, or infer from the filename.
     #[serde(default)]
     pub module_kind: Option<ModuleKind>,
+    /// Per-request native resource ceilings.
+    #[serde(default, skip_serializing_if = "RequestLimits::is_default")]
+    pub limits: RequestLimits,
 }
 
 /// Trace density requested by editor and playground analysis hosts.
@@ -329,11 +335,15 @@ pub struct AnalyzeRequest {
     /// Tooling and compiler analysis controls.
     #[serde(default)]
     pub options: AnalyzeOptions,
+    /// Per-request native resource ceilings. Service-level deadlines and queueing stay host-owned.
+    #[serde(default, skip_serializing_if = "RequestLimits::is_default")]
+    pub limits: RequestLimits,
 }
 
 impl CompileRequest {
     /// Validate and make all inferred identities/source modes explicit.
     pub fn normalize(self) -> Result<NormalizedCompileRequest, CompileRequestError> {
+        self.validate_limits()?;
         if self.protocol_version != COMPILER_PROTOCOL_VERSION {
             return Err(CompileRequestError::UnsupportedProtocolVersion(
                 self.protocol_version,
@@ -407,13 +417,42 @@ impl CompileRequest {
             options: self.options,
             metadata: self.metadata,
             integration_diagnostics: self.integration_diagnostics,
+            limits: self.limits,
         })
+    }
+
+    fn validate_limits(&self) -> Result<(), CompileRequestError> {
+        self.limits
+            .validate_configuration()
+            .and_then(|()| self.limits.check_source(&self.code))
+            .and_then(|()| {
+                if self.metadata.is_empty() {
+                    Ok(())
+                } else {
+                    self.limits.check_metadata(&self.metadata)
+                }
+            })
+            .and_then(|()| {
+                self.limits
+                    .check_diagnostics(self.integration_diagnostics.len())
+            })
+            .and_then(|()| match &self.input_source_map {
+                Some(map) => self.limits.check_source_map(map),
+                None => Ok(()),
+            })
+            .and_then(|()| self.limits.check_request(self))
+            .map_err(|error| CompileRequestError::ResourceLimit(error.to_string()))
     }
 }
 
 impl ScanRequest {
     /// Validate and make all inferred identities/source modes explicit.
     pub fn normalize(self) -> Result<NormalizedScanRequest, CompileRequestError> {
+        self.limits
+            .validate_configuration()
+            .and_then(|()| self.limits.check_source(&self.code))
+            .and_then(|()| self.limits.check_request(&self))
+            .map_err(|error| CompileRequestError::ResourceLimit(error.to_string()))?;
         if self.protocol_version != COMPILER_PROTOCOL_VERSION {
             return Err(CompileRequestError::UnsupportedProtocolVersion(
                 self.protocol_version,
@@ -440,6 +479,7 @@ impl ScanRequest {
             module_id: self.module_id.unwrap_or(self.filename),
             language,
             module_kind,
+            limits: self.limits,
         })
     }
 }
@@ -460,6 +500,7 @@ impl AnalyzeRequest {
             options: self.options.compiler_options,
             metadata: self.metadata,
             integration_diagnostics: self.integration_diagnostics,
+            limits: self.limits,
         }
         .normalize()?;
 
@@ -476,6 +517,7 @@ impl AnalyzeRequest {
             compiler_options: normalized.options,
             metadata: normalized.metadata,
             integration_diagnostics: normalized.integration_diagnostics,
+            limits: normalized.limits,
         })
     }
 }
@@ -505,6 +547,8 @@ pub struct NormalizedCompileRequest {
     pub metadata: Vec<ResolvedMetadataInput>,
     /// Integration-owned diagnostics.
     pub integration_diagnostics: Vec<Diagnostic>,
+    /// Validated per-request resource ceilings.
+    pub limits: RequestLimits,
 }
 
 /// Fully validated scan request consumed by the OXC adapter.
@@ -522,6 +566,8 @@ pub struct NormalizedScanRequest {
     pub language: SourceLanguage,
     /// Explicit module grammar.
     pub module_kind: ModuleKind,
+    /// Validated per-request resource ceilings.
+    pub limits: RequestLimits,
 }
 
 /// Fully validated analysis request consumed by the native tooling pipeline.
@@ -551,6 +597,8 @@ pub struct NormalizedAnalyzeRequest {
     pub metadata: Vec<ResolvedMetadataInput>,
     /// Integration-owned diagnostics shared with compilation.
     pub integration_diagnostics: Vec<Diagnostic>,
+    /// Validated per-request resource ceilings.
+    pub limits: RequestLimits,
 }
 
 /// Fail-closed request normalization error.
@@ -584,6 +632,8 @@ pub enum CompileRequestError {
         /// Rejected severity override.
         level: WarningLevel,
     },
+    /// A request exceeded a native resource ceiling or tried to disable a hard ceiling.
+    ResourceLimit(String),
 }
 
 impl std::fmt::Display for CompileRequestError {
@@ -618,6 +668,7 @@ impl std::fmt::Display for CompileRequestError {
                 "strictGuarantee does not allow downgrading {pattern} to \"{}\"",
                 warning_level_name(*level)
             ),
+            Self::ResourceLimit(message) => formatter.write_str(message),
         }
     }
 }
@@ -761,6 +812,7 @@ mod tests {
             options: CompilerOptions::default(),
             metadata: Vec::new(),
             integration_diagnostics: Vec::new(),
+            limits: Default::default(),
         }
     }
 
@@ -818,6 +870,7 @@ mod tests {
             module_id: Some("/@id/module.ts?worker#client".into()),
             language: None,
             module_kind: None,
+            limits: Default::default(),
         }
         .normalize()
         .expect("normalize scan request");

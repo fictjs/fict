@@ -13,6 +13,7 @@ fn request(code: impl Into<String>, filename: impl Into<String>) -> CompileReque
         options: CompilerOptions::default(),
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     }
 }
 

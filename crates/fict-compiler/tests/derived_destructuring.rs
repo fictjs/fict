@@ -16,6 +16,7 @@ fn compile_source(code: &str, filename: &str) -> fict_compiler::CompileResult {
         },
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     })
 }
 

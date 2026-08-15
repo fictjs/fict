@@ -142,6 +142,12 @@ impl Default for HirBuildOptions {
 /// Hard budgets for analyses that run before Fict-owned HIR reaches the core pass manager.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HirAnalysisBudgets {
+    /// Maximum semantic AST nodes accepted before the second parse and HIR construction.
+    pub max_frontend_nodes: u32,
+    /// Maximum semantic scopes accepted before the second parse and HIR construction.
+    pub max_frontend_scopes: u32,
+    /// Maximum semantic symbols accepted before the second parse and HIR construction.
+    pub max_frontend_symbols: u32,
     /// Maximum whole-program sweeps used to resolve static hook aliases and deferred effects.
     pub max_static_hook_alias_iterations: u32,
     /// Maximum distinct CFG block-state visits used by storage-origin dataflow.
@@ -151,6 +157,9 @@ pub struct HirAnalysisBudgets {
 impl Default for HirAnalysisBudgets {
     fn default() -> Self {
         Self {
+            max_frontend_nodes: 1_000_000,
+            max_frontend_scopes: 250_000,
+            max_frontend_symbols: 500_000,
             max_static_hook_alias_iterations: 256,
             max_storage_origin_block_visits: 2_000_000,
         }
@@ -202,6 +211,16 @@ pub fn build_hir(
             diagnostics: frontend_output.diagnostics,
         };
     };
+
+    if let Some(diagnostic) = frontend_budget_diagnostic(&frontend, hir_options.analysis_budgets) {
+        return HirBuildOutput {
+            hir: None,
+            frontend: None,
+            module_plan: None,
+            syntax_fragments: Vec::new(),
+            diagnostics: vec![diagnostic],
+        };
+    }
 
     if frontend.program_compiler_disabled() {
         return HirBuildOutput {
@@ -275,6 +294,47 @@ pub fn build_hir(
     let mut builder = Builder::new(source, frontend, &semantic, hir_options);
     builder.build(&program);
     builder.finish()
+}
+
+fn frontend_budget_diagnostic(
+    frontend: &FrontendSummary,
+    budgets: HirAnalysisBudgets,
+) -> Option<Diagnostic> {
+    let checks = [
+        (
+            frontend.source.node_count,
+            budgets.max_frontend_nodes,
+            "semantic AST nodes",
+            "maxAstNodes",
+        ),
+        (
+            frontend.source.scope_count,
+            budgets.max_frontend_scopes,
+            "semantic scopes",
+            "maxScopes",
+        ),
+        (
+            frontend.source.symbol_count,
+            budgets.max_frontend_symbols,
+            "semantic symbols",
+            "maxSymbols",
+        ),
+    ];
+    checks
+        .into_iter()
+        .find(|(observed, limit, _, _)| observed > limit)
+        .map(|(observed, limit, resource, setting)| {
+            Diagnostic::new(
+                DiagnosticCode::new("FICT-REQUEST")
+                    .expect("frontend resource diagnostic literal must be valid"),
+                DiagnosticSeverity::Error,
+                format!("{resource} exceeds {setting}: observed {observed}, limit {limit}"),
+            )
+            .with_guarantee_class(GuaranteeClass::Unsupported)
+            .with_help(
+                "lower request complexity or raise limits within the documented hard ceilings",
+            )
+        })
 }
 
 #[derive(Debug, Clone)]

@@ -35,6 +35,7 @@ impl MappedOutput {
             options,
             metadata: Vec::new(),
             integration_diagnostics: Vec::new(),
+            limits: Default::default(),
         });
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         let raw_map = result.map.as_ref().expect("requested source map");
@@ -144,6 +145,7 @@ fn rejects_mismatched_input_map_identity_as_public_input() {
         },
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     });
 
     assert!(result.has_errors());

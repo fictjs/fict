@@ -132,6 +132,7 @@ fn request_for(source: &str, controls: u64) -> CompileRequest {
         options,
         metadata: vec![metadata_input(controls)],
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     }
 }
 
@@ -278,6 +279,7 @@ fn validate_generated_module(code: &str, module_kind: Option<ModuleKind>, filena
         module_id: None,
         language: Some(SourceLanguage::JavaScript),
         module_kind,
+        limits: Default::default(),
     });
     assert!(
         !parsed.has_errors(),

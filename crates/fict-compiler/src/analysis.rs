@@ -224,6 +224,21 @@ fn invalid_analyze_request_result_for(
 }
 
 fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
+    let limits = request.limits;
+    let file_name = request.filename.clone();
+    let result = analyze_normalized_inner(request);
+    let violation = limits
+        .check_diagnostics(result.diagnostics.len())
+        .and_then(|()| limits.check_output(&result));
+    match violation {
+        Ok(()) => result,
+        Err(error) => {
+            invalid_analyze_request_result_for(file_name, "FICT-REQUEST", error.to_string())
+        }
+    }
+}
+
+fn analyze_normalized_inner(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
     let mut result = AnalyzeResult::empty(request.filename.clone());
     let source_index = SourceIndex::new(&request.code);
     let oxc_options = OxcCompileOptions {
@@ -258,9 +273,18 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
                 GuaranteeClass::Fallback,
             ),
             resolved_metadata: request.metadata.clone(),
-            analysis_budgets: Default::default(),
+            analysis_budgets: request.limits.hir_analysis_budgets(),
         },
     );
+    if let Some(hir) = &build.hir
+        && let Err(error) = request.limits.check_hir(hir)
+    {
+        return invalid_analyze_request_result_for(
+            request.filename,
+            "FICT-REQUEST",
+            error.to_string(),
+        );
+    }
     let suppressions = build
         .frontend
         .as_ref()
@@ -885,6 +909,7 @@ mod tests {
                 verbosity: AnalyzeVerbosity::Verbose,
                 ..AnalyzeOptions::default()
             },
+            limits: Default::default(),
         }
     }
 
@@ -1129,6 +1154,7 @@ mod tests {
             options: Default::default(),
             metadata: Vec::new(),
             integration_diagnostics: Vec::new(),
+            limits: Default::default(),
         });
         assert!(compiled.has_errors());
         assert!(compiled.diagnostics.iter().any(|diagnostic| {
@@ -1251,6 +1277,7 @@ mod tests {
             options: analyze_request.options.compiler_options.clone(),
             metadata,
             integration_diagnostics: Vec::new(),
+            limits: Default::default(),
         });
         let analyze_result = analyze(analyze_request);
 

@@ -127,6 +127,7 @@ fn request(fixture: &CompatibilityFixture) -> CompileRequest {
         options: fixture.options.clone(),
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     }
 }
 

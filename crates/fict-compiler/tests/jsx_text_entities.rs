@@ -13,6 +13,7 @@ fn compile_source(source: &str) -> fict_compiler::CompileResult {
         options: CompilerOptions::default(),
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     })
 }
 

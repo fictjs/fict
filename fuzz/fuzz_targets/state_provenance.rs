@@ -444,6 +444,7 @@ fn request(generated: &GeneratedCase, strict_guarantee: bool) -> CompileRequest 
         },
         metadata: Vec::new(),
         integration_diagnostics: Vec::new(),
+        limits: Default::default(),
     }
 }
 
@@ -527,6 +528,7 @@ fn validate_output(result: &CompileResult, label: &str) {
         module_id: None,
         language: Some(SourceLanguage::JavaScript),
         module_kind: Some(ModuleKind::Module),
+        limits: Default::default(),
     });
     assert!(
         !reparsed.has_errors(),
