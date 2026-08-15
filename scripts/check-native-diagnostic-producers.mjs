@@ -11,13 +11,10 @@ function isRecord(value) {
 }
 
 export function configuredDiagnosticCodes(source) {
-  const match = source.match(/const CONFIGURABLE_DIAGNOSTIC_CODES[^=]*=\s*&\[(?<entries>.*?)\];/s)
-  if (!match?.groups?.entries) {
-    throw new Error('unable to locate CONFIGURABLE_DIAGNOSTIC_CODES')
-  }
-  return [...match.groups.entries.matchAll(/"(?<code>FICT-[A-Z0-9-]+)"/g)].map(
-    entry => entry.groups.code,
-  )
+  const registry = parseDiagnosticRegistry(source)
+  return Object.entries(registry.policy)
+    .filter(([, policy]) => policy.allowOverrideOutsideStrict === true)
+    .map(([code]) => code)
 }
 
 export function missingNativeDiagnosticProducers(policySource, producerSources) {
@@ -41,8 +38,8 @@ export function parseDiagnosticRegistry(source) {
   if (registry?.schemaVersion !== 1 || !isRecord(registry.active)) {
     throw new Error('diagnostic registry must use schemaVersion 1 and define active producers')
   }
-  if (!isRecord(registry.aliases) || !isRecord(registry.retired)) {
-    throw new Error('diagnostic registry must define aliases and retired maps')
+  if (!isRecord(registry.aliases) || !isRecord(registry.retired) || !isRecord(registry.policy)) {
+    throw new Error('diagnostic registry must define aliases, retired, and policy maps')
   }
   return registry
 }
@@ -90,7 +87,6 @@ function sourceContainsCode(sources, code) {
 
 export function validateDiagnosticRegistry({
   registrySource,
-  policySource,
   rustProducerSources,
   vscodeProducerSources,
   docsSource,
@@ -99,6 +95,21 @@ export function validateDiagnosticRegistry({
   const registry = parseDiagnosticRegistry(registrySource)
   const inventory = registryInventory(registry)
   const activeCodes = new Set(inventory.active.keys())
+  for (const [code, policy] of Object.entries(registry.policy)) {
+    if (!activeCodes.has(code) || inventory.active.get(code) !== 'rust') {
+      throw new Error(`diagnostic policy references inactive Rust code: ${code}`)
+    }
+    if (
+      !isRecord(policy) ||
+      !['notApplicable', 'advisory', 'fallback', 'unsupported', 'internal'].includes(
+        policy.guaranteeClass,
+      ) ||
+      typeof policy.allowOverrideOutsideStrict !== 'boolean' ||
+      (policy.exact !== undefined && typeof policy.exact !== 'boolean')
+    ) {
+      throw new Error(`diagnostic policy is malformed: ${code}`)
+    }
+  }
   for (const [alias, target] of inventory.aliases) {
     if (!activeCodes.has(target)) {
       throw new Error(`diagnostic alias ${alias} targets inactive code ${target}`)
@@ -119,7 +130,7 @@ export function validateDiagnosticRegistry({
   if (JSON.stringify(sorted(documented)) !== JSON.stringify(expectedDocumented)) {
     throw new Error('diagnostic documentation headings do not match the active registry')
   }
-  for (const code of configuredDiagnosticCodes(policySource)) {
+  for (const code of configuredDiagnosticCodes(registrySource)) {
     if (!activeCodes.has(code)) {
       throw new Error(`configurable diagnostic is not active in the registry: ${code}`)
     }
@@ -165,8 +176,6 @@ async function sourceFiles(directory, extension) {
 }
 
 export async function checkNativeDiagnosticProducers(root = DEFAULT_ROOT) {
-  const policyPath = path.join(root, 'crates/fict-compiler/src/diagnostic_policy.rs')
-  const policySource = await readFile(policyPath, 'utf8')
   const registrySource = await readFile(path.join(root, 'diagnostics/registry.json'), 'utf8')
   const docsSource = await readFile(path.join(root, 'docs/diagnostic-codes.md'), 'utf8')
   const crateEntries = await readdir(path.join(root, 'crates'), { withFileTypes: true })
@@ -180,10 +189,8 @@ export async function checkNativeDiagnosticProducers(root = DEFAULT_ROOT) {
       if (error?.code !== 'ENOENT') throw error
     }
   }
-  const rustProducerSources = await Promise.all(
-    rustFiles.filter(file => file !== policyPath).map(file => readFile(file, 'utf8')),
-  )
-  const missing = missingNativeDiagnosticProducers(policySource, rustProducerSources)
+  const rustProducerSources = await Promise.all(rustFiles.map(file => readFile(file, 'utf8')))
+  const missing = missingNativeDiagnosticProducers(registrySource, rustProducerSources)
   if (missing.length > 0) {
     throw new Error(`configurable diagnostics without native producers: ${missing.join(', ')}`)
   }
@@ -199,7 +206,6 @@ export async function checkNativeDiagnosticProducers(root = DEFAULT_ROOT) {
   const integrationSources = await Promise.all(integrationFiles.map(file => readFile(file, 'utf8')))
   return validateDiagnosticRegistry({
     registrySource,
-    policySource,
     rustProducerSources,
     vscodeProducerSources,
     docsSource,

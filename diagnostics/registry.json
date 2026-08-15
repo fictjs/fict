@@ -62,6 +62,40 @@
       "additional": []
     }
   },
+  "policy": {
+    "FICT-P001": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-P002": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-P003": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-P004": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-P005": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-S002": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-E001": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true },
+    "FICT-M": {
+      "guaranteeClass": "fallback",
+      "allowOverrideOutsideStrict": true,
+      "exact": true
+    },
+    "FICT-M001": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true },
+    "FICT-M003": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-C003": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true },
+    "FICT-C004": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true },
+    "FICT-J001": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true },
+    "FICT-J002": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true },
+    "FICT-J003": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-R002": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-R004": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-R005": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-R006": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-R007": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-H": {
+      "guaranteeClass": "fallback",
+      "allowOverrideOutsideStrict": true,
+      "exact": true
+    },
+    "FICT-H002": { "guaranteeClass": "fallback", "allowOverrideOutsideStrict": true },
+    "FICT-H003": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true },
+    "FICT-X003": { "guaranteeClass": "advisory", "allowOverrideOutsideStrict": true }
+  },
   "aliases": {},
   "retired": {
     "FICT-S001": {

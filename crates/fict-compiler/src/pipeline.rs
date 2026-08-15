@@ -121,9 +121,10 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             reactive_scopes: request.options.reactive_scopes.clone(),
             strict_guarantee: request.options.strict_guarantee,
             reactive_creation_control_flow_severity: configured_diagnostic_severity(
-                &request.options.warning_levels,
+                &request.options,
                 "FICT-R004",
                 DiagnosticSeverity::Error,
+                GuaranteeClass::Fallback,
             ),
             resolved_metadata: request.metadata.clone(),
             analysis_budgets: Default::default(),

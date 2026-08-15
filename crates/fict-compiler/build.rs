@@ -23,10 +23,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parent()
         .and_then(Path::parent)
         .ok_or("fict-compiler must remain under <workspace>/crates")?;
+    let output_directory = PathBuf::from(
+        env::var_os("OUT_DIR").ok_or("OUT_DIR is required to generate compiler policy")?,
+    );
+    let diagnostic_registry = workspace_root.join("diagnostics/registry.json");
+    generate_diagnostic_policy_registry(&diagnostic_registry, &output_directory)?;
 
     let mut inputs = vec![
         workspace_root.join("Cargo.lock"),
         workspace_root.join("Cargo.toml"),
+        diagnostic_registry,
         workspace_root.join("packages/compiler/compiler-capabilities.json"),
         workspace_root.join("rust-toolchain.toml"),
     ];
@@ -76,6 +82,81 @@ fn main() -> Result<(), Box<dyn Error>> {
         write!(&mut source_hash, "{byte:02x}")?;
     }
     println!("cargo:rustc-env=FICT_COMPILER_SOURCE_HASH={source_hash}");
+    Ok(())
+}
+
+fn generate_diagnostic_policy_registry(
+    registry_path: &Path,
+    output_directory: &Path,
+) -> Result<(), Box<dyn Error>> {
+    println!("cargo:rerun-if-changed={}", registry_path.display());
+    let registry: serde_json::Value = serde_json::from_slice(&fs::read(registry_path)?)?;
+    let active_rust = registry
+        .pointer("/active/rust")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("diagnostic registry must define active.rust")?;
+    let active_codes = active_rust
+        .values()
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let policies = registry
+        .get("policy")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("diagnostic registry must define policy")?;
+
+    let mut generated =
+        String::from("const DIAGNOSTIC_POLICY_REGISTRY: &[DiagnosticPolicyEntry] = &[\n");
+    for (pattern, raw_policy) in policies {
+        if !active_codes.contains(pattern.as_str()) {
+            return Err(
+                format!("diagnostic policy references inactive Rust code {pattern}").into(),
+            );
+        }
+        let policy = raw_policy
+            .as_object()
+            .ok_or_else(|| format!("diagnostic policy {pattern} must be an object"))?;
+        let guarantee_class = match policy
+            .get("guaranteeClass")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("notApplicable") => "NotApplicable",
+            Some("advisory") => "Advisory",
+            Some("fallback") => "Fallback",
+            Some("unsupported") => "Unsupported",
+            Some("internal") => "Internal",
+            _ => {
+                return Err(
+                    format!("diagnostic policy {pattern} has an invalid guaranteeClass").into(),
+                );
+            }
+        };
+        let allow_override = policy
+            .get("allowOverrideOutsideStrict")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| {
+                format!("diagnostic policy {pattern} must define allowOverrideOutsideStrict")
+            })?;
+        let exact = policy
+            .get("exact")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| format!("diagnostic policy {pattern}.exact must be boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false);
+        writeln!(
+            generated,
+            "    DiagnosticPolicyEntry {{ pattern: {pattern:?}, guarantee_class: GuaranteeClass::{guarantee_class}, allow_override_outside_strict: {allow_override}, exact: {exact} }},"
+        )?;
+    }
+    generated.push_str("];\n");
+    fs::write(
+        output_directory.join("diagnostic_policy_registry.rs"),
+        generated,
+    )?;
     Ok(())
 }
 

@@ -746,7 +746,7 @@ mod tests {
         AnalyzeRequest, CompileRequest, CompileRequestError, CompilerOptions, ModuleKind,
         ScanRequest, SourceLanguage,
     };
-    use crate::{COMPILER_PROTOCOL_VERSION, compile};
+    use crate::{COMPILER_PROTOCOL_VERSION, WarningLevel, compile};
 
     fn request(filename: &str) -> CompileRequest {
         CompileRequest {
@@ -761,6 +761,25 @@ mod tests {
             options: CompilerOptions::default(),
             metadata: Vec::new(),
             integration_diagnostics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn strict_guarantee_rejects_r004_warning_overrides_during_normalization() {
+        for level in [WarningLevel::Warn, WarningLevel::Off] {
+            let mut input = request("strict-r004.tsx");
+            input
+                .options
+                .warning_levels
+                .insert("FICT-R004".into(), level);
+
+            assert!(matches!(
+                input.normalize(),
+                Err(CompileRequestError::StrictGuaranteeWarningDowngrade {
+                    pattern,
+                    level: rejected,
+                }) if pattern == "FICT-R004" && rejected == level
+            ));
         }
     }
 

@@ -1,53 +1,27 @@
 use std::collections::BTreeMap;
 
 use fict_compiler_oxc::FrontendSuppression;
-use fict_diagnostics::{Diagnostic, DiagnosticSeverity, SourceIndex};
+use fict_diagnostics::{Diagnostic, DiagnosticSeverity, GuaranteeClass, SourceIndex};
 
 use crate::{CompilerOptions, WarningLevel, WarningsAsErrors};
 
-const STRICT_GUARANTEE_EXACT_CODES: &[&str] = &["FICT-M"];
-const STRICT_GUARANTEE_CODES: &[&str] = &[
-    "FICT-P001",
-    "FICT-P002",
-    "FICT-P003",
-    "FICT-P004",
-    "FICT-P005",
-    "FICT-J003",
-    "FICT-M003",
-    "FICT-S002",
-    "FICT-H",
-    "FICT-H002",
-    "FICT-R002",
-    "FICT-R005",
-    "FICT-R006",
-    "FICT-R007",
-];
 const STRICT_REACTIVITY_CODES: &[&str] = &["FICT-R006"];
-const CONFIGURABLE_DIAGNOSTIC_CODES: &[&str] = &[
-    "FICT-P001",
-    "FICT-P002",
-    "FICT-P003",
-    "FICT-P004",
-    "FICT-P005",
-    "FICT-S002",
-    "FICT-E001",
-    "FICT-M001",
-    "FICT-M003",
-    "FICT-C003",
-    "FICT-C004",
-    "FICT-J001",
-    "FICT-J002",
-    "FICT-J003",
-    "FICT-R002",
-    "FICT-R004",
-    "FICT-R005",
-    "FICT-R006",
-    "FICT-R007",
-    "FICT-H",
-    "FICT-H002",
-    "FICT-H003",
-    "FICT-X003",
-];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DiagnosticPolicyEntry {
+    pattern: &'static str,
+    guarantee_class: GuaranteeClass,
+    allow_override_outside_strict: bool,
+    exact: bool,
+}
+
+// Machine-readable policy shared by request validation and final severity normalization.
+//
+// The diagnostic's own `guarantee_class` remains authoritative for unregistered future codes,
+// so adding a fallback producer cannot accidentally bypass strict mode. Registry entries make
+// policy known before a producer runs and therefore let request normalization reject an invalid
+// strict-mode override without compiling the source first.
+include!(concat!(env!("OUT_DIR"), "/diagnostic_policy_registry.rs"));
 
 pub(crate) fn apply_diagnostic_policy(
     options: &CompilerOptions,
@@ -94,7 +68,7 @@ fn effective_severity(
     diagnostic: &Diagnostic,
 ) -> Option<DiagnosticSeverity> {
     let code = diagnostic.code.as_str();
-    if options.strict_guarantee && strict_guarantee_code_matches(code) {
+    if options.strict_guarantee && guarantee_class_requires_strict(diagnostic.guarantee_class) {
         return Some(DiagnosticSeverity::Error);
     }
 
@@ -120,11 +94,17 @@ fn effective_severity(
 }
 
 pub(crate) fn configured_diagnostic_severity(
-    levels: &BTreeMap<String, WarningLevel>,
+    options: &CompilerOptions,
     code: &str,
     default: DiagnosticSeverity,
+    guarantee_class: GuaranteeClass,
 ) -> DiagnosticSeverity {
-    configured_warning_level(levels, code).map_or(default, warning_level_severity)
+    if options.strict_guarantee && guarantee_class_requires_strict(guarantee_class) {
+        DiagnosticSeverity::Error
+    } else {
+        configured_warning_level(&options.warning_levels, code)
+            .map_or(default, warning_level_severity)
+    }
 }
 
 fn configured_warning_level(
@@ -158,19 +138,39 @@ fn warnings_as_errors_matches(policy: &WarningsAsErrors, code: &str) -> bool {
 }
 
 fn configurable_diagnostic_code(code: &str) -> bool {
-    STRICT_GUARANTEE_EXACT_CODES.contains(&code) || matches_any(code, CONFIGURABLE_DIAGNOSTIC_CODES)
+    policy_entry(code).is_some_and(|entry| entry.allow_override_outside_strict)
 }
 
-pub(crate) fn strict_guarantee_code_matches(code: &str) -> bool {
-    STRICT_GUARANTEE_EXACT_CODES.contains(&code) || matches_any(code, STRICT_GUARANTEE_CODES)
+const fn guarantee_class_requires_strict(guarantee_class: GuaranteeClass) -> bool {
+    matches!(
+        guarantee_class,
+        GuaranteeClass::Fallback | GuaranteeClass::Unsupported
+    )
 }
 
 pub(crate) fn strict_guarantee_pattern_overlaps(pattern: &str) -> bool {
-    STRICT_GUARANTEE_CODES.iter().any(|code| {
-        diagnostic_code_matches(code, pattern) || diagnostic_code_matches(pattern, code)
-    }) || STRICT_GUARANTEE_EXACT_CODES
+    DIAGNOSTIC_POLICY_REGISTRY.iter().any(|entry| {
+        guarantee_class_requires_strict(entry.guarantee_class)
+            && (if entry.exact {
+                pattern == entry.pattern || diagnostic_code_matches(entry.pattern, pattern)
+            } else {
+                diagnostic_code_matches(entry.pattern, pattern)
+                    || diagnostic_code_matches(pattern, entry.pattern)
+            })
+    })
+}
+
+fn policy_entry(code: &str) -> Option<&'static DiagnosticPolicyEntry> {
+    DIAGNOSTIC_POLICY_REGISTRY
         .iter()
-        .any(|code| pattern == *code || diagnostic_code_matches(code, pattern))
+        .filter(|entry| {
+            if entry.exact {
+                code == entry.pattern
+            } else {
+                diagnostic_code_matches(code, entry.pattern)
+            }
+        })
+        .max_by_key(|entry| entry.pattern.len())
 }
 
 fn matches_any(code: &str, patterns: &[&str]) -> bool {
@@ -196,22 +196,48 @@ mod tests {
     use super::{apply_diagnostic_policy, apply_diagnostic_suppressions, diagnostic_code_matches};
     use crate::{CompilerOptions, WarningLevel, WarningsAsErrors};
 
-    fn warning(code: &str) -> Diagnostic {
+    fn finding(code: &str, guarantee_class: GuaranteeClass) -> Diagnostic {
         Diagnostic::new(
             DiagnosticCode::new(code).expect("diagnostic code"),
             DiagnosticSeverity::Warning,
             "policy probe",
         )
-        .with_guarantee_class(GuaranteeClass::Fallback)
+        .with_guarantee_class(guarantee_class)
     }
 
     #[test]
     fn strict_guarantee_keeps_fict_m_exact() {
-        let mut diagnostics = vec![warning("FICT-M"), warning("FICT-M001")];
+        let mut diagnostics = vec![
+            finding("FICT-M", GuaranteeClass::Fallback),
+            finding("FICT-M001", GuaranteeClass::Advisory),
+        ];
         apply_diagnostic_policy(&CompilerOptions::default(), &mut diagnostics);
 
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
         assert_eq!(diagnostics[1].severity, DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn strict_guarantee_is_driven_by_the_producer_class_for_future_codes() {
+        let mut options = CompilerOptions::default();
+        options
+            .warning_levels
+            .insert("FICT-FUTURE001".into(), WarningLevel::Off);
+        options
+            .warning_levels
+            .insert("FICT-FUTURE002".into(), WarningLevel::Warn);
+        let mut diagnostics = vec![
+            finding("FICT-FUTURE001", GuaranteeClass::Fallback),
+            finding("FICT-FUTURE002", GuaranteeClass::Unsupported),
+            finding("FICT-M001", GuaranteeClass::Advisory),
+        ];
+
+        apply_diagnostic_policy(&options, &mut diagnostics);
+
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(diagnostics[1].severity, DiagnosticSeverity::Error);
+        assert_eq!(diagnostics[2].severity, DiagnosticSeverity::Warning);
     }
 
     #[test]
@@ -236,7 +262,10 @@ mod tests {
             warnings_as_errors: WarningsAsErrors::Codes(vec!["FICT-PLACEMENT".into()]),
             ..CompilerOptions::default()
         };
-        let mut diagnostics = vec![warning("FICT-PLACEMENT-HOOK-CONTROL")];
+        let mut diagnostics = vec![finding(
+            "FICT-PLACEMENT-HOOK-CONTROL",
+            GuaranteeClass::Advisory,
+        )];
         apply_diagnostic_policy(&options, &mut diagnostics);
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
 
@@ -244,7 +273,10 @@ mod tests {
         options
             .warning_levels
             .insert("FICT-PLACEMENT".into(), WarningLevel::Off);
-        let mut diagnostics = vec![warning("FICT-PLACEMENT-HOOK-CONTROL")];
+        let mut diagnostics = vec![finding(
+            "FICT-PLACEMENT-HOOK-CONTROL",
+            GuaranteeClass::Advisory,
+        )];
         apply_diagnostic_policy(&options, &mut diagnostics);
         assert!(diagnostics.is_empty());
     }

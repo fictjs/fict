@@ -407,9 +407,12 @@ rendering, ownership, and update semantics.
 
 **Fix:** Ensure reactive primitives are created at component top level or wrap them with explicit scope management (`createScope`/`runInScope`).
 
-**Downgrade (optional):** If your project needs transitional behavior, set compiler `warningLevels` to override:
+**Downgrade (non-production fallback only):** First opt out with `strictGuarantee: false`, then
+set compiler `warningLevels` to override. Strict mode rejects `warn` and `off` overrides before
+compilation because this diagnostic represents fallback lifecycle semantics.
 
 ```ts
+strictGuarantee: false,
 warningLevels: {
   'FICT-R004': 'warn',
 }

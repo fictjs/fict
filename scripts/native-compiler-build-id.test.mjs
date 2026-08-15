@@ -28,6 +28,7 @@ function collectBuildInputs() {
   const inputs = [
     'Cargo.lock',
     'Cargo.toml',
+    'diagnostics/registry.json',
     'packages/compiler/compiler-capabilities.json',
     'rust-toolchain.toml',
   ].map(relative => path.join(repositoryRoot, relative))
@@ -120,6 +121,17 @@ test('native build identity changes when the compiler capability manifest change
   const changed = computeSourceHash({
     mutate: {
       relative: 'packages/compiler/compiler-capabilities.json',
+      apply: source => Buffer.concat([source, Buffer.from('\n')]),
+    },
+  })
+  assert.notEqual(changed, baseline)
+})
+
+test('native build identity changes when the diagnostic registry changes', () => {
+  const baseline = computeSourceHash()
+  const changed = computeSourceHash({
+    mutate: {
+      relative: 'diagnostics/registry.json',
       apply: source => Buffer.concat([source, Buffer.from('\n')]),
     },
   })

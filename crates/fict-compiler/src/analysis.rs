@@ -252,9 +252,10 @@ fn analyze_normalized(request: NormalizedAnalyzeRequest) -> AnalyzeResult {
             reactive_scopes: request.compiler_options.reactive_scopes.clone(),
             strict_guarantee: request.compiler_options.strict_guarantee,
             reactive_creation_control_flow_severity: configured_diagnostic_severity(
-                &request.compiler_options.warning_levels,
+                &request.compiler_options,
                 "FICT-R004",
                 DiagnosticSeverity::Error,
+                GuaranteeClass::Fallback,
             ),
             resolved_metadata: request.metadata.clone(),
             analysis_budgets: Default::default(),
