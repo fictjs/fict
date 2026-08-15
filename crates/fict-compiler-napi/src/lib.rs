@@ -4,26 +4,33 @@
 
 mod async_task;
 mod convert;
+mod incident;
 mod panic_boundary;
 
 use async_task::{AnalyzeTask, CompileTask, ScanTask};
 use convert::{
-    AnalyzeWork, CompileWork, ScanWork, prepare_analyze, prepare_compile, prepare_scan,
-    serialize_analyze_result, serialize_result, serialize_scan_result,
+    AnalyzeWork, CompileWork, ScanWork, decode_analyze, decode_compile, decode_scan,
+    serialize_parse_probe_result,
 };
 use fict_compiler::{
     COMPILER_CAPABILITY_MANIFEST_DIGEST, COMPILER_CAPABILITY_MANIFEST_VERSION,
-    COMPILER_CAPABILITY_PACKAGE_VERSION, COMPILER_PROTOCOL_VERSION,
-    MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe, compiler_build_id,
-    compiler_build_revision, parse_tsx_probe,
+    COMPILER_CAPABILITY_PACKAGE_VERSION, COMPILER_PROTOCOL_VERSION, CompilerInternalError,
+    MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe, RequestLimits, compiler_build_id,
+    compiler_build_revision, internal_analyze_error_result_with_context,
+    internal_error_result_with_context, internal_scan_error_result_with_context, parse_tsx_probe,
 };
 use napi::{
-    Env, Result, Task,
-    bindgen_prelude::{AsyncTask, Either, Null, Object},
+    Env, Error, Result, Status, Task,
+    bindgen_prelude::{AsyncTask, Either, Null, Object, Unknown},
 };
 use napi_derive::napi;
-use panic_boundary::{analyze_safely, catch_panic, compile_safely, scan_safely};
-use serde_json::Value;
+use serde::Serialize;
+
+use incident::{IncidentStage, PanicReport, RequestFingerprint, internal_error};
+use panic_boundary::{
+    analyze_safely, catch_panic, compile_safely, scan_safely, serialize_analyze_safely,
+    serialize_compile_safely, serialize_scan_safely,
+};
 
 /// Native compiler build information exposed to the JavaScript loader.
 #[napi(object)]
@@ -53,12 +60,15 @@ pub struct NativeCompilerInfo {
 }
 
 /// Arena-independent parse result returned across N-API.
-#[napi(object)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ParseProbeResult {
     /// Number of top-level statements parsed from the source.
     pub statement_count: u32,
     /// Number of parser diagnostics produced for the source.
     pub diagnostic_count: u32,
+    /// Sanitized context present only for a contained parser-probe panic.
+    pub internal_error: Option<CompilerInternalError>,
 }
 
 impl From<ParseProbe> for ParseProbeResult {
@@ -66,6 +76,7 @@ impl From<ParseProbe> for ParseProbeResult {
         Self {
             statement_count: value.statement_count,
             diagnostic_count: value.diagnostic_count,
+            internal_error: None,
         }
     }
 }
@@ -92,96 +103,229 @@ pub fn native_compiler_info() -> NativeCompilerInfo {
 }
 
 /// Synchronous parse probe for editor and build-tool call sites.
-#[napi]
-pub fn parse_tsx_probe_sync(source: String) -> ParseProbeResult {
-    parse_tsx_probe(&source).into()
+#[napi(
+    ts_args_type = "source: string",
+    ts_return_type = "{ statementCount: number; diagnosticCount: number; internalError: object | null }"
+)]
+pub fn parse_tsx_probe_sync(env: Env, source: Unknown<'_>) -> Result<Object<'static>> {
+    let (work, fingerprint) = prepare_parse_probe(&env, source)?;
+    let result = run_parse_probe(work, &fingerprint);
+    serialize_parse_probe_safely(&env, result, &fingerprint)
 }
 
 /// Worker-pool task used to prove that compilation can run off the JS thread.
 pub struct ParseTsxTask {
-    source: String,
+    work: Option<ParseProbeWork>,
+    fingerprint: RequestFingerprint,
 }
 
 impl Task for ParseTsxTask {
-    type Output = ParseProbe;
-    type JsValue = ParseProbeResult;
+    type Output = ParseProbeResult;
+    type JsValue = Object<'static>;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        Ok(parse_tsx_probe(&self.source))
+        let result = match self.work.take() {
+            Some(work) => run_parse_probe(work, &self.fingerprint),
+            None => parse_probe_internal_result(internal_error(
+                IncidentStage::WorkerState,
+                &self.fingerprint,
+                worker_state_report(),
+            )),
+        };
+        Ok(result)
     }
 
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output.into())
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        serialize_parse_probe_safely(&env, output, &self.fingerprint)
     }
 }
 
 /// Asynchronous parse probe backed by the native worker pool.
-#[napi]
-pub fn parse_tsx_probe_async(source: String) -> AsyncTask<ParseTsxTask> {
-    AsyncTask::new(ParseTsxTask { source })
+#[napi(
+    ts_args_type = "source: string",
+    ts_return_type = "Promise<{ statementCount: number; diagnosticCount: number; internalError: object | null }>"
+)]
+pub fn parse_tsx_probe_async(env: Env, source: Unknown<'_>) -> Result<AsyncTask<ParseTsxTask>> {
+    let (work, fingerprint) = prepare_parse_probe(&env, source)?;
+    Ok(AsyncTask::new(ParseTsxTask {
+        work: Some(work),
+        fingerprint,
+    }))
 }
 
 /// Execute native compilation synchronously for editor and synchronous build APIs.
-#[napi]
-pub fn transform_sync(env: Env, request: Value) -> Result<Object<'static>> {
-    let work = catch_panic(|| prepare_compile(request))
-        .unwrap_or_else(|_| CompileWork::Immediate(fict_compiler::internal_error_result()));
+#[napi(ts_args_type = "request: object")]
+pub fn transform_sync(env: Env, request: Unknown<'_>) -> Result<Object<'static>> {
+    let (work, fingerprint) = decode_compile_safely(&env, request);
     let result = match work {
-        CompileWork::Request(request) => compile_safely(request),
-        CompileWork::Immediate(result) => result,
+        CompileWork::Request(request) => compile_safely(*request, &fingerprint),
+        CompileWork::Immediate(result) => *result,
     };
-    catch_panic(|| serialize_result(&env, result))
-        .unwrap_or_else(|_| serialize_result(&env, fict_compiler::internal_error_result()))
+    serialize_compile_safely(&env, result, &fingerprint)
 }
 
 /// Schedule native compilation in the libuv worker pool after JS-value conversion.
-#[napi]
-pub fn transform(request: Value) -> AsyncTask<CompileTask> {
-    let work = catch_panic(|| prepare_compile(request))
-        .unwrap_or_else(|_| CompileWork::Immediate(fict_compiler::internal_error_result()));
-    AsyncTask::new(CompileTask::new(work))
+#[napi(ts_args_type = "request: object")]
+pub fn transform(env: Env, request: Unknown<'_>) -> AsyncTask<CompileTask> {
+    let (work, fingerprint) = decode_compile_safely(&env, request);
+    AsyncTask::new(CompileTask::new(work, fingerprint))
 }
 
 /// Scan static module requests synchronously without running compiler passes.
-#[napi]
-pub fn scan_sync(env: Env, request: Value) -> Result<Object<'static>> {
-    let work = catch_panic(|| prepare_scan(request))
-        .unwrap_or_else(|_| ScanWork::Immediate(fict_compiler::internal_scan_error_result()));
+#[napi(ts_args_type = "request: object")]
+pub fn scan_sync(env: Env, request: Unknown<'_>) -> Result<Object<'static>> {
+    let (work, fingerprint) = decode_scan_safely(&env, request);
     let result = match work {
-        ScanWork::Request(request) => scan_safely(request),
+        ScanWork::Request(request) => scan_safely(request, &fingerprint),
         ScanWork::Immediate(result) => result,
     };
-    catch_panic(|| serialize_scan_result(&env, result)).unwrap_or_else(|_| {
-        serialize_scan_result(&env, fict_compiler::internal_scan_error_result())
-    })
+    serialize_scan_safely(&env, result, &fingerprint)
 }
 
 /// Scan static module requests in the libuv worker pool after JS-value conversion.
-#[napi]
-pub fn scan(request: Value) -> AsyncTask<ScanTask> {
-    let work = catch_panic(|| prepare_scan(request))
-        .unwrap_or_else(|_| ScanWork::Immediate(fict_compiler::internal_scan_error_result()));
-    AsyncTask::new(ScanTask::new(work))
+#[napi(ts_args_type = "request: object")]
+pub fn scan(env: Env, request: Unknown<'_>) -> AsyncTask<ScanTask> {
+    let (work, fingerprint) = decode_scan_safely(&env, request);
+    AsyncTask::new(ScanTask::new(work, fingerprint))
 }
 
 /// Analyze one source file synchronously for editor and local tooling consumers.
-#[napi]
-pub fn analyze_sync(env: Env, request: Value) -> Result<Object<'static>> {
-    let work = catch_panic(|| prepare_analyze(request))
-        .unwrap_or_else(|_| AnalyzeWork::Immediate(fict_compiler::internal_analyze_error_result()));
+#[napi(ts_args_type = "request: object")]
+pub fn analyze_sync(env: Env, request: Unknown<'_>) -> Result<Object<'static>> {
+    let (work, fingerprint) = decode_analyze_safely(&env, request);
     let result = match work {
-        AnalyzeWork::Request(request) => analyze_safely(request),
+        AnalyzeWork::Request(request) => analyze_safely(request, &fingerprint),
         AnalyzeWork::Immediate(result) => result,
     };
-    catch_panic(|| serialize_analyze_result(&env, result)).unwrap_or_else(|_| {
-        serialize_analyze_result(&env, fict_compiler::internal_analyze_error_result())
-    })
+    serialize_analyze_safely(&env, result, &fingerprint)
 }
 
 /// Analyze one source file in the libuv worker pool after JS-value conversion.
-#[napi]
-pub fn analyze(request: Value) -> AsyncTask<AnalyzeTask> {
-    let work = catch_panic(|| prepare_analyze(request))
-        .unwrap_or_else(|_| AnalyzeWork::Immediate(fict_compiler::internal_analyze_error_result()));
-    AsyncTask::new(AnalyzeTask::new(work))
+#[napi(ts_args_type = "request: object")]
+pub fn analyze(env: Env, request: Unknown<'_>) -> AsyncTask<AnalyzeTask> {
+    let (work, fingerprint) = decode_analyze_safely(&env, request);
+    AsyncTask::new(AnalyzeTask::new(work, fingerprint))
+}
+
+enum ParseProbeWork {
+    Source(String),
+    Immediate(Box<ParseProbeResult>),
+}
+
+fn prepare_parse_probe(
+    env: &Env,
+    source: Unknown<'_>,
+) -> Result<(ParseProbeWork, RequestFingerprint)> {
+    match catch_panic(|| env.from_js_value::<String, _>(source)) {
+        Ok(Ok(source)) => {
+            let fingerprint = RequestFingerprint::source(&source);
+            let limit = RequestLimits::default().max_source_bytes;
+            if source.len() as u64 > limit {
+                return Err(Error::new(
+                    Status::InvalidArg,
+                    format!(
+                        "parser probe source exceeds maxSourceBytes: observed {}, limit {limit}",
+                        source.len()
+                    ),
+                ));
+            }
+            Ok((ParseProbeWork::Source(source), fingerprint))
+        }
+        Ok(Err(error)) => Err(error),
+        Err(panic) => Ok((
+            ParseProbeWork::Immediate(Box::new(parse_probe_internal_result(internal_error(
+                IncidentStage::ParseProbeDecode,
+                &RequestFingerprint::default(),
+                panic,
+            )))),
+            RequestFingerprint::default(),
+        )),
+    }
+}
+
+fn run_parse_probe(work: ParseProbeWork, fingerprint: &RequestFingerprint) -> ParseProbeResult {
+    match work {
+        ParseProbeWork::Source(source) => catch_panic(|| parse_tsx_probe(&source).into())
+            .unwrap_or_else(|panic| {
+                parse_probe_internal_result(internal_error(
+                    IncidentStage::ParseProbe,
+                    fingerprint,
+                    panic,
+                ))
+            }),
+        ParseProbeWork::Immediate(result) => *result,
+    }
+}
+
+fn serialize_parse_probe_safely(
+    env: &Env,
+    result: ParseProbeResult,
+    fingerprint: &RequestFingerprint,
+) -> Result<Object<'static>> {
+    catch_panic(|| serialize_parse_probe_result(env, result)).unwrap_or_else(|panic| {
+        serialize_parse_probe_result(
+            env,
+            parse_probe_internal_result(internal_error(
+                IncidentStage::ParseProbeSerialize,
+                fingerprint,
+                panic,
+            )),
+        )
+    })
+}
+
+fn parse_probe_internal_result(internal_error: CompilerInternalError) -> ParseProbeResult {
+    ParseProbeResult {
+        statement_count: 0,
+        diagnostic_count: 1,
+        internal_error: Some(internal_error),
+    }
+}
+
+fn worker_state_report() -> PanicReport {
+    PanicReport {
+        category: "worker-state-invariant",
+        backtrace_hash: None,
+    }
+}
+
+fn decode_compile_safely(env: &Env, request: Unknown<'_>) -> (CompileWork, RequestFingerprint) {
+    catch_panic(|| decode_compile(env, request)).unwrap_or_else(|panic| {
+        (
+            CompileWork::Immediate(Box::new(internal_error_result_with_context(
+                internal_error(
+                    IncidentStage::RequestDecode,
+                    &RequestFingerprint::default(),
+                    panic,
+                ),
+            ))),
+            RequestFingerprint::default(),
+        )
+    })
+}
+
+fn decode_scan_safely(env: &Env, request: Unknown<'_>) -> (ScanWork, RequestFingerprint) {
+    catch_panic(|| decode_scan(env, request)).unwrap_or_else(|panic| {
+        (
+            ScanWork::Immediate(internal_scan_error_result_with_context(internal_error(
+                IncidentStage::RequestDecode,
+                &RequestFingerprint::default(),
+                panic,
+            ))),
+            RequestFingerprint::default(),
+        )
+    })
+}
+
+fn decode_analyze_safely(env: &Env, request: Unknown<'_>) -> (AnalyzeWork, RequestFingerprint) {
+    catch_panic(|| decode_analyze(env, request)).unwrap_or_else(|panic| {
+        (
+            AnalyzeWork::Immediate(internal_analyze_error_result_with_context(internal_error(
+                IncidentStage::RequestDecode,
+                &RequestFingerprint::default(),
+                panic,
+            ))),
+            RequestFingerprint::default(),
+        )
+    })
 }

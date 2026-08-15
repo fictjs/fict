@@ -90,6 +90,21 @@ An online compiler that accepts untrusted source must enforce those controls
 outside the native library; `RequestLimits` does not make an in-process service
 safe against OOM, abort, or stack exhaustion.
 
+All transform, scan, analyze, and parser-probe entrypoints perform recursive
+JavaScript request decoding, compiler work, and result serialization inside a
+shared Rust panic boundary. Cyclic inputs, inputs deeper than 128 JSON levels,
+and non-JSON N-API values fail before typed request decoding. A contained panic
+returns `FICT-I001` and an `internalError` object with an incident ID, last known
+stage, compiler/build/source identities, request/source/options hashes, a
+sanitized panic category, and an optional backtrace hash. It never includes the
+request, source text, panic payload, or backtrace. Hosts should correlate the
+incident ID with bounded telemetry and discard all other result fields.
+
+Rust panic containment is crash recovery, not process isolation: it cannot
+recover from OOM, an abort, foreign-code termination, or most stack overflows.
+Untrusted compilation therefore still requires a disposable worker process,
+deadline/cancellation enforcement, memory limits, and queue backpressure.
+
 Compiler timing and counter stats always cross N-API as non-negative JavaScript
 `number` safe integers. Values above `Number.MAX_SAFE_INTEGER` saturate at that
 maximum instead of becoming `bigint` or losing precision.

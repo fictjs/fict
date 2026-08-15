@@ -9,8 +9,9 @@ use fict_diagnostics::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, ModuleKind, NormalizedScanRequest, RequestLimits,
-    ScanRequest, SourceLanguage, result::INTERNAL_RECOVERY_HELP,
+    COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, CompilerInternalError, ModuleKind,
+    NormalizedScanRequest, RequestLimits, ScanRequest, SourceLanguage,
+    result::INTERNAL_RECOVERY_HELP,
 };
 
 /// Static module-request category returned to bundler graph hosts.
@@ -53,6 +54,9 @@ pub struct ScanResult {
     pub diagnostics: Vec<Diagnostic>,
     /// Immutable compiler/OXC/schema identity used by caches and rollback checks.
     pub compiler_build_id: String,
+    /// Sanitized context present only for a contained native panic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub internal_error: Option<CompilerInternalError>,
 }
 
 impl ScanResult {
@@ -65,6 +69,7 @@ impl ScanResult {
             has_module_syntax: false,
             diagnostics: Vec::new(),
             compiler_build_id: COMPILER_BUILD_ID.to_owned(),
+            internal_error: None,
         }
     }
 
@@ -108,6 +113,22 @@ pub fn internal_scan_error_result() -> ScanResult {
     )
 }
 
+/// Construct a structured scanner ICE result after a native boundary contains a panic.
+#[must_use]
+pub fn internal_scan_error_result_with_context(context: CompilerInternalError) -> ScanResult {
+    let incident_id = context.incident_id.clone();
+    let mut result = failed_scan_result(
+        "FICT-I001",
+        format!(
+            "the native compiler scanner encountered an internal error; incident {incident_id}"
+        ),
+        GuaranteeClass::Internal,
+        Some(INTERNAL_RECOVERY_HELP),
+    );
+    result.internal_error = Some(context);
+    result
+}
+
 fn scan_normalized(request: NormalizedScanRequest) -> ScanResult {
     let limits = request.limits;
     let output = scan_static_module_requests(
@@ -130,6 +151,7 @@ fn scan_normalized(request: NormalizedScanRequest) -> ScanResult {
         has_module_syntax: output.has_module_syntax,
         diagnostics: output.diagnostics,
         compiler_build_id: COMPILER_BUILD_ID.to_owned(),
+        internal_error: None,
     };
     enforce_scan_result_limits(result, limits)
 }

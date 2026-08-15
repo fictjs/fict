@@ -41,6 +41,22 @@ export interface FictDiagnostic {
   guaranteeClass: FictDiagnosticGuaranteeClass
 }
 
+/** Sanitized context present only when the native boundary contains an internal panic. */
+export interface CompilerInternalError {
+  schemaVersion: 1
+  incidentId: string
+  stage: string
+  compilerVersion: string
+  compilerBuildId: string
+  sourceRevision: string | null
+  nativeTarget: string
+  requestFingerprint: string | null
+  sourceHash: string | null
+  optionsFingerprint: string | null
+  panicCategory: string
+  backtraceHash: string | null
+}
+
 export type CompilerExplainEventKind =
   | 'source-signal'
   | 'source-effect'
@@ -235,6 +251,7 @@ export interface ScanResult {
   hasModuleSyntax: boolean
   diagnostics: FictDiagnostic[]
   compilerBuildId: string
+  internalError?: CompilerInternalError
 }
 
 export type NativeAnalyzeVerbosity = 'minimal' | 'verbose'
@@ -322,4 +339,5 @@ export interface CompileResult {
   artifacts: CompilerArtifact[]
   stats: CompilerStats | null
   compilerBuildId: string
+  internalError?: CompilerInternalError
 }

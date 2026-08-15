@@ -14,6 +14,36 @@ pub(crate) const INTERNAL_RECOVERY_HELP: &str = "report the minimized fixture wi
 /// Largest integer that can cross the public JavaScript protocol without losing precision.
 pub const MAX_SAFE_JAVASCRIPT_INTEGER: u64 = 9_007_199_254_740_991;
 
+/// Sanitized, machine-readable context attached only when a native panic is contained.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct CompilerInternalError {
+    /// Context schema version.
+    pub schema_version: u32,
+    /// Request-local identifier suitable for correlating bounded host telemetry.
+    pub incident_id: String,
+    /// Last known native boundary or compiler pipeline stage.
+    pub stage: String,
+    /// Published compiler package version implemented by the native artifact.
+    pub compiler_version: String,
+    /// Immutable native build identity.
+    pub compiler_build_id: String,
+    /// Exact source revision embedded by controlled builds, when available.
+    pub source_revision: Option<String>,
+    /// Rust target embedded in the native addon.
+    pub native_target: String,
+    /// SHA-256 of the complete decoded request, never the request body.
+    pub request_fingerprint: Option<String>,
+    /// SHA-256 of source text, never source text.
+    pub source_hash: Option<String>,
+    /// SHA-256 of effective language/module/options controls.
+    pub options_fingerprint: Option<String>,
+    /// Sanitized panic payload category.
+    pub panic_category: String,
+    /// Optional SHA-256 of a panic-site backtrace captured before unwinding.
+    pub backtrace_hash: Option<String>,
+}
+
 /// Kind of additional module emitted by the compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -160,6 +190,9 @@ pub struct CompileResult {
     pub stats: Option<CompilerStats>,
     /// Immutable compiler/OXC/schema identity used by caches and rollback checks.
     pub compiler_build_id: String,
+    /// Sanitized context present only for a contained native panic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub internal_error: Option<CompilerInternalError>,
 }
 
 pub(crate) fn request_error_result(error: CompileRequestError) -> CompileResult {
@@ -220,6 +253,7 @@ impl CompileResult {
             artifacts: Vec::new(),
             stats: None,
             compiler_build_id: COMPILER_BUILD_ID.to_owned(),
+            internal_error: None,
         }
     }
 

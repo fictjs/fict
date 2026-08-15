@@ -8,9 +8,9 @@ use crate::result::{INTERNAL_RECOVERY_HELP, failed_result, request_error_result}
 use crate::source_map::compose_source_maps;
 use crate::{
     CompileRequest, CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
-    CompilerExplainEvent, CompilerExplainEventKind, CompilerStats, CorePassOptions,
-    HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap, RequestLimits,
-    SourceLanguage, run_core_passes,
+    CompilerExplainEvent, CompilerExplainEventKind, CompilerInternalError, CompilerStats,
+    CorePassOptions, HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap,
+    RequestLimits, SourceLanguage, run_core_passes,
 };
 use fict_compiler_oxc::{
     FrontendSuppression, HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage,
@@ -43,6 +43,20 @@ pub fn internal_error_result() -> CompileResult {
         GuaranteeClass::Internal,
         Some(INTERNAL_RECOVERY_HELP),
     )
+}
+
+/// Construct a structured ICE result after a native boundary contains a panic.
+#[must_use]
+pub fn internal_error_result_with_context(context: CompilerInternalError) -> CompileResult {
+    let incident_id = context.incident_id.clone();
+    let mut result = failed_result(
+        "FICT-I001",
+        format!("the native compiler encountered an internal error; incident {incident_id}"),
+        GuaranteeClass::Internal,
+        Some(INTERNAL_RECOVERY_HELP),
+    );
+    result.internal_error = Some(context);
+    result
 }
 fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     let limits = request.limits;

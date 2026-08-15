@@ -137,8 +137,12 @@ function scanAllStaticImports(request: ScanRequest): ScanResult {
 function binding() {
   return {
     nativeCompilerInfo: () => native.info,
-    parseTsxProbeSync: () => ({ statementCount: 1, diagnosticCount: 0 }),
-    parseTsxProbeAsync: async () => ({ statementCount: 1, diagnosticCount: 0 }),
+    parseTsxProbeSync: () => ({ statementCount: 1, diagnosticCount: 0, internalError: null }),
+    parseTsxProbeAsync: async () => ({
+      statementCount: 1,
+      diagnosticCount: 0,
+      internalError: null,
+    }),
     transformSync: vi.fn(),
     transform: native.transform,
     scanSync: native.scanSync,

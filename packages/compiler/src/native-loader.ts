@@ -19,6 +19,7 @@ import type { AnalyzeResult } from './tooling/types'
 import {
   MODULE_REACTIVE_METADATA_VERSION,
   type AnalyzeRequest,
+  type CompilerInternalError,
   type CompileRequest,
   type CompileResult,
   type ScanRequest,
@@ -51,6 +52,7 @@ export interface NativeCompilerInfo {
 export interface NativeParseProbeResult {
   statementCount: number
   diagnosticCount: number
+  internalError: CompilerInternalError | null
 }
 
 export interface NativeCompilerBinding {

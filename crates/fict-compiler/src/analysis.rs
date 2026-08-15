@@ -154,6 +154,9 @@ pub struct AnalyzeResult {
     pub components: Vec<ComponentAnalysis>,
     /// Structured compiler diagnostics.
     pub diagnostics: Vec<AnalyzeDiagnostic>,
+    /// Sanitized context present only for a contained native panic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub internal_error: Option<crate::CompilerInternalError>,
 }
 
 impl AnalyzeResult {
@@ -162,6 +165,7 @@ impl AnalyzeResult {
             file_name: file_name.into(),
             components: Vec::new(),
             diagnostics: Vec::new(),
+            internal_error: None,
         }
     }
 }
@@ -202,6 +206,28 @@ pub fn internal_analyze_error_result() -> AnalyzeResult {
         end_line: None,
         end_column: None,
     });
+    result
+}
+
+/// Construct a structured analysis ICE result after a native boundary contains a panic.
+#[must_use]
+pub fn internal_analyze_error_result_with_context(
+    context: crate::CompilerInternalError,
+) -> AnalyzeResult {
+    let incident_id = context.incident_id.clone();
+    let mut result = AnalyzeResult::empty("<unknown>");
+    result.diagnostics.push(AnalyzeDiagnostic {
+        code: "FICT-I001".to_owned(),
+        message: format!(
+            "the native compiler encountered an internal error; incident {incident_id}"
+        ),
+        severity: AnalyzeDiagnosticSeverity::Error,
+        line: 1,
+        column: 1,
+        end_line: None,
+        end_column: None,
+    });
+    result.internal_error = Some(context);
     result
 }
 

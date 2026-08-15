@@ -1,4 +1,4 @@
-import type { NativeCompilerOptions } from '../types'
+import type { CompilerInternalError, NativeCompilerOptions } from '../types'
 
 export type TraceMarkerKind = 'once' | 'reactive' | 'effect'
 
@@ -58,4 +58,5 @@ export interface AnalyzeResult {
   fileName: string
   components: ComponentAnalysis[]
   diagnostics: AnalyzeDiagnostic[]
+  internalError?: CompilerInternalError
 }

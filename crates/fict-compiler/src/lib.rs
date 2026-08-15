@@ -25,7 +25,7 @@ mod source_map;
 pub use analysis::{
     AnalyzeDiagnostic, AnalyzeDiagnosticSeverity, AnalyzeResult, ComponentAnalysis, LineTrace,
     RegionInfo, TraceMarker, TraceMarkerKind, analyze, internal_analyze_error_result,
-    invalid_analyze_request_result,
+    internal_analyze_error_result_with_context, invalid_analyze_request_result,
 };
 pub use capabilities::{
     COMPILER_CAPABILITY_MANIFEST_DIGEST, COMPILER_CAPABILITY_MANIFEST_SCOPE,
@@ -38,7 +38,7 @@ pub use pass_manager::{
     CompilerPass, CorePassBudgets, CorePassOptions, CorePassOutput, CorePassStats,
     FunctionPassAnalysis, PassContext, run_core_passes,
 };
-pub use pipeline::{compile, internal_error_result};
+pub use pipeline::{compile, internal_error_result, internal_error_result_with_context};
 pub use request::{
     AnalyzeOptions, AnalyzeRequest, AnalyzeVerbosity, CompileRequest, CompileRequestError,
     CompilerOptions, CompilerPreviewOptions, CompilerTypeScriptOptions, ModuleKind,
@@ -47,12 +47,12 @@ pub use request::{
 };
 pub use result::{
     CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
-    CompilerExplainEvent, CompilerExplainEventKind, CompilerStats, HandlerArtifactMetadata,
-    MAX_SAFE_JAVASCRIPT_INTEGER, invalid_request_result,
+    CompilerExplainEvent, CompilerExplainEventKind, CompilerInternalError, CompilerStats,
+    HandlerArtifactMetadata, MAX_SAFE_JAVASCRIPT_INTEGER, invalid_request_result,
 };
 pub use scan::{
     ScanModuleRequest, ScanModuleRequestKind, ScanResult, internal_scan_error_result,
-    invalid_scan_request_result, scan,
+    internal_scan_error_result_with_context, invalid_scan_request_result, scan,
 };
 pub use source_map::{RawSourceMap, SourceMapValidationError};
 
