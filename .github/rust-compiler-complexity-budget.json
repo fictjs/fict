@@ -1,28 +1,119 @@
 {
-  "schemaVersion": 1,
-  "totalMaxLines": 185650,
+  "schemaVersion": 2,
+  "reservePolicy": {
+    "minimumTotalLines": 1000,
+    "maximumTotalPercent": 2,
+    "minimumCrateLines": 32,
+    "maximumCratePercent": 10,
+    "minimumFileOverrideLines": 16,
+    "maximumFileOverridePercent": 10,
+    "totalRatchetReductionLines": 1000,
+    "crateRatchetReductionLines": 250,
+    "fileOverrideRatchetReductionLines": 100
+  },
+  "total": {
+    "reviewedLines": 185650,
+    "maxLines": 188000
+  },
   "defaultFileMaxLines": 2000,
   "crates": {
-    "fict-compiler": 30187,
-    "fict-compiler-napi": 1389,
-    "fict-compiler-oxc": 119500,
-    "fict-compiler-preview": 2400,
-    "fict-diagnostics": 702,
-    "fict-emit": 11303,
-    "fict-hir": 6768,
-    "fict-metadata": 600,
-    "fict-reactivity": 13000
+    "fict-compiler": {
+      "reviewedLines": 30187,
+      "maxLines": 30750
+    },
+    "fict-compiler-napi": {
+      "reviewedLines": 1389,
+      "maxLines": 1500
+    },
+    "fict-compiler-oxc": {
+      "reviewedLines": 119406,
+      "maxLines": 121000
+    },
+    "fict-compiler-preview": {
+      "reviewedLines": 2333,
+      "maxLines": 2400
+    },
+    "fict-diagnostics": {
+      "reviewedLines": 702,
+      "maxLines": 750
+    },
+    "fict-emit": {
+      "reviewedLines": 11303,
+      "maxLines": 11500
+    },
+    "fict-hir": {
+      "reviewedLines": 6768,
+      "maxLines": 6900
+    },
+    "fict-metadata": {
+      "reviewedLines": 562,
+      "maxLines": 600
+    },
+    "fict-reactivity": {
+      "reviewedLines": 13000,
+      "maxLines": 13200
+    }
   },
   "fileOverrides": {
-    "crates/fict-compiler-oxc/src/emit_codegen.rs": 8560,
-    "crates/fict-compiler-oxc/src/hir_builder.rs": 47000,
-    "crates/fict-compiler-oxc/src/hir_builder/execution_state.rs": 10000,
-    "crates/fict-compiler-oxc/tests/hir_builder.rs": 36335,
-    "crates/fict-compiler-preview/src/lib.rs": 2350,
-    "crates/fict-compiler/src/pipeline.rs": 9001,
-    "crates/fict-compiler/src/reactive_write_validation.rs": 4554,
-    "crates/fict-compiler/tests/reactive_writes.rs": 2677,
-    "crates/fict-compiler/tests/pass_manager.rs": 2374,
-    "crates/fict-emit/src/lower.rs": 4694
+    "crates/fict-compiler-oxc/src/emit_codegen.rs": {
+      "reviewedLines": 8560,
+      "maxLines": 8750,
+      "owner": "OXC EmitIR code generation",
+      "rationale": "Keep the remaining dispatcher bounded while lowering and optimizer logic moves into focused submodules."
+    },
+    "crates/fict-compiler-oxc/src/hir_builder.rs": {
+      "reviewedLines": 46792,
+      "maxLines": 47000,
+      "owner": "OXC HIR construction",
+      "rationale": "Temporary ceiling for the central builder while binding, control-flow, JSX, and ownership logic moves into focused modules."
+    },
+    "crates/fict-compiler-oxc/src/hir_builder/execution_state.rs": {
+      "reviewedLines": 9529,
+      "maxLines": 10000,
+      "owner": "OXC execution-state analysis",
+      "rationale": "Bound the extracted fixed-point engine while individual transfer functions and state domains are separated."
+    },
+    "crates/fict-compiler-oxc/tests/hir_builder.rs": {
+      "reviewedLines": 36334,
+      "maxLines": 36500,
+      "owner": "OXC HIR compatibility tests",
+      "rationale": "Preserve the frozen semantic corpus while test scenarios are split by independently reviewable language domain."
+    },
+    "crates/fict-compiler-preview/src/lib.rs": {
+      "reviewedLines": 2333,
+      "maxLines": 2400,
+      "owner": "Preview compiler adapter",
+      "rationale": "Keep preview-only orchestration bounded while shared request and result policy remains in the core compiler."
+    },
+    "crates/fict-compiler/src/pipeline.rs": {
+      "reviewedLines": 9001,
+      "maxLines": 9250,
+      "owner": "Compiler pipeline orchestration",
+      "rationale": "Reserve is limited to orchestration fixes while stage-specific analysis and validation moves to owned modules."
+    },
+    "crates/fict-compiler/src/reactive_write_validation.rs": {
+      "reviewedLines": 4554,
+      "maxLines": 4750,
+      "owner": "Reactive write validation",
+      "rationale": "Keep cross-pass validation bounded while provenance, alias, and replay rules are decomposed by invariant."
+    },
+    "crates/fict-compiler/tests/reactive_writes.rs": {
+      "reviewedLines": 2677,
+      "maxLines": 2800,
+      "owner": "Reactive write regression tests",
+      "rationale": "Retain semantic coverage while large regression groups are split into focused ownership and mutation suites."
+    },
+    "crates/fict-compiler/tests/pass_manager.rs": {
+      "reviewedLines": 2374,
+      "maxLines": 2500,
+      "owner": "Compiler pass-manager tests",
+      "rationale": "Keep pass scheduling coverage bounded while stage contracts are moved beside their owning implementations."
+    },
+    "crates/fict-emit/src/lower.rs": {
+      "reviewedLines": 4694,
+      "maxLines": 4850,
+      "owner": "EmitIR lowering",
+      "rationale": "Limit the central lowering dispatcher while syntax-family lowering is extracted into focused modules."
+    }
   }
 }

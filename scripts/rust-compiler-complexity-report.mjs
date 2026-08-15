@@ -40,8 +40,90 @@ function positiveInteger(value) {
   return Number.isInteger(value) && value > 0
 }
 
+function boundedPercentage(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 100
+}
+
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function sortedDifference(left, right) {
   return [...left].filter(value => !right.has(value)).sort()
+}
+
+function validateReservePolicy(policy, errors) {
+  const integerFields = [
+    'minimumTotalLines',
+    'minimumCrateLines',
+    'minimumFileOverrideLines',
+    'totalRatchetReductionLines',
+    'crateRatchetReductionLines',
+    'fileOverrideRatchetReductionLines',
+  ]
+  const percentageFields = [
+    'maximumTotalPercent',
+    'maximumCratePercent',
+    'maximumFileOverridePercent',
+  ]
+  if (!isRecord(policy)) {
+    errors.push('Rust complexity reservePolicy must be an object')
+    return
+  }
+  for (const field of integerFields) {
+    if (!positiveInteger(policy[field])) {
+      errors.push(`Rust complexity reservePolicy.${field} must be a positive integer`)
+    }
+  }
+  for (const field of percentageFields) {
+    if (!boundedPercentage(policy[field])) {
+      errors.push(`Rust complexity reservePolicy.${field} must be a percentage in (0, 100]`)
+    }
+  }
+}
+
+function validateReviewedBoundary(
+  label,
+  boundary,
+  observedLines,
+  { minimumReserve, maximumReservePercent, ratchetReductionLines },
+  errors,
+) {
+  if (!isRecord(boundary)) {
+    errors.push(`${label} budget must be an object`)
+    return
+  }
+  if (!positiveInteger(boundary.reviewedLines)) {
+    errors.push(`${label} reviewedLines must be a positive integer`)
+  }
+  if (!positiveInteger(boundary.maxLines)) {
+    errors.push(`${label} maxLines must be a positive integer`)
+  }
+  if (!positiveInteger(boundary.reviewedLines) || !positiveInteger(boundary.maxLines)) return
+
+  const reserve = boundary.maxLines - boundary.reviewedLines
+  if (positiveInteger(minimumReserve) && reserve < minimumReserve) {
+    errors.push(`${label} reserve ${reserve} lines is below policy minimum ${minimumReserve}`)
+  }
+  if (boundedPercentage(maximumReservePercent)) {
+    const maximumReserve = Math.ceil((boundary.reviewedLines * maximumReservePercent) / 100)
+    if (reserve > maximumReserve) {
+      errors.push(`${label} reserve ${reserve} lines exceeds policy maximum ${maximumReserve}`)
+    }
+  }
+  if (
+    positiveInteger(ratchetReductionLines) &&
+    positiveInteger(observedLines) &&
+    boundary.reviewedLines - observedLines >= ratchetReductionLines
+  ) {
+    errors.push(
+      `${label} reviewed baseline is stale: ${observedLines} lines is ${boundary.reviewedLines - observedLines} below ${boundary.reviewedLines}; ratchet after ${ratchetReductionLines}`,
+    )
+  }
+}
+
+function boundaryMaxLines(boundary) {
+  return isRecord(boundary) ? boundary.maxLines : undefined
 }
 
 export function evaluateRustCompilerComplexity(rows, budget) {
@@ -50,14 +132,13 @@ export function evaluateRustCompilerComplexity(rows, budget) {
   const budgetCrates = new Set(Object.keys(budget?.crates ?? {}))
   const observedCrates = new Set(rows.map(row => row.crate))
   const overrides = budget?.fileOverrides ?? {}
+  const reservePolicy = budget?.reservePolicy ?? {}
   const rowsByFile = new Map(rows.map(row => [row.file, row]))
 
-  if (budget?.schemaVersion !== 1) {
-    errors.push('Rust complexity budget schemaVersion must be 1')
+  if (budget?.schemaVersion !== 2) {
+    errors.push('Rust complexity budget schemaVersion must be 2')
   }
-  if (!positiveInteger(budget?.totalMaxLines)) {
-    errors.push('Rust complexity totalMaxLines must be a positive integer')
-  }
+  validateReservePolicy(budget?.reservePolicy, errors)
   if (!positiveInteger(budget?.defaultFileMaxLines)) {
     errors.push('Rust complexity defaultFileMaxLines must be a positive integer')
   }
@@ -75,18 +156,62 @@ export function evaluateRustCompilerComplexity(rows, budget) {
     errors.push(`Unreviewed Rust source crate: ${crate}`)
   }
 
-  for (const [crate, maxLines] of Object.entries(budget?.crates ?? {}).sort(([a], [b]) =>
+  const crateLines = new Map(EXPECTED_RUST_PACKAGES.map(crate => [crate, 0]))
+  for (const row of rows) {
+    crateLines.set(row.crate, (crateLines.get(row.crate) ?? 0) + row.lines)
+  }
+  const totalLines = rows.reduce((total, row) => total + row.lines, 0)
+
+  validateReviewedBoundary(
+    'Rust compiler total',
+    budget?.total,
+    observedCrates.size === expectedCrates.size &&
+      sortedDifference(expectedCrates, observedCrates).length === 0 &&
+      sortedDifference(observedCrates, expectedCrates).length === 0
+      ? totalLines
+      : undefined,
+    {
+      minimumReserve: reservePolicy.minimumTotalLines,
+      maximumReservePercent: reservePolicy.maximumTotalPercent,
+      ratchetReductionLines: reservePolicy.totalRatchetReductionLines,
+    },
+    errors,
+  )
+
+  for (const [crate, boundary] of Object.entries(budget?.crates ?? {}).sort(([a], [b]) =>
     a.localeCompare(b),
   )) {
-    if (!positiveInteger(maxLines)) {
-      errors.push(`Rust crate budget must be a positive integer: ${crate}`)
-    }
+    validateReviewedBoundary(
+      `Rust crate ${crate}`,
+      boundary,
+      observedCrates.has(crate) ? crateLines.get(crate) : undefined,
+      {
+        minimumReserve: reservePolicy.minimumCrateLines,
+        maximumReservePercent: reservePolicy.maximumCratePercent,
+        ratchetReductionLines: reservePolicy.crateRatchetReductionLines,
+      },
+      errors,
+    )
   }
-  for (const [file, maxLines] of Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b))) {
-    if (!positiveInteger(maxLines)) {
-      errors.push(`Rust file budget must be a positive integer: ${file}`)
-    }
+  for (const [file, boundary] of Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b))) {
     const row = rowsByFile.get(file)
+    validateReviewedBoundary(
+      `Rust file ${file}`,
+      boundary,
+      row?.lines,
+      {
+        minimumReserve: reservePolicy.minimumFileOverrideLines,
+        maximumReservePercent: reservePolicy.maximumFileOverridePercent,
+        ratchetReductionLines: reservePolicy.fileOverrideRatchetReductionLines,
+      },
+      errors,
+    )
+    if (typeof boundary?.owner !== 'string' || boundary.owner.trim().length === 0) {
+      errors.push(`Rust file budget owner must be a non-empty string: ${file}`)
+    }
+    if (typeof boundary?.rationale !== 'string' || boundary.rationale.trim().length < 20) {
+      errors.push(`Rust file budget rationale must contain at least 20 characters: ${file}`)
+    }
     if (!row) {
       errors.push(`Rust file budget references a missing source file: ${file}`)
     } else if (
@@ -99,26 +224,24 @@ export function evaluateRustCompilerComplexity(rows, budget) {
     }
   }
 
-  const crateLines = new Map(EXPECTED_RUST_PACKAGES.map(crate => [crate, 0]))
   for (const row of rows) {
-    crateLines.set(row.crate, (crateLines.get(row.crate) ?? 0) + row.lines)
-    const maxLines = overrides[row.file] ?? budget?.defaultFileMaxLines
+    const maxLines = boundaryMaxLines(overrides[row.file]) ?? budget?.defaultFileMaxLines
     if (positiveInteger(maxLines) && row.lines > maxLines) {
-      errors.push(`${row.file}: ${row.lines} lines exceeds budget ${maxLines}`)
+      errors.push(`${row.file}: ${row.lines} lines exceeds file ceiling ${maxLines}`)
     }
   }
 
   for (const crate of EXPECTED_RUST_PACKAGES) {
     const lines = crateLines.get(crate) ?? 0
-    const maxLines = budget?.crates?.[crate]
+    const maxLines = boundaryMaxLines(budget?.crates?.[crate])
     if (positiveInteger(maxLines) && lines > maxLines) {
-      errors.push(`${crate}: ${lines} lines exceeds crate budget ${maxLines}`)
+      errors.push(`${crate}: ${lines} lines exceeds crate ceiling ${maxLines}`)
     }
   }
 
-  const totalLines = rows.reduce((total, row) => total + row.lines, 0)
-  if (positiveInteger(budget?.totalMaxLines) && totalLines > budget.totalMaxLines) {
-    errors.push(`Rust compiler total: ${totalLines} lines exceeds budget ${budget.totalMaxLines}`)
+  const totalMaxLines = boundaryMaxLines(budget?.total)
+  if (positiveInteger(totalMaxLines) && totalLines > totalMaxLines) {
+    errors.push(`Rust compiler total: ${totalLines} lines exceeds ceiling ${totalMaxLines}`)
   }
 
   return { crateLines, errors, totalLines }
@@ -134,13 +257,17 @@ export function runRustCompilerComplexityReport(rootDirectory = process.cwd()) {
   const largest = [...rows].sort((a, b) => b.lines - a.lines).slice(0, 12)
 
   console.log(`Rust source files: ${rows.length}`)
-  console.log(`Rust source lines: ${result.totalLines} / ${budget.totalMaxLines}`)
+  console.log(
+    `Rust source lines: ${result.totalLines} / ${budget.total.maxLines} (${budget.total.maxLines - result.totalLines} reserve)`,
+  )
   console.log('Rust crate source lines:')
   console.table(
     EXPECTED_RUST_PACKAGES.map(crate => ({
       crate,
       lines: result.crateLines.get(crate) ?? 0,
-      budget: budget.crates[crate],
+      reviewed: budget.crates[crate].reviewedLines,
+      ceiling: budget.crates[crate].maxLines,
+      remaining: budget.crates[crate].maxLines - (result.crateLines.get(crate) ?? 0),
     })),
   )
   console.log('Largest Rust source files:')
@@ -148,7 +275,10 @@ export function runRustCompilerComplexityReport(rootDirectory = process.cwd()) {
     largest.map(row => ({
       file: row.file,
       lines: row.lines,
-      budget: budget.fileOverrides[row.file] ?? budget.defaultFileMaxLines,
+      reviewed: budget.fileOverrides[row.file]?.reviewedLines ?? null,
+      ceiling: budget.fileOverrides[row.file]?.maxLines ?? budget.defaultFileMaxLines,
+      remaining:
+        (budget.fileOverrides[row.file]?.maxLines ?? budget.defaultFileMaxLines) - row.lines,
     })),
   )
 

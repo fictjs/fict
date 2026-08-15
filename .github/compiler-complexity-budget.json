@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 2,
+  "reservePolicy": {
+    "minimumTotalLines": 10,
+    "maximumTotalPercent": 5,
+    "minimumFileOverrideLines": 2,
+    "maximumFileOverridePercent": 5,
+    "totalRatchetReductionLines": 20,
+    "fileOverrideRatchetReductionLines": 10
+  },
+  "total": {
+    "reviewedLines": 1105,
+    "maxLines": 1128
+  },
+  "defaultFileMaxLines": 100,
+  "fileOverrides": {
+    "packages/compiler/src/environment-policy.ts": {
+      "reviewedLines": 59,
+      "maxLines": 61,
+      "owner": "Native environment policy",
+      "rationale": "Keeps environment-derived compiler defaults isolated from request processing."
+    },
+    "packages/compiler/src/module-metadata.ts": {
+      "reviewedLines": 392,
+      "maxLines": 400,
+      "owner": "Module metadata graph host",
+      "rationale": "Owns deterministic SCC metadata convergence, cache identity, and fail-closed graph state."
+    },
+    "packages/compiler/src/native-loader.ts": {
+      "reviewedLines": 223,
+      "maxLines": 228,
+      "owner": "Native binding loader",
+      "rationale": "Owns platform resolution and the typed boundary for all native compiler entrypoints."
+    },
+    "packages/compiler/src/native-target.ts": {
+      "reviewedLines": 84,
+      "maxLines": 87,
+      "owner": "Native target resolution",
+      "rationale": "Keeps supported host and package target selection explicit and deterministic."
+    },
+    "packages/compiler/src/types.ts": {
+      "reviewedLines": 236,
+      "maxLines": 242,
+      "owner": "Public compiler request protocol",
+      "rationale": "Owns the documented request limits, structured ICE shape, options, and result contracts."
+    }
+  }
+}
