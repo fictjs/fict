@@ -292,18 +292,23 @@ are one release unit. Their versions must match exactly. The release workflow:
 
 1. builds every ADR-0002 target on its native OS and architecture, using a
    native Linux host plus an Alpine container for musl runtime evidence;
-2. emits a package-local binary checksum, npm tarball checksum, and build
-   evidence for every target;
-3. installs each tarball with lifecycle scripts disabled and no Rust toolchain,
+2. emits a package-local SPDX 2.3 SBOM for the locked, target-filtered Cargo
+   build closure, binds it to the binary digest and source revision, and ships
+   it inside the npm tarball beside both checksums;
+3. signs GitHub/Sigstore provenance attestations for each native binary and
+   tarball plus an SBOM attestation for each binary; retained offline bundles
+   are parsed locally and independently verified through `gh attestation`;
+4. installs each tarball with lifecycle scripts disabled and no Rust toolchain,
    then executes ESM/CJS and sync/async compiler calls on Node 22.18 and 24;
-4. aggregates all 16 runtime evidence documents and rejects missing or duplicate
+5. aggregates all 16 runtime evidence documents and rejects missing or duplicate
    target/Node pairs, mixed compiler build IDs or source revisions, and Node
    lanes that did not execute the exact same target tarball; every evidence
-   hash, byte count, version, and size result must match the eight downloaded
-   bundles that will be published; this dedicated certification job runs for
-   both manual dispatches and tag pushes and retains a machine-readable result;
-5. preflights all eight artifacts before any npm publish;
-6. publishes every pending tarball in dependency order, waiting for registry
+   hash, SBOM, attestation bundle, byte count, version, and size result must
+   match the eight downloaded bundles that will be published; the certification
+   job regenerates the Cargo closure from the lockfile and runs for both manual
+   dispatches and tag pushes;
+6. preflights all eight artifacts before any npm publish;
+7. publishes every pending tarball in dependency order, waiting for registry
    visibility after each package; all native packages precede `@fictjs/compiler`.
 
 Npm has no multi-package transaction. Fict's atomicity guarantee therefore
@@ -336,6 +341,16 @@ on npmjs.com with:
 The Release workflow grants `id-token: write` so npm can exchange the GitHub OIDC
 identity for short-lived publish credentials. Package provenance is enabled by
 the workflow and each package's `publishConfig.provenance`.
+
+Consumers can independently verify a downloaded native binary and inspect its
+signed SBOM:
+
+```bash
+gh attestation verify fict_compiler_napi.node -R fictjs/fict \
+  --predicate-type https://slsa.dev/provenance/v1
+gh attestation verify fict_compiler_napi.node -R fictjs/fict \
+  --predicate-type https://spdx.dev/Document/v2.3 --format json
+```
 
 ### First publication of a new package
 

@@ -57,6 +57,11 @@ jobs:
     name: Build native compiler packages (${{ matrix.target }})
     needs: native-matrix
     runs-on: ${{ matrix.runner }}
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.native-matrix.outputs.build) }}
@@ -123,6 +128,7 @@ jobs:
           node scripts/native-compiler-packages.mjs bundle
           --target ${{ matrix.target }}
           --binary ${{ matrix.binary }}
+          --revision ${{ github.sha }}
           --output "${{ runner.temp }}/native-package"
 
       - name: Verify assembled platform tarball
@@ -130,6 +136,39 @@ jobs:
           node scripts/native-compiler-packages.mjs verify-bundle
           --target ${{ matrix.target }}
           --bundle "${{ runner.temp }}/native-package"
+
+      - name: Attest native binary and tarball provenance
+        id: native-provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/native-package/package/fict_compiler_napi.node
+            ${{ runner.temp }}/native-package/*.tgz
+
+      - name: Attest native binary SBOM
+        id: native-sbom-attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/native-package/package/fict_compiler_napi.node
+          sbom-path: ${{ runner.temp }}/native-package/package/fict-compiler-native.spdx.json
+
+      - name: Retain offline attestation bundles
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.native-provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.native-sbom-attestation.outputs.bundle-path }}
+        run: >-
+          node -e
+          "const fs=require('node:fs'),path=require('node:path');
+          fs.copyFileSync(process.env.PROVENANCE_BUNDLE,path.join(process.env.RUNNER_TEMP,'native-package','provenance.attestation.json'));
+          fs.copyFileSync(process.env.SBOM_BUNDLE,path.join(process.env.RUNNER_TEMP,'native-package','sbom.attestation.json'))"
+
+      - name: Verify signed native supply-chain bundle
+        run: >-
+          node scripts/native-compiler-packages.mjs verify-bundle
+          --target ${{ matrix.target }}
+          --bundle "${{ runner.temp }}/native-package"
+          --attestations required
+          --sbom-closure true
 
       - name: Upload native platform package
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -182,6 +221,7 @@ jobs:
           --bundle "${{ runner.temp }}/native-package"
           --node-lane ${{ matrix.node }}
           --expected-revision ${{ github.sha }}
+          --attestations required
           --evidence "${{ runner.temp }}/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"
 
       - name: Clean-install and execute ESM/CJS in musl
@@ -197,7 +237,7 @@ jobs:
             -v "${RUNNER_TEMP}/native-evidence:/native-evidence" \
             -w /workspace \
             "${{ matrix.dockerImage }}" \
-            sh -lc 'corepack enable && corepack prepare pnpm@9.1.1 --activate && pnpm install --frozen-lockfile && pnpm --filter @fictjs/compiler build && node scripts/native-compiler-package-smoke.mjs --target "${{ matrix.target }}" --bundle /native-package --node-lane "${{ matrix.node }}" --expected-revision "${{ github.sha }}" --evidence "/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"'
+            sh -lc 'corepack enable && corepack prepare pnpm@9.1.1 --activate && pnpm install --frozen-lockfile && pnpm --filter @fictjs/compiler build && node scripts/native-compiler-package-smoke.mjs --target "${{ matrix.target }}" --bundle /native-package --node-lane "${{ matrix.node }}" --expected-revision "${{ github.sha }}" --attestations required --evidence "/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"'
 
       - name: Upload native runtime evidence
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -211,6 +251,9 @@ jobs:
     name: Certify complete native release unit
     needs: [native-build, native-runtime]
     runs-on: ubuntu-latest
+    permissions:
+      attestations: read
+      contents: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -235,6 +278,30 @@ jobs:
           path: ${{ runner.temp }}/native-evidence
           merge-multiple: true
 
+      - name: Verify published GitHub artifact attestations
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t binaries < <(find "${RUNNER_TEMP}/native-packages" -type f -name fict_compiler_napi.node | sort)
+          mapfile -t tarballs < <(find "${RUNNER_TEMP}/native-packages" -type f -name '*.tgz' | sort)
+          test "${#binaries[@]}" -eq 8
+          test "${#tarballs[@]}" -eq 8
+          for binary in "${binaries[@]}"; do
+            gh attestation verify "${binary}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --predicate-type https://slsa.dev/provenance/v1
+            gh attestation verify "${binary}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --predicate-type https://spdx.dev/Document/v2.3
+          done
+          for tarball in "${tarballs[@]}"; do
+            gh attestation verify "${tarball}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --predicate-type https://slsa.dev/provenance/v1
+          done
+
       - name: Certify the complete native runtime evidence matrix
         run: >-
           node scripts/native-compiler-packages.mjs
@@ -242,6 +309,8 @@ jobs:
           --evidence "${RUNNER_TEMP}/native-evidence"
           --artifacts "${RUNNER_TEMP}/native-packages"
           --revision "${GITHUB_SHA}"
+          --attestations required
+          --sbom-closure true
           --output "${RUNNER_TEMP}/native-certification.json"
 
       - name: Upload native release certification

@@ -9,6 +9,8 @@
 
 ### Patch Changes
 
+- Certify every native binary with a revision-bound SPDX SBOM plus signed binary and tarball
+  attestations before release publication.
 - Publish a machine-readable manifest scoped to certified behavior-variant options, and reject
   native binaries whose capability digest or package version does not match the JavaScript facade.
 - Bind release certification to the exact package version, tag revision, native build, and frozen

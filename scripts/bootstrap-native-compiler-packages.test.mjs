@@ -56,6 +56,13 @@ function fixture() {
       const tarballSha256 = hashCharacters[index + 8].repeat(64)
       const tarballBytes = 1_000 + index
       const unpackedBytes = 2_000 + index
+      const sbomSha256 = createHash('sha256').update(`${target.target}:sbom`).digest('hex')
+      const provenanceAttestationSha256 = createHash('sha256')
+        .update(`${target.target}:provenance`)
+        .digest('hex')
+      const sbomAttestationSha256 = createHash('sha256')
+        .update(`${target.target}:sbom-attestation`)
+        .digest('hex')
       const sizeGate = {
         schemaVersion: 1,
         target: target.target,
@@ -75,10 +82,16 @@ function fixture() {
           tarballSha256,
           tarballPath: `/tmp/${target.target}.tgz`,
           buildEvidence: {
+            sourceRevision: revision,
             tarballBytes,
             unpackedBytes,
             sizeGate,
             npmIntegrity: `sha512-${target.target}`,
+          },
+          sbomSha256,
+          attestations: {
+            provenanceSha256: provenanceAttestationSha256,
+            sbomAttestationSha256,
           },
         },
       ]
@@ -152,11 +165,11 @@ test('binds bootstrap to the complete certified bundle matrix and exact revision
   )
 })
 
-test('accepts current certification only when capability and corpus identities are bound', () => {
+test('accepts current certification only when capability, corpus, SBOM, and attestations are bound', () => {
   const { bundles, certification } = fixture()
   const payload = structuredClone(certification)
   delete payload.certificationDigest
-  payload.schemaVersion = 3
+  payload.schemaVersion = 4
   payload.compilerCapabilityManifestVersion = COMPILER_CAPABILITY_MANIFEST_VERSION
   payload.compilerCapabilityManifestDigest = `sha256:${'c'.repeat(64)}`
   payload.compilerCapabilityPackageVersion = packageVersion
@@ -168,6 +181,16 @@ test('accepts current certification only when capability and corpus identities a
     reviewedRevision: 'e'.repeat(40),
     reviewedCompilerBuildId: 'fict-rust-reviewed-build',
   }
+  payload.releaseBundles = payload.releaseBundles.map(bundle => {
+    const nativeBundle = bundles.get(bundle.target)
+    return {
+      ...bundle,
+      sourceRevision: nativeBundle.buildEvidence.sourceRevision,
+      sbomSha256: nativeBundle.sbomSha256,
+      provenanceAttestationSha256: nativeBundle.attestations.provenanceSha256,
+      sbomAttestationSha256: nativeBundle.attestations.sbomAttestationSha256,
+    }
+  })
   const current = {
     ...payload,
     certificationDigest: `sha256:${createHash('sha256')

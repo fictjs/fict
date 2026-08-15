@@ -28,11 +28,13 @@
   "files": [
     "fict_compiler_napi.node",
     "binding-manifest.json",
-    "SHASUMS256.txt"
+    "SHASUMS256.txt",
+    "fict-compiler-native.spdx.json"
   ],
   "fictNative": {
     "target": "linux-arm64-musl",
     "rustTarget": "aarch64-unknown-linux-musl",
-    "binary": "fict_compiler_napi.node"
+    "binary": "fict_compiler_napi.node",
+    "sbom": "fict-compiler-native.spdx.json"
   }
 }

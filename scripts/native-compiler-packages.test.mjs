@@ -23,9 +23,14 @@ import {
 } from './native-compiler-package-smoke.mjs'
 import {
   COMPILER_CAPABILITY_MANIFEST_VERSION,
+  NATIVE_COMPILER_BINARY,
   NATIVE_COMPILER_NODE_LANES,
+  NATIVE_COMPILER_PROVENANCE_ATTESTATION,
+  NATIVE_COMPILER_SBOM,
+  NATIVE_COMPILER_SBOM_ATTESTATION,
   NATIVE_COMPILER_TARGETS,
   assembleNativePackage,
+  assertCheckoutRevision,
   bundleNativePackage,
   evaluateNativePackageSize,
   loadNativePackageSizeBudget,
@@ -69,6 +74,8 @@ function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
     const tarballSha256 = releaseBundle?.tarballSha256 ?? hashCharacters[targetIndex + 8].repeat(64)
     const tarballBytes = releaseBundle?.tarballBytes ?? 1_000 + targetIndex
     const unpackedBytes = releaseBundle?.unpackedBytes ?? 2_000 + targetIndex
+    const supplyChainHash = label =>
+      createHash('sha256').update(`${target.target}:${label}`).digest('hex')
     const sizeGate = releaseBundle?.sizeGate ?? {
       schemaVersion: 1,
       target: target.target,
@@ -81,7 +88,7 @@ function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
       violations: [],
     }
     return NATIVE_COMPILER_NODE_LANES.map(nodeLane => ({
-      schemaVersion: 3,
+      schemaVersion: 4,
       target: target.target,
       rustTarget: target.rustTarget,
       nodeLane,
@@ -92,10 +99,16 @@ function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
       packageName: target.packageName,
       packageVersion: releaseBundle?.packageVersion ?? '1.2.3',
       binarySha256,
+      sourceRevision: releaseBundle?.sourceRevision ?? RUNTIME_REVISION,
+      sbomSha256: releaseBundle?.sbomSha256 ?? supplyChainHash('sbom'),
       tarballSha256,
       tarballBytes,
       unpackedBytes,
       sizeGate: structuredClone(sizeGate),
+      provenanceAttestationSha256:
+        releaseBundle?.provenanceAttestationSha256 ?? supplyChainHash('provenance-attestation'),
+      sbomAttestationSha256:
+        releaseBundle?.sbomAttestationSha256 ?? supplyChainHash('sbom-attestation'),
       compilerBuildId: RUNTIME_BUILD_ID,
       compilerBuildRevision: RUNTIME_REVISION,
       compilerCapabilityManifestVersion: COMPILER_CAPABILITY_MANIFEST_VERSION,
@@ -118,14 +131,62 @@ function nativeBundleIdentitiesFixture(documents) {
         {
           packageVersion: evidence.packageVersion,
           binarySha256: evidence.binarySha256,
+          sourceRevision: evidence.sourceRevision,
+          sbomSha256: evidence.sbomSha256,
           tarballSha256: evidence.tarballSha256,
           tarballBytes: evidence.tarballBytes,
           unpackedBytes: evidence.unpackedBytes,
           sizeGate: structuredClone(evidence.sizeGate),
+          provenanceAttestationSha256: evidence.provenanceAttestationSha256,
+          sbomAttestationSha256: evidence.sbomAttestationSha256,
         },
       ]
     }),
   )
+}
+
+function writeSigstoreBundle(filePath, statement) {
+  writeFileSync(
+    filePath,
+    `${JSON.stringify({
+      mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
+      verificationMaterial: { certificate: { rawBytes: 'test-certificate' } },
+      dsseEnvelope: {
+        payload: Buffer.from(JSON.stringify(statement)).toString('base64'),
+        payloadType: 'application/vnd.in-toto+json',
+        signatures: [{ sig: 'test-signature' }],
+      },
+    })}\n`,
+  )
+}
+
+function attachNativeAttestationFixtures({ target, bundleDirectory, sourceRevision }) {
+  const bundle = verifyNativeBundle({ target, bundleDirectory })
+  writeSigstoreBundle(path.join(bundleDirectory, NATIVE_COMPILER_PROVENANCE_ATTESTATION), {
+    _type: 'https://in-toto.io/Statement/v1',
+    subject: [
+      { name: NATIVE_COMPILER_BINARY, digest: { sha256: bundle.sha256 } },
+      { name: path.basename(bundle.tarballPath), digest: { sha256: bundle.tarballSha256 } },
+    ],
+    predicateType: 'https://slsa.dev/provenance/v1',
+    predicate: {
+      buildDefinition: {
+        resolvedDependencies: [
+          {
+            uri: 'git+https://github.com/fictjs/fict',
+            digest: { gitCommit: sourceRevision },
+          },
+        ],
+      },
+    },
+  })
+  writeSigstoreBundle(path.join(bundleDirectory, NATIVE_COMPILER_SBOM_ATTESTATION), {
+    _type: 'https://in-toto.io/Statement/v1',
+    subject: [{ name: NATIVE_COMPILER_BINARY, digest: { sha256: bundle.sha256 } }],
+    predicateType: 'https://spdx.dev/Document/v2.3',
+    predicate: bundle.sbom,
+  })
+  return verifyNativeBundle({ target, bundleDirectory, requireAttestations: true })
 }
 
 test('defines eight blocking native targets and two Node runtime lanes', () => {
@@ -147,6 +208,42 @@ test('defines eight blocking native targets and two Node runtime lanes', () => {
   assert.equal(nativeNodeVersionMatchesLane('v22.18.1', '22.18.0'), false)
   assert.equal(nativeNodeVersionMatchesLane('v24.7.0', '24'), true)
   assert.equal(nativeNodeVersionMatchesLane('v25.0.0', '24'), false)
+})
+
+test('binds native bundle assembly to one clean checkout revision', () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-revision-test-'))
+  const git = args =>
+    spawnSync('git', args, {
+      cwd: tempRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  try {
+    assert.equal(git(['init', '--quiet']).status, 0)
+    writeFileSync(path.join(tempRoot, 'tracked.txt'), 'candidate\n')
+    assert.equal(git(['add', 'tracked.txt']).status, 0)
+    assert.equal(
+      git([
+        '-c',
+        'user.name=Fict Test',
+        '-c',
+        'user.email=fict-test@example.invalid',
+        'commit',
+        '--quiet',
+        '-m',
+        'candidate',
+      ]).status,
+      0,
+    )
+    const revision = git(['rev-parse', 'HEAD']).stdout.trim()
+    assert.equal(assertCheckoutRevision(revision, tempRoot), revision)
+    assert.throws(() => assertCheckoutRevision('f'.repeat(40), tempRoot), /does not match checkout/)
+
+    writeFileSync(path.join(tempRoot, 'tracked.txt'), 'changed\n')
+    assert.throws(() => assertCheckoutRevision(revision, tempRoot), /tracked changes/)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 })
 
 test('retries transient native smoke cleanup failures', () => {
@@ -217,7 +314,7 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       compatibilityCorpus,
     }))(result),
     {
-      schemaVersion: 3,
+      schemaVersion: 4,
       status: 'pass',
       targets: 8,
       nodeLanes: ['22.18.0', '24'],
@@ -270,14 +367,24 @@ test('verifies downloaded native runtime evidence through the release CLI', () =
         target: target.target,
         binaryPath,
         outputDirectory: path.join(artifactsDirectory, nativeArtifactName(target.target)),
+        sourceRevision: RUNTIME_REVISION,
+      })
+      const verified = attachNativeAttestationFixtures({
+        target: target.target,
+        bundleDirectory: path.join(artifactsDirectory, nativeArtifactName(target.target)),
+        sourceRevision: RUNTIME_REVISION,
       })
       nativeBundles.set(target.target, {
         packageVersion: bundle.packageVersion,
         binarySha256: bundle.binarySha256,
+        sourceRevision: bundle.sourceRevision,
+        sbomSha256: bundle.sbomSha256,
         tarballSha256: bundle.tarballSha256,
         tarballBytes: bundle.tarballBytes,
         unpackedBytes: bundle.unpackedBytes,
         sizeGate: bundle.sizeGate,
+        provenanceAttestationSha256: verified.attestations.provenanceSha256,
+        sbomAttestationSha256: verified.attestations.sbomAttestationSha256,
       })
     }
     for (const evidence of nativeRuntimeEvidenceFixture(nativeBundles)) {
@@ -297,6 +404,10 @@ test('verifies downloaded native runtime evidence through the release CLI', () =
         artifactsDirectory,
         '--revision',
         RUNTIME_REVISION,
+        '--attestations',
+        'required',
+        '--sbom-closure',
+        'true',
         '--output',
         certificationPath,
       ],
@@ -332,6 +443,10 @@ test('rejects incomplete, duplicate, mixed-build, and mixed-bundle runtime evide
   const mixedRevision = structuredClone(complete)
   mixedRevision[0].compilerBuildRevision = 'c'.repeat(40)
   assert.throws(() => validate(mixedRevision), /must equal release source revision/)
+
+  const mixedPackagedRevision = structuredClone(complete)
+  mixedPackagedRevision[0].sourceRevision = 'c'.repeat(40)
+  assert.throws(() => validate(mixedPackagedRevision), /sourceRevision must equal/)
 
   const mixedBuild = structuredClone(complete)
   mixedBuild[0].compilerBuildId = `${RUNTIME_BUILD_ID}-different`
@@ -514,13 +629,20 @@ test('assembles and verifies deterministic binary metadata and checksums', () =>
       target: 'darwin-arm64',
       binaryPath,
       outputDirectory: packageDirectory,
+      sourceRevision: RUNTIME_REVISION,
     })
     const artifact = verifyNativePackageArtifact({
       target: 'darwin-arm64',
       packageDirectory,
+      verifySbomClosure: true,
     })
     assert.equal(artifact.bindingManifest.rustTarget, 'aarch64-apple-darwin')
+    assert.equal(artifact.bindingManifest.sourceRevision, RUNTIME_REVISION)
     assert.match(artifact.sha256, /^[0-9a-f]{64}$/)
+    assert.match(artifact.sbomSha256, /^[0-9a-f]{64}$/)
+    assert.equal(artifact.sbom.spdxVersion, 'SPDX-2.3')
+    assert.ok(artifact.sbom.packages.some(entry => entry.name === 'fict-compiler-napi'))
+    assert.doesNotMatch(JSON.stringify(artifact.sbom), /path\+file:\/\//)
 
     writeFileSync(artifact.binaryPath, 'tampered')
     assert.throws(
@@ -542,15 +664,66 @@ test('packs a complete native bundle with a tarball checksum', () => {
       target: 'darwin-arm64',
       binaryPath,
       outputDirectory: bundleDirectory,
+      sourceRevision: RUNTIME_REVISION,
     })
-    const verified = verifyNativeBundle({ target: 'darwin-arm64', bundleDirectory })
+    const verified = verifyNativeBundle({
+      target: 'darwin-arm64',
+      bundleDirectory,
+      verifySbomClosure: true,
+    })
     assert.equal(evidence.tarballSha256, verified.tarballSha256)
-    assert.equal(evidence.schemaVersion, 2)
+    assert.equal(evidence.schemaVersion, 3)
+    assert.equal(evidence.sourceRevision, RUNTIME_REVISION)
+    assert.equal(evidence.sbom, NATIVE_COMPILER_SBOM)
+    assert.equal(evidence.sbomSha256, verified.sbomSha256)
     assert.equal(evidence.sizeGate.passed, true)
     assert.deepEqual(evidence.sizeGate, verified.buildEvidence.sizeGate)
     assert.match(
       readFileSync(`${verified.tarballPath}.sha256`, 'utf8'),
       new RegExp(`^${verified.tarballSha256}  `),
+    )
+    const secondEvidence = bundleNativePackage({
+      target: 'darwin-arm64',
+      binaryPath,
+      outputDirectory: path.join(tempRoot, 'second-bundle'),
+      sourceRevision: RUNTIME_REVISION,
+    })
+    assert.equal(secondEvidence.sbomSha256, evidence.sbomSha256)
+    assert.equal(secondEvidence.tarballSha256, evidence.tarballSha256)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('binds offline Sigstore bundles to the binary, tarball, SBOM, and revision', () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-attestation-test-'))
+  try {
+    const binaryPath = path.join(tempRoot, 'compiler.node')
+    const bundleDirectory = path.join(tempRoot, 'bundle')
+    writeFileSync(binaryPath, 'native-attestation-test-binary')
+    bundleNativePackage({
+      target: 'darwin-arm64',
+      binaryPath,
+      outputDirectory: bundleDirectory,
+      sourceRevision: RUNTIME_REVISION,
+    })
+    const verified = attachNativeAttestationFixtures({
+      target: 'darwin-arm64',
+      bundleDirectory,
+      sourceRevision: RUNTIME_REVISION,
+    })
+    assert.match(verified.attestations.provenanceSha256, /^[0-9a-f]{64}$/)
+    assert.match(verified.attestations.sbomAttestationSha256, /^[0-9a-f]{64}$/)
+
+    writeFileSync(path.join(bundleDirectory, NATIVE_COMPILER_PROVENANCE_ATTESTATION), '{}\n')
+    assert.throws(
+      () =>
+        verifyNativeBundle({
+          target: 'darwin-arm64',
+          bundleDirectory,
+          requireAttestations: true,
+        }),
+      /signed Sigstore DSSE bundle/,
     )
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })

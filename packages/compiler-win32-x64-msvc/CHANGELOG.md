@@ -4,6 +4,7 @@
 
 ### Patch Changes
 
+- Ship a revision-bound SPDX SBOM and bind the platform binary to signed release attestations.
 - Publish the capability-identified and frozen-corpus-certified Rust compiler for Windows x64 MSVC.
 
 ## 0.31.0

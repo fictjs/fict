@@ -26,7 +26,7 @@ function fixture() {
       packages: [{ name: '@fictjs/compiler', version }],
     },
     certification: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       packageVersion: version,
       compilerBuildRevision: revision,
       compilerCapabilityManifestVersion: capabilityIdentity.version,

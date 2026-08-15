@@ -60,8 +60,10 @@ export function validateCompilerReleaseUnit({
   if (!GIT_REVISION.test(revision ?? '') || tagRevision !== revision) {
     failures.push('release tag revision does not match the certified checkout revision')
   }
-  if (certification?.schemaVersion !== 3) {
-    failures.push('release requires native certification schema v3 with tarball corpus replay')
+  if (certification?.schemaVersion !== 4) {
+    failures.push(
+      'release requires native certification schema v4 with SBOM and artifact attestations',
+    )
   }
   if (certification?.compilerBuildRevision !== revision) {
     failures.push('native certification build revision does not match the release revision')
@@ -124,6 +126,8 @@ function main() {
       verifyNativeBundle({
         target: target.target,
         bundleDirectory: path.join(options.artifacts, nativeArtifactName(target.target)),
+        requireAttestations: true,
+        verifySbomClosure: true,
       }),
     ]),
   )

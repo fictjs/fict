@@ -19,6 +19,9 @@ export const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.me
 export const NATIVE_COMPILER_BINARY = 'fict_compiler_napi.node'
 export const NATIVE_COMPILER_MANIFEST = 'binding-manifest.json'
 export const NATIVE_COMPILER_CHECKSUMS = 'SHASUMS256.txt'
+export const NATIVE_COMPILER_SBOM = 'fict-compiler-native.spdx.json'
+export const NATIVE_COMPILER_PROVENANCE_ATTESTATION = 'provenance.attestation.json'
+export const NATIVE_COMPILER_SBOM_ATTESTATION = 'sbom.attestation.json'
 export const NATIVE_COMPILER_NODE_LANES = Object.freeze(['22.18.0', '24'])
 export const NATIVE_COMPILER_BUDGET_PATH = path.join(
   repositoryRoot,
@@ -28,6 +31,14 @@ export const NATIVE_COMPILER_BUDGET_PATH = path.join(
 export const COMPILER_CAPABILITY_MANIFEST_VERSION = readJson(
   path.join(repositoryRoot, 'packages/compiler/compiler-capabilities.json'),
 ).schemaVersion
+
+const GIT_REVISION_PATTERN = /^[0-9a-f]{40}$/
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
+const SPDX_DOCUMENT_TYPE = 'https://spdx.dev/Document/v2.3'
+const SLSA_PROVENANCE_TYPE = 'https://slsa.dev/provenance/v1'
+const IN_TOTO_STATEMENT_TYPE = 'https://in-toto.io/Statement/v1'
+const DETERMINISTIC_EPOCH = '1970-01-01T00:00:00Z'
+const cargoMetadataCache = new Map()
 
 const targetDefinitions = [
   {
@@ -252,6 +263,367 @@ function hashFile(filePath) {
   return createHash('sha256').update(readFileSync(filePath)).digest('hex')
 }
 
+function hashText(value) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function canonicalCargoPackageIdentity(cargoPackage) {
+  return `${cargoPackage.source ?? 'workspace'}#${cargoPackage.name}@${cargoPackage.version}`
+}
+
+function cargoSpdxId(cargoPackage) {
+  const safeName = cargoPackage.name.replace(/[^A-Za-z0-9.-]/g, '-')
+  return `SPDXRef-Cargo-${safeName}-${hashText(canonicalCargoPackageIdentity(cargoPackage)).slice(0, 12)}`
+}
+
+function cargoPackageUrl(cargoPackage) {
+  return `pkg:cargo/${encodeURIComponent(cargoPackage.name)}@${encodeURIComponent(cargoPackage.version)}`
+}
+
+function npmPackageUrl(packageName, packageVersion) {
+  const encodedName = packageName.startsWith('@')
+    ? `%40${packageName.slice(1).split('/').map(encodeURIComponent).join('/')}`
+    : encodeURIComponent(packageName)
+  return `pkg:npm/${encodedName}@${encodeURIComponent(packageVersion)}`
+}
+
+function parseCargoLockChecksums(source) {
+  const checksums = new Map()
+  for (const block of source.split(/\n(?=\[\[package\]\]\n)/)) {
+    if (!block.startsWith('[[package]]')) continue
+    const readString = name => {
+      const match = new RegExp(`^${name} = ("(?:[^"\\\\]|\\\\.)*")$`, 'm').exec(block)
+      return match ? JSON.parse(match[1]) : null
+    }
+    const name = readString('name')
+    const version = readString('version')
+    const sourceIdentity = readString('source')
+    const checksum = readString('checksum')
+    if (name && version && checksum) {
+      checksums.set(`${sourceIdentity ?? 'workspace'}#${name}@${version}`, checksum)
+    }
+  }
+  return checksums
+}
+
+function loadCargoMetadata(root, rustTarget) {
+  const cacheKey = `${path.resolve(root)}\0${rustTarget}`
+  const cached = cargoMetadataCache.get(cacheKey)
+  if (cached) return cached
+  const metadata = JSON.parse(
+    run(
+      'cargo',
+      ['metadata', '--locked', '--format-version', '1', '--filter-platform', rustTarget],
+      { cwd: root },
+    ),
+  )
+  cargoMetadataCache.set(cacheKey, metadata)
+  return metadata
+}
+
+function activeCargoClosure(metadata) {
+  if (metadata?.version !== 1 || !Array.isArray(metadata.packages)) {
+    throw new TypeError('Cargo metadata must use format version 1')
+  }
+  const rootPackage = metadata.packages.find(candidate => candidate.name === 'fict-compiler-napi')
+  if (!rootPackage) throw new Error('Cargo metadata is missing fict-compiler-napi')
+  const packagesById = new Map(
+    metadata.packages.map(cargoPackage => [cargoPackage.id, cargoPackage]),
+  )
+  const nodesById = new Map((metadata.resolve?.nodes ?? []).map(node => [node.id, node]))
+  const activeIds = new Set()
+  const pending = [rootPackage.id]
+  while (pending.length > 0) {
+    const id = pending.pop()
+    if (activeIds.has(id)) continue
+    if (!packagesById.has(id))
+      throw new Error(`Cargo resolve graph references unknown package ${id}`)
+    activeIds.add(id)
+    for (const dependency of nodesById.get(id)?.deps ?? []) {
+      const dependencyKinds = dependency.dep_kinds ?? []
+      if (dependencyKinds.length === 0 || dependencyKinds.some(kind => kind.kind !== 'dev')) {
+        pending.push(dependency.pkg)
+      }
+    }
+  }
+  return { rootPackage, packagesById, nodesById, activeIds }
+}
+
+function sourceRevisionTimestamp(sourceRevision, root) {
+  if (!sourceRevision) return DETERMINISTIC_EPOCH
+  const result = spawnSync('git', ['show', '-s', '--format=%cI', sourceRevision], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (result.status !== 0) return DETERMINISTIC_EPOCH
+  const timestamp = new Date(result.stdout.trim())
+  return Number.isNaN(timestamp.valueOf())
+    ? DETERMINISTIC_EPOCH
+    : timestamp.toISOString().replace('.000Z', 'Z')
+}
+
+export function createNativeCompilerSbom({
+  target,
+  packageManifest,
+  binarySha256,
+  sourceRevision = null,
+  root = repositoryRoot,
+  cargoMetadata,
+  cargoLockSource,
+  createdAt,
+}) {
+  const definition = nativeTargetDefinition(target)
+  if (!SHA256_PATTERN.test(binarySha256 ?? '')) {
+    throw new TypeError('binarySha256 must be a lowercase SHA-256')
+  }
+  if (sourceRevision !== null && !GIT_REVISION_PATTERN.test(sourceRevision)) {
+    throw new TypeError('sourceRevision must be null or a lowercase 40-character Git SHA-1')
+  }
+  if (
+    packageManifest?.name !== definition.packageName ||
+    typeof packageManifest.version !== 'string' ||
+    !packageManifest.version
+  ) {
+    throw new TypeError('Native package manifest does not match the requested SBOM target')
+  }
+
+  const metadata = cargoMetadata ?? loadCargoMetadata(root, definition.rustTarget)
+  const closure = activeCargoClosure(metadata)
+  const lockChecksums = parseCargoLockChecksums(
+    cargoLockSource ?? readFileSync(path.join(root, 'Cargo.lock'), 'utf8'),
+  )
+  const cargoPackages = [...closure.activeIds]
+    .map(id => closure.packagesById.get(id))
+    .sort((left, right) =>
+      canonicalCargoPackageIdentity(left).localeCompare(canonicalCargoPackageIdentity(right)),
+    )
+  const spdxIdsByCargoId = new Map(cargoPackages.map(entry => [entry.id, cargoSpdxId(entry)]))
+  const sourceIdentity = sourceRevision ?? 'unversioned'
+  const nativePackageId = 'SPDXRef-NativePackage'
+  const binaryFileId = 'SPDXRef-NativeBinary'
+  const rootCargoId = spdxIdsByCargoId.get(closure.rootPackage.id)
+
+  const packages = [
+    {
+      SPDXID: nativePackageId,
+      name: packageManifest.name,
+      versionInfo: packageManifest.version,
+      downloadLocation: 'NOASSERTION',
+      filesAnalyzed: false,
+      licenseConcluded: 'NOASSERTION',
+      licenseDeclared: 'MIT',
+      copyrightText: 'NOASSERTION',
+      supplier: 'Organization: Fict',
+      primaryPackagePurpose: 'LIBRARY',
+      externalRefs: [
+        {
+          referenceCategory: 'PACKAGE-MANAGER',
+          referenceType: 'purl',
+          referenceLocator: npmPackageUrl(packageManifest.name, packageManifest.version),
+        },
+        {
+          referenceCategory: 'OTHER',
+          referenceType: 'https://fict.dev/spdx/source-revision',
+          referenceLocator: sourceIdentity,
+        },
+      ],
+      comment: `target=${target}; rustTarget=${definition.rustTarget}; sourceRevision=${sourceIdentity}; binarySha256=${binarySha256}`,
+    },
+    ...cargoPackages.map(cargoPackage => {
+      const checksum = lockChecksums.get(canonicalCargoPackageIdentity(cargoPackage))
+      return {
+        SPDXID: spdxIdsByCargoId.get(cargoPackage.id),
+        name: cargoPackage.name,
+        versionInfo: cargoPackage.version,
+        downloadLocation: cargoPackage.source?.startsWith(
+          'registry+https://github.com/rust-lang/crates.io-index',
+        )
+          ? `https://crates.io/api/v1/crates/${encodeURIComponent(cargoPackage.name)}/${encodeURIComponent(cargoPackage.version)}/download`
+          : cargoPackage.source?.startsWith('git+')
+            ? cargoPackage.source.slice(4)
+            : 'NOASSERTION',
+        filesAnalyzed: false,
+        licenseConcluded: 'NOASSERTION',
+        licenseDeclared: cargoPackage.license || 'NOASSERTION',
+        copyrightText: 'NOASSERTION',
+        primaryPackagePurpose: 'LIBRARY',
+        externalRefs: [
+          {
+            referenceCategory: 'PACKAGE-MANAGER',
+            referenceType: 'purl',
+            referenceLocator: cargoPackageUrl(cargoPackage),
+          },
+        ],
+        ...(checksum ? { checksums: [{ algorithm: 'SHA256', checksumValue: checksum }] } : {}),
+      }
+    }),
+  ]
+
+  const relationships = [
+    {
+      spdxElementId: nativePackageId,
+      relationshipType: 'CONTAINS',
+      relatedSpdxElement: binaryFileId,
+    },
+    {
+      spdxElementId: nativePackageId,
+      relationshipType: 'DEPENDS_ON',
+      relatedSpdxElement: rootCargoId,
+    },
+  ]
+  for (const cargoPackage of cargoPackages) {
+    for (const dependency of closure.nodesById.get(cargoPackage.id)?.deps ?? []) {
+      const dependencyKinds = dependency.dep_kinds ?? []
+      if (
+        !closure.activeIds.has(dependency.pkg) ||
+        (dependencyKinds.length > 0 && dependencyKinds.every(kind => kind.kind === 'dev'))
+      ) {
+        continue
+      }
+      relationships.push({
+        spdxElementId: spdxIdsByCargoId.get(cargoPackage.id),
+        relationshipType: 'DEPENDS_ON',
+        relatedSpdxElement: spdxIdsByCargoId.get(dependency.pkg),
+      })
+    }
+  }
+  relationships.sort((left, right) =>
+    `${left.spdxElementId}\0${left.relationshipType}\0${left.relatedSpdxElement}`.localeCompare(
+      `${right.spdxElementId}\0${right.relationshipType}\0${right.relatedSpdxElement}`,
+    ),
+  )
+
+  return {
+    spdxVersion: 'SPDX-2.3',
+    dataLicense: 'CC0-1.0',
+    SPDXID: 'SPDXRef-DOCUMENT',
+    name: `${packageManifest.name}@${packageManifest.version} native binary SBOM`,
+    documentNamespace: `https://github.com/fictjs/fict/sbom/${sourceIdentity}/${target}/${binarySha256}`,
+    creationInfo: {
+      created: createdAt ?? sourceRevisionTimestamp(sourceRevision, root),
+      creators: ['Organization: Fict', 'Tool: fict-native-sbom/1'],
+    },
+    documentDescribes: [nativePackageId],
+    packages,
+    files: [
+      {
+        SPDXID: binaryFileId,
+        fileName: NATIVE_COMPILER_BINARY,
+        checksums: [{ algorithm: 'SHA256', checksumValue: binarySha256 }],
+        licenseConcluded: 'NOASSERTION',
+        copyrightText: 'NOASSERTION',
+      },
+    ],
+    relationships,
+  }
+}
+
+export function validateNativeCompilerSbom({
+  sbom,
+  target,
+  packageManifest,
+  binarySha256,
+  sourceRevision,
+}) {
+  const definition = nativeTargetDefinition(target)
+  const failures = []
+  const sourceIdentity = sourceRevision ?? 'unversioned'
+  if (
+    sbom?.spdxVersion !== 'SPDX-2.3' ||
+    sbom.dataLicense !== 'CC0-1.0' ||
+    sbom.SPDXID !== 'SPDXRef-DOCUMENT'
+  ) {
+    failures.push('SBOM must be an SPDX 2.3 JSON document')
+  }
+  if (
+    sbom?.documentNamespace !==
+    `https://github.com/fictjs/fict/sbom/${sourceIdentity}/${target}/${binarySha256}`
+  ) {
+    failures.push('SBOM namespace does not bind target, source revision, and binary digest')
+  }
+  if (
+    !Array.isArray(sbom?.creationInfo?.creators) ||
+    !sbom.creationInfo.creators.includes('Tool: fict-native-sbom/1') ||
+    Number.isNaN(new Date(sbom.creationInfo.created).valueOf())
+  ) {
+    failures.push('SBOM creation metadata is incomplete')
+  }
+  const packages = Array.isArray(sbom?.packages) ? sbom.packages : []
+  const files = Array.isArray(sbom?.files) ? sbom.files : []
+  const relationships = Array.isArray(sbom?.relationships) ? sbom.relationships : []
+  const nativePackage = packages.find(entry => entry?.SPDXID === 'SPDXRef-NativePackage')
+  const binary = files.find(entry => entry?.SPDXID === 'SPDXRef-NativeBinary')
+  const cargoPackages = packages.filter(entry => entry?.SPDXID?.startsWith('SPDXRef-Cargo-'))
+  if (
+    nativePackage?.name !== packageManifest.name ||
+    nativePackage?.versionInfo !== packageManifest.version ||
+    nativePackage?.comment !==
+      `target=${target}; rustTarget=${definition.rustTarget}; sourceRevision=${sourceIdentity}; binarySha256=${binarySha256}` ||
+    !nativePackage.externalRefs?.some(
+      reference =>
+        reference.referenceType === 'https://fict.dev/spdx/source-revision' &&
+        reference.referenceLocator === sourceIdentity,
+    )
+  ) {
+    failures.push('SBOM native package identity is incomplete or mismatched')
+  }
+  if (
+    files.length !== 1 ||
+    binary?.fileName !== NATIVE_COMPILER_BINARY ||
+    !binary?.checksums?.some(
+      checksum => checksum.algorithm === 'SHA256' && checksum.checksumValue === binarySha256,
+    )
+  ) {
+    failures.push('SBOM binary file identity is incomplete or mismatched')
+  }
+  if (
+    cargoPackages.length === 0 ||
+    !cargoPackages.some(entry => entry.name === 'fict-compiler-napi') ||
+    cargoPackages.some(
+      entry =>
+        !entry.externalRefs?.some(
+          reference =>
+            reference.referenceCategory === 'PACKAGE-MANAGER' &&
+            reference.referenceType === 'purl' &&
+            reference.referenceLocator ===
+              cargoPackageUrl({ name: entry.name, version: entry.versionInfo }),
+        ),
+    )
+  ) {
+    failures.push('SBOM Cargo build closure is missing or malformed')
+  }
+  const knownIds = new Set([
+    'SPDXRef-DOCUMENT',
+    ...packages.map(entry => entry?.SPDXID),
+    ...files.map(entry => entry?.SPDXID),
+  ])
+  if (
+    JSON.stringify(sbom?.documentDescribes) !== JSON.stringify(['SPDXRef-NativePackage']) ||
+    !relationships.some(
+      entry =>
+        entry.spdxElementId === 'SPDXRef-NativePackage' &&
+        entry.relationshipType === 'CONTAINS' &&
+        entry.relatedSpdxElement === 'SPDXRef-NativeBinary',
+    ) ||
+    !relationships.some(
+      entry =>
+        entry.spdxElementId === 'SPDXRef-NativePackage' &&
+        entry.relationshipType === 'DEPENDS_ON' &&
+        cargoPackages.some(candidate => candidate.SPDXID === entry.relatedSpdxElement),
+    ) ||
+    relationships.some(
+      entry => !knownIds.has(entry.spdxElementId) || !knownIds.has(entry.relatedSpdxElement),
+    )
+  ) {
+    failures.push('SBOM relationships are incomplete or reference unknown elements')
+  }
+  if (/manifest_path|src_path|path\+file:\/\//.test(JSON.stringify(sbom))) {
+    failures.push('SBOM leaks a build-runner filesystem path')
+  }
+  return failures
+}
+
 function packageManifestPath(root, definition) {
   return path.join(root, definition.packageDirectory, 'package.json')
 }
@@ -363,6 +735,7 @@ export function validateNativePackageConfiguration(root = repositoryRoot) {
         NATIVE_COMPILER_BINARY,
         NATIVE_COMPILER_MANIFEST,
         NATIVE_COMPILER_CHECKSUMS,
+        NATIVE_COMPILER_SBOM,
       ])
     ) {
       failures.push(`${definition.packageName} files must contain only native release artifacts`)
@@ -370,7 +743,8 @@ export function validateNativePackageConfiguration(root = repositoryRoot) {
     if (
       manifest.fictNative?.target !== definition.target ||
       manifest.fictNative?.rustTarget !== definition.rustTarget ||
-      manifest.fictNative?.binary !== NATIVE_COMPILER_BINARY
+      manifest.fictNative?.binary !== NATIVE_COMPILER_BINARY ||
+      manifest.fictNative?.sbom !== NATIVE_COMPILER_SBOM
     ) {
       failures.push(`${definition.packageName} fictNative metadata does not match the matrix`)
     }
@@ -409,6 +783,7 @@ export function assembleNativePackage({
   target,
   binaryPath,
   outputDirectory,
+  sourceRevision = null,
   root = repositoryRoot,
 }) {
   const definition = nativeTargetDefinition(target)
@@ -434,14 +809,27 @@ export function assembleNativePackage({
   copyFileSync(binaryPath, binaryDestination)
   const sha256 = hashFile(binaryDestination)
   const packageManifest = readJson(path.join(destination, 'package.json'))
+  const sbom = createNativeCompilerSbom({
+    target,
+    packageManifest,
+    binarySha256: sha256,
+    sourceRevision,
+    root,
+  })
+  const sbomPath = path.join(destination, NATIVE_COMPILER_SBOM)
+  writeFileSync(sbomPath, `${JSON.stringify(sbom, null, 2)}\n`)
+  const sbomSha256 = hashFile(sbomPath)
   const bindingManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     packageName: definition.packageName,
     packageVersion: packageManifest.version,
     target: definition.target,
     rustTarget: definition.rustTarget,
     binary: NATIVE_COMPILER_BINARY,
     sha256,
+    sourceRevision,
+    sbom: NATIVE_COMPILER_SBOM,
+    sbomSha256,
   }
   writeFileSync(
     path.join(destination, NATIVE_COMPILER_MANIFEST),
@@ -449,17 +837,23 @@ export function assembleNativePackage({
   )
   writeFileSync(
     path.join(destination, NATIVE_COMPILER_CHECKSUMS),
-    `${sha256}  ${NATIVE_COMPILER_BINARY}\n`,
+    `${sha256}  ${NATIVE_COMPILER_BINARY}\n${sbomSha256}  ${NATIVE_COMPILER_SBOM}\n`,
   )
-  return { definition, directory: destination, manifest: bindingManifest }
+  return { definition, directory: destination, manifest: bindingManifest, sbom }
 }
 
-export function verifyNativePackageArtifact({ target, packageDirectory }) {
+export function verifyNativePackageArtifact({
+  target,
+  packageDirectory,
+  verifySbomClosure = false,
+  root = repositoryRoot,
+}) {
   const definition = nativeTargetDefinition(target)
   const directory = path.resolve(packageDirectory)
   const packageManifest = readJson(path.join(directory, 'package.json'))
   const bindingManifest = readJson(path.join(directory, NATIVE_COMPILER_MANIFEST))
   const binaryPath = path.join(directory, NATIVE_COMPILER_BINARY)
+  const sbomPath = path.join(directory, NATIVE_COMPILER_SBOM)
   const checksumPath = path.join(directory, NATIVE_COMPILER_CHECKSUMS)
   const failures = []
 
@@ -467,6 +861,8 @@ export function verifyNativePackageArtifact({ target, packageDirectory }) {
     failures.push(`${NATIVE_COMPILER_BINARY} is missing or empty`)
   }
   const sha256 = existsSync(binaryPath) ? hashFile(binaryPath) : null
+  const sbom = existsSync(sbomPath) ? readJson(sbomPath) : null
+  const sbomSha256 = existsSync(sbomPath) ? hashFile(sbomPath) : null
   if (
     packageManifest.name !== definition.packageName ||
     packageManifest.fictNative?.target !== definition.target ||
@@ -475,25 +871,66 @@ export function verifyNativePackageArtifact({ target, packageDirectory }) {
     failures.push('package.json target metadata does not match the requested target')
   }
   if (
-    bindingManifest.schemaVersion !== 1 ||
+    bindingManifest.schemaVersion !== 2 ||
     bindingManifest.packageName !== definition.packageName ||
     bindingManifest.packageVersion !== packageManifest.version ||
     bindingManifest.target !== definition.target ||
     bindingManifest.rustTarget !== definition.rustTarget ||
     bindingManifest.binary !== NATIVE_COMPILER_BINARY ||
-    bindingManifest.sha256 !== sha256
+    bindingManifest.sha256 !== sha256 ||
+    (bindingManifest.sourceRevision !== null &&
+      !GIT_REVISION_PATTERN.test(bindingManifest.sourceRevision ?? '')) ||
+    bindingManifest.sbom !== NATIVE_COMPILER_SBOM ||
+    bindingManifest.sbomSha256 !== sbomSha256
   ) {
     failures.push('binding-manifest.json does not match the package or binary')
   }
+  if (!sbom) {
+    failures.push(`${NATIVE_COMPILER_SBOM} is missing`)
+  } else {
+    failures.push(
+      ...validateNativeCompilerSbom({
+        sbom,
+        target,
+        packageManifest,
+        binarySha256: sha256,
+        sourceRevision: bindingManifest.sourceRevision,
+      }),
+    )
+    if (verifySbomClosure) {
+      const expectedSbom = createNativeCompilerSbom({
+        target,
+        packageManifest,
+        binarySha256: sha256,
+        sourceRevision: bindingManifest.sourceRevision,
+        root,
+      })
+      if (JSON.stringify(sbom) !== JSON.stringify(expectedSbom)) {
+        failures.push('native SBOM does not match the current locked Cargo build closure')
+      }
+    }
+  }
   const checksum = existsSync(checksumPath) ? readFileSync(checksumPath, 'utf8') : ''
-  if (checksum !== `${sha256}  ${NATIVE_COMPILER_BINARY}\n`) {
-    failures.push('SHASUMS256.txt does not match the packaged binary')
+  if (
+    checksum !== `${sha256}  ${NATIVE_COMPILER_BINARY}\n${sbomSha256}  ${NATIVE_COMPILER_SBOM}\n`
+  ) {
+    failures.push('SHASUMS256.txt does not match the packaged binary and SBOM')
   }
   if (failures.length > 0) {
     throw new Error(`Invalid ${definition.packageName} artifact:\n- ${failures.join('\n- ')}`)
   }
 
-  return { definition, directory, packageManifest, bindingManifest, binaryPath, sha256 }
+  return {
+    definition,
+    directory,
+    packageManifest,
+    bindingManifest,
+    binaryPath,
+    sha256,
+    sbomPath,
+    sbomSha256,
+    sbom,
+  }
 }
 
 function run(command, args, options = {}) {
@@ -554,6 +991,7 @@ export function packNativePackage({ target, packageDirectory, outputDirectory })
     NATIVE_COMPILER_BINARY,
     NATIVE_COMPILER_MANIFEST,
     NATIVE_COMPILER_CHECKSUMS,
+    NATIVE_COMPILER_SBOM,
   ])
   const packedEntries = new Set((packed.files ?? []).map(file => file.path))
   const missing = [...requiredEntries].filter(entry => !packedEntries.has(entry))
@@ -566,16 +1004,117 @@ export function packNativePackage({ target, packageDirectory, outputDirectory })
   return { ...artifact, packed, tarballPath, tarballSha256 }
 }
 
+function readAttestationStatement(attestationPath) {
+  const bundle = readJson(attestationPath)
+  const envelope = bundle?.dsseEnvelope
+  if (
+    !envelope ||
+    envelope.payloadType !== 'application/vnd.in-toto+json' ||
+    typeof envelope.payload !== 'string' ||
+    !Array.isArray(envelope.signatures) ||
+    envelope.signatures.length === 0 ||
+    envelope.signatures.some(signature => typeof signature?.sig !== 'string' || !signature.sig) ||
+    !bundle.verificationMaterial ||
+    typeof bundle.verificationMaterial !== 'object'
+  ) {
+    throw new Error(`${path.basename(attestationPath)} is not a signed Sigstore DSSE bundle`)
+  }
+  let statement
+  try {
+    statement = JSON.parse(Buffer.from(envelope.payload, 'base64').toString('utf8'))
+  } catch (error) {
+    throw new Error(`${path.basename(attestationPath)} contains an invalid DSSE statement`, {
+      cause: error,
+    })
+  }
+  if (statement?._type !== IN_TOTO_STATEMENT_TYPE || !Array.isArray(statement.subject)) {
+    throw new Error(`${path.basename(attestationPath)} does not contain an in-toto v1 statement`)
+  }
+  return { bundle, statement, sha256: hashFile(attestationPath) }
+}
+
+function statementSubjectDigests(statement) {
+  const digests = statement.subject.map(subject => subject?.digest?.sha256)
+  if (
+    statement.subject.some(
+      (subject, index) =>
+        typeof subject?.name !== 'string' ||
+        !subject.name ||
+        !SHA256_PATTERN.test(digests[index] ?? ''),
+    )
+  ) {
+    throw new Error('attestation subjects must have names and lowercase SHA-256 digests')
+  }
+  return digests.sort()
+}
+
+export function verifyNativeAttestationBundles({
+  bundleDirectory,
+  binarySha256,
+  tarballSha256,
+  sourceRevision,
+  sbom,
+}) {
+  const directory = path.resolve(bundleDirectory)
+  const provenancePath = path.join(directory, NATIVE_COMPILER_PROVENANCE_ATTESTATION)
+  const sbomAttestationPath = path.join(directory, NATIVE_COMPILER_SBOM_ATTESTATION)
+  for (const attestationPath of [provenancePath, sbomAttestationPath]) {
+    if (!existsSync(attestationPath)) {
+      throw new Error(`${path.basename(attestationPath)} is missing`)
+    }
+  }
+  const provenance = readAttestationStatement(provenancePath)
+  const sbomAttestation = readAttestationStatement(sbomAttestationPath)
+  if (provenance.statement.predicateType !== SLSA_PROVENANCE_TYPE) {
+    throw new Error('native provenance attestation must use the SLSA v1 predicate')
+  }
+  if (
+    JSON.stringify(statementSubjectDigests(provenance.statement)) !==
+    JSON.stringify([binarySha256, tarballSha256].sort())
+  ) {
+    throw new Error('native provenance attestation subjects do not match binary and tarball')
+  }
+  const resolvedDependencies = provenance.statement.predicate?.buildDefinition?.resolvedDependencies
+  if (
+    sourceRevision &&
+    (!Array.isArray(resolvedDependencies) ||
+      !resolvedDependencies.some(dependency => dependency?.digest?.gitCommit === sourceRevision))
+  ) {
+    throw new Error('native provenance attestation does not bind the source revision')
+  }
+  if (sbomAttestation.statement.predicateType !== SPDX_DOCUMENT_TYPE) {
+    throw new Error('native SBOM attestation must use the SPDX 2.3 predicate')
+  }
+  if (
+    JSON.stringify(statementSubjectDigests(sbomAttestation.statement)) !==
+    JSON.stringify([binarySha256])
+  ) {
+    throw new Error('native SBOM attestation subject does not match the binary')
+  }
+  if (JSON.stringify(sbomAttestation.statement.predicate) !== JSON.stringify(sbom)) {
+    throw new Error('native SBOM attestation predicate does not match the packaged SBOM')
+  }
+  return Object.freeze({
+    provenancePath,
+    provenanceSha256: provenance.sha256,
+    sbomAttestationPath,
+    sbomAttestationSha256: sbomAttestation.sha256,
+  })
+}
+
 export function verifyNativeBundle({
   target,
   bundleDirectory,
   budgetPath = NATIVE_COMPILER_BUDGET_PATH,
   budgetProfile = 'ci',
+  verifySbomClosure = false,
+  requireAttestations = false,
 }) {
   const directory = path.resolve(bundleDirectory)
   const artifact = verifyNativePackageArtifact({
     target,
     packageDirectory: path.join(directory, 'package'),
+    verifySbomClosure,
   })
   const tarballs = readdirSync(directory).filter(file => file.endsWith('.tgz'))
   if (tarballs.length !== 1) {
@@ -598,12 +1137,15 @@ export function verifyNativeBundle({
     budget: loadNativePackageSizeBudget({ budgetPath, profile: budgetProfile }),
   })
   if (
-    buildEvidence.schemaVersion !== 2 ||
+    buildEvidence.schemaVersion !== 3 ||
     buildEvidence.target !== target ||
     buildEvidence.rustTarget !== artifact.definition.rustTarget ||
     buildEvidence.packageName !== artifact.definition.packageName ||
     buildEvidence.packageVersion !== artifact.packageManifest.version ||
     buildEvidence.binarySha256 !== artifact.sha256 ||
+    buildEvidence.sourceRevision !== artifact.bindingManifest.sourceRevision ||
+    buildEvidence.sbom !== NATIVE_COMPILER_SBOM ||
+    buildEvidence.sbomSha256 !== artifact.sbomSha256 ||
     buildEvidence.tarball !== path.basename(tarballPath) ||
     buildEvidence.tarballSha256 !== tarballSha256 ||
     !Number.isInteger(buildEvidence.tarballBytes) ||
@@ -615,13 +1157,28 @@ export function verifyNativeBundle({
     throw new Error(`${target} build evidence does not match the certified bundle`)
   }
   assertNativePackageSize(sizeGate)
-  return { ...artifact, tarballPath, tarballSha256, buildEvidence }
+  const hasAttestations = [
+    NATIVE_COMPILER_PROVENANCE_ATTESTATION,
+    NATIVE_COMPILER_SBOM_ATTESTATION,
+  ].some(file => existsSync(path.join(directory, file)))
+  const attestations =
+    requireAttestations || hasAttestations
+      ? verifyNativeAttestationBundles({
+          bundleDirectory: directory,
+          binarySha256: artifact.sha256,
+          tarballSha256,
+          sourceRevision: buildEvidence.sourceRevision,
+          sbom: artifact.sbom,
+        })
+      : null
+  return { ...artifact, tarballPath, tarballSha256, buildEvidence, attestations }
 }
 
 export function bundleNativePackage({
   target,
   binaryPath,
   outputDirectory,
+  sourceRevision = null,
   budgetPath = NATIVE_COMPILER_BUDGET_PATH,
   budgetProfile = 'ci',
 }) {
@@ -632,6 +1189,7 @@ export function bundleNativePackage({
     target,
     binaryPath: path.resolve(binaryPath),
     outputDirectory: path.join(destination, 'package'),
+    sourceRevision,
   })
   const packed = packNativePackage({
     target,
@@ -648,12 +1206,15 @@ export function bundleNativePackage({
   })
   assertNativePackageSize(sizeGate)
   const evidence = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     target,
     rustTarget: packed.definition.rustTarget,
     packageName: packed.definition.packageName,
     packageVersion: packed.packageManifest.version,
     binarySha256: packed.sha256,
+    sourceRevision: packed.bindingManifest.sourceRevision,
+    sbom: NATIVE_COMPILER_SBOM,
+    sbomSha256: packed.sbomSha256,
     tarball: path.basename(packed.tarballPath),
     tarballSha256: packed.tarballSha256,
     tarballBytes,
@@ -667,9 +1228,6 @@ export function bundleNativePackage({
   )
   return evidence
 }
-
-const GIT_REVISION_PATTERN = /^[0-9a-f]{40}$/
-const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function nativeRuntimePairKey(target, nodeLane) {
   return `${target}:node-${nodeLane}`
@@ -716,20 +1274,29 @@ function nativeBundleIdentity(bundle) {
   return Object.freeze({
     packageVersion: bundle.packageManifest.version,
     binarySha256: bundle.sha256,
+    sourceRevision: bundle.buildEvidence.sourceRevision,
+    sbomSha256: bundle.sbomSha256,
     tarballSha256: bundle.tarballSha256,
     tarballBytes: bundle.buildEvidence.tarballBytes,
     unpackedBytes: bundle.buildEvidence.unpackedBytes,
     sizeGate: bundle.buildEvidence.sizeGate,
+    provenanceAttestationSha256: bundle.attestations?.provenanceSha256 ?? null,
+    sbomAttestationSha256: bundle.attestations?.sbomAttestationSha256 ?? null,
   })
 }
 
-function loadNativeReleaseBundleIdentities(directory) {
+function loadNativeReleaseBundleIdentities(
+  directory,
+  { requireAttestations = false, verifySbomClosure = false } = {},
+) {
   const artifactsRoot = path.resolve(directory)
   return new Map(
     NATIVE_COMPILER_TARGETS.map(definition => {
       const bundle = verifyNativeBundle({
         target: definition.target,
         bundleDirectory: path.join(artifactsRoot, nativeArtifactName(definition.target)),
+        requireAttestations,
+        verifySbomClosure,
       })
       return [definition.target, nativeBundleIdentity(bundle)]
     }),
@@ -800,8 +1367,8 @@ export function validateNativeRuntimeEvidenceMatrix(
       else evidenceByPair.set(pair, evidence)
     }
 
-    if (evidence.schemaVersion !== 3) {
-      failures.push(`${evidenceLabel} must use runtime evidence schema v3`)
+    if (evidence.schemaVersion !== 4) {
+      failures.push(`${evidenceLabel} must use runtime evidence schema v4`)
     }
     if (definition) {
       for (const [field, expected] of [
@@ -827,6 +1394,14 @@ export function validateNativeRuntimeEvidenceMatrix(
       packageVersions.add(evidence.packageVersion)
     }
     for (const field of ['binarySha256', 'tarballSha256']) {
+      if (!SHA256_PATTERN.test(evidence[field] ?? '')) {
+        failures.push(`${evidenceLabel}.${field} must be a lowercase SHA-256`)
+      }
+    }
+    if (evidence.sourceRevision !== expectedRevision) {
+      failures.push(`${evidenceLabel}.sourceRevision must equal ${expectedRevision}`)
+    }
+    for (const field of ['sbomSha256', 'provenanceAttestationSha256', 'sbomAttestationSha256']) {
       if (!SHA256_PATTERN.test(evidence[field] ?? '')) {
         failures.push(`${evidenceLabel}.${field} must be a lowercase SHA-256`)
       }
@@ -932,10 +1507,14 @@ export function validateNativeRuntimeEvidenceMatrix(
   const releaseBundleFields = [
     'packageVersion',
     'binarySha256',
+    'sourceRevision',
+    'sbomSha256',
     'tarballSha256',
     'tarballBytes',
     'unpackedBytes',
     'sizeGate',
+    'provenanceAttestationSha256',
+    'sbomAttestationSha256',
   ]
   const laneIdentityFields = [
     ...releaseBundleFields,
@@ -987,7 +1566,7 @@ export function validateNativeRuntimeEvidenceMatrix(
   }
 
   const payload = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     status: 'pass',
     targets: NATIVE_COMPILER_TARGETS.length,
     nodeLanes: Object.freeze([...NATIVE_COMPILER_NODE_LANES]),
@@ -1032,6 +1611,25 @@ export function validateNativeRuntimeEvidenceMatrix(
   })
 }
 
+export function assertCheckoutRevision(sourceRevision, root = repositoryRoot) {
+  if (!GIT_REVISION_PATTERN.test(sourceRevision ?? '')) {
+    throw new TypeError('source revision must be a lowercase 40-character Git SHA-1')
+  }
+  const checkoutRevision = run('git', ['rev-parse', 'HEAD'], { cwd: root }).trim()
+  if (checkoutRevision !== sourceRevision) {
+    throw new Error(
+      `native bundle source revision ${sourceRevision} does not match checkout ${checkoutRevision}`,
+    )
+  }
+  const trackedChanges = run('git', ['status', '--porcelain', '--untracked-files=no'], {
+    cwd: root,
+  }).trim()
+  if (trackedChanges) {
+    throw new Error(`native bundle checkout has tracked changes:\n${trackedChanges}`)
+  }
+  return checkoutRevision
+}
+
 function parseArguments(args) {
   const [command, ...rest] = args
   const options = {}
@@ -1065,10 +1663,13 @@ function main() {
     return
   }
   if (command === 'bundle') {
+    if (!options.revision) throw new Error('bundle requires --revision')
+    assertCheckoutRevision(options.revision)
     const evidence = bundleNativePackage({
       target: options.target,
       binaryPath: options.binary,
       outputDirectory: options.output,
+      sourceRevision: options.revision,
       budgetPath: options.budget,
       budgetProfile: options.profile,
     })
@@ -1081,6 +1682,8 @@ function main() {
       bundleDirectory: options.bundle,
       budgetPath: options.budget,
       budgetProfile: options.profile,
+      requireAttestations: options.attestations === 'required',
+      verifySbomClosure: options['sbom-closure'] === 'true',
     })
     process.stdout.write(
       `${JSON.stringify({ target: options.target, tarballSha256: bundle.tarballSha256 })}\n`,
@@ -1095,7 +1698,10 @@ function main() {
       loadNativeRuntimeEvidence(options.evidence),
       {
         expectedRevision: options.revision,
-        nativeBundles: loadNativeReleaseBundleIdentities(options.artifacts),
+        nativeBundles: loadNativeReleaseBundleIdentities(options.artifacts, {
+          requireAttestations: options.attestations === 'required',
+          verifySbomClosure: options['sbom-closure'] === 'true',
+        }),
       },
     )
     const output = `${JSON.stringify(result, null, 2)}\n`

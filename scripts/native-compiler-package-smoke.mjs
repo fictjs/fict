@@ -293,9 +293,14 @@ function main() {
         target,
         binaryPath: path.resolve(options['host-binary']),
         outputDirectory: bundleDirectory,
+        sourceRevision: expectedRevision,
       })
     }
-    const nativeBundle = verifyNativeBundle({ target, bundleDirectory })
+    const nativeBundle = verifyNativeBundle({
+      target,
+      bundleDirectory,
+      requireAttestations: options.attestations === 'required',
+    })
     const compilerTarball = options['compiler-tarball']
       ? path.resolve(options['compiler-tarball'])
       : packCompilerFacade(packsDirectory)
@@ -387,6 +392,11 @@ function main() {
       if (expectedRevision !== null) {
         assert.equal(result.info.compilerBuildRevision, expectedRevision)
       }
+      assert.equal(
+        result.info.compilerBuildRevision,
+        nativeBundle.buildEvidence.sourceRevision,
+        'Embedded compiler revision must match the packaged source revision',
+      )
     }
     assert.equal(esm.info.compilerBuildId, cjs.info.compilerBuildId)
     assert.equal(esm.info.compilerBuildRevision, cjs.info.compilerBuildRevision)
@@ -401,7 +411,7 @@ function main() {
     )
 
     const evidence = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       target,
       rustTarget: host.rustTarget,
       nodeLane,
@@ -412,10 +422,14 @@ function main() {
       packageName: host.packageName,
       packageVersion: nativeBundle.packageManifest.version,
       binarySha256: nativeBundle.sha256,
+      sourceRevision: nativeBundle.buildEvidence.sourceRevision,
+      sbomSha256: nativeBundle.sbomSha256,
       tarballSha256: nativeBundle.tarballSha256,
       tarballBytes: nativeBundle.buildEvidence.tarballBytes,
       unpackedBytes: nativeBundle.buildEvidence.unpackedBytes,
       sizeGate: nativeBundle.buildEvidence.sizeGate,
+      provenanceAttestationSha256: nativeBundle.attestations?.provenanceSha256 ?? null,
+      sbomAttestationSha256: nativeBundle.attestations?.sbomAttestationSha256 ?? null,
       compilerBuildId: esm.info.compilerBuildId,
       compilerBuildRevision: esm.info.compilerBuildRevision,
       compilerCapabilityManifestVersion: esm.info.compilerCapabilityManifestVersion,

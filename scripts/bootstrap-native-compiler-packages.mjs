@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 
 import {
   COMPILER_CAPABILITY_MANIFEST_VERSION,
@@ -29,14 +30,28 @@ function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function bundleIdentity(bundle) {
+function bundleIdentity(bundle, { includeSupplyChain = false } = {}) {
+  if (!includeSupplyChain) {
+    return {
+      packageVersion: bundle.packageManifest.version,
+      binarySha256: bundle.sha256,
+      tarballSha256: bundle.tarballSha256,
+      tarballBytes: bundle.buildEvidence.tarballBytes,
+      unpackedBytes: bundle.buildEvidence.unpackedBytes,
+      sizeGate: bundle.buildEvidence.sizeGate,
+    }
+  }
   return {
     packageVersion: bundle.packageManifest.version,
     binarySha256: bundle.sha256,
+    sourceRevision: bundle.buildEvidence.sourceRevision,
+    sbomSha256: bundle.sbomSha256,
     tarballSha256: bundle.tarballSha256,
     tarballBytes: bundle.buildEvidence.tarballBytes,
     unpackedBytes: bundle.buildEvidence.unpackedBytes,
     sizeGate: bundle.buildEvidence.sizeGate,
+    provenanceAttestationSha256: bundle.attestations?.provenanceSha256 ?? null,
+    sbomAttestationSha256: bundle.attestations?.sbomAttestationSha256 ?? null,
   }
 }
 
@@ -58,8 +73,8 @@ export function validateNativeBootstrapCertification(certification, bundles, exp
     .update(JSON.stringify(payload))
     .digest('hex')}`
 
-  if (![2, 3].includes(payload.schemaVersion) || payload.status !== 'pass') {
-    failures.push('certification must be a passing schema v2 or v3 record')
+  if (![2, 3, 4].includes(payload.schemaVersion) || payload.status !== 'pass') {
+    failures.push('certification must be a passing schema v2, v3, or v4 record')
   }
   if (
     payload.targets !== NATIVE_COMPILER_TARGETS.length ||
@@ -78,7 +93,7 @@ export function validateNativeBootstrapCertification(certification, bundles, exp
     failures.push('certification does not bind the expected compiler build revision')
   }
   if (
-    payload.schemaVersion === 3 &&
+    payload.schemaVersion >= 3 &&
     (payload.compilerCapabilityManifestVersion !== COMPILER_CAPABILITY_MANIFEST_VERSION ||
       !/^sha256:[0-9a-f]{64}$/.test(payload.compilerCapabilityManifestDigest ?? '') ||
       payload.compilerCapabilityPackageVersion !== payload.packageVersion)
@@ -86,7 +101,7 @@ export function validateNativeBootstrapCertification(certification, bundles, exp
     failures.push('certification does not bind one compiler capability manifest')
   }
   if (
-    payload.schemaVersion === 3 &&
+    payload.schemaVersion >= 3 &&
     (payload.compatibilityCorpus?.schemaVersion !== 1 ||
       payload.compatibilityCorpus.corpusSchemaVersion !== 5 ||
       !/^sha256:[0-9a-f]{64}$/.test(payload.compatibilityCorpus.corpusSha256 ?? '') ||
@@ -131,8 +146,11 @@ export function validateNativeBootstrapCertification(certification, bundles, exp
         failures.push(`verified bundle is missing ${target.target}`)
         continue
       }
-      const expected = { target: target.target, ...bundleIdentity(bundle) }
-      if (JSON.stringify(certified) !== JSON.stringify(expected)) {
+      const expected = {
+        target: target.target,
+        ...bundleIdentity(bundle, { includeSupplyChain: payload.schemaVersion >= 4 }),
+      }
+      if (!isDeepStrictEqual(certified, expected)) {
         failures.push(`certified identity does not match ${target.target} bundle`)
       }
     }

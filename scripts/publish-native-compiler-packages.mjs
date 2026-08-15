@@ -133,6 +133,8 @@ async function main() {
     const bundle = verifyNativeBundle({
       target: target.target,
       bundleDirectory: path.join(options.artifactsRoot, nativeArtifactName(target.target)),
+      requireAttestations: true,
+      verifySbomClosure: true,
     })
     const planEntry = plan.packages.find(entry => entry.name === target.packageName)
     if (bundle.packageManifest.version !== planEntry.version) {

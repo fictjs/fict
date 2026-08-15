@@ -62,6 +62,7 @@ const releaseWorkflow = readFileSync(
   'utf8',
 )
 const gitAttributes = readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8')
+const gitIgnore = readFileSync(new URL('../.gitignore', import.meta.url), 'utf8')
 const zigRequirements = readFileSync(
   new URL('../.github/requirements-zig-linux.txt', import.meta.url),
   'utf8',
@@ -72,6 +73,10 @@ const workflowSources = readdirSync(workflowsDirectory)
   .filter(file => file.endsWith('.yml') || file.endsWith('.yaml'))
   .map(file => [file, readFileSync(new URL(file, workflowsDirectory), 'utf8')])
 const reviewedActionPins = new Map([
+  [
+    'actions/attest',
+    { sha: '1e69f48acb82d1966a394da916b4c1698aa569d6', version: 'v4.2.2', minimumMajor: 4 },
+  ],
   [
     'actions/cache',
     { sha: 'caa296126883cff596d87d8935842f9db880ef25', version: 'v5.1.0', minimumMajor: 5 },
@@ -329,6 +334,49 @@ test('musl native releases use a pinned Zig cdylib build path', () => {
     /name: Build target N-API binary with Zig[\s\S]*?CARGO_ZIGBUILD_PYTHON_PATH: \$\{\{ runner\.temp \}\}\/fict-zig\/bin\/python[\s\S]*?RUSTFLAGS: '-C target-feature=-crt-static'[\s\S]*?cargo zigbuild --release -p fict-compiler-napi --target \$\{\{ matrix\.rustTarget \}\}/,
   )
   assert.doesNotMatch(nativeBuild, /musl-tools|Install musl linker|mlugg\/setup-zig/)
+})
+
+test('native release artifacts carry revision-bound SBOM and Sigstore attestations', () => {
+  const nativeBuildStart = releaseWorkflow.indexOf('\n  native-build:')
+  const nativeRuntimeStart = releaseWorkflow.indexOf('\n  native-runtime:')
+  const nativeCertificationStart = releaseWorkflow.indexOf('\n  native-certification:')
+  const releaseStart = releaseWorkflow.indexOf('\n  release:')
+  const nativeBuild = releaseWorkflow.slice(nativeBuildStart, nativeRuntimeStart)
+  const nativeRuntime = releaseWorkflow.slice(nativeRuntimeStart, nativeCertificationStart)
+  const nativeCertificationSource = releaseWorkflow.slice(nativeCertificationStart, releaseStart)
+  const attestPin = reviewedActionPins.get('actions/attest')
+
+  assert.match(nativeBuild, /permissions:[\s\S]*?artifact-metadata: write/)
+  assert.match(nativeBuild, /permissions:[\s\S]*?attestations: write/)
+  assert.match(nativeBuild, /permissions:[\s\S]*?id-token: write/)
+  assert.equal(
+    (
+      nativeBuild.match(
+        new RegExp(`uses: actions/attest@${attestPin.sha} # ${attestPin.version}`, 'g'),
+      ) ?? []
+    ).length,
+    2,
+  )
+  assert.match(nativeBuild, /bundle[\s\S]*?--revision \$\{\{ github\.sha \}\}/)
+  assert.match(nativeBuild, /subject-path:[\s\S]*?fict_compiler_napi\.node[\s\S]*?\*\.tgz/)
+  assert.match(nativeBuild, /sbom-path: .*fict-compiler-native\.spdx\.json/)
+  assert.match(gitIgnore, /^packages\/compiler-\*\/fict-compiler-native\.spdx\.json$/m)
+  assert.match(nativeBuild, /provenance\.attestation\.json/)
+  assert.match(nativeBuild, /sbom\.attestation\.json/)
+  assert.match(nativeBuild, /--attestations required[\s\S]*?--sbom-closure true/)
+  assert.match(nativeRuntime, /--attestations required/)
+  assert.match(nativeCertificationSource, /permissions:[\s\S]*?attestations: read/)
+  assert.equal((nativeCertificationSource.match(/gh attestation verify/g) ?? []).length, 3)
+  assert.equal(
+    (nativeCertificationSource.match(/--predicate-type https:\/\/slsa\.dev\/provenance\/v1/g) ?? [])
+      .length,
+    2,
+  )
+  assert.match(nativeCertificationSource, /--predicate-type https:\/\/spdx\.dev\/Document\/v2\.3/)
+  assert.match(
+    nativeCertificationSource,
+    /verify-runtime-evidence[\s\S]*?--attestations required[\s\S]*?--sbom-closure true/,
+  )
 })
 
 test('native bundler typechecks wait for compiler declarations in clean checkouts', () => {

@@ -52,6 +52,8 @@ function verifyPreparedCompilerTarball(prepared, nativeArtifactsRoot, outputDire
     target,
     '--compiler-tarball',
     path.join(outputDirectory, compiler.tarball),
+    '--attestations',
+    'required',
   ])
 }
 
@@ -191,7 +193,12 @@ function planFingerprint(plan) {
     .digest('hex')
 }
 
-export function prepareReleaseArtifacts({ plan, nativeArtifactsRoot, outputDirectory }) {
+export function prepareReleaseArtifacts({
+  plan,
+  nativeArtifactsRoot,
+  outputDirectory,
+  requireNativeAttestations = false,
+}) {
   const manifests = packageManifests(plan)
   const failures = validateReleasePublishPlan(plan, manifests)
   if (failures.length > 0) {
@@ -208,6 +215,8 @@ export function prepareReleaseArtifacts({ plan, nativeArtifactsRoot, outputDirec
       verifyNativeBundle({
         target: target.target,
         bundleDirectory: path.join(nativeArtifactsRoot, nativeArtifactName(target.target)),
+        requireAttestations: requireNativeAttestations,
+        verifySbomClosure: requireNativeAttestations,
       }),
     ]),
   )
@@ -320,6 +329,7 @@ async function main() {
     plan,
     nativeArtifactsRoot: options.nativeArtifactsRoot,
     outputDirectory: options.outputDirectory,
+    requireNativeAttestations: true,
   })
   verifyPreparedCompilerTarball(prepared, options.nativeArtifactsRoot, options.outputDirectory)
   if (options.publish) await publishPreparedArtifacts(plan, options.outputDirectory)
