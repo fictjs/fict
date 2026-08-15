@@ -4,6 +4,8 @@
 
 ### Patch Changes
 
+- Keep non-disableable high-threshold effect-flush and root-reentry cycle guards in production,
+  with bounded once-per-episode telemetry and queue recovery.
 - Preserve native string coercion for raw-text JSX content and isolate component spread inputs so
   compiler-generated component properties cannot leak across instances.
 

@@ -342,6 +342,30 @@ describe('framework cycle protection', () => {
       exitRootGuard(root)
       warn.mockRestore()
     })
+
+    it('emits root telemetry once per re-entry episode', () => {
+      setCycleProtectionOptions({
+        maxRootReentrantDepth: 1,
+        devMode: false,
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const root = createRootContext()
+
+      expect(enterRootGuard(root)).toBe(true)
+      expect(enterRootGuard(root)).toBe(false)
+      expect(enterRootGuard(root)).toBe(false)
+      exitRootGuard(root)
+      expect(enterRootGuard(root)).toBe(true)
+      expect(enterRootGuard(root)).toBe(false)
+
+      const rootWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('root-reentry'),
+      )
+      expect(rootWarnings).toHaveLength(2)
+
+      exitRootGuard(root)
+      warn.mockRestore()
+    })
   })
 
   describe('window usage warning', () => {
@@ -434,6 +458,68 @@ describe('framework cycle protection', () => {
       ).toBe(false)
 
       warn.mockRestore()
+    })
+
+    it('emits bounded telemetry once per sustained high-usage episode', () => {
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 10,
+        maxEffectRunsPerFlush: 10,
+        windowSize: 2,
+        highUsageRatio: 0.8,
+        enableWindowWarning: true,
+        devMode: false,
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const flushWithRuns = (runs: number) => {
+        beginFlushGuard()
+        for (let run = 0; run < runs; run++) beforeEffectRunGuard()
+        endFlushGuard()
+      }
+
+      flushWithRuns(9)
+      flushWithRuns(9)
+      flushWithRuns(9)
+      flushWithRuns(1)
+      flushWithRuns(9)
+      flushWithRuns(9)
+
+      const windowWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('high-usage-window'),
+      )
+      expect(windowWarnings).toHaveLength(2)
+      expect(windowWarnings.every(([, detail]) => JSON.stringify(detail).length < 100)).toBe(true)
+
+      warn.mockRestore()
+    })
+
+    it('keeps dropping work when telemetry observers throw', () => {
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 1,
+        maxEffectRunsPerFlush: 1,
+        devMode: false,
+      })
+      const previousHook = (globalThis as any).__FICT_DEVTOOLS_HOOK__
+      ;(globalThis as any).__FICT_DEVTOOLS_HOOK__ = {
+        cycleDetected() {
+          throw new Error('observer failed')
+        },
+      }
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {
+        throw new Error('console failed')
+      })
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      try {
+        beginFlushGuard()
+        expect(beforeEffectRunGuard()).toBe(true)
+        expect(() => beforeEffectRunGuard()).not.toThrow()
+        expect(beforeEffectRunGuard()).toBe(false)
+        endFlushGuard()
+      } finally {
+        ;(globalThis as any).__FICT_DEVTOOLS_HOOK__ = previousHook
+        warn.mockRestore()
+        error.mockRestore()
+      }
     })
   })
 

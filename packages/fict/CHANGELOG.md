@@ -4,6 +4,8 @@
 
 ### Patch Changes
 
+- Keep the runtime's high-threshold cycle hard guard active in production, including bounded
+  telemetry and runaway-queue recovery.
 - Publish the top-level entrypoints with the runtime fixes for raw-text JSX coercion and isolated
   component spread inputs.
 - @fictjs/runtime@0.32.0-next.0

@@ -1148,7 +1148,7 @@ function flushQueues(): void {
 
   const dropQueuesAfterGuardFailure = () => {
     // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
-    // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
+    // Non-throwing guards, including the immutable production tier, recover by dropping queues.
     for (let i = 0; i < highPriorityQueue.length; i++) {
       const queued = highPriorityQueue[i]
       if (queued) {

@@ -1,6 +1,6 @@
 # Cycle Protection
 
-Fict includes built-in cycle protection to help developers identify and prevent infinite reactive loops during development. This feature detects runaway effects and provides early warnings before they can crash the application, and can be enabled in production if desired.
+Fict includes built-in cycle protection to identify and stop infinite reactive loops. Development and canary builds can use configurable low thresholds and early warnings; every build, including production, retains a non-disableable high-threshold hard guard so a dynamic cycle cannot spin forever.
 
 ## Overview
 
@@ -10,11 +10,11 @@ Reactive systems can accidentally create infinite loops when:
 - Multiple effects form a circular dependency chain
 - Component re-renders trigger effects that cause more re-renders
 
-Fict's cycle protection monitors these patterns and provides helpful warnings in development mode (or in production if you opt in).
+Fict's cycle protection monitors these patterns and provides helpful warnings in development mode. Production keeps the hard guard active even when the configurable diagnostic tier is disabled.
 
 ## When Cycle Protection Activates
 
-Cycle protection is **enabled by default only in development mode** (`NODE_ENV !== 'production'`). In production, it is **disabled by default** for maximum performance, but you can opt-in by calling `setCycleProtectionOptions({ enabled: true })`.
+The configurable guard is **enabled by default only in development mode** (`NODE_ENV !== 'production'`). Production defaults to immutable ceilings of 100,000 effect runs per flush and 100 re-entries of the same root. `setCycleProtectionOptions({ enabled: false })` cannot disable those ceilings. Internal canaries should enable the configurable tier explicitly and use lower thresholds so a regression is detected before the production hard limit.
 
 Detection triggers in three scenarios:
 
@@ -34,7 +34,7 @@ Configure cycle protection thresholds and behavior.
 import { setCycleProtectionOptions } from 'fict/advanced'
 
 interface CycleProtectionOptions {
-  /** Enable cycle protection guards (default: dev-only) */
+  /** Enable configurable guards and warnings (default: dev-only). Hard limits remain active. */
   enabled?: boolean
   /** Maximum effect runs allowed per microtask flush (default: 10,000) */
   maxFlushCyclesPerMicrotask?: number
@@ -67,6 +67,10 @@ interface CycleProtectionOptions {
 setCycleProtectionOptions(options: CycleProtectionOptions): void
 ```
 
+The immutable ceilings are intentionally not options. Non-finite or oversized
+configured values are bounded to them, and the high-usage window is bounded to
+100 entries.
+
 **Example:**
 
 ```tsx
@@ -83,6 +87,15 @@ setCycleProtectionOptions({
   devMode: true,
   maxFlushCyclesPerMicrotask: 100,
 })
+
+// Recommended internal canary profile
+setCycleProtectionOptions({
+  enabled: true,
+  devMode: false,
+  maxFlushCyclesPerMicrotask: 10000,
+  maxEffectRunsPerFlush: 20000,
+  enableWindowWarning: true,
+})
 ```
 
 ---
@@ -93,7 +106,7 @@ setCycleProtectionOptions({
 
 **Default:** `NODE_ENV !== 'production'`
 
-Controls whether cycle protection is active. This is enabled by default in development and disabled by default in production. You can opt in for production safety:
+Controls the configurable diagnostic tier. It is enabled by default in development and disabled by default in production. The immutable production hard guard remains active in both cases. Enable this tier in canaries to enforce lower thresholds and high-usage warnings:
 
 ```tsx
 setCycleProtectionOptions({ enabled: true })
@@ -104,6 +117,9 @@ setCycleProtectionOptions({ enabled: true })
 **Default:** `10,000`
 
 Maximum number of effect runs allowed within a single microtask flush. If exceeded, cycle protection will warn (or throw in devMode) and stop processing further effects.
+
+Values above the immutable 100,000-run ceiling are clamped. Setting
+`enabled: false` selects that ceiling rather than disabling cycle safety.
 
 **When to adjust:**
 
@@ -130,6 +146,9 @@ setCycleProtectionOptions({
 
 Similar to `maxFlushCyclesPerMicrotask`, but tracks total effect runs across the flush. This provides a secondary limit.
 
+The effective limit is the lower of the two configured effect limits and the
+immutable 100,000-run ceiling.
+
 ---
 
 ### `windowSize`
@@ -137,6 +156,9 @@ Similar to `maxFlushCyclesPerMicrotask`, but tracks total effect runs across the
 **Default:** `5`
 
 Number of consecutive flush cycles to track for high-usage pattern detection. The window tracks how much of the budget each flush used.
+
+The retained window is capped at 100 entries. A sustained high-usage episode
+emits once; telemetry is re-armed only after usage drops below the threshold.
 
 ---
 
@@ -165,6 +187,8 @@ setCycleProtectionOptions({
 **Default:** `10`
 
 Maximum depth of nested root context re-entry. This detects recursive component execution patterns that could indicate infinite loops.
+
+Values above 100 are clamped to the immutable production ceiling.
 
 ```tsx
 // Stricter recursive detection
@@ -219,6 +243,8 @@ interface CycleDetectedPayload {
   reason: 'flush-budget-exceeded' | 'root-reentry' | 'high-usage-window'
   detail?: {
     effectRuns?: number
+    limit?: number
+    hardLimit?: boolean
     depth?: number
     windowSize?: number
     ratio?: number
@@ -227,6 +253,10 @@ interface CycleDetectedPayload {
 ```
 
 DevTools can subscribe to these events for enhanced debugging visualization.
+The payload is bounded to numeric/boolean counters and never includes component
+names, source text, reactive values, or a dependency graph. Observer and
+console failures are contained and cannot weaken queue dropping or root
+re-entry blocking.
 
 ---
 

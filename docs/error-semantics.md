@@ -66,7 +66,9 @@ run.
 Convergence is **bounded by cycle protection**, not by the scheduler itself: a
 self-write loop that never converges is treated like any other reactive cycle
 and trips the cycle guard (configurable flush budget, dev-mode throw,
-prod-mode warning with queue drop). See [cycle-protection.md](./cycle-protection.md)
+prod-mode warning with queue drop). Even when the configurable tier is disabled,
+an immutable production hard limit still drops the runaway queue. See
+[cycle-protection.md](./cycle-protection.md)
 for thresholds and tuning. Do not rely on a specific iteration count; if a
 computation needs N convergence steps by design, derive it with a memo or an
 explicit loop instead.

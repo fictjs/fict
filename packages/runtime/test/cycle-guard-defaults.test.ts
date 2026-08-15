@@ -40,17 +40,46 @@ describe('cycle guard defaults', () => {
     ).toBe(true)
   })
 
-  it('disables guards by default in production', async () => {
+  it('retains a non-disableable high-threshold flush guard in production', async () => {
     const mod = await loadCycleGuardForEnv('production')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     mod.resetCycleProtectionStateForTests()
     mod.beginFlushGuard()
-    expect(mod.beforeEffectRunGuard()).toBe(true)
-    expect(mod.beforeEffectRunGuard()).toBe(true)
-    expect(mod.beforeEffectRunGuard()).toBe(true)
+    let lastAllowed = false
+    for (let run = 0; run < mod.CYCLE_PROTECTION_HARD_LIMITS.effectRunsPerFlush; run++) {
+      lastAllowed = mod.beforeEffectRunGuard()
+    }
+    expect(lastAllowed).toBe(true)
+    expect(mod.beforeEffectRunGuard()).toBe(false)
     mod.endFlushGuard()
 
-    expect(warn).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith('[fict] cycle protection triggered: flush-budget-exceeded', {
+      effectRuns: mod.CYCLE_PROTECTION_HARD_LIMITS.effectRunsPerFlush + 1,
+      limit: mod.CYCLE_PROTECTION_HARD_LIMITS.effectRunsPerFlush,
+      hardLimit: true,
+    })
+  })
+
+  it('retains a non-disableable root re-entry guard in production', async () => {
+    const mod = await loadCycleGuardForEnv('production')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const root = {}
+
+    mod.resetCycleProtectionStateForTests()
+    for (let depth = 0; depth < mod.CYCLE_PROTECTION_HARD_LIMITS.rootReentrantDepth; depth++) {
+      expect(mod.enterRootGuard(root)).toBe(true)
+    }
+    expect(mod.enterRootGuard(root)).toBe(false)
+
+    expect(warn).toHaveBeenCalledWith('[fict] cycle protection triggered: root-reentry', {
+      depth: mod.CYCLE_PROTECTION_HARD_LIMITS.rootReentrantDepth + 1,
+      limit: mod.CYCLE_PROTECTION_HARD_LIMITS.rootReentrantDepth,
+      hardLimit: true,
+    })
+
+    for (let depth = 0; depth < mod.CYCLE_PROTECTION_HARD_LIMITS.rootReentrantDepth; depth++) {
+      mod.exitRootGuard(root)
+    }
   })
 })

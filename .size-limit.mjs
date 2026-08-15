@@ -13,17 +13,18 @@ export default [
     path: 'packages/fict/dist/index.js',
     // Approved production baseline after cross-module correctness, resumability,
     // hydration repair, full namespace semantics, selector ownership, and
-    // reflection-safe deep-store tracking, SSR-safe form selection, and stable
-    // context-provider ownership with reactive context accessors.
-    limit: '21.2 KB',
+    // reflection-safe deep-store tracking, SSR-safe form selection, stable
+    // context-provider ownership, and the non-disableable production cycle guard.
+    limit: '21.4 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    // Approved compatibility cost for stable context ownership and materializing
-    // JSX values before raw-text/RCDATA coercion; CJS retains interop overhead.
-    limit: '23.1 KB',
+    // Approved compatibility cost for stable context ownership, materializing
+    // JSX values before raw-text/RCDATA coercion, and the production cycle guard;
+    // CJS retains interop overhead.
+    limit: '23.3 KB',
     modifyEsbuildConfig: production,
   },
 ]

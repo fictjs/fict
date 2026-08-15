@@ -103,6 +103,67 @@ for (const [subpath, names] of exportChecks) {
   }
 }
 
+const productionCycleSmoke = spawnSync(
+  process.execPath,
+  [
+    '--input-type=module',
+    '--eval',
+    `import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const variants = [
+  [
+    'ESM',
+    await import(${JSON.stringify(pathToFileURL(path.join(runtimeDist, 'index.js')).href)}),
+    await import(${JSON.stringify(pathToFileURL(path.join(runtimeDist, 'advanced.js')).href)}),
+  ],
+  [
+    'CJS',
+    require(${JSON.stringify(path.join(runtimeDist, 'index.cjs'))}),
+    require(${JSON.stringify(path.join(runtimeDist, 'advanced.cjs'))}),
+  ],
+]
+
+for (const [label, runtime, advanced] of variants) {
+  const warnings = []
+  console.warn = (message, detail) => warnings.push({ message, detail })
+  const value = advanced.createSignal(0)
+  let runs = 0
+  runtime.createEffect(() => {
+    const current = value()
+    runs++
+    if (runs < 200000) value(current + 1)
+  })
+  await new Promise(resolve => setTimeout(resolve, 25))
+  const warning = warnings.find(entry => entry.message.includes('flush-budget-exceeded'))
+  if (
+    runs !== 100001 ||
+    warning?.detail?.effectRuns !== 100001 ||
+    warning?.detail?.limit !== 100000 ||
+    warning?.detail?.hardLimit !== true
+  ) {
+    throw new Error(
+      label + ' production cycle guard did not stop at its immutable limit: ' +
+        JSON.stringify({ runs, warnings }),
+    )
+  }
+}
+`,
+  ],
+  {
+    cwd: rootDir,
+    encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'production' },
+  },
+)
+if (productionCycleSmoke.status !== 0) {
+  const output = [productionCycleSmoke.stdout, productionCycleSmoke.stderr]
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+  fail(`Production package cycle guard failed:\n${output}`)
+}
+
 const fragmentEntries = [
   ['ESM root', esmEntries.get('.')],
   ['ESM jsx-runtime', esmEntries.get('./jsx-runtime')],
