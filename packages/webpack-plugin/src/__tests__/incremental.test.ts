@@ -154,15 +154,19 @@ describe('@fictjs/webpack-plugin incremental metadata', () => {
       assertSourceMap(initialStats)
       await waitForWatchingReady(watching, { files: [entryPath, hookPath] })
 
+      const rapidBuiltFiles = new Set<string>()
       const rapidBuild = builds.nextMatching(
-        stats => buildAssetMatches(stats, /count\(\)\s*\*\s*2/),
+        stats => {
+          for (const filename of builtFixtureFiles(stats, root)) rapidBuiltFiles.add(filename)
+          return buildAssetMatches(stats, /count\(\)\s*\*\s*2/)
+        },
         { description: 'the final signal-hook output after rapid edits' },
       )
       await writeFile(hookPath, plainHook(6))
       await writeFile(hookPath, signalHook(5))
       const rapidStats = await rapidBuild
       expect(runApp(root)).toBe(10)
-      expect(builtFixtureFiles(rapidStats, root)).toContain(entryPath)
+      expect([...rapidBuiltFiles]).toContain(entryPath)
       assertSourceMap(rapidStats)
       await waitForWatchingReady(watching, { files: [entryPath, hookPath] })
 
