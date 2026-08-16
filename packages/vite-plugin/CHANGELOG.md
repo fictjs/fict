@@ -1,6 +1,6 @@
 # @fictjs/vite-plugin
 
-## 0.32.0-next.0
+## 0.32.0
 
 ### Patch Changes
 
@@ -8,8 +8,13 @@
   user explicitly supplies `compiler.dev`.
 - Require a target-compatible pre-transform for standard decorators before native Fict
   compilation.
-- Updated dependencies
-  - @fictjs/compiler@0.32.0-next.0
+- Harden package import/export metadata discovery across file URLs, Vite-resolved package entries,
+  regex aliases, and opaque URI schemes; malformed or non-invertible package targets now fail
+  closed instead of entering the compiler graph.
+- Preserve partial metadata states and invalidate compiler generations consistently across package
+  metadata changes, missing-boundary recovery, and full-reload HMR.
+- Updated dependency:
+  - `@fictjs/compiler@0.32.0`
 
 ## 0.31.0
 

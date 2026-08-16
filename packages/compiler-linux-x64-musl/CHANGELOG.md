@@ -1,6 +1,6 @@
 # @fictjs/compiler-linux-x64-musl
 
-## 0.32.0-next.0
+## 0.32.0
 
 ### Patch Changes
 

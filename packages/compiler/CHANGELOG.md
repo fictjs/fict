@@ -1,14 +1,32 @@
 # @fictjs/compiler
 
-## 0.32.0-next.0
+## 0.32.0
 
 ### Minor Changes
 
 - Implement the non-default Rust compiler modes for development metadata, eager conditionals,
   uncached getters, full optimization, and retained derived memos.
+- Add bounded native `RequestLimits` for source and request bytes, source maps, metadata,
+  AST/scopes/symbols, HIR, diagnostics, and serialized output. Limits are validated before and
+  throughout the pipeline and cannot exceed the compiler's hard ceilings.
+- Return structured native internal-error context with an incident ID, pipeline stage, compiler
+  build and source revision, request fingerprint, source hash, panic category, and optional
+  backtrace hash from every N-API entrypoint.
+- 8d78aa9: Add `useContextAccessor` and keep Provider value updates fine-grained without
+  silently freezing existing `useContext` consumers. Accessor/effect consumers
+  retain descendant state and DOM identity, while setup-time snapshots keep their
+  legacy update behavior through compatibility replay.
 
 ### Patch Changes
 
+- Drive strict-guarantee enforcement from the diagnostic registry and guarantee class so
+  fallback or unsupported diagnostics, including `FICT-R004`, cannot be suppressed or
+  downgraded in strict compilation or analysis.
+- Remove the unsound double-negation optimization and preserve JavaScript `ToNumeric`
+  coercion, exceptions, types, and observable object conversion in full optimization mode.
+- Strengthen HIR/CFG effect and storage-provenance analysis across closures, destructuring,
+  descriptors, accessors, classes, arrays, object mutations, built-ins, and control-flow joins;
+  fail closed when safe reactive ownership cannot be established.
 - Certify every native binary with a revision-bound SPDX SBOM plus signed binary and tarball
   attestations before release publication.
 - Publish a machine-readable manifest scoped to certified behavior-variant options, and reject
@@ -23,6 +41,8 @@
   map, and state the reviewed-sample boundary of Babel/Rust source-map evidence.
 - Reject malformed or over-depth module metadata consistently in JavaScript graph hosts and the
   Rust compiler.
+- Validate package names, subpaths, export keys, URI schemes, and encoded path boundaries before
+  resolving graph metadata, while keeping non-file schemes opaque to filesystem resolution.
 - Require standard decorators to be lowered by a target-compatible transform before native Fict
   compilation; raw decorator syntax fails closed.
 - Normalize multiline authored JSX text using standard JSX whitespace rules. Use expression

@@ -181,3 +181,5 @@ plan.md
 # Standalone repos kept next to the monorepo working tree
 /mcp/
 /skill/
+
+.omo/run-continuation/

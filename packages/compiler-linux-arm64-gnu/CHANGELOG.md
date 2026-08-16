@@ -1,6 +1,6 @@
 # @fictjs/compiler-linux-arm64-gnu
 
-## 0.32.0-next.0
+## 0.32.0
 
 ### Patch Changes
 

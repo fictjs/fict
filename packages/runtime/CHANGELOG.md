@@ -1,6 +1,17 @@
 # @fictjs/runtime
 
-## 0.32.0-next.0
+## 0.32.0
+
+### Minor Changes
+
+- 8d78aa9: Unify framework and router lazy components around preload, reset, retry, and
+  Suspense semantics, including compatibility with legacy router lazy markers.
+  Deprecate the router-specific resource helper in favor of `fict/plus` and add
+  request cancellation to the retained compatibility implementation.
+- 8d78aa9: Add `useContextAccessor` and keep Provider value updates fine-grained without
+  silently freezing existing `useContext` consumers. Accessor/effect consumers
+  retain descendant state and DOM identity, while setup-time snapshots keep their
+  legacy update behavior through compatibility replay.
 
 ### Patch Changes
 

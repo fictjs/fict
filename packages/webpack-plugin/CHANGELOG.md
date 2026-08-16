@@ -1,14 +1,18 @@
 # @fictjs/webpack-plugin
 
-## 0.32.0-next.0
+## 0.32.0
 
 ### Patch Changes
 
+- 8982f34: Use compatible Core dependency ranges so Satellite packages are not released solely to
+  follow a compatible Core version change.
 - Derive native compiler development metadata from Webpack's resolved mode unless the user
   explicitly supplies `compiler.dev`.
 - Require a target-compatible loader to lower standard decorators before the Fict loader runs.
-- Updated dependencies
-  - @fictjs/compiler@0.32.0-next.0
+- Validate restored metadata schemas and package export keys, reject encoded path separators, and
+  await stable watcher snapshots before publishing incremental module metadata.
+- Updated dependency:
+  - `@fictjs/compiler@0.32.0`
 
 ## 0.31.0
 

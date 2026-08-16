@@ -1,5 +1,11 @@
 # @fictjs/testing-library
 
+## 0.28.1
+
+### Patch Changes
+
+- fix
+
 ## 0.28.0
 
 ### Minor Changes

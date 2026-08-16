@@ -1,5 +1,16 @@
 # @fictjs/ssr
 
+## 0.28.5
+
+### Patch Changes
+
+- 8982f34: Use compatible Core dependency ranges so Satellite packages are not released solely to follow a compatible Core version change.
+- fix
+- Updated dependencies
+- Updated dependencies [8d78aa9]
+- Updated dependencies [8d78aa9]
+  - @fictjs/runtime@0.32.0
+
 ## 0.28.4
 
 ### Patch Changes

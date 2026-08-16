@@ -1,5 +1,29 @@
 # @fictjs/router
 
+## 0.29.0
+
+### Minor Changes
+
+- 8d78aa9: Expose query loading, error, status, and latest-value state. Reading a rejected
+  query now throws its original rejection so route ErrorBoundaries can handle it,
+  while successful `undefined` results remain distinguishable from failures.
+- 8d78aa9: Make Link and NavLink prefetch matched route data and lazy components instead
+  of emitting an unhandled custom event. Prefetching now respects router bases,
+  navigation state, external and document-reload links, and retry behavior.
+- 8d78aa9: Unify framework and router lazy components around preload, reset, retry, and
+  Suspense semantics, including compatibility with legacy router lazy markers.
+  Deprecate the router-specific resource helper in favor of `fict/plus` and add
+  request cancellation to the retained compatibility implementation.
+
+### Patch Changes
+
+- 8982f34: Use compatible Core dependency ranges so Satellite packages are not released solely to follow a compatible Core version change.
+- fix
+- Updated dependencies
+- Updated dependencies [8d78aa9]
+- Updated dependencies [8d78aa9]
+  - @fictjs/runtime@0.32.0
+
 ## 0.28.4
 
 ### Patch Changes

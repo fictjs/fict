@@ -1,11 +1,14 @@
 # @fictjs/eslint-plugin
 
-## 0.32.0-next.0
+## 0.32.0
 
 ### Patch Changes
 
-- Publish the ESLint plugin with the compiler/runtime prerelease train; no lint rule behavior
-  changed in this release.
+- Extend `no-state-destructure-write` across direct and destructured `$state` aliases, nested
+  member assignments, updates, deletes, and mutating array methods so lint diagnostics match the
+  compiler's read-only reactive-alias contract.
+- Recognize hook names beginning with `use` followed by an uppercase letter, digit, or underscore,
+  matching the compiler's component and hook classification.
 
 ## 0.31.0
 
