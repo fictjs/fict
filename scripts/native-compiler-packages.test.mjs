@@ -32,6 +32,7 @@ import {
   assembleNativePackage,
   assertCheckoutRevision,
   bundleNativePackage,
+  createNativeCompilerSbom,
   evaluateNativePackageSize,
   loadNativePackageSizeBudget,
   nativeArtifactName,
@@ -617,6 +618,62 @@ test('enforces compressed and unpacked native package size budgets', () => {
   assert.equal(oversized.violations.length, 2)
   assert.match(oversized.violations[0], /tarball .* exceeds/)
   assert.match(oversized.violations[1], /unpacked package .* exceeds/)
+})
+
+test('keeps Cargo checksum evidence stable across lockfile line endings', () => {
+  const registrySource = 'registry+https://github.com/rust-lang/crates.io-index'
+  const rootPackage = {
+    id: 'path+file:///workspace/crates/fict-compiler-napi#0.0.0',
+    name: 'fict-compiler-napi',
+    version: '0.0.0',
+    source: null,
+    license: 'MIT',
+  }
+  const dependencyPackage = {
+    id: `${registrySource}#checksum-fixture@1.2.3`,
+    name: 'checksum-fixture',
+    version: '1.2.3',
+    source: registrySource,
+    license: 'MIT',
+  }
+  const cargoMetadata = {
+    version: 1,
+    packages: [rootPackage, dependencyPackage],
+    resolve: {
+      nodes: [
+        {
+          id: rootPackage.id,
+          deps: [{ pkg: dependencyPackage.id, dep_kinds: [{ kind: null, target: null }] }],
+        },
+        { id: dependencyPackage.id, deps: [] },
+      ],
+    },
+  }
+  const checksum = 'a'.repeat(64)
+  const cargoLockSource = `[[package]]\nname = "checksum-fixture"\nversion = "1.2.3"\nsource = "${registrySource}"\nchecksum = "${checksum}"\n`
+  const packageManifest = {
+    name: '@fictjs/compiler-win32-arm64-msvc',
+    version: '0.32.0',
+  }
+  const options = {
+    target: 'win32-arm64-msvc',
+    packageManifest,
+    binarySha256: 'b'.repeat(64),
+    sourceRevision: RUNTIME_REVISION,
+    cargoMetadata,
+    createdAt: '2026-08-16T00:00:00Z',
+  }
+  const lfSbom = createNativeCompilerSbom({ ...options, cargoLockSource })
+  const crlfSbom = createNativeCompilerSbom({
+    ...options,
+    cargoLockSource: cargoLockSource.replaceAll('\n', '\r\n'),
+  })
+
+  assert.deepEqual(crlfSbom, lfSbom)
+  assert.deepEqual(
+    crlfSbom.packages.find(entry => entry.name === dependencyPackage.name)?.checksums,
+    [{ algorithm: 'SHA256', checksumValue: checksum }],
+  )
 })
 
 test('assembles and verifies deterministic binary metadata and checksums', () => {

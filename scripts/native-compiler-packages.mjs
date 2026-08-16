@@ -289,7 +289,8 @@ function npmPackageUrl(packageName, packageVersion) {
 
 function parseCargoLockChecksums(source) {
   const checksums = new Map()
-  for (const block of source.split(/\n(?=\[\[package\]\]\n)/)) {
+  const normalizedSource = source.replace(/\r\n?/g, '\n')
+  for (const block of normalizedSource.split(/\n(?=\[\[package\]\]\n)/)) {
     if (!block.startsWith('[[package]]')) continue
     const readString = name => {
       const match = new RegExp(`^${name} = ("(?:[^"\\\\]|\\\\.)*")$`, 'm').exec(block)
