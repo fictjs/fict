@@ -18,7 +18,7 @@
     "legacyLockfileSha256": "2b385eb419b90cf4f512a80ae925c2e2899bdb0e8d8c202cba8e09a9343b5af6",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
     "assertionInventorySha256": "96ad04d4812624987fec46895ca7a54c5cc6b8de3f5552252cba4362051eb186",
-    "rustCodegenCorpusSha256": "2a06859b91d06273b9b462ba4d3d5e2f95c79ef7b97d409fad65e5e78b6f8af6",
+    "rustCodegenCorpusSha256": "2d765234a64b4b77abc010822ed140e4e62c4a023b87b42ecf7bc7145a210439",
     "generatorSha256": "ec50a19976c812c42f62e87fcd3cd57545b1bdbf24039859c9790f864fadaf72",
     "captureConfigSha256": "5b383415eefeff180428cf22bad269597133a0d190ce35a57b4567434113bc65",
     "selectedTestFiles": 29,

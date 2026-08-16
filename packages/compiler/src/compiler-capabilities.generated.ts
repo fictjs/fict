@@ -2,7 +2,7 @@
 
 export const COMPILER_CAPABILITY_MANIFEST = {
   schemaVersion: 2,
-  packageVersion: '0.32.0-next.0',
+  packageVersion: '0.32.0',
   backend: 'rust',
   scope: 'certified-behavior-variant-options',
   options: {
@@ -29,4 +29,4 @@ export const COMPILER_CAPABILITY_MANIFEST = {
   },
 } as const
 export const COMPILER_CAPABILITY_MANIFEST_DIGEST =
-  'sha256:bdaad5f594f6939e438bc57a86a1516978f197e0e14d29effc4f05411ab63e84'
+  'sha256:9335d7d9c51014704012110c5132765fa029b49ab0f6c7199b5debb331615689'
