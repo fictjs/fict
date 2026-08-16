@@ -1,2 +1,5 @@
+# Husky rewrites this tracked stub during install; keep the checkout clean on Windows.
+.husky/_/husky.sh text eol=lf
+
 # Native release evidence hashes this corpus byte-for-byte on every runner.
 crates/fict-compiler/tests/rust_frozen_codegen_corpus.json text eol=lf

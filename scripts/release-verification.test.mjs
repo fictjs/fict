@@ -458,6 +458,15 @@ test('native certification hashes one byte-identical frozen corpus on every runn
   assert.deepEqual(corpusRules, [`${corpusPath} text eol=lf`])
 })
 
+test('native release installs keep the tracked Husky stub clean on Windows', () => {
+  const huskyStubPath = '.husky/_/husky.sh'
+  const huskyStubRules = gitAttributes
+    .split(/\r?\n/)
+    .filter(line => line.startsWith(`${huskyStubPath} `))
+
+  assert.deepEqual(huskyStubRules, [`${huskyStubPath} text eol=lf`])
+})
+
 test('Rust-default approval binds the complete native certification to its candidate', () => {
   assert.equal(rolloutState.schemaVersion, 5)
   assert.equal(
