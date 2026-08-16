@@ -573,6 +573,7 @@ test('browser E2E failures retain annotations, reports, and retry traces', () =>
   assert.match(ciWorkflow, /packages\/fict\/test-results/)
   assert.match(ciWorkflow, /examples\/real-apps\/playwright-report/)
   assert.match(ciWorkflow, /examples\/real-apps\/test-results/)
+  assert.match(ciWorkflow, /test-results\/native-vite-hmr/)
 })
 
 test('packed manifests reject unresolved workspace protocols', () => {

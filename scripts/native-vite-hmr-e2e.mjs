@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict'
-import { access, mkdir, mkdtemp, realpath, rm, unlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -15,7 +15,9 @@ const repositoryRoot = path.resolve(import.meta.dirname, '..')
 const requireFromVitePlugin = createRequire(
   path.join(repositoryRoot, 'packages', 'vite-plugin', 'package.json'),
 )
-const { createServer } = await import(pathToFileURL(requireFromVitePlugin.resolve('vite')).href)
+const { createLogger, createServer } = await import(
+  pathToFileURL(requireFromVitePlugin.resolve('vite')).href
+)
 const nativeCompilerPath = path.resolve(
   process.env.FICT_COMPILER_NATIVE_PATH ??
     path.join(repositoryRoot, 'target', 'release', 'fict_compiler_napi.node'),
@@ -25,15 +27,18 @@ const fictInternalEntry = path.join(repositoryRoot, 'packages', 'fict', 'dist', 
 const runtimeEntry = path.join(repositoryRoot, 'packages', 'runtime', 'dist', 'index.js')
 const runtimeAdvancedEntry = path.join(repositoryRoot, 'packages', 'runtime', 'dist', 'advanced.js')
 const runtimeInternalEntry = path.join(repositoryRoot, 'packages', 'runtime', 'dist', 'internal.js')
+const diagnosticsRoot = path.resolve(
+  process.env.FICT_VITE_HMR_DIAGNOSTICS_DIR ??
+    path.join(repositoryRoot, 'test-results', 'native-vite-hmr'),
+)
 
-await Promise.all([
-  access(nativeCompilerPath),
-  access(fictEntry),
-  access(fictInternalEntry),
-  access(runtimeEntry),
-  access(runtimeAdvancedEntry),
-  access(runtimeInternalEntry),
-])
+// Chokidar 3 suppresses repeated same-path change events for 50 ms. The browser error
+// overlay can appear before that server-side window expires, so it is not a safe barrier
+// for the recovery write. Wait twice the dependency's throttle window from the event that
+// Vite actually observed.
+const watcherChangeQuietMs = 100
+const traceStartedAt = performance.now()
+const traceElapsedMs = () => Number((performance.now() - traceStartedAt).toFixed(3))
 
 function deferred() {
   let resolve
@@ -59,6 +64,21 @@ function withTimeout(promise, description, timeoutMs = 15_000) {
       }),
     ),
   ]).finally(() => clearTimeout(timeout))
+}
+
+function serializeError(error, depth = 0) {
+  if (!(error instanceof Error)) return { message: String(error) }
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    ...(error.cause && depth < 3 ? { cause: serializeError(error.cause, depth + 1) } : {}),
+  }
+}
+
+function boundedText(value, limit = 8_000) {
+  if (typeof value !== 'string' || value.length <= limit) return value
+  return `${value.slice(0, limit)}\n<truncated ${value.length - limit} characters>`
 }
 
 function mainSource(revision) {
@@ -152,6 +172,103 @@ const previewPath = path.join(sourceRoot, 'preview.tsx')
 let delayRequest = null
 let server
 let browser
+let page
+let baseUrl
+let expectedFailurePhase = false
+let currentPhase = 'fixture-setup'
+let currentExpectation = null
+let watcherSequence = 0
+
+const watcherEvents = []
+const watcherSubscribers = new Set()
+const hmrUpdates = []
+const viteLogs = []
+const unexpectedConsoleErrors = []
+const expectedConsoleErrors = []
+const unexpectedPageErrors = []
+const expectedPageErrors = []
+const failedResponses = []
+
+const normalizeWatcherPath = filename =>
+  path.normalize(path.isAbsolute(filename) ? filename : path.resolve(fixtureRoot, filename))
+
+function recordWatcherEvent(event, filename) {
+  const entry = {
+    sequence: ++watcherSequence,
+    event,
+    path: normalizeWatcherPath(filename),
+    elapsedMs: traceElapsedMs(),
+  }
+  watcherEvents.push(entry)
+  if (watcherEvents.length > 200) watcherEvents.shift()
+  for (const subscriber of watcherSubscribers) subscriber(entry)
+}
+
+function waitForWatcherEvent({ filename, events, afterSequence, description }) {
+  const expectedEvents = new Set(events)
+  const expectedPath = normalizeWatcherPath(filename)
+  const matches = entry =>
+    entry.sequence > afterSequence && expectedEvents.has(entry.event) && entry.path === expectedPath
+  const existing = watcherEvents.find(matches)
+  if (existing) return Promise.resolve(existing)
+
+  const pending = deferred()
+  const subscriber = entry => {
+    if (!matches(entry)) return
+    watcherSubscribers.delete(subscriber)
+    pending.resolve(entry)
+  }
+  watcherSubscribers.add(subscriber)
+  return withTimeout(pending.promise, description).finally(() => {
+    watcherSubscribers.delete(subscriber)
+  })
+}
+
+async function writeAndObserve(filename, source, { events = ['change'], description } = {}) {
+  const afterSequence = watcherSequence
+  await writeFile(filename, source)
+  return waitForWatcherEvent({
+    filename,
+    events,
+    afterSequence,
+    description: description ?? `${events.join('/')} for ${path.basename(filename)}`,
+  })
+}
+
+async function waitForWatcherQuietPeriod(event) {
+  while (true) {
+    const remainingMs = event.elapsedMs + watcherChangeQuietMs - traceElapsedMs()
+    if (remainingMs <= 0) return
+    await new Promise(resolve => setTimeout(resolve, Math.ceil(remainingMs)))
+  }
+}
+
+const viteLogger = createLogger('silent')
+for (const level of ['info', 'warn', 'error']) {
+  const original = viteLogger[level].bind(viteLogger)
+  viteLogger[level] = (message, options) => {
+    viteLogs.push({
+      level,
+      message: boundedText(message),
+      elapsedMs: traceElapsedMs(),
+      ...(options?.error ? { error: serializeError(options.error) } : {}),
+    })
+    if (viteLogs.length > 200) viteLogs.shift()
+    original(message, options)
+  }
+}
+
+const hmrTracePlugin = {
+  name: 'fict-native-hmr-trace',
+  hotUpdate(context) {
+    hmrUpdates.push({
+      file: normalizeWatcherPath(context.file),
+      modules: context.modules.map(module => module.url),
+      elapsedMs: traceElapsedMs(),
+    })
+    if (hmrUpdates.length > 200) hmrUpdates.shift()
+  },
+}
 
 const delayPlugin = {
   name: 'fict-native-hmr-delay',
@@ -167,7 +284,117 @@ const delayPlugin = {
   },
 }
 
+async function captureBrowserState() {
+  if (!page) return { available: false }
+  try {
+    return await page.evaluate(() => {
+      const overlay = document.querySelector('vite-error-overlay')
+      const text = selector => document.querySelector(selector)?.textContent?.trim() ?? null
+      return {
+        available: true,
+        url: location.href,
+        loadCount: Number(sessionStorage.getItem('fict-native-hmr-loads') ?? 0),
+        revision: text('#revision'),
+        hookValue: text('#hook-value'),
+        preview: text('#preview-handler'),
+        overlayCount: document.querySelectorAll('vite-error-overlay').length,
+        overlayText: (overlay?.shadowRoot?.textContent ?? overlay?.textContent ?? '')
+          .trim()
+          .slice(0, 8_000),
+        bodyText: (document.body?.innerText ?? '').slice(0, 8_000),
+        html: document.documentElement.outerHTML.slice(0, 20_000),
+      }
+    })
+  } catch (error) {
+    return { available: false, error: serializeError(error), url: page.url() }
+  }
+}
+
+async function captureFixtureSources() {
+  const entries = await Promise.all(
+    [mainPath, hookPath, previewPath].map(async filename => {
+      try {
+        return [path.relative(fixtureRoot, filename), boundedText(await readFile(filename, 'utf8'))]
+      } catch (error) {
+        return [path.relative(fixtureRoot, filename), { error: serializeError(error) }]
+      }
+    }),
+  )
+  return Object.fromEntries(entries)
+}
+
+async function writeFailureDiagnostics(error) {
+  await mkdir(diagnosticsRoot, { recursive: true })
+  const screenshotPath = path.join(diagnosticsRoot, 'failure.png')
+  let screenshot = path.relative(repositoryRoot, screenshotPath)
+  if (!page) {
+    screenshot = { unavailable: 'browser page was not created' }
+  } else {
+    try {
+      await page.screenshot({ path: screenshotPath, fullPage: true })
+    } catch (screenshotError) {
+      screenshot = { error: serializeError(screenshotError) }
+    }
+  }
+
+  const browserState = await captureBrowserState()
+  const report = {
+    schemaVersion: 1,
+    capturedAt: new Date().toISOString(),
+    phase: currentPhase,
+    expectation: currentExpectation,
+    error: serializeError(error),
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      ci: Boolean(process.env.CI),
+      githubActions: Boolean(process.env.GITHUB_ACTIONS),
+    },
+    paths: {
+      fixtureRoot,
+      diagnosticsRoot,
+      screenshot,
+    },
+    browser: browserState,
+    fixtureSources: await captureFixtureSources(),
+    trace: {
+      watcherEvents,
+      hmrUpdates,
+      viteLogs,
+      expectedConsoleErrors: expectedConsoleErrors.map(value => boundedText(value)),
+      unexpectedConsoleErrors: unexpectedConsoleErrors.map(value => boundedText(value)),
+      expectedPageErrors: expectedPageErrors.map(value => boundedText(value)),
+      unexpectedPageErrors: unexpectedPageErrors.map(value => boundedText(value)),
+      failedResponses: failedResponses.map(response => ({
+        ...response,
+        ...(response.body ? { body: boundedText(response.body) } : {}),
+      })),
+    },
+  }
+  const reportPath = path.join(diagnosticsRoot, 'failure.json')
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
+  process.stderr.write(
+    [
+      `Native Vite HMR diagnostics: ${reportPath}`,
+      `phase: ${currentPhase}`,
+      `expectation: ${JSON.stringify(currentExpectation)}`,
+      `browser: ${JSON.stringify(browserState)}`,
+    ].join('\n') + '\n',
+  )
+}
+
 try {
+  currentPhase = 'dependency-access-check'
+  await Promise.all([
+    access(nativeCompilerPath),
+    access(fictEntry),
+    access(fictInternalEntry),
+    access(runtimeEntry),
+    access(runtimeAdvancedEntry),
+    access(runtimeInternalEntry),
+  ])
+
   await mkdir(sourceRoot, { recursive: true })
   await Promise.all([
     writeFile(
@@ -204,8 +431,10 @@ try {
     appType: 'spa',
     clearScreen: false,
     logLevel: 'silent',
+    customLogger: viteLogger,
     plugins: [
       delayPlugin,
+      hmrTracePlugin,
       fict({
         nativeCompilerPath,
         cache: false,
@@ -235,19 +464,16 @@ try {
       fs: { allow: [fixtureRoot, repositoryRoot] },
     },
   })
+  for (const event of ['add', 'change', 'unlink']) {
+    server.watcher.on(event, filename => recordWatcherEvent(event, filename))
+  }
   await server.listen()
   const address = server.httpServer?.address()
   assert.ok(address && typeof address !== 'string', 'Vite did not expose a TCP address')
-  const baseUrl = `http://127.0.0.1:${address.port}`
+  baseUrl = `http://127.0.0.1:${address.port}`
 
   browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-  const unexpectedConsoleErrors = []
-  const expectedConsoleErrors = []
-  const unexpectedPageErrors = []
-  const expectedPageErrors = []
-  const failedResponses = []
-  let expectedFailurePhase = false
+  page = await browser.newPage()
 
   page.on('console', message => {
     if (message.type() !== 'error') return
@@ -272,27 +498,55 @@ try {
 
   const loadCount = () =>
     page.evaluate(() => Number(sessionStorage.getItem('fict-native-hmr-loads') ?? 0))
-  const waitForState = async ({ selector, text, afterLoads }) => {
-    await page.waitForFunction(
-      ({ selector: target, text: expected, afterLoads: previous }) => {
-        const element = document.querySelector(target)
-        const loads = Number(sessionStorage.getItem('fict-native-hmr-loads') ?? 0)
-        return element?.textContent?.trim() === expected && loads > previous
-      },
-      { afterLoads, selector, text },
-      { timeout: 15_000 },
-    )
-    return loadCount()
+  const waitForState = async ({ selector, text, afterLoads, description }) => {
+    currentPhase = description
+    currentExpectation = { selector, text, afterLoads }
+    try {
+      await page.waitForFunction(
+        ({ selector: target, text: expected, afterLoads: previous }) => {
+          const element = document.querySelector(target)
+          const loads = Number(sessionStorage.getItem('fict-native-hmr-loads') ?? 0)
+          return element?.textContent?.trim() === expected && loads > previous
+        },
+        { afterLoads, selector, text },
+        { timeout: 15_000 },
+      )
+    } catch (error) {
+      const observed = await captureBrowserState()
+      throw new Error(`Failed waiting for ${description}. Observed: ${JSON.stringify(observed)}`, {
+        cause: error,
+      })
+    }
+    const observedLoads = await loadCount()
+    currentExpectation = null
+    return observedLoads
   }
   const writeAndWait = async (filename, source, selector, text) => {
     const before = await loadCount()
-    await writeFile(filename, source)
-    return waitForState({ afterLoads: before, selector, text })
+    const description = `${path.basename(filename)} to render ${selector}=${JSON.stringify(text)}`
+    currentPhase = `write:${description}`
+    const watcherEvent = await writeAndObserve(filename, source, {
+      description: `change event for ${description}`,
+    })
+    const observedLoads = await waitForState({ afterLoads: before, selector, text, description })
+    await waitForWatcherQuietPeriod(watcherEvent)
+    return observedLoads
   }
-  const waitForOverlay = () =>
-    page.locator('vite-error-overlay').waitFor({ state: 'attached', timeout: 15_000 })
-  const waitForOverlayGone = () =>
-    page.locator('vite-error-overlay').waitFor({ state: 'detached', timeout: 15_000 })
+  const waitForOverlayState = async (state, description) => {
+    currentPhase = description
+    currentExpectation = { overlay: state }
+    try {
+      await page.locator('vite-error-overlay').waitFor({ state, timeout: 15_000 })
+    } catch (error) {
+      const observed = await captureBrowserState()
+      throw new Error(`Failed waiting for ${description}. Observed: ${JSON.stringify(observed)}`, {
+        cause: error,
+      })
+    }
+    currentExpectation = null
+  }
+  const waitForOverlay = description => waitForOverlayState('attached', description)
+  const waitForOverlayGone = description => waitForOverlayState('detached', description)
   const transformPreviewArtifact = async requestPath => {
     const transformed = await server.transformRequest(requestPath)
     assert.ok(transformed, `Vite returned no transform for ${requestPath}`)
@@ -308,6 +562,8 @@ try {
     return { code, specifier, transformed, url }
   }
 
+  currentPhase = 'initial-page-load'
+  currentExpectation = { selector: '#revision', text: 'main-one' }
   const navigationResponse = await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' })
   assert.equal(navigationResponse?.status(), 200)
   try {
@@ -340,6 +596,7 @@ try {
       { cause: error },
     )
   }
+  currentExpectation = null
   assert.equal(await page.locator('#hook-value').textContent(), 'hook-one')
   assert.equal(
     await page.locator('#preview-handler').getAttribute('data-generation'),
@@ -421,44 +678,84 @@ try {
     'An expired Preview handler generation remained loadable after HMR.',
   )
 
+  currentPhase = 'rapid-write-coalescing'
   const rapidBefore = loads
+  const beforeRapidSequence = watcherSequence
   await writeFile(mainPath, mainSource('rapid-intermediate'))
   await writeFile(mainPath, mainSource('rapid-final'))
+  const rapidChange = await waitForWatcherEvent({
+    filename: mainPath,
+    events: ['change'],
+    afterSequence: beforeRapidSequence,
+    description: 'the coalesced change event for rapid main-module writes',
+  })
   loads = await waitForState({
     afterLoads: rapidBefore,
     selector: '#revision',
     text: 'rapid-final',
+    description: 'rapid writes to settle on the final main revision',
   })
+  await waitForWatcherQuietPeriod(rapidChange)
   assert.notEqual(await page.locator('#revision').textContent(), 'rapid-intermediate')
 
   expectedFailurePhase = true
-  await writeFile(mainPath, 'export const broken = ;')
-  await waitForOverlay()
+  currentPhase = 'compile-error:write-invalid-main'
+  const brokenChange = await writeAndObserve(mainPath, 'export const broken = ;', {
+    description: 'change event for the deliberately invalid main module',
+  })
+  await waitForOverlay('the compile-error overlay to appear')
+  await waitForWatcherQuietPeriod(brokenChange)
   const brokenLoads = await loadCount()
-  await writeFile(mainPath, mainSource('recovered-main'))
+  currentPhase = 'compile-error:write-recovered-main'
+  const recoveredChange = await writeAndObserve(mainPath, mainSource('recovered-main'), {
+    description: 'change event for the recovered main module',
+  })
+  const compileErrorRecoveryWatcherGapMs = Number(
+    (recoveredChange.elapsedMs - brokenChange.elapsedMs).toFixed(3),
+  )
+  assert.ok(
+    compileErrorRecoveryWatcherGapMs >= watcherChangeQuietMs,
+    `Expected the recovery change after the watcher quiet window, observed ${compileErrorRecoveryWatcherGapMs} ms.`,
+  )
   loads = await waitForState({
     afterLoads: brokenLoads,
     selector: '#revision',
     text: 'recovered-main',
+    description: 'the main module to recover from its compile error',
   })
-  await waitForOverlayGone()
+  await waitForOverlayGone('the compile-error overlay to disappear')
   await new Promise(resolve => setTimeout(resolve, 100))
   expectedFailurePhase = false
 
   expectedFailurePhase = true
+  currentPhase = 'delete-recreate:delete-hook'
+  const beforeDeleteSequence = watcherSequence
   await unlink(hookPath)
-  await waitForOverlay()
+  const deleteEvent = await waitForWatcherEvent({
+    filename: hookPath,
+    events: ['unlink'],
+    afterSequence: beforeDeleteSequence,
+    description: 'unlink event for the deleted hook module',
+  })
+  await waitForOverlay('the deleted-module overlay to appear')
+  await waitForWatcherQuietPeriod(deleteEvent)
   const deletedLoads = await loadCount()
-  await writeFile(hookPath, reactiveHookSource('hook-recreated'))
+  currentPhase = 'delete-recreate:restore-hook'
+  await writeAndObserve(hookPath, reactiveHookSource('hook-recreated'), {
+    events: ['add', 'change'],
+    description: 'add/change event for the recreated hook module',
+  })
   loads = await waitForState({
     afterLoads: deletedLoads,
     selector: '#hook-value',
     text: 'hook-recreated',
+    description: 'the recreated hook module to render',
   })
-  await waitForOverlayGone()
+  await waitForOverlayGone('the deleted-module overlay to disappear')
   await new Promise(resolve => setTimeout(resolve, 100))
   expectedFailurePhase = false
 
+  currentPhase = 'final-assertions'
   const finalArtifact = await transformPreviewArtifact('/src/preview.tsx')
   assert.match(finalArtifact.code, /handler-three/)
   assert.equal(await page.locator('#revision').textContent(), 'recovered-main')
@@ -480,8 +777,22 @@ try {
       recoveredFromCompileError: true,
       recoveredFromDeleteRecreate: true,
       sourceMapSources: initialMain.map.sources.length,
+      compileErrorRecoveryWatcherGapMs,
+      watcherEvents: watcherEvents.length,
+      hmrUpdates: hmrUpdates.length,
     })}\n`,
   )
+} catch (error) {
+  try {
+    await writeFailureDiagnostics(error)
+  } catch (diagnosticError) {
+    process.stderr.write(
+      `Failed to write native Vite HMR diagnostics: ${JSON.stringify(
+        serializeError(diagnosticError),
+      )}\n`,
+    )
+  }
+  throw error
 } finally {
   if (delayRequest) delayRequest.release.resolve()
   await browser?.close()

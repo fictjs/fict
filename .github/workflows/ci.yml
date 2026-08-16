@@ -458,6 +458,7 @@ jobs:
             packages/fict/test-results
             examples/real-apps/playwright-report
             examples/real-apps/test-results
+            test-results/native-vite-hmr
           if-no-files-found: warn
           retention-days: 14
 
