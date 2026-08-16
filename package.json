@@ -24,7 +24,7 @@
     "test:api-boundaries": "node --test scripts/check-api-boundaries.test.mjs && node scripts/check-api-boundaries.mjs",
     "test:preview-boundaries": "node --test scripts/preview-boundary-helpers.test.mjs scripts/check-preview-boundaries.test.mjs && node scripts/check-preview-boundaries.mjs",
     "test:review-regressions": "node scripts/review-regression-suite.mjs",
-    "test:release-publish-plan": "node --test scripts/release-publish-plan.test.mjs scripts/verify-compiler-release-unit.test.mjs scripts/compiler-corpus-replay.test.mjs && node scripts/release-publish-plan.mjs --offline",
+    "test:release-publish-plan": "node --test scripts/release-publish-plan.test.mjs scripts/verify-compiler-release-unit.test.mjs scripts/compiler-corpus-replay.test.mjs scripts/compiler-review-provenance.test.mjs && node scripts/release-publish-plan.mjs --offline",
     "test:release-verification": "node --test scripts/release-verification.test.mjs scripts/compiler-release-evidence.test.mjs scripts/compiler-consumer-evidence.test.mjs scripts/run-real-app-e2e.test.mjs",
     "test:package-tarballs": "node scripts/package-tarball-smoke.mjs",
     "test": "pnpm build:compiler:native-host && env -u FICT_STRICT_GUARANTEE turbo run test --concurrency=1",

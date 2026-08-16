@@ -28,6 +28,13 @@ jobs:
       runtime: ${{ steps.matrix.outputs.runtime }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Verify frozen compiler review ancestry
+        env:
+          FICT_REVIEW_TARGET_REVISION: ${{ github.sha }}
+        run: node --test scripts/compiler-review-provenance.test.mjs
 
       - name: Cache pinned Rust advisory auditor
         id: cargo-audit-cache

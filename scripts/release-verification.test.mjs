@@ -406,6 +406,30 @@ test('controlled native builds embed the workflow source revision', () => {
   assert.match(releaseWorkflow, revisionBinding)
 })
 
+test('compiler review ancestry fails before the native release fanout', () => {
+  const nativeMatrixStart = releaseWorkflow.indexOf('\n  native-matrix:')
+  const nativeBuildStart = releaseWorkflow.indexOf('\n  native-build:')
+  const nativeMatrixSource = releaseWorkflow.slice(nativeMatrixStart, nativeBuildStart)
+  const reviewGate = nativeMatrixSource.indexOf('name: Verify frozen compiler review ancestry')
+  const dependencyAudit = nativeMatrixSource.indexOf('name: Audit locked Rust dependencies')
+
+  assert.ok(nativeMatrixStart >= 0 && nativeMatrixStart < nativeBuildStart)
+  assert.match(nativeMatrixSource, /fetch-depth: 0/)
+  assert.match(nativeMatrixSource, /FICT_REVIEW_TARGET_REVISION: \$\{\{ github\.sha \}\}/)
+  assert.match(nativeMatrixSource, /node --test scripts\/compiler-review-provenance\.test\.mjs/)
+  assert.ok(reviewGate >= 0 && reviewGate < dependencyAudit)
+  assert.match(
+    rootPackage.scripts['test:release-publish-plan'],
+    /compiler-review-provenance\.test\.mjs/,
+  )
+
+  const lintStart = ciWorkflow.indexOf('\n  lint:')
+  const typecheckStart = ciWorkflow.indexOf('\n  typecheck:')
+  const lintSource = ciWorkflow.slice(lintStart, typecheckStart)
+  assert.match(lintSource, /fetch-depth: 0/)
+  assert.match(lintSource, /pnpm test:release-publish-plan/)
+})
+
 test('release aggregates and certifies all revision-bound native runtime evidence', () => {
   assert.equal((releaseWorkflow.match(/--node-lane/g) ?? []).length, 2)
   assert.equal((releaseWorkflow.match(/--expected-revision/g) ?? []).length, 2)
