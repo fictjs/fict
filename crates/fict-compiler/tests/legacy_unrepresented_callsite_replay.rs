@@ -208,6 +208,53 @@ fn assert_sha256(value: &str, context: &str) {
     );
 }
 
+/// Rewrite every fixture's expected digests from the current compiler.
+///
+/// The corpus generator needs a legacy compiler checkout, which is not part of
+/// this repository, so intentional codegen changes would otherwise be
+/// unmaintainable. Run with `FICT_BLESS_REPLAY=1` and review the resulting
+/// diff; the digests must only move for outputs the change is meant to affect.
+///
+/// Only digests are rewritten. A changed status or diagnostic set is a semantic
+/// change that must be reviewed by hand, so those assertions still fail.
+fn bless_replay_corpus(corpus_text: &str, corpus: &ReplayCorpus) {
+    let mut text = corpus_text.to_owned();
+    let mut updated = 0_usize;
+    for fixture in &corpus.fixtures {
+        let result = compile(fixture.request.clone());
+        let code_sha256 = sha256(&result.code);
+        let deterministic_sha256 = sha256(
+            &serde_json::to_string(&deterministic_result(&result))
+                .expect("serialize deterministic result"),
+        );
+        for (old, new) in [
+            (&fixture.expected.code_sha256, &code_sha256),
+            (
+                &fixture.expected.deterministic_result_sha256,
+                &deterministic_sha256,
+            ),
+        ] {
+            if old == new {
+                continue;
+            }
+            // Digests are unique per fixture, so a single textual replacement
+            // keeps the surrounding formatting byte-for-byte intact.
+            assert_eq!(
+                text.matches(old.as_str()).count(),
+                1,
+                "{} digest is not unique",
+                fixture.id
+            );
+            text = text.replace(old.as_str(), new.as_str());
+            updated += 1;
+        }
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/legacy_unrepresented_callsite_replay.json");
+    std::fs::write(&path, text).expect("write replay corpus json");
+    eprintln!("blessed {updated} replay digests");
+}
+
 #[test]
 fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
     let corpus_text = include_str!("legacy_unrepresented_callsite_replay.json");
@@ -215,6 +262,11 @@ fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
     assert!(!corpus_text.contains("file:///var/folders/"));
     assert!(!corpus_text.contains("/fict-legacy-unrepresented-"));
     let corpus: ReplayCorpus = serde_json::from_str(corpus_text).expect("valid replay corpus");
+
+    if std::env::var_os("FICT_BLESS_REPLAY").is_some() {
+        bless_replay_corpus(corpus_text, &corpus);
+        return;
+    }
 
     assert_eq!(corpus.schema_version, 1);
     assert_eq!(

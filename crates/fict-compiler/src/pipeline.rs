@@ -3849,6 +3849,39 @@ mod tests {
     }
 
     #[test]
+    fn keys_block_bodied_map_callbacks_that_declare_unrelated_locals() {
+        // A leading `const` that is not the key is an ordinary callback local.
+        // Bailing out of keyed lowering here silently dropped the list markers,
+        // so client updates appended a second copy of the list instead of
+        // reconciling the server-rendered one.
+        let mut input = request(
+            "import { $state } from 'fict'; export function List() { let rows = $state([{ id: 1, name: 'A' }]); return <main>{rows.map((row, index) => { const label = index === 0 ? row.name : row.name; return <span key={row.id}>{label}</span> })}</main>; }",
+            "keyed-block-body-map.tsx",
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("createKeyedList("), "{}", result.code);
+        assert!(!result.code.contains("rows.map("), "{}", result.code);
+    }
+
+    #[test]
+    fn keeps_block_bodied_map_callbacks_unkeyed_when_the_key_reads_a_local() {
+        // The runtime key function runs outside the render callback, so a key
+        // that reads a callback-local binding cannot be lowered to a keyed list.
+        let mut input = request(
+            "import { $state } from 'fict'; export function List() { let rows = $state([{ id: 1, name: 'A' }]); return <main>{rows.map(row => { const meta = { id: row.id }; return <span key={meta.id}>{row.name}</span> })}</main>; }",
+            "keyed-block-body-local-key.tsx",
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("createKeyedList("), "{}", result.code);
+    }
+
+    #[test]
     fn reuses_runtime_keys_for_keyed_component_maps() {
         let mut input = request(
             "import { $state } from 'fict'; const Row = (_props) => null; const __fict_key = 'outer'; export function List() { let rows = $state([{ id: 1, name: 'A' }]); return <main>{rows.map(row => <Row key={makeKey(row)} row={row} label={__fict_key} />)}</main>; }",

@@ -7960,17 +7960,27 @@ fn raw_jsx_list_expression(
         Some((alias, initializer)) => {
             key?;
             let key_expression = direct_jsx_key_expression(element)?.get_inner_expression();
-            let Expression::Identifier(identifier) = key_expression else {
-                return None;
+            let aliases_key = match key_expression {
+                Expression::Identifier(identifier) => identifier
+                    .reference_id
+                    .get()
+                    .and_then(|reference| scoping.get_reference(reference).symbol_id())
+                    .is_some_and(|resolved| resolved == alias),
+                _ => false,
             };
-            let resolved = scoping
-                .get_reference(identifier.reference_id.get()?)
-                .symbol_id()?;
-            if resolved != alias {
-                return None;
+            if aliases_key {
+                let initializer = source_span(initializer.span());
+                (Some(initializer), Some(initializer))
+            } else {
+                // A leading `const` that is not the key is an ordinary callback
+                // local. Keep the list keyed by its own key expression, but only
+                // when the runtime key function can evaluate that expression
+                // without the callback-local binding.
+                if expression_references_symbol(scoping, key_expression, alias) {
+                    return None;
+                }
+                (key, None)
             }
-            let initializer = source_span(initializer.span());
-            (Some(initializer), Some(initializer))
         }
         None => (key, None),
     };
@@ -8093,6 +8103,43 @@ fn simple_parameter_symbol(parameters: &FormalParameters<'_>, index: usize) -> O
         return None;
     };
     identifier.symbol_id.get()
+}
+
+/// Whether `expression` reads `symbol` anywhere inside it.
+fn expression_references_symbol(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+    symbol: SymbolId,
+) -> bool {
+    struct SymbolReferenceProbe<'scoping> {
+        scoping: &'scoping Scoping,
+        symbol: SymbolId,
+        found: bool,
+    }
+
+    impl<'a> Visit<'a> for SymbolReferenceProbe<'_> {
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if self.found {
+                return;
+            }
+            if identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+                .is_some_and(|resolved| resolved == self.symbol)
+            {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut probe = SymbolReferenceProbe {
+        scoping,
+        symbol,
+        found: false,
+    };
+    probe.visit_expression(expression);
+    probe.found
 }
 
 struct ListParameterReferenceCollector<'scoping> {
