@@ -396,7 +396,7 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
         .as_ref()
         .filter(|preview| preview.resumable)
     {
-        if let Err(diagnostics) = fict_compiler_preview::attach_preview_plan(
+        match fict_compiler_preview::attach_preview_plan(
             &core.hir,
             &mut emit,
             &fict_compiler_preview::PreviewOptions {
@@ -406,10 +406,14 @@ fn compile_normalized_inner(request: NormalizedCompileRequest) -> CompileResult 
                 public_module_id: request.public_module_id.clone(),
             },
         ) {
-            result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_source_diagnostics(&mut result, &request, &suppressions);
-            attach_explain_if_requested(&mut result, &request, &source_events, &[]);
-            return result;
+            Err(diagnostics) => {
+                result.diagnostics.extend(diagnostics.into_sorted());
+                finalize_source_diagnostics(&mut result, &request, &suppressions);
+                attach_explain_if_requested(&mut result, &request, &source_events, &[]);
+                return result;
+            }
+            // Advisories report degraded output without aborting the plan.
+            Ok(advisories) => result.diagnostics.extend(advisories),
         }
         if let Err(diagnostics) = fict_emit::verify_emit_program(&core.hir, &regions, &emit) {
             result.diagnostics.extend(diagnostics.into_sorted());
@@ -8153,6 +8157,18 @@ mod tests {
         assert!(result.code.contains("createKeyedList"), "{}", result.code);
         assert!(result.code.contains("addEventListener"), "{}", result.code);
         assert!(!result.code.contains("fict:compiler-artifact:"));
+        // The eager fallback leaves the control inert until something else
+        // resumes the scope, so it must be reported rather than applied
+        // silently.
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-PREVIEW-EAGER-CAPTURE"
+                    && diagnostic.severity == DiagnosticSeverity::Warning
+                    && diagnostic.message.contains("stays inert")
+            }),
+            "{:?}",
+            result.diagnostics
+        );
     }
 
     #[cfg(feature = "preview")]

@@ -32,12 +32,14 @@ pub struct PreviewOptions {
 /// Attach deterministic resumable handler/component plans to verified Core EmitIR.
 ///
 /// This pass owns no frontend AST. OXC consumes the structured origins and identities later.
+/// Returns non-fatal advisories on success; fatal diagnostics abort the plan.
 pub fn attach_preview_plan(
     hir: &HirFile,
     emit: &mut EmitProgram,
     options: &PreviewOptions,
-) -> Result<(), DiagnosticBundle> {
+) -> Result<Vec<Diagnostic>, DiagnosticBundle> {
     let mut diagnostics = Vec::new();
+    let mut advisories = Vec::new();
     let mut reserved: BTreeSet<String> = emit.module.reserved_names.iter().cloned().collect();
     let mut handler_index = 0_u32;
     let mut dependency_index = 0_u32;
@@ -296,6 +298,21 @@ pub fn attach_preview_plan(
                         .with_primary_span(handler_origin)
                         .with_help(
                             "keyed-list item and index aliases exist only while rendering an item; remove the `$` suffix to keep the handler eager",
+                        ),
+                    );
+                } else if automatically_selected {
+                    advisories.push(
+                        preview_eager_fallback_warning(
+                            "FICT-PREVIEW-EAGER-CAPTURE",
+                            &candidate.event,
+                            format!(
+                                "it captures keyed-list aliases that only exist while rendering an item ({})",
+                                keyed_alias_captures.join(", ")
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "move the handler out of the list callback and read the item from `event.target` (for example a `data-` attribute on the row), so it captures nothing per-item",
                         ),
                     );
                 }
@@ -614,7 +631,7 @@ pub fn attach_preview_plan(
         handlers,
         components,
     });
-    Ok(())
+    Ok(advisories)
 }
 
 fn keyed_render_parameter_bindings(hir: &HirFile, emit: &EmitProgram) -> BTreeSet<BindingId> {
@@ -2321,6 +2338,30 @@ fn ensure_runtime_import(
         imported: spec.export.to_owned(),
         local: allocate_name(reserved, spec.preferred_local),
     });
+}
+
+/// Warn that an auto-selected handler had to stay eager.
+///
+/// In resumable output an eager handler is only attached once its component
+/// scope resumes, and a scope with no extracted handler has nothing to trigger
+/// that resume. Such a control is inert, so the degradation must not be silent.
+fn preview_eager_fallback_warning(
+    code: &'static str,
+    event: &str,
+    reason: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::new(code).expect("Preview diagnostic literal"),
+        DiagnosticSeverity::Warning,
+        format!(
+            "resumable output keeps on:{event} eager because {}; the control stays inert until its component scope resumes",
+            reason.into()
+        ),
+    )
+    // Advisory, not Fallback: `Fallback` escalates to a hard error under
+    // `strictGuarantee`, which would newly fail builds that compile today.
+    // Promote this once the eager fallback is considered unacceptable.
+    .with_guarantee_class(GuaranteeClass::Advisory)
 }
 
 fn preview_error(code: &'static str, message: impl Into<String>) -> Diagnostic {
