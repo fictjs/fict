@@ -7398,6 +7398,16 @@ mod tests {
         assert!(result.code.contains("\"default\", \"pd\""));
         assert!(result.code.contains("export const __fict_r0"));
         assert!(result.code.contains("/src/preview-handler.tsx"));
+        // The chunk-URL registry key ("<chunk>#__fict_r0") is not unique once a
+        // bundler merges several source modules into one chunk, so every
+        // component also registers under its module-qualified metadata id.
+        assert!(
+            result
+                .code
+                .contains("__fictRegisterResume(__fict_meta_App.id, __fict_r0)"),
+            "{}",
+            result.code
+        );
         assert_eq!(result.artifacts.len(), 1);
         let artifact = &result.artifacts[0];
         assert_eq!(artifact.id, "handler-0");

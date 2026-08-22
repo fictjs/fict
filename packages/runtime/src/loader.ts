@@ -1935,7 +1935,13 @@ async function resumeScope(
     return false
   }
 
+  // The component type key ("Name@fict:module:<hash>") is unique per source
+  // module, so it survives bundling. Chunk-URL keys do not: two modules that
+  // land in the same chunk both register "<chunk>#__fict_r0" and the last one
+  // wins, which would resume a scope with a different component's function.
+  const hostTypeKey = host.getAttribute('data-fict-t')
   const resumeFn =
+    (hostTypeKey === null ? undefined : __fictGetResume(hostTypeKey)) ??
     __fictGetResume(resumeQrl) ??
     __fictGetResume(resolvedResumeQrl) ??
     __fictGetResume(resolvedAbsoluteResumeQrl) ??

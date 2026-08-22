@@ -1863,6 +1863,57 @@ describe('resumable loader snapshot validation', () => {
     expect(__fictGetScopeProps('sAliased')).toBe(raw)
   })
 
+  it('resumes each component by its module-qualified type key when a chunk shares resume names', async () => {
+    // Two source modules bundled into one chunk both emit `__fict_r0`, so the
+    // chunk-URL key "<chunk>#__fict_r0" is registered twice and the last write
+    // wins. The module-qualified `data-fict-t` key disambiguates them.
+    const sharedQrl = 'data:text/javascript,export default null#__fict_r0'
+    const firstTypeKey = 'ListRepro@fict:module:maaaa'
+    const secondTypeKey = 'CapacityControl@fict:module:mbbbb'
+
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sFirst: { id: 'sFirst', slots: [] },
+          sSecond: { id: 'sSecond', slots: [] },
+        },
+      }),
+    )
+
+    const resumed: string[] = []
+    // Registration order mirrors bundling: both claim the shared chunk key.
+    __fictRegisterResume(sharedQrl, () => resumed.push('shared:first'))
+    __fictRegisterResume(firstTypeKey, () => resumed.push('first'))
+    __fictRegisterResume(sharedQrl, () => resumed.push('shared:second'))
+    __fictRegisterResume(secondTypeKey, () => resumed.push('second'))
+
+    const appendHost = (scopeId: string, typeKey: string): HTMLElement => {
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', scopeId)
+      host.setAttribute('data-fict-t', typeKey)
+      host.setAttribute('data-fict-h', sharedQrl)
+      host.setAttribute(
+        'on:click',
+        'data:text/javascript,export default function handle(){}#default',
+      )
+      doc.body.appendChild(host)
+      return host
+    }
+
+    const firstHost = appendHost('sFirst', firstTypeKey)
+    const secondHost = appendHost('sSecond', secondTypeKey)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    firstHost.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+    secondHost.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(resumed).toEqual(['first', 'second'])
+  })
+
   it('fails closed when a resumable component props identity may already be captured', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(

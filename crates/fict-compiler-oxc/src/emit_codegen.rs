@@ -3602,7 +3602,7 @@ fn render_preview_module_statements(
     for component in &preview.components {
         writeln!(
             source,
-            "export const {resume} = (scopeId, host) => {{\n  const snapshot = {get_scope}(scopeId);\n  if (!snapshot) return;\n  const ctx = {ensure_scope}(scopeId, host, snapshot);\n  try {{\n    {prepare_context}(ctx);\n    {push_context}();\n    {hydrate_component}(() => {component}(snapshot.props || {{}}), host);\n  }} finally {{\n    {pop_context}();\n  }}\n}};\n{register_resume}({qrl}(import.meta.url, {resume_name}), {resume});\nconst {metadata} = {{ id: {type_key} + {public_module}, resume: {qrl}({public_module}, {resume_name}) }};\n{set_component_meta}({component}, {metadata});",
+            "export const {resume} = (scopeId, host) => {{\n  const snapshot = {get_scope}(scopeId);\n  if (!snapshot) return;\n  const ctx = {ensure_scope}(scopeId, host, snapshot);\n  try {{\n    {prepare_context}(ctx);\n    {push_context}();\n    {hydrate_component}(() => {component}(snapshot.props || {{}}), host);\n  }} finally {{\n    {pop_context}();\n  }}\n}};\n{register_resume}({qrl}(import.meta.url, {resume_name}), {resume});\nconst {metadata} = {{ id: {type_key} + {public_module}, resume: {qrl}({public_module}, {resume_name}) }};\n{register_resume}({metadata}.id, {resume});\n{set_component_meta}({component}, {metadata});",
             resume = component.resume_export_name,
             component = component.name,
             resume_name = quote_javascript_string(&component.resume_export_name),
