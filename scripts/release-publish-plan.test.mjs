@@ -8,6 +8,7 @@ import {
   getPublishedVersions,
   normalizeRegistryDocument,
   validateAtomicNativeReleaseConfiguration,
+  validateCompilerSemanticOracleProvenance,
   validateReleaseConfiguration,
   validateReleaseTag,
 } from './release-publish-plan.mjs'
@@ -137,6 +138,40 @@ test('requires native packages, facade dependencies, and capability versions to 
     validateAtomicNativeReleaseConfiguration([compiler, ...nativePackages], allowlist),
     ['compiler capability packageVersion missing must match @fictjs/compiler@1.2.3'],
   )
+})
+
+test('requires semantic oracle provenance to match released runtime packages', () => {
+  const packages = [
+    { name: '@fictjs/runtime', version: '1.2.3' },
+    { name: '@fictjs/ssr', version: '1.2.3' },
+  ]
+  const semanticOracles = [
+    {
+      path: 'cross-module.json',
+      packageFields: { sharedRuntimePackage: '@fictjs/runtime' },
+      provenance: { sharedRuntimePackage: '@fictjs/runtime@1.2.3' },
+    },
+    {
+      path: 'ssr.json',
+      packageFields: {
+        sharedRuntimePackage: '@fictjs/runtime',
+        sharedSsrPackage: '@fictjs/ssr',
+      },
+      provenance: {
+        sharedRuntimePackage: '@fictjs/runtime@1.2.3',
+        sharedSsrPackage: '@fictjs/ssr@1.2.3',
+      },
+    },
+  ]
+
+  assert.deepEqual(validateCompilerSemanticOracleProvenance(packages, semanticOracles), [])
+
+  semanticOracles[0].provenance.sharedRuntimePackage = '@fictjs/runtime@1.2.2'
+  delete semanticOracles[1].provenance.sharedSsrPackage
+  assert.deepEqual(validateCompilerSemanticOracleProvenance(packages, semanticOracles), [
+    'cross-module.json sharedRuntimePackage @fictjs/runtime@1.2.2 must match @fictjs/runtime@1.2.3',
+    'ssr.json sharedSsrPackage missing must match @fictjs/ssr@1.2.3',
+  ])
 })
 
 test('retries a cached 404 with a cache-busting registry request', async () => {

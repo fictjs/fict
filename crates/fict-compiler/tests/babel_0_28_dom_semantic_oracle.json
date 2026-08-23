@@ -14,7 +14,7 @@
     },
     "oracleInputsSha256": "da6f9e7a18c9d2be46ca1fc6bcdb34d8a6e569d6cc5fbbe817c5f25afd01e2bb",
     "rustCodegenCorpusSha256": "a923d0e322e2aab22025a7d505436d4c8960e7ef4225e0cc80fbf54e276af7e2",
-    "sharedRuntimePackage": "@fictjs/runtime@0.32.0",
+    "sharedRuntimePackage": "@fictjs/runtime@0.33.0",
     "runtimeExecutionModel": "frozen-babel-and-live-rust-output-share-current-runtime"
   },
   "fixtures": [

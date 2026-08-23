@@ -12,6 +12,23 @@ const compilerCapabilityManifestPath = path.join(
   repoRoot,
   'packages/compiler/compiler-capabilities.json',
 )
+const compilerSemanticOracleSpecifications = [
+  {
+    path: 'crates/fict-compiler/tests/babel_0_28_cross_module_semantic_oracle.json',
+    packageFields: { sharedRuntimePackage: '@fictjs/runtime' },
+  },
+  {
+    path: 'crates/fict-compiler/tests/babel_0_28_dom_semantic_oracle.json',
+    packageFields: { sharedRuntimePackage: '@fictjs/runtime' },
+  },
+  {
+    path: 'crates/fict-compiler/tests/babel_0_28_ssr_semantic_oracle.json',
+    packageFields: {
+      sharedRuntimePackage: '@fictjs/runtime',
+      sharedSsrPackage: '@fictjs/ssr',
+    },
+  },
+]
 const workspaceRoots = ['packages', 'examples']
 const registryRetryDelaysMs = [1_000, 2_000, 4_000, 8_000, 15_000]
 
@@ -149,10 +166,36 @@ export function validateAtomicNativeReleaseConfiguration(
   return failures
 }
 
+export function validateCompilerSemanticOracleProvenance(packages, semanticOracles) {
+  const failures = []
+  const packagesByName = new Map(packages.map(pkg => [pkg.name, pkg]))
+
+  for (const oracle of semanticOracles) {
+    for (const [field, packageName] of Object.entries(oracle.packageFields)) {
+      const pkg = packagesByName.get(packageName)
+      if (!pkg || typeof pkg.version !== 'string') {
+        failures.push(`${oracle.path} ${field} requires workspace package ${packageName}`)
+        continue
+      }
+
+      const expected = `${packageName}@${pkg.version}`
+      const actual = oracle.provenance?.[field]
+      if (actual !== expected) {
+        failures.push(
+          `${oracle.path} ${field} ${String(actual ?? 'missing')} must match ${expected}`,
+        )
+      }
+    }
+  }
+
+  return failures
+}
+
 export function validateReleaseConfiguration({
   packages,
   allowedPackageNames,
   compilerCapabilityManifest,
+  compilerSemanticOracles = [],
   registry,
 }) {
   const failures = []
@@ -218,6 +261,7 @@ export function validateReleaseConfiguration({
       compilerCapabilityManifest,
     ),
   )
+  failures.push(...validateCompilerSemanticOracleProvenance(packages, compilerSemanticOracles))
 
   return failures
 }
@@ -375,10 +419,15 @@ async function main() {
   const config = readJson(options.configPath)
   const workspacePackages = readWorkspacePackages(repoRoot)
   const compilerCapabilityManifest = readJson(compilerCapabilityManifestPath)
+  const compilerSemanticOracles = compilerSemanticOracleSpecifications.map(specification => ({
+    ...specification,
+    provenance: readJson(path.join(repoRoot, specification.path)).provenance,
+  }))
   const failures = validateReleaseConfiguration({
     packages: workspacePackages,
     allowedPackageNames: config.packages ?? [],
     compilerCapabilityManifest,
+    compilerSemanticOracles,
     registry: config.registry,
   })
   failures.push(...validateReleaseTag(options.tag, workspacePackages))
