@@ -27,7 +27,6 @@ async function init() {
   // and lazily loads + executes the handler code
   installResumableLoader({
     document,
-    events: ['click', 'input', 'change', 'submit'],
     prefetch: {
       // Prefetch handlers when elements become visible
       visibility: true,

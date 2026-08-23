@@ -68,7 +68,7 @@ function ChangeRequest() {
   }
 
   return (
-    <form class="panel change-form" onSubmit={submit}>
+    <form class="panel change-form">
       <div class="panel-heading">
         <div>
           <p class="eyebrow">Resumable form</p>
@@ -89,14 +89,14 @@ function ChangeRequest() {
         <select
           data-testid="change-risk"
           value={risk}
-          onChange={(event: Event) => (risk = (event.target as HTMLSelectElement).value as Risk)}
+          onInput={(event: Event) => (risk = (event.target as HTMLSelectElement).value as Risk)}
         >
           <option value="standard">Standard</option>
           <option value="elevated">Elevated</option>
           <option value="critical">Critical</option>
         </select>
       </label>
-      <button class="button primary" data-testid="change-submit" type="submit">
+      <button class="button primary" data-testid="change-submit" type="submit" onClick$={submit}>
         Queue {risk} change
       </button>
       {approved && (
