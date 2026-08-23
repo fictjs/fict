@@ -20,8 +20,35 @@ env:
   ZIG_VERSION: 0.14.1
 
 jobs:
+  release-preflight:
+    name: Verify release inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+        with:
+          version: 9.1.1
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify release contracts before native fanout
+        run: pnpm release:preflight
+
+      - name: Verify tagged release identity
+        if: github.event_name == 'push'
+        run: pnpm release:plan --offline --tag "${GITHUB_REF_NAME}"
+
   native-matrix:
     name: Prepare native compiler matrix
+    needs: release-preflight
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.matrix.outputs.build }}

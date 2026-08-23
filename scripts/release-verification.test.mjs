@@ -135,9 +135,10 @@ test('tarball Vite smoke binds the compiler capability version into its generate
   assert.match(consumer, /typeof error\.message === 'string'/)
 })
 
-test('CI validates the live compiler rollout state', () => {
-  assert.match(ciWorkflow, /pnpm test:compiler:rollout-state/)
-  assert.match(ciWorkflow, /pnpm guardrails:compiler-capabilities/)
+test('CI validates the live compiler rollout state through the shared release preflight', () => {
+  assert.match(ciWorkflow, /run: pnpm release:preflight/)
+  assert.match(rootPackage.scripts['release:preflight'], /pnpm test:compiler:rollout-state/)
+  assert.match(rootPackage.scripts['release:preflight'], /pnpm guardrails:compiler-capabilities/)
   assert.match(
     rootPackage.scripts['test:compiler:rollout-state'],
     /node scripts\/compiler-rollout-readiness\.mjs$/,
@@ -189,6 +190,29 @@ test('release publishing uses one dependency-ordered publisher after native cert
   assert.ok(compilerIdentityGate >= 0 && compilerIdentityGate < packagePublisher)
   assert.doesNotMatch(releaseWorkflow, /changeset publish/)
   assert.equal(rootPackage.scripts.release, 'pnpm release:plan --require-existing-packages')
+})
+
+test('release preflight blocks native fanout on release identity drift', () => {
+  const preflightStart = releaseWorkflow.indexOf('\n  release-preflight:')
+  const nativeMatrixStart = releaseWorkflow.indexOf('\n  native-matrix:')
+  const nativeBuildStart = releaseWorkflow.indexOf('\n  native-build:')
+  const preflightSource = releaseWorkflow.slice(preflightStart, nativeMatrixStart)
+  const nativeMatrixSource = releaseWorkflow.slice(nativeMatrixStart, nativeBuildStart)
+
+  assert.ok(preflightStart >= 0 && preflightStart < nativeMatrixStart)
+  assert.match(preflightSource, /fetch-depth: 0/)
+  assert.match(preflightSource, /pnpm install --frozen-lockfile/)
+  assert.match(preflightSource, /name: Verify release contracts before native fanout/)
+  assert.match(preflightSource, /run: pnpm release:preflight/)
+  assert.match(
+    preflightSource,
+    /name: Verify tagged release identity[\s\S]*?if: github\.event_name == 'push'[\s\S]*?pnpm release:plan --offline --tag "\$\{GITHUB_REF_NAME\}"/,
+  )
+  assert.match(nativeMatrixSource, /needs: release-preflight/)
+  assert.match(rootPackage.scripts.precommit, /pnpm release:preflight/)
+  assert.match(rootPackage.scripts['release:preflight'], /pnpm test:release-publish-plan/)
+  assert.match(rootPackage.scripts['release:preflight'], /pnpm test:release-verification/)
+  assert.match(rootPackage.scripts['release:preflight'], /pnpm guardrails:metadata-protocol/)
 })
 
 test('tag publishing creates an evidence-bound idempotent GitHub Release after npm', () => {
@@ -427,7 +451,8 @@ test('compiler review ancestry fails before the native release fanout', () => {
   const typecheckStart = ciWorkflow.indexOf('\n  typecheck:')
   const lintSource = ciWorkflow.slice(lintStart, typecheckStart)
   assert.match(lintSource, /fetch-depth: 0/)
-  assert.match(lintSource, /pnpm test:release-publish-plan/)
+  assert.match(lintSource, /pnpm release:preflight/)
+  assert.match(rootPackage.scripts['release:preflight'], /pnpm test:release-publish-plan/)
 })
 
 test('release aggregates and certifies all revision-bound native runtime evidence', () => {
