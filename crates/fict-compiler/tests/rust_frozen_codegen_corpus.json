@@ -14,7 +14,7 @@
       "@babel/core": "7.29.7",
       "@babel/plugin-transform-typescript": "7.28.5"
     },
-    "rustAuditRelease": "0.32.0",
+    "rustAuditRelease": "0.33.0",
     "rustAuditRevision": "e0d135088b984c5e83be91a5259c4cf9dc6a63d4",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
