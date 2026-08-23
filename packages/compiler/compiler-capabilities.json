@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "packageVersion": "0.32.0",
+  "packageVersion": "0.33.0",
   "backend": "rust",
   "scope": "certified-behavior-variant-options",
   "options": {
