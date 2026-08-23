@@ -849,6 +849,27 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "preview")]
+    fn allow_preview_fallback(input: &mut CompileRequest) {
+        // These focused tests inspect the emitted degradation. Production
+        // compilation remains fail-closed under the default strict guarantee.
+        input.options.strict_guarantee = false;
+    }
+
+    #[cfg(feature = "preview")]
+    fn assert_preview_fallback(result: &crate::CompileResult, code: &str) {
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == code
+                    && diagnostic.severity == DiagnosticSeverity::Warning
+                    && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                    && diagnostic.message.contains("stays inert")
+            }),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
     #[test]
     fn compiles_empty_plain_javascript_and_plain_typescript() {
         let empty = compile(request("", "empty.js"));
@@ -7824,6 +7845,7 @@ mod tests {
     fn keeps_auto_handlers_that_call_function_props_eager() {
         let source = "export function Button(props) { return <button onClick={() => { if (props.enabled) props.onClick(); }}>Click</button>; }";
         let mut input = request(source, "preview-function-prop-auto.tsx");
+        allow_preview_fallback(&mut input);
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -7839,6 +7861,7 @@ mod tests {
             "{}",
             result.code
         );
+        assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-PROP-CALL");
     }
 
     #[cfg(feature = "preview")]
@@ -7980,14 +8003,25 @@ mod tests {
     #[cfg(feature = "preview")]
     #[test]
     fn keeps_auto_event_options_and_unobserved_events_eager() {
-        for (name, attribute, expected) in [
-            ("capture", "onClickCapture", "capture: true"),
-            ("submit", "onSubmit", "\"submit\""),
+        for (name, attribute, expected, code) in [
+            (
+                "capture",
+                "onClickCapture",
+                "capture: true",
+                "FICT-PREVIEW-EAGER-EVENT-OPTIONS",
+            ),
+            (
+                "submit",
+                "onSubmit",
+                "\"submit\"",
+                "FICT-PREVIEW-EAGER-EVENT-LOADER",
+            ),
         ] {
             let source = format!(
                 "export function Form() {{ return <form {attribute}={{() => {{ console.log('before'); console.log('after'); }}}}>Save</form>; }}"
             );
             let mut input = request(&source, &format!("preview-event-eager-{name}.tsx"));
+            allow_preview_fallback(&mut input);
             input.options.preview = Some(CompilerPreviewOptions {
                 resumable: true,
                 auto_extract_handlers: true,
@@ -8008,6 +8042,7 @@ mod tests {
                 "{name}: {}",
                 result.code
             );
+            assert_preview_fallback(&result, code);
         }
     }
 
@@ -8085,6 +8120,7 @@ mod tests {
     fn keeps_auto_non_serializable_signal_handlers_eager() {
         let source = "import { $state } from 'fict'; export function App() { const callback = $state(() => 'hit'); return <button onClick={() => { console.log(typeof callback()); console.log('again'); }}>Click</button>; }";
         let mut input = request(source, "preview-signal-auto.tsx");
+        allow_preview_fallback(&mut input);
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -8095,6 +8131,7 @@ mod tests {
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
         assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-CAPTURE");
     }
 
     #[cfg(feature = "preview")]
@@ -8102,6 +8139,7 @@ mod tests {
     fn keeps_auto_outer_signal_handlers_eager() {
         let source = "import { $state } from 'fict'; export function Outer() { const count = $state(0); function Inner() { return <button onClick={() => { console.log(count()); console.log('again'); }}>Click</button>; } return <Inner />; }";
         let mut input = request(source, "preview-outer-signal-auto.tsx");
+        allow_preview_fallback(&mut input);
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -8112,6 +8150,7 @@ mod tests {
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
         assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-CAPTURE");
     }
 
     #[cfg(feature = "preview")]
@@ -8145,9 +8184,7 @@ mod tests {
     fn keeps_auto_keyed_list_alias_handlers_eager_in_fallback_mode() {
         let source = "import { $state } from 'fict'; const remove = id => id; export function App() { const rows = $state([]); return <ul>{rows.map((row, index) => <li key={row.id}><button onClick={() => remove(row.id + index)}>X</button></li>)}</ul>; }";
         let mut input = request(source, "preview-keyed-alias-auto.tsx");
-        // This test intentionally inspects the emitted eager fallback. Normal
-        // application compilation remains fail-closed under strictGuarantee.
-        input.options.strict_guarantee = false;
+        allow_preview_fallback(&mut input);
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -8160,19 +8197,7 @@ mod tests {
         assert!(result.code.contains("createKeyedList"), "{}", result.code);
         assert!(result.code.contains("addEventListener"), "{}", result.code);
         assert!(!result.code.contains("fict:compiler-artifact:"));
-        // The eager fallback leaves the control inert until something else
-        // resumes the scope, so it must be reported rather than applied
-        // silently.
-        assert!(
-            result.diagnostics.iter().any(|diagnostic| {
-                diagnostic.code.as_str() == "FICT-PREVIEW-EAGER-CAPTURE"
-                    && diagnostic.severity == DiagnosticSeverity::Warning
-                    && diagnostic.guarantee_class == GuaranteeClass::Fallback
-                    && diagnostic.message.contains("stays inert")
-            }),
-            "{:?}",
-            result.diagnostics
-        );
+        assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-CAPTURE");
     }
 
     #[cfg(feature = "preview")]
@@ -8301,6 +8326,7 @@ mod tests {
     fn keeps_auto_preview_member_handler_values_eager() {
         let source = "const holder = { handler: () => 1 }; export function App() { return <button onClick={holder.handler}>Click</button>; }";
         let mut input = request(source, "preview-member-auto.tsx");
+        allow_preview_fallback(&mut input);
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -8316,6 +8342,7 @@ mod tests {
             result.code
         );
         assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-HANDLER");
     }
 
     #[cfg(feature = "preview")]
@@ -8560,20 +8587,28 @@ mod tests {
     #[cfg(feature = "preview")]
     #[test]
     fn keeps_auto_handlers_with_unsafe_local_function_dependencies_eager() {
-        for (name, source) in [
+        for (name, source, code) in [
             (
                 "reassigned",
                 "export function App() { let helper = () => 1; helper = () => 2; return <button onClick={() => { helper(); console.log('eager'); }}>Click</button>; }",
+                "FICT-PREVIEW-EAGER-CAPTURE",
             ),
             (
                 "alias-mutated",
                 "export function App() { const helper = () => 1; const alias = helper; alias.extra = 'x'; return <button onClick={() => { console.log(helper.extra); console.log('eager'); }}>Click</button>; }",
+                "FICT-PREVIEW-EAGER-CAPTURE",
+            ),
+            (
+                "lexical-context",
+                "export function App() { const helper = () => arguments.length; return <button onClick={() => { helper(); console.log('eager'); }}>Click</button>; }",
+                "FICT-PREVIEW-EAGER-CONTEXT",
             ),
         ] {
             let mut input = request(
                 source,
                 &format!("preview-local-function-dependency-auto-{name}.tsx"),
             );
+            allow_preview_fallback(&mut input);
             input.options.preview = Some(CompilerPreviewOptions {
                 resumable: true,
                 auto_extract_handlers: true,
@@ -8593,6 +8628,7 @@ mod tests {
                 "{name}: {}",
                 result.code
             );
+            assert_preview_fallback(&result, code);
         }
     }
 
@@ -8652,6 +8688,7 @@ mod tests {
                 "export function App() {{ {declaration} return <button onClick={{handler}}>Click</button>; }}"
             );
             let mut input = request(&source, &format!("preview-local-handler-auto-{name}.tsx"));
+            allow_preview_fallback(&mut input);
             input.options.preview = Some(CompilerPreviewOptions {
                 resumable: true,
                 auto_extract_handlers: true,
@@ -8670,6 +8707,7 @@ mod tests {
                 "{name}: {}",
                 result.code
             );
+            assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-HANDLER");
         }
     }
 
@@ -8678,6 +8716,7 @@ mod tests {
     fn keeps_auto_mutable_module_preview_handler_identifiers_eager() {
         let source = "export let handler = () => 1; export function App() { return <button onClick={handler}>Click</button>; }";
         let mut input = request(source, "preview-mutable-module-auto.tsx");
+        allow_preview_fallback(&mut input);
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -8693,6 +8732,7 @@ mod tests {
             result.code
         );
         assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-HANDLER");
     }
 
     #[cfg(feature = "preview")]
@@ -8700,6 +8740,7 @@ mod tests {
     fn falls_back_for_auto_preview_handlers_with_lexical_context() {
         let source = "export function App() { return <button onClick={() => { console.log(this); console.log('eager'); }}>Click</button>; }";
         let mut input = request(source, "preview-context-auto.tsx");
+        allow_preview_fallback(&mut input);
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -8715,6 +8756,7 @@ mod tests {
             result.code
         );
         assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-CONTEXT");
     }
 
     #[cfg(feature = "preview")]
@@ -9010,6 +9052,7 @@ mod tests {
             ),
         ] {
             let mut input = request(source, &format!("preview-factory-{name}-auto.tsx"));
+            allow_preview_fallback(&mut input);
             input.options.preview = Some(CompilerPreviewOptions {
                 resumable: true,
                 auto_extract_handlers: true,
@@ -9026,6 +9069,7 @@ mod tests {
             assert!(!result.code.contains("fict:compiler-artifact:"));
             assert!(result.code.contains(binding), "{name}: {}", result.code);
             assert!(result.code.contains(expected), "{name}: {}", result.code);
+            assert_preview_fallback(&result, "FICT-PREVIEW-EAGER-CONTEXT");
         }
     }
 

@@ -83,77 +83,78 @@ pub fn attach_preview_plan(
                 continue;
             }
 
+            macro_rules! reject_handler {
+                ($diagnostic:expr) => {{
+                    let diagnostic = $diagnostic;
+                    if candidate.explicit {
+                        diagnostics.push(diagnostic);
+                    } else {
+                        advisories
+                            .push(preview_eager_fallback_warning(diagnostic, &candidate.event));
+                    }
+                    continue;
+                }};
+            }
+
             if !candidate.options.is_empty() {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-EVENT-OPTIONS",
-                            format!(
-                                "resumable event handler on:{} does not support event options ({})",
-                                candidate.event,
-                                event_option_labels(candidate.options).join(", ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help("remove the `$` suffix or the event modifier"),
-                    );
-                }
-                continue;
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-EVENT-OPTIONS",
+                        format!(
+                            "resumable event handler on:{} does not support event options ({})",
+                            candidate.event,
+                            event_option_labels(candidate.options).join(", ")
+                        ),
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help("remove the `$` suffix or the event modifier")
+                );
             }
             if !DELEGATED_EVENTS.contains(&candidate.event.as_str()) {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-EVENT-LOADER",
-                            format!(
-                                "resumable event handler on:{} is not observed by the default loader",
-                                candidate.event
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "remove the `$` suffix or configure the loader to observe this event",
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-EVENT-LOADER",
+                        format!(
+                            "resumable event handler on:{} is not observed by the default loader",
+                            candidate.event
                         ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "remove the `$` suffix or configure the loader to observe this event",
+                    )
+                );
             }
 
             if handler_is_member_read(owner, &candidate.handler) {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-HANDLER",
-                            "resumable handlers cannot use member-expression handler values because the member read must run during render",
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "store the handler in a stable function binding, or remove the `$` suffix",
-                        ),
-                    );
-                }
-                continue;
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-HANDLER",
+                        "resumable handlers cannot use member-expression handler values because the member read must run during render",
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "store the handler in a stable function binding, or remove the `$` suffix",
+                    )
+                );
             }
 
             let suspension_contexts =
                 handler_expression_suspensions(hir, owner, candidate.origin, handler_function);
             if !suspension_contexts.is_empty() {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-CONTEXT",
-                            format!(
-                                "resumable handler factory expression cannot move suspension context into an isolated artifact: {}",
-                                suspension_contexts.join(", ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "wrap the suspended work in an async or generator event handler, or remove the `$` suffix",
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-CONTEXT",
+                        format!(
+                            "resumable handler factory expression cannot move suspension context into an isolated artifact: {}",
+                            suspension_contexts.join(", ")
                         ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "wrap the suspended work in an async or generator event handler, or remove the `$` suffix",
+                    )
+                );
             }
 
             let direct_handler_binding = handler_binding(owner, &candidate.handler);
@@ -162,24 +163,21 @@ pub fn attach_preview_plan(
             if module_handler_binding
                 .is_some_and(|binding| !is_stable_module_handler_binding(hir, binding))
             {
-                if candidate.explicit {
-                    let name = module_handler_binding
-                        .and_then(|binding| hir.bindings.get(binding.as_usize()))
-                        .map_or("<unknown>", |binding| binding.display_name.as_str());
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-HANDLER",
-                            format!(
-                                "resumable handlers cannot use mutable module handler identifier `{name}`"
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "use a module const/function/class binding, or remove the `$` suffix",
+                let name = module_handler_binding
+                    .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                    .map_or("<unknown>", |binding| binding.display_name.as_str());
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-HANDLER",
+                        format!(
+                            "resumable handlers cannot use mutable module handler identifier `{name}`"
                         ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "use a module const/function/class binding, or remove the `$` suffix",
+                    )
+                );
             }
 
             let local_handler_binding =
@@ -201,24 +199,21 @@ pub fn attach_preview_plan(
                 })
             });
             if local_handler_binding.is_some() && local_handler.is_none() {
-                if candidate.explicit {
-                    let name = local_handler_binding
-                        .and_then(|binding| hir.bindings.get(binding.as_usize()))
-                        .map_or("<unknown>", |binding| binding.display_name.as_str());
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-HANDLER",
-                            format!(
-                                "resumable handlers cannot use mutable or aliased local handler identifier `{name}`"
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "use a local const initialized directly with a function, a function declaration, or remove the `$` suffix",
+                let name = local_handler_binding
+                    .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                    .map_or("<unknown>", |binding| binding.display_name.as_str());
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-HANDLER",
+                        format!(
+                            "resumable handlers cannot use mutable or aliased local handler identifier `{name}`"
                         ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "use a local const initialized directly with a function, a function declaration, or remove the `$` suffix",
+                    )
+                );
             }
 
             let context_captures = handler_context_captures(
@@ -229,26 +224,23 @@ pub fn attach_preview_plan(
                 handler_function,
             );
             if !context_captures.is_empty() {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-CONTEXT",
-                            format!(
-                                "resumable handler captures lexical execution context: {}",
-                                context_captures
-                                    .iter()
-                                    .map(|kind| context_value_label(*kind))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "use an ordinary function with its own dynamic context, or remove the `$` suffix",
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-CONTEXT",
+                        format!(
+                            "resumable handler captures lexical execution context: {}",
+                            context_captures
+                                .iter()
+                                .map(|kind| context_value_label(*kind))
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "use an ordinary function with its own dynamic context, or remove the `$` suffix",
+                    )
+                );
             }
 
             let mut captures = handler_captured_bindings(
@@ -265,22 +257,19 @@ pub fn attach_preview_plan(
                 &mut captures,
             );
             if !local_function_contexts.is_empty() {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-CONTEXT",
-                            format!(
-                                "resumable handler function dependencies capture lexical execution context: {}",
-                                local_function_contexts.join(", ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "use ordinary helper functions with their own dynamic context, or remove the `$` suffix",
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-CONTEXT",
+                        format!(
+                            "resumable handler function dependencies capture lexical execution context: {}",
+                            local_function_contexts.join(", ")
                         ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "use ordinary helper functions with their own dynamic context, or remove the `$` suffix",
+                    )
+                );
             }
             let keyed_alias_captures: Vec<_> = captures
                 .intersection(&keyed_render_parameters)
@@ -288,37 +277,19 @@ pub fn attach_preview_plan(
                 .map(|binding| binding.display_name.as_str())
                 .collect();
             if !keyed_alias_captures.is_empty() {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-CAPTURE",
-                            format!(
-                                "resumable handler captures values that cannot be restored: non-serializable locals: {}",
-                                keyed_alias_captures.join(", ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "keyed-list item and index aliases exist only while rendering an item; remove the `$` suffix to keep the handler eager",
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-CAPTURE",
+                        format!(
+                            "resumable handler captures values that cannot be restored: non-serializable locals: {}",
+                            keyed_alias_captures.join(", ")
                         ),
-                    );
-                } else if automatically_selected {
-                    advisories.push(
-                        preview_eager_fallback_warning(
-                            "FICT-PREVIEW-EAGER-CAPTURE",
-                            &candidate.event,
-                            format!(
-                                "it captures keyed-list aliases that only exist while rendering an item ({})",
-                                keyed_alias_captures.join(", ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "move the handler out of the list callback and read the item from `event.target` (for example a `data-` attribute on the row), so it captures nothing per-item",
-                        ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "keyed-list item and index aliases exist only while rendering an item; remove the `$` suffix to keep the handler eager",
+                    )
+                );
             }
             let local_function_bindings: BTreeSet<_> = local_functions
                 .iter()
@@ -368,22 +339,19 @@ pub fn attach_preview_plan(
                 &prop_bindings,
             );
             if !function_prop_calls.is_empty() {
-                if candidate.explicit {
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-PROP-CALL",
-                            format!(
-                                "resumable handlers cannot call function props: {}",
-                                function_prop_calls.join(", ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help(
-                            "dispatch through a serializable signal or keep this handler eager by removing the `$` suffix",
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-PROP-CALL",
+                        format!(
+                            "resumable handlers cannot call function props: {}",
+                            function_prop_calls.join(", ")
                         ),
-                    );
-                }
-                continue;
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help(
+                        "dispatch through a serializable signal or keep this handler eager by removing the `$` suffix",
+                    )
+                );
             }
             let prop_rest_binding = owner_emit
                 .props
@@ -486,36 +454,33 @@ pub fn attach_preview_plan(
             }
 
             if !unsupported.is_empty() || !unsafe_signals.is_empty() || !outer_signals.is_empty() {
-                if candidate.explicit {
-                    unsupported.sort();
-                    unsafe_signals.sort();
-                    outer_signals.sort();
-                    let mut details = Vec::new();
-                    if !unsupported.is_empty() {
-                        details.push(format!(
-                            "non-serializable locals: {}",
-                            unsupported.join(", ")
-                        ));
-                    }
-                    if !unsafe_signals.is_empty() {
-                        details.push(format!("signals: {}", unsafe_signals.join(", ")));
-                    }
-                    if !outer_signals.is_empty() {
-                        details.push(format!("outer signals: {}", outer_signals.join(", ")));
-                    }
-                    diagnostics.push(
-                        preview_error(
-                            "FICT-PREVIEW-CAPTURE",
-                            format!(
-                                "resumable handler captures values that cannot be restored: {}",
-                                details.join("; ")
-                            ),
-                        )
-                        .with_primary_span(handler_origin)
-                        .with_help("use only component-owned serializable signals, serializable props, or stable module bindings; otherwise remove the `$` suffix"),
-                    );
+                unsupported.sort();
+                unsafe_signals.sort();
+                outer_signals.sort();
+                let mut details = Vec::new();
+                if !unsupported.is_empty() {
+                    details.push(format!(
+                        "non-serializable locals: {}",
+                        unsupported.join(", ")
+                    ));
                 }
-                continue;
+                if !unsafe_signals.is_empty() {
+                    details.push(format!("signals: {}", unsafe_signals.join(", ")));
+                }
+                if !outer_signals.is_empty() {
+                    details.push(format!("outer signals: {}", outer_signals.join(", ")));
+                }
+                reject_handler!(
+                    preview_error(
+                        "FICT-PREVIEW-CAPTURE",
+                        format!(
+                            "resumable handler captures values that cannot be restored: {}",
+                            details.join("; ")
+                        ),
+                    )
+                    .with_primary_span(handler_origin)
+                    .with_help("use only component-owned serializable signals, serializable props, or stable module bindings; otherwise remove the `$` suffix")
+                );
             }
 
             lexical_captures.sort_by_key(|capture| capture.binding);
@@ -2342,28 +2307,28 @@ fn ensure_runtime_import(
     });
 }
 
-/// Warn that an auto-selected handler had to stay eager.
-///
-/// In resumable output an eager handler is only attached once its component
-/// scope resumes, and a scope with no extracted handler has nothing to trigger
-/// that resume. Such a control is inert, so the degradation must not be silent.
-fn preview_eager_fallback_warning(
-    code: &'static str,
-    event: &str,
-    reason: impl Into<String>,
-) -> Diagnostic {
-    Diagnostic::new(
-        DiagnosticCode::new(code).expect("Preview diagnostic literal"),
-        DiagnosticSeverity::Warning,
-        format!(
-            "resumable output keeps on:{event} eager because {}; the control stays inert until its component scope resumes",
-            reason.into()
-        ),
-    )
-    // An inert control is not guaranteed resumable output. Keep the producer
-    // warning-shaped so explicit non-production fallback builds can inspect the
-    // degradation, while `strictGuarantee` escalates it to a hard error.
-    .with_guarantee_class(GuaranteeClass::Fallback)
+/// Convert an explicit-handler rejection into the equivalent auto fallback.
+fn preview_eager_fallback_warning(mut diagnostic: Diagnostic, event: &str) -> Diagnostic {
+    let code = match diagnostic.code.as_str() {
+        "FICT-PREVIEW-EVENT-OPTIONS" => "FICT-PREVIEW-EAGER-EVENT-OPTIONS",
+        "FICT-PREVIEW-EVENT-LOADER" => "FICT-PREVIEW-EAGER-EVENT-LOADER",
+        "FICT-PREVIEW-HANDLER" => "FICT-PREVIEW-EAGER-HANDLER",
+        "FICT-PREVIEW-CONTEXT" => "FICT-PREVIEW-EAGER-CONTEXT",
+        "FICT-PREVIEW-CAPTURE" => "FICT-PREVIEW-EAGER-CAPTURE",
+        "FICT-PREVIEW-PROP-CALL" => "FICT-PREVIEW-EAGER-PROP-CALL",
+        code => unreachable!("unsupported Preview fallback diagnostic: {code}"),
+    };
+    diagnostic.code = DiagnosticCode::new(code).expect("Preview fallback diagnostic");
+    diagnostic.severity = DiagnosticSeverity::Warning;
+    diagnostic.message = format!(
+        "resumable output keeps on:{event} eager because {}; the control stays inert until its component scope resumes",
+        diagnostic.message
+    );
+    diagnostic.help = Some(
+        "make the handler fully resumable, or disable resumable output for this module".to_owned(),
+    );
+    diagnostic.guarantee_class = GuaranteeClass::Fallback;
+    diagnostic
 }
 
 fn preview_error(code: &'static str, message: impl Into<String>) -> Diagnostic {
