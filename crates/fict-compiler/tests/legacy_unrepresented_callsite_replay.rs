@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
     fmt::Write as _,
 };
 
@@ -208,6 +209,10 @@ fn assert_sha256(value: &str, context: &str) {
     );
 }
 
+fn replay_bless_enabled(value: Option<&OsStr>) -> bool {
+    value.is_some_and(|value| value == "1")
+}
+
 /// Rewrite every fixture's expected digests from the current compiler.
 ///
 /// The corpus generator needs a legacy compiler checkout, which is not part of
@@ -262,11 +267,11 @@ fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
     assert!(!corpus_text.contains("file:///var/folders/"));
     assert!(!corpus_text.contains("/fict-legacy-unrepresented-"));
     let corpus: ReplayCorpus = serde_json::from_str(corpus_text).expect("valid replay corpus");
-
-    if std::env::var_os("FICT_BLESS_REPLAY").is_some() {
-        bless_replay_corpus(corpus_text, &corpus);
-        return;
-    }
+    let bless = replay_bless_enabled(std::env::var_os("FICT_BLESS_REPLAY").as_deref());
+    assert!(
+        !bless || cfg!(feature = "preview"),
+        "replay blessing requires the preview feature"
+    );
 
     assert_eq!(corpus.schema_version, 1);
     assert_eq!(
@@ -526,20 +531,24 @@ fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
             "{} diagnostics",
             fixture.id
         );
-        assert_eq!(
-            sha256(&first.code),
-            fixture.expected.code_sha256,
-            "{} code",
-            fixture.id
-        );
+        if !bless {
+            assert_eq!(
+                sha256(&first.code),
+                fixture.expected.code_sha256,
+                "{} code",
+                fixture.id
+            );
+        }
         let deterministic_json =
             serde_json::to_string(&first_deterministic).expect("serialize deterministic result");
-        assert_eq!(
-            sha256(&deterministic_json),
-            fixture.expected.deterministic_result_sha256,
-            "{} deterministic result digest",
-            fixture.id
-        );
+        if !bless {
+            assert_eq!(
+                sha256(&deterministic_json),
+                fixture.expected.deterministic_result_sha256,
+                "{} deterministic result digest",
+                fixture.id
+            );
+        }
     }
 
     assert_eq!(fixture_ids, fixture_ids_referenced);
@@ -562,4 +571,16 @@ fn replays_every_legacy_unrepresented_compiler_callsite_variant() {
             ("structured-hook-return".into(), 1),
         ])
     );
+    if bless {
+        bless_replay_corpus(corpus_text, &corpus);
+    }
+}
+
+#[test]
+fn requires_exact_replay_bless_opt_in() {
+    assert!(!replay_bless_enabled(None));
+    assert!(!replay_bless_enabled(Some(OsStr::new(""))));
+    assert!(!replay_bless_enabled(Some(OsStr::new("0"))));
+    assert!(!replay_bless_enabled(Some(OsStr::new("true"))));
+    assert!(replay_bless_enabled(Some(OsStr::new("1"))));
 }
