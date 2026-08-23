@@ -21,6 +21,7 @@ import {
   releaseIsolationEnv,
   worktreeRemovalFailure,
 } from './release-verify-clean.mjs'
+import { isolatedNpmEnvironment } from './lib/npm-smoke-environment.mjs'
 
 const rootPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const compilerPackage = JSON.parse(
@@ -775,6 +776,20 @@ test('consumer overrides force transitive workspace dependencies to local tarbal
       },
     },
   )
+})
+
+test('native npm smoke installs ignore user-scoped script policy', () => {
+  const baseEnvironment = {
+    PATH: '/usr/bin',
+    npm_config_userconfig: '/tmp/user-npmrc',
+    NPM_CONFIG_ALLOW_SCRIPTS: 'fict-monorepo',
+  }
+
+  assert.deepEqual(isolatedNpmEnvironment(baseEnvironment, '/tmp/smoke-npmrc'), {
+    PATH: '/usr/bin',
+    NPM_CONFIG_USERCONFIG: '/tmp/smoke-npmrc',
+  })
+  assert.equal(baseEnvironment.npm_config_userconfig, '/tmp/user-npmrc')
 })
 
 test('clean-checkout diagnostics preserve the offending porcelain entries', () => {

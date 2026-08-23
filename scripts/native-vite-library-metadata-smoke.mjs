@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import fict from '../packages/vite-plugin/dist/index.js'
+import { isolatedNpmEnvironment } from './lib/npm-smoke-environment.mjs'
 
 const execFileAsync = promisify(execFile)
 const repositoryRoot = path.resolve(import.meta.dirname, '..')
@@ -45,6 +46,8 @@ const root = await mkdtemp(path.join(tmpdir(), 'fict-native-library-'))
 const libraryRoot = path.join(root, 'library')
 const consumerRoot = path.join(root, 'consumer')
 const packDirectory = path.join(root, 'pack')
+const npmUserConfigPath = path.join(root, 'npmrc')
+const npmEnvironment = isolatedNpmEnvironment(process.env, npmUserConfigPath)
 
 try {
   await Promise.all([
@@ -53,6 +56,7 @@ try {
     mkdir(packDirectory, { recursive: true }),
   ])
   await Promise.all([
+    writeFile(npmUserConfigPath, ''),
     writeFile(
       path.join(libraryRoot, 'package.json'),
       JSON.stringify({
@@ -111,13 +115,11 @@ try {
 
   const packed = parsePackEntry(
     (
-      await execFileAsync('npm', [
-        'pack',
-        libraryRoot,
-        '--json',
-        '--pack-destination',
-        packDirectory,
-      ])
+      await execFileAsync(
+        'npm',
+        ['pack', libraryRoot, '--json', '--pack-destination', packDirectory],
+        { env: npmEnvironment },
+      )
     ).stdout,
   )
   assert.ok(packed.files.some(file => file.path === 'dist/index.fict.meta.json'))
@@ -130,7 +132,7 @@ try {
   await execFileAsync(
     'npm',
     ['install', tarballPath, '--ignore-scripts', '--package-lock=false', '--no-audit', '--no-fund'],
-    { cwd: consumerRoot },
+    { cwd: consumerRoot, env: npmEnvironment },
   )
   await writeFile(
     path.join(consumerRoot, 'src', 'main.ts'),
