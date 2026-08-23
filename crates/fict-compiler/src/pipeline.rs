@@ -8142,9 +8142,12 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
-    fn keeps_auto_keyed_list_alias_handlers_eager() {
+    fn keeps_auto_keyed_list_alias_handlers_eager_in_fallback_mode() {
         let source = "import { $state } from 'fict'; const remove = id => id; export function App() { const rows = $state([]); return <ul>{rows.map((row, index) => <li key={row.id}><button onClick={() => remove(row.id + index)}>X</button></li>)}</ul>; }";
         let mut input = request(source, "preview-keyed-alias-auto.tsx");
+        // This test intentionally inspects the emitted eager fallback. Normal
+        // application compilation remains fail-closed under strictGuarantee.
+        input.options.strict_guarantee = false;
         input.options.preview = Some(CompilerPreviewOptions {
             resumable: true,
             auto_extract_handlers: true,
@@ -8164,6 +8167,34 @@ mod tests {
             result.diagnostics.iter().any(|diagnostic| {
                 diagnostic.code.as_str() == "FICT-PREVIEW-EAGER-CAPTURE"
                     && diagnostic.severity == DiagnosticSeverity::Warning
+                    && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                    && diagnostic.message.contains("stays inert")
+            }),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn fails_closed_for_auto_keyed_list_alias_handlers_in_strict_mode() {
+        let source = "import { $state } from 'fict'; const remove = id => id; export function App() { const rows = $state([]); return <ul>{rows.map((row, index) => <li key={row.id}><button onClick={() => remove(row.id + index)}>X</button></li>)}</ul>; }";
+        let mut input = request(source, "preview-keyed-alias-auto-strict.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.is_empty(), "{}", result.code);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-PREVIEW-EAGER-CAPTURE"
+                    && diagnostic.severity == DiagnosticSeverity::Error
+                    && diagnostic.guarantee_class == GuaranteeClass::Fallback
                     && diagnostic.message.contains("stays inert")
             }),
             "{:?}",

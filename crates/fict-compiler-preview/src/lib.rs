@@ -32,7 +32,9 @@ pub struct PreviewOptions {
 /// Attach deterministic resumable handler/component plans to verified Core EmitIR.
 ///
 /// This pass owns no frontend AST. OXC consumes the structured origins and identities later.
-/// Returns non-fatal advisories on success; fatal diagnostics abort the plan.
+/// Returns non-fatal findings on success; the caller's diagnostic policy may
+/// escalate fallback findings after the plan is attached. Fatal diagnostics
+/// abort the plan immediately.
 pub fn attach_preview_plan(
     hir: &HirFile,
     emit: &mut EmitProgram,
@@ -2358,10 +2360,10 @@ fn preview_eager_fallback_warning(
             reason.into()
         ),
     )
-    // Advisory, not Fallback: `Fallback` escalates to a hard error under
-    // `strictGuarantee`, which would newly fail builds that compile today.
-    // Promote this once the eager fallback is considered unacceptable.
-    .with_guarantee_class(GuaranteeClass::Advisory)
+    // An inert control is not guaranteed resumable output. Keep the producer
+    // warning-shaped so explicit non-production fallback builds can inspect the
+    // degradation, while `strictGuarantee` escalates it to a hard error.
+    .with_guarantee_class(GuaranteeClass::Fallback)
 }
 
 fn preview_error(code: &'static str, message: impl Into<String>) -> Diagnostic {
