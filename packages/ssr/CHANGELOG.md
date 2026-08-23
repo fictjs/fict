@@ -1,5 +1,17 @@
 # @fictjs/ssr
 
+## 0.33.0
+
+### Minor Changes
+
+- Adopt runtime 0.33's module-qualified resume lookup for serialized component scopes, preventing
+  cross-module resume collisions in bundled SSR applications.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.33.0
+
 ## 0.28.5
 
 ### Patch Changes

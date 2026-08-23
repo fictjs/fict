@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/compiler-darwin-arm64",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "description": "Fict Rust compiler native binding for macOS ARM64",
   "license": "MIT",
   "repository": {

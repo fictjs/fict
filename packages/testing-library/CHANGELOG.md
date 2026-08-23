@@ -1,5 +1,12 @@
 # @fictjs/testing-library
 
+## 0.33.0
+
+### Minor Changes
+
+- Align the testing utilities with the Fict 0.33 release; helper APIs and runtime peer
+  compatibility remain unchanged.
+
 ## 0.28.1
 
 ### Patch Changes

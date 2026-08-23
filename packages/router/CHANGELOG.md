@@ -1,5 +1,17 @@
 # @fictjs/router
 
+## 0.33.0
+
+### Minor Changes
+
+- Adopt runtime 0.33's module-qualified resumable-scope lookup so routed SSR applications cannot
+  resume a component through another module's colliding bundled export.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.33.0
+
 ## 0.29.0
 
 ### Minor Changes

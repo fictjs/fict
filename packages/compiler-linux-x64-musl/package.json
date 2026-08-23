@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/compiler-linux-x64-musl",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "description": "Fict Rust compiler native binding for Linux x64 (musl)",
   "license": "MIT",
   "repository": {

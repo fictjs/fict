@@ -1,5 +1,18 @@
 # fict
 
+## 0.33.0
+
+### Minor Changes
+
+- Expose runtime 0.33's module-qualified resumable-scope lookup through
+  `fict/experimental/loader`, preventing cross-module resume collisions when bundlers coalesce
+  generated resume names.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.33.0
+
 ## 0.32.0
 
 ### Minor Changes

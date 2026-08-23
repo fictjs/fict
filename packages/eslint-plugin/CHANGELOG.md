@@ -1,5 +1,12 @@
 # @fictjs/eslint-plugin
 
+## 0.33.0
+
+### Minor Changes
+
+- Align the lint package with the Fict 0.33 Core release; rule behavior and public configuration
+  remain unchanged.
+
 ## 0.32.0
 
 ### Patch Changes

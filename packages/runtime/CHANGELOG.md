@@ -1,5 +1,13 @@
 # @fictjs/runtime
 
+## 0.33.0
+
+### Minor Changes
+
+- Resolve resumable scopes by their module-qualified `data-fict-t` component identity before
+  legacy QRL aliases, preventing components with colliding bundled resume exports from resuming
+  through the wrong function while retaining compatibility fallbacks.
+
 ## 0.32.0
 
 ### Minor Changes

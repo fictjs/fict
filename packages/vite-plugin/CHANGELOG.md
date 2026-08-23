@@ -1,5 +1,18 @@
 # @fictjs/vite-plugin
 
+## 0.33.0
+
+### Minor Changes
+
+- Use compiler 0.33 to emit module-qualified resumable identities, preserve keyed block-bodied
+  `.map()` lowering, and fail strict builds when automatically selected handlers cannot be
+  extracted safely.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.33.0
+
 ## 0.32.0
 
 ### Patch Changes

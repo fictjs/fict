@@ -1,5 +1,17 @@
 # @fictjs/webpack-plugin
 
+## 0.33.0
+
+### Minor Changes
+
+- Use compiler 0.33 so keyed block-bodied `.map()` callbacks retain list reconciliation when they
+  declare unrelated local bindings.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.33.0
+
 ## 0.32.0
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # @fictjs/compiler
 
+## 0.33.0
+
+### Minor Changes
+
+- Register Preview resume functions under module-qualified component identities so components
+  that share a bundled resume export cannot resume through another source module's function.
+- Preserve keyed-list lowering for block-bodied `.map()` callbacks whose keys do not depend on
+  unrelated callback-local declarations, avoiding duplicate client rows after SSR.
+- Diagnose every automatically selected Preview handler that must remain eager, and fail closed
+  under `strictGuarantee` when the resulting control would otherwise remain inert.
+- Harden compiler review and replay evidence so corpus blessing is explicit and release
+  provenance remains bound to the reviewed source revision.
+
 ## 0.32.0
 
 ### Minor Changes
