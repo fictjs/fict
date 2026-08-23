@@ -94,7 +94,7 @@ test('orders workspace dependencies before their publishable consumers', () => {
   assert.ok(ordered.indexOf('@fictjs/compiler') < ordered.indexOf('@fictjs/plugin'))
 })
 
-test('requires native packages, facade optional dependencies, and versions to be atomic', () => {
+test('requires native packages, facade dependencies, and capability versions to be atomic', () => {
   const compiler = {
     name: '@fictjs/compiler',
     version: '1.2.3',
@@ -107,14 +107,35 @@ test('requires native packages, facade optional dependencies, and versions to be
     version: '1.2.3',
   }))
   const allowlist = ['@fictjs/compiler', ...nativePackages.map(pkg => pkg.name)]
+  const capabilityManifest = { packageVersion: '1.2.3' }
   assert.deepEqual(
-    validateAtomicNativeReleaseConfiguration([compiler, ...nativePackages], allowlist),
+    validateAtomicNativeReleaseConfiguration(
+      [compiler, ...nativePackages],
+      allowlist,
+      capabilityManifest,
+    ),
     [],
   )
 
   assert.deepEqual(
-    validateAtomicNativeReleaseConfiguration([compiler, ...nativePackages.slice(1)], allowlist),
+    validateAtomicNativeReleaseConfiguration(
+      [compiler, ...nativePackages.slice(1)],
+      allowlist,
+      capabilityManifest,
+    ),
     [`native release matrix is missing ${nativePackages[0].name}`],
+  )
+
+  assert.deepEqual(
+    validateAtomicNativeReleaseConfiguration([compiler, ...nativePackages], allowlist, {
+      packageVersion: '1.2.2',
+    }),
+    ['compiler capability packageVersion 1.2.2 must match @fictjs/compiler@1.2.3'],
+  )
+
+  assert.deepEqual(
+    validateAtomicNativeReleaseConfiguration([compiler, ...nativePackages], allowlist),
+    ['compiler capability packageVersion missing must match @fictjs/compiler@1.2.3'],
   )
 })
 

@@ -8,6 +8,10 @@ import { NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
 const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const defaultConfigPath = path.join(repoRoot, '.github/npm-publish-packages.json')
+const compilerCapabilityManifestPath = path.join(
+  repoRoot,
+  'packages/compiler/compiler-capabilities.json',
+)
 const workspaceRoots = ['packages', 'examples']
 const registryRetryDelaysMs = [1_000, 2_000, 4_000, 8_000, 15_000]
 
@@ -101,7 +105,11 @@ export function buildAtomicPublishOrder(plan, packages = []) {
   return ordered
 }
 
-export function validateAtomicNativeReleaseConfiguration(packages, allowedPackageNames) {
+export function validateAtomicNativeReleaseConfiguration(
+  packages,
+  allowedPackageNames,
+  compilerCapabilityManifest,
+) {
   const failures = []
   const byName = new Map(packages.map(pkg => [pkg.name, pkg]))
   const compiler = byName.get('@fictjs/compiler')
@@ -112,6 +120,12 @@ export function validateAtomicNativeReleaseConfiguration(packages, allowedPackag
   if (!compiler) {
     failures.push('native compiler packages require the @fictjs/compiler facade')
     return failures
+  }
+
+  if (compilerCapabilityManifest?.packageVersion !== compiler.version) {
+    failures.push(
+      `compiler capability packageVersion ${String(compilerCapabilityManifest?.packageVersion ?? 'missing')} must match @fictjs/compiler@${compiler.version}`,
+    )
   }
 
   for (const target of NATIVE_COMPILER_TARGETS) {
@@ -135,7 +149,12 @@ export function validateAtomicNativeReleaseConfiguration(packages, allowedPackag
   return failures
 }
 
-export function validateReleaseConfiguration({ packages, allowedPackageNames, registry }) {
+export function validateReleaseConfiguration({
+  packages,
+  allowedPackageNames,
+  compilerCapabilityManifest,
+  registry,
+}) {
   const failures = []
   const allowed = new Set(allowedPackageNames)
   const packagesByName = new Map()
@@ -192,7 +211,13 @@ export function validateReleaseConfiguration({ packages, allowedPackageNames, re
     }
   }
 
-  failures.push(...validateAtomicNativeReleaseConfiguration(packages, allowedPackageNames))
+  failures.push(
+    ...validateAtomicNativeReleaseConfiguration(
+      packages,
+      allowedPackageNames,
+      compilerCapabilityManifest,
+    ),
+  )
 
   return failures
 }
@@ -349,9 +374,11 @@ async function main() {
   const options = parseArguments(process.argv.slice(2))
   const config = readJson(options.configPath)
   const workspacePackages = readWorkspacePackages(repoRoot)
+  const compilerCapabilityManifest = readJson(compilerCapabilityManifestPath)
   const failures = validateReleaseConfiguration({
     packages: workspacePackages,
     allowedPackageNames: config.packages ?? [],
+    compilerCapabilityManifest,
     registry: config.registry,
   })
   failures.push(...validateReleaseTag(options.tag, workspacePackages))
