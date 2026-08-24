@@ -65,7 +65,7 @@
   },
   "devDependencies": {
     "fict": "workspace:*",
-    "tsdown": "^0.22.3"
+    "tsdown": "^0.22.14"
   },
   "keywords": [
     "fict",
