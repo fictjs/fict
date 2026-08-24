@@ -63,7 +63,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@oxc-project/runtime": "0.139.0"
+    "@oxc-project/runtime": "0.146.0"
   },
   "optionalDependencies": {
     "@fictjs/compiler-darwin-arm64": "workspace:*",
