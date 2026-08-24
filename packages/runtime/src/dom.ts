@@ -758,21 +758,30 @@ function createElementWithContext(
         ? semanticTagName
         : tagName
   assertValidDOMElementName(domTagName, namespaceURI !== null, namespaceURI ?? undefined)
-  const el =
+  const createDOMElement = () =>
     namespaceURI !== null
       ? ownerDocument.createElementNS(namespaceURI, domTagName)
       : ownerDocument.createElement(domTagName)
-  applyProps(el, vnode.props ?? {}, resolvedNamespace)
+  const expected = createDOMElement()
+  const el = isHydratingActive() ? (claimNodes(expected, () => expected) as Element) : expected
   const childParent =
     namespaceURI === null && el.localName === 'template' && 'content' in el
       ? (el as HTMLTemplateElement).content
       : (el as unknown as ParentNode & Node)
-  appendChildren(
-    childParent,
-    vnode.props?.children as FictNode | FictNode[] | undefined,
-    resolveChildNamespace(resolvedNamespace, el),
-    ownerDocument,
-  )
+  const applyElement = () => {
+    applyProps(el, vnode.props ?? {}, resolvedNamespace)
+    appendChildren(
+      childParent,
+      vnode.props?.children as FictNode | FictNode[] | undefined,
+      resolveChildNamespace(resolvedNamespace, el),
+      ownerDocument,
+    )
+  }
+  if (isHydratingActive()) {
+    withHydration(childParent, applyElement)
+  } else {
+    applyElement()
+  }
   return el as DOMElement
 }
 
@@ -963,6 +972,10 @@ function appendChildNode(
 
   if (domNode.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
     parent.ownerDocument.adoptNode(domNode)
+  }
+
+  if (isHydratingActive() && domNode.parentNode === parent) {
+    return
   }
 
   try {

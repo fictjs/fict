@@ -501,6 +501,78 @@ describe('DOM Module', () => {
       teardown()
     })
 
+    it('claims a nested resumable component host before a compiled insert marker', () => {
+      container.innerHTML =
+        '<button><span>prefix</span><fict-host data-fict-host data-fict-s="sChild" data-fict-t="Child@test" data-fict-h="/child.js#resume"><svg data-server-child></svg></fict-host><!----></button>'
+      const button = container.firstElementChild
+      const childHost = button?.querySelector('fict-host')
+      let childRenders = 0
+
+      function Child() {
+        childRenders++
+        return template('<svg data-client-child></svg>', false, true)()
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      const teardown = hydrateComponent(() => {
+        const root = template('<button><span>prefix</span><!----></button>')()
+        const marker = resolvePath(root, [1])!
+        insert(
+          root as ParentNode & Node,
+          () => ({ type: Child, props: {}, key: undefined }),
+          marker,
+          createElement,
+        )
+      }, container)
+
+      expect(container.firstElementChild).toBe(button)
+      expect(button?.querySelector('fict-host')).toBe(childHost)
+      expect(button?.querySelectorAll('fict-host')).toHaveLength(1)
+      expect(button?.querySelectorAll('svg')).toHaveLength(1)
+      expect(button?.querySelector('[data-server-child]')).not.toBeNull()
+      expect(button?.querySelector('[data-client-child]')).toBeNull()
+      expect(childRenders).toBe(0)
+
+      teardown()
+    })
+
+    it('hydrates generic intrinsic vnode trees without replacing nested scope hosts', () => {
+      container.innerHTML =
+        '<section><span>prefix</span><fict-host data-fict-host data-fict-s="sChild" data-fict-t="Child@test" data-fict-h="/child.js#resume"><button>server child</button></fict-host></section>'
+      const section = container.firstElementChild
+      const childHost = section?.querySelector('fict-host')
+      let childRenders = 0
+
+      function Child() {
+        childRenders++
+        return { type: 'button', props: { children: 'client child' }, key: undefined }
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      const teardown = hydrateComponent(
+        () =>
+          createElement({
+            type: 'section',
+            props: {
+              children: [
+                { type: 'span', props: { children: 'prefix' }, key: undefined },
+                { type: Child, props: {}, key: undefined },
+              ],
+            },
+            key: undefined,
+          }),
+        container,
+      )
+
+      expect(container.firstElementChild).toBe(section)
+      expect(section?.querySelector('fict-host')).toBe(childHost)
+      expect(section?.querySelectorAll('fict-host')).toHaveLength(1)
+      expect(section?.querySelector('button')?.textContent).toBe('server child')
+      expect(childRenders).toBe(0)
+
+      teardown()
+    })
+
     it('does not claim a nested resumable host with a different component identity', () => {
       container.innerHTML =
         '<fict-host data-fict-host data-fict-s="sOther" data-fict-t="Other@test" data-fict-h="/other.js#resume"><button>server</button></fict-host>'

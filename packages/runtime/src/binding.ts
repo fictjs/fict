@@ -1179,6 +1179,7 @@ export function insert(
   let currentNodes: Node[] = []
   let currentText: Text | null = null
   let currentRoot: RootContext | null = null
+  let initialHydrating = __fictIsHydrating()
 
   const expectedMarker = (marker as Node & { [HYDRATED_TEMPLATE_NODE]?: Node })[
     HYDRATED_TEMPLATE_NODE
@@ -1275,6 +1276,7 @@ export function insert(
         const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
         const shouldInsert = value != null && typeof value !== 'boolean'
         setTextNode(textValue, shouldInsert, parentNode)
+        initialHydrating = false
         return
       }
 
@@ -1297,6 +1299,18 @@ export function insert(
       }
       try {
         const ownerDocument = root.ownerDocument ?? markerOwnerDocument
+        const hydrationScopeHost =
+          initialHydrating &&
+          isHydratingActive() &&
+          value !== null &&
+          typeof value === 'object' &&
+          !Array.isArray(value) &&
+          typeof (value as FictVNode).type === 'function' &&
+          marker.previousSibling?.nodeType === 1 &&
+          (marker.previousSibling as Element).localName.toLowerCase() === 'fict-host' &&
+          (marker.previousSibling as Element).hasAttribute('data-fict-host')
+            ? marker.previousSibling
+            : null
         const createValue = () => {
           if (isNodeLike(value, ownerDocument)) {
             return value
@@ -1316,20 +1330,33 @@ export function insert(
           return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
         }
 
-        const newNode: Node | Node[] = untrack(createValue)
+        let newNode: Node | Node[]
+        if (hydrationScopeHost && parentNode) {
+          newNode = withHydrationRange(
+            hydrationScopeHost,
+            marker,
+            parentNode.ownerDocument ?? markerOwnerDocument,
+            () => untrack(createValue),
+          )
+        } else {
+          newNode = untrack(createValue)
+        }
 
         nodes = toNodeArray(newNode, ownerDocument)
         if (root.suspended) {
+          initialHydrating = false
           release()
           return
         }
-        if (parentNode) {
+        if (parentNode && !hydrationScopeHost) {
           nodes = insertNodesBefore(parentNode, nodes, marker)
         }
         currentRoot = root
         currentNodes = nodes
+        initialHydrating = false
         committed = true
       } catch (err) {
+        initialHydrating = false
         if (handleSuspend(err as any, root)) {
           release()
           return
