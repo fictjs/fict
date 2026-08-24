@@ -45,16 +45,16 @@
   },
   "dependencies": {
     "@fictjs/runtime": "workspace:*",
-    "open": "^11.0.0",
-    "ws": "^8.21.0"
+    "open": "^11.0.1",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.37",
     "@types/ws": "^8.18.1",
     "jsdom": "^28.1.0",
     "tsdown": "^0.22.3",
-    "typescript": "^5.7.3",
-    "vite": "^7.3.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
