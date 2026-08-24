@@ -49,7 +49,7 @@
     "magic-string": "^0.30.21"
   },
   "devDependencies": {
-    "tsdown": "^0.22.3",
+    "tsdown": "^0.22.14",
     "vite": "^7.3.6"
   },
   "keywords": [

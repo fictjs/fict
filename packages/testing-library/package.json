@@ -49,11 +49,11 @@
     "@fictjs/compiler": "workspace:*",
     "@fictjs/runtime": "workspace:*",
     "@fictjs/vite-plugin": "workspace:*",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@types/node": "^25.3.0",
-    "jsdom": "^28.1.0",
-    "tsdown": "^0.22.3",
-    "vitest": "^4.0.18"
+    "@testing-library/jest-dom": "^7.0.1",
+    "@types/node": "^26.2.0",
+    "jsdom": "^30.0.1",
+    "tsdown": "^0.22.14",
+    "vitest": "^4.1.11"
   },
   "keywords": [
     "fict",
