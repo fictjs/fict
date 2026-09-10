@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[rustfmt::skip] use oxc::{allocator::Vec as ArenaVec, ast::ast::{ObjectPropertyKind as OxcObjectPropertyKind, PropertyKey as OxcPropertyKey, *}, ast_visit::{Visit, walk::*}, semantic::Scoping, span::{GetSpan, Span}, syntax::{operator::{AssignmentOperator as OxcAssignmentOperator, UnaryOperator as OxcUnaryOperator}, scope::ScopeFlags, symbol::SymbolId}};
 #[rustfmt::skip]
 use super::{PlannedPlaceBase, StaticAliasPath, class_guaranteed_returned_object, class_preserves_instance_prototype, direct_array_push_call_receiver, direct_mutating_array_call_receiver, identifier_symbol, planned_assignment_target_place, planned_expression_place, planned_simple_assignment_target_place, prototype_sensitive_invalidation_paths, static_alias_invalidation_path, static_alias_path_from_place, static_alias_source_path, static_from_entries_pairs, static_json_replacer_global_item, static_member_name, unwrap_transparent_call_expression};
+mod path_conditions;
+use path_conditions::{PathRead, PathRules, solve_paths};
+
 pub(super) struct ExecutionStateFacts {
     pub(super) discarded_invocation_spans: BTreeSet<(u32, u32)>,
     pub(super) unexecuted_body_spans: BTreeSet<(u32, u32)>,
@@ -835,27 +838,6 @@ impl<'semantic> ExecutionStateCollector<'semantic> {
             .extend_from_slice(&path.properties[source.properties.len()..]);
         forwarded.element_wildcard |= path.element_wildcard;
         Some(forwarded.canonicalized())
-    }
-
-    fn read_is_owned_by_merely_observed_callable(
-        &self,
-        span: &(u32, u32),
-        merely_observed: &BTreeSet<StaticAliasPath>,
-    ) -> bool {
-        self.read_callable_owner_spans
-            .get(span)
-            .into_iter()
-            .flatten()
-            .any(|owner| {
-                self.callable_targets_by_span
-                    .get(owner)
-                    .is_some_and(|targets| {
-                        !targets.is_empty()
-                            && targets
-                                .iter()
-                                .all(|target| merely_observed.contains(target))
-                    })
-            })
     }
 
     fn record_returned_callable_definition(
@@ -8949,243 +8931,207 @@ impl<'semantic> ExecutionStateCollector<'semantic> {
                 .or_default()
                 .insert(target.clone());
         }
-        let mut definite_generator_callables = BTreeSet::new();
-        loop {
-            let mut changed = false;
-            for path in &candidates {
-                if definite_generator_callables.contains(path)
-                    || forced_executed_targets.contains(path)
-                    || self.non_generator_callable_targets.contains(path)
+        let mut forwardings_by_target_root = BTreeMap::<_, Vec<_>>::new();
+        for (index, forwarding) in self.forwarded_callable_reads.iter().enumerate() {
+            forwardings_by_target_root
+                .entry(&forwarding.target.root)
+                .or_default()
+                .push((index, forwarding));
+        }
+        let mut generator_rules = PathRules::new();
+        for path in &candidates {
+            if forced_executed_targets.contains(path)
+                || self.non_generator_callable_targets.contains(path)
+            {
+                continue;
+            }
+            let dependencies = forwardings_by_target_root
+                .get(&path.root)
+                .into_iter()
+                .flatten()
+                .filter_map(|(index, forwarding)| {
+                    Self::replace_callable_path_prefix(path, &forwarding.target, &forwarding.source)
+                        .map(|source| (*index, source))
+                })
+                .collect::<Vec<_>>();
+            if (!self.generator_callable_targets.contains(path) && dependencies.is_empty())
+                || dependencies
+                    .iter()
+                    .any(|(index, _)| !trusted_method_forwardings[*index])
+            {
+                continue;
+            }
+            generator_rules.insert(
+                path.clone(),
+                vec![PathRead {
+                    alternatives: vec![
+                        dependencies.into_iter().map(|(_, source)| source).collect(),
+                    ],
+                }],
+            );
+        }
+        let definite_generator_callables =
+            solve_paths(BTreeSet::new(), &generator_rules, false).paths;
+        let merely_observed = self.merely_observed_paths(
+            &candidates,
+            &forced_executed_targets,
+            &trusted_method_forwardings,
+            &trusted_retained_reads,
+        );
+        let indexed_forwardings = [
+            (&self.forwarded_callable_reads, &trusted_method_forwardings),
+            (&self.retained_callable_reads, &trusted_retained_reads),
+            (
+                &self.terminal_method_alias_reads,
+                &trusted_terminal_method_alias_reads,
+            ),
+            (
+                &self.generator_argument_reads,
+                &trusted_generator_argument_reads,
+            ),
+            (
+                &self.generator_result_reads,
+                &trusted_generator_result_reads,
+            ),
+            (
+                &self.assigned_generator_result_reads,
+                &trusted_assigned_generator_result_reads,
+            ),
+        ]
+        .map(|(reads, trusted)| {
+            let mut by_span = BTreeMap::<_, Vec<_>>::new();
+            for (read, trusted) in reads.iter().zip(trusted) {
+                if *trusted {
+                    by_span.entry(read.source_span).or_default().push(read);
+                }
+            }
+            by_span
+        });
+        let [
+            forwarded,
+            retained,
+            terminal,
+            generator_arguments,
+            generator_results,
+            assigned_results,
+        ] = indexed_forwardings;
+        let mut unexecuted_rules = PathRules::new();
+        for path in &candidates {
+            if forced_executed_targets.contains(path) {
+                continue;
+            }
+            let Some(root) = path.binding_root() else {
+                continue;
+            };
+            let reads = unexecuted_rules.entry(path.clone()).or_default();
+            let discarded = self.discarded_invocation_reads.get(path);
+            'reads: for span in self
+                .binding_reads
+                .get(&root)
+                .into_iter()
+                .flatten()
+                .chain(self.direct_callable_reads.get(path).into_iter().flatten())
+            {
+                if discarded.is_some_and(|discarded| discarded.contains(span))
+                    || self.discarded_value_reads.iter().any(|(observed, spans)| {
+                        (observed.starts_with(path) || path.starts_with(observed))
+                            && spans.contains(span)
+                    })
+                    || self
+                        .guarded_discarded_invocation_reads
+                        .iter()
+                        .enumerate()
+                        .any(|(index, (source, source_span, _))| {
+                            trusted_guarded_reads[index] && source == path && source_span == span
+                        })
                 {
                     continue;
                 }
-                let dependencies = self
-                    .forwarded_callable_reads
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, forwarding)| {
-                        Self::replace_callable_path_prefix(
-                            path,
-                            &forwarding.target,
-                            &forwarding.source,
-                        )
-                        .map(|source| (index, source))
-                    })
-                    .collect::<Vec<_>>();
-                if !self.generator_callable_targets.contains(path) && dependencies.is_empty() {
-                    continue;
+                let mut read = PathRead::default();
+                for (index, guarded) in self.composite_guarded_reads.iter().enumerate() {
+                    if trusted_composite_guarded_reads[index]
+                        && guarded.source == *path
+                        && guarded.source_span == *span
+                    {
+                        let Some(target) = &guarded.target else {
+                            continue 'reads;
+                        };
+                        read.alternatives.push(vec![target.clone()]);
+                    }
                 }
-                if dependencies.iter().all(|(index, source)| {
-                    trusted_method_forwardings[*index]
-                        && definite_generator_callables.contains(source)
-                }) {
-                    changed |= definite_generator_callables.insert(path.clone());
+                for forwarding in terminal.get(span).into_iter().flatten() {
+                    if forwarding.source == *path {
+                        read.alternatives.push(vec![forwarding.target.clone()]);
+                    }
                 }
-            }
-            if !changed {
-                break;
-            }
-        }
-        let mut merely_observed = candidates
-            .iter()
-            .filter(|path| {
-                path.binding_root().is_some() && !forced_executed_targets.contains(*path)
-            })
-            .chain(
-                self.explicitly_merely_observed_callable_paths
-                    .iter()
-                    .filter(|path| !forced_executed_targets.contains(*path)),
-            )
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        loop {
-            let mut rejected = Vec::new();
-            for path in &candidates {
-                if !merely_observed.contains(path) {
-                    continue;
+                for forwarding in forwarded.get(span).into_iter().flatten() {
+                    if forwarding.source == *path {
+                        read.alternatives.push(vec![forwarding.target.clone()]);
+                    } else if forwarding.source.starts_with(path)
+                        && merely_observed.contains(&forwarding.target)
+                    {
+                        continue 'reads;
+                    }
                 }
-                let Some(root) = path.binding_root() else {
-                    continue;
-                };
-                let all_reads_are_observations =
-                    self.binding_reads
-                        .get(&root)
-                        .into_iter()
-                        .flatten()
-                        .chain(self.direct_callable_reads.get(path).into_iter().flatten())
-                        .all(|span| {
-                            self.merely_observed_value_reads.iter().any(
-                                |(observed, observed_spans)| {
-                                    (observed.starts_with(path) || path.starts_with(observed))
-                                        && observed_spans.contains(span)
-                                },
-                            ) || self.forwarded_callable_reads.iter().enumerate().any(
-                                |(index, forwarding)| {
-                                    trusted_method_forwardings[index]
-                                        && forwarding.source_span == *span
-                                        && Self::replace_callable_path_prefix(
-                                            path,
-                                            &forwarding.source,
-                                            &forwarding.target,
-                                        )
-                                        .is_some_and(|target| merely_observed.contains(&target))
-                                },
-                            ) || self.retained_callable_reads.iter().enumerate().any(
-                                |(index, forwarding)| {
-                                    trusted_retained_reads[index]
-                                        && forwarding.source.starts_with(path)
-                                        && forwarding.source_span == *span
-                                        && merely_observed.contains(&forwarding.target)
-                                },
-                            ) || self
-                                .read_is_owned_by_merely_observed_callable(span, &merely_observed)
+                for forwarding in retained.get(span).into_iter().flatten() {
+                    if forwarding.source.starts_with(path) {
+                        if merely_observed.contains(&forwarding.target) {
+                            continue 'reads;
+                        }
+                        if definite_generator_callables.contains(&forwarding.target) {
+                            read.alternatives.push(vec![forwarding.target.clone()]);
+                        }
+                    }
+                }
+                for forwarding in generator_arguments.get(span).into_iter().flatten() {
+                    if forwarding.source.starts_with(path)
+                        && definite_generator_callables.contains(&forwarding.target)
+                    {
+                        if forwarding.source == forwarding.target {
+                            continue 'reads;
+                        }
+                        read.alternatives.push(vec![forwarding.target.clone()]);
+                    }
+                }
+                for (index, argument) in self.generator_body_argument_reads.iter().enumerate() {
+                    if trusted_generator_body_argument_reads[index]
+                        && argument.source.starts_with(path)
+                        && argument.source_span == *span
+                    {
+                        let mut dependencies = Vec::new();
+                        let supported = argument.body_spans.iter().all(|body_span| {
+                            if self.directly_unexecuted_body_spans.contains(body_span)
+                                || trusted_guarded_body_spans.contains(body_span)
+                            {
+                                return true;
+                            }
+                            if let Some(targets) = targets_by_body.get(body_span) {
+                                dependencies.extend(targets.iter().cloned());
+                                return true;
+                            }
+                            false
                         });
-                if !all_reads_are_observations {
-                    rejected.push(path.clone());
+                        if supported {
+                            read.alternatives.push(dependencies);
+                        }
+                    }
                 }
-            }
-            if rejected.is_empty() {
-                break;
-            }
-            for path in rejected {
-                merely_observed.remove(&path);
+                for forwarding in generator_results.get(span).into_iter().flatten() {
+                    if forwarding.source == *path {
+                        read.alternatives.push(vec![forwarding.target.clone()]);
+                    }
+                }
+                for assigned in assigned_results.get(span).into_iter().flatten() {
+                    if assigned.source == *path
+                        && definite_generator_callables.contains(&assigned.source)
+                    {
+                        read.alternatives.push(vec![assigned.target.clone()]);
+                    }
+                }
+                reads.push(read);
             }
         }
-        let mut unexecuted = BTreeSet::new();
-        loop {
-            let mut changed = false;
-            for path in &candidates {
-                if unexecuted.contains(path) || forced_executed_targets.contains(path) {
-                    continue;
-                }
-                let Some(root) = path.binding_root() else {
-                    continue;
-                };
-                let discarded = self.discarded_invocation_reads.get(path);
-                let all_reads_are_nonexecuting = self
-                    .binding_reads
-                    .get(&root)
-                    .into_iter()
-                    .flatten()
-                    .chain(self.direct_callable_reads.get(path).into_iter().flatten())
-                    .all(|span| {
-                        discarded.is_some_and(|discarded| discarded.contains(span))
-                            || self.discarded_value_reads.iter().any(
-                                |(observed, observed_spans)| {
-                                    (observed.starts_with(path) || path.starts_with(observed))
-                                        && observed_spans.contains(span)
-                                },
-                            )
-                            || self
-                                .guarded_discarded_invocation_reads
-                                .iter()
-                                .enumerate()
-                                .any(|(index, (source, source_span, _))| {
-                                    trusted_guarded_reads[index]
-                                        && source == path
-                                        && source_span == span
-                                })
-                            || self.composite_guarded_reads.iter().enumerate().any(
-                                |(index, read)| {
-                                    trusted_composite_guarded_reads[index]
-                                        && read.source == *path
-                                        && read.source_span == *span
-                                        && read
-                                            .target
-                                            .as_ref()
-                                            .is_none_or(|target| unexecuted.contains(target))
-                                },
-                            )
-                            || self.terminal_method_alias_reads.iter().enumerate().any(
-                                |(index, read)| {
-                                    trusted_terminal_method_alias_reads[index]
-                                        && read.source == *path
-                                        && read.source_span == *span
-                                        && unexecuted.contains(&read.target)
-                                },
-                            )
-                            || self.forwarded_callable_reads.iter().enumerate().any(
-                                |(index, forwarding)| {
-                                    trusted_method_forwardings[index]
-                                        && forwarding.source == *path
-                                        && forwarding.source_span == *span
-                                        && unexecuted.contains(&forwarding.target)
-                                },
-                            )
-                            || self.forwarded_callable_reads.iter().enumerate().any(
-                                |(index, forwarding)| {
-                                    trusted_method_forwardings[index]
-                                        && forwarding.source != *path
-                                        && forwarding.source.starts_with(path)
-                                        && forwarding.source_span == *span
-                                        && merely_observed.contains(&forwarding.target)
-                                },
-                            )
-                            || self.retained_callable_reads.iter().enumerate().any(
-                                |(index, forwarding)| {
-                                    trusted_retained_reads[index]
-                                        && forwarding.source.starts_with(path)
-                                        && forwarding.source_span == *span
-                                        && (merely_observed.contains(&forwarding.target)
-                                            || (definite_generator_callables
-                                                .contains(&forwarding.target)
-                                                && unexecuted.contains(&forwarding.target)))
-                                },
-                            )
-                            || self.generator_argument_reads.iter().enumerate().any(
-                                |(index, forwarding)| {
-                                    trusted_generator_argument_reads[index]
-                                        && forwarding.source.starts_with(path)
-                                        && forwarding.source_span == *span
-                                        && definite_generator_callables.contains(&forwarding.target)
-                                        && (forwarding.source == forwarding.target
-                                            || unexecuted.contains(&forwarding.target))
-                                },
-                            )
-                            || self.generator_body_argument_reads.iter().enumerate().any(
-                                |(index, read)| {
-                                    trusted_generator_body_argument_reads[index]
-                                        && read.source.starts_with(path)
-                                        && read.source_span == *span
-                                        && read.body_spans.iter().all(|body_span| {
-                                            self.directly_unexecuted_body_spans.contains(body_span)
-                                                || trusted_guarded_body_spans.contains(body_span)
-                                                || targets_by_body.get(body_span).is_some_and(
-                                                    |targets| {
-                                                        targets.iter().all(|target| {
-                                                            unexecuted.contains(target)
-                                                        })
-                                                    },
-                                                )
-                                        })
-                                },
-                            )
-                            || self.generator_result_reads.iter().enumerate().any(
-                                |(index, forwarding)| {
-                                    trusted_generator_result_reads[index]
-                                        && forwarding.source == *path
-                                        && forwarding.source_span == *span
-                                        && unexecuted.contains(&forwarding.target)
-                                },
-                            )
-                            || self.assigned_generator_result_reads.iter().enumerate().any(
-                                |(index, read)| {
-                                    trusted_assigned_generator_result_reads[index]
-                                        && read.source == *path
-                                        && read.source_span == *span
-                                        && definite_generator_callables.contains(&read.source)
-                                        && unexecuted.contains(&read.target)
-                                },
-                            )
-                    });
-                if all_reads_are_nonexecuting {
-                    changed |= unexecuted.insert(path.clone());
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        let unexecuted = solve_paths(BTreeSet::new(), &unexecuted_rules, false).paths;
         let direct_advances = self
             .direct_generator_advances
             .iter()

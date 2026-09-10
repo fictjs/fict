@@ -46,6 +46,14 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 - Unsupported guarantee shapes emit stable `FICT-*` diagnostics; they are not
   silently frozen or downgraded in production.
 - Cross-module facts come only from the request metadata snapshot.
+- Execution-state analysis preserves the greatest fixed point for observed paths
+  and the least fixed points for generators and unexecuted paths, including cyclic
+  aliases and alternative callable owners. Changes propagate through reverse
+  dependencies; a linear alias chain must require only linear candidate checks,
+  without rescanning every forwarding for each read.
+- Root-only historical aliases use graph reachability. Projected aliases,
+  wildcard aliases, and global-object canonicalization retain path-sensitive
+  traversal, and getter-free states avoid unnecessary historical getter queries.
 
 ### Optimizer
 

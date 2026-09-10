@@ -95,6 +95,7 @@ mod class_components;
 mod dangerous_html;
 mod execution_state;
 mod function_abi;
+mod historical_aliases;
 mod inline_jsx_functions;
 mod jsx_spread_children;
 mod macro_policy;
@@ -9068,6 +9069,16 @@ fn resolve_historical_alias_slot_paths(
 }
 
 fn resolve_historical_alias_paths_with_mode(
+    aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
+    original: &StaticAliasPath,
+    allow_exact_alias: bool,
+) -> BTreeSet<StaticAliasPath> {
+    historical_aliases::resolve_roots(aliases, original, allow_exact_alias).unwrap_or_else(|| {
+        resolve_historical_alias_paths_general(aliases, original, allow_exact_alias)
+    })
+}
+
+fn resolve_historical_alias_paths_general(
     aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     original: &StaticAliasPath,
     allow_exact_alias: bool,
@@ -24448,6 +24459,31 @@ impl StaticHookAliasCollector<'_> {
             || resolution_chain
                 .iter()
                 .any(|path| self.path_requires_historical_aliases(path, self.function_depth));
+        let getters = if enumerable_only {
+            if historical {
+                &self.enumerable_getter_property_history
+            } else {
+                &self.enumerable_getter_properties
+            }
+        } else if historical {
+            &self.local_getter_property_history
+        } else {
+            &self.local_getter_properties
+        };
+        let dynamic_getters = if enumerable_only {
+            if historical {
+                &self.enumerable_dynamic_getter_property_history
+            } else {
+                &self.enumerable_dynamic_getter_properties
+            }
+        } else if historical {
+            &self.dynamic_getter_property_history
+        } else {
+            &self.dynamic_getter_properties
+        };
+        if getters.is_empty() && dynamic_getters.is_empty() {
+            return (historical, BTreeSet::new());
+        }
         let mut candidates = if historical {
             resolve_historical_alias_paths(&self.alias_history, path)
         } else {
@@ -24462,33 +24498,11 @@ impl StaticHookAliasCollector<'_> {
             }
         }
         candidates.extend(structured);
-        let getters = if enumerable_only {
-            if historical {
-                &self.enumerable_getter_property_history
-            } else {
-                &self.enumerable_getter_properties
-            }
-        } else if historical {
-            &self.local_getter_property_history
-        } else {
-            &self.local_getter_properties
-        };
         let mut resolved_getters = candidates
             .iter()
             .filter(|candidate| getters.contains(*candidate))
             .cloned()
             .collect::<BTreeSet<_>>();
-        let dynamic_getters = if enumerable_only {
-            if historical {
-                &self.enumerable_dynamic_getter_property_history
-            } else {
-                &self.enumerable_dynamic_getter_properties
-            }
-        } else if historical {
-            &self.dynamic_getter_property_history
-        } else {
-            &self.dynamic_getter_properties
-        };
         for candidate in candidates {
             if candidate.properties.is_empty() {
                 continue;
