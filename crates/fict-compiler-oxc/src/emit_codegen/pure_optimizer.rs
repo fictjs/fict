@@ -6,10 +6,10 @@ use oxc::{
     ast::{
         AstBuilder,
         ast::{
-            Argument, ArrayExpressionElement, ArrowFunctionExpression, BindingPattern,
-            CallExpression, ChainElement, Expression, Function, IdentifierReference,
-            MemberExpression, ObjectPropertyKind, Program, Statement, VariableDeclaration,
-            VariableDeclarationKind, VariableDeclarator,
+            Argument, ArrayExpressionElement, ArrowFunctionExpression, BindingIdentifier,
+            BindingPattern, CallExpression, ChainElement, Expression, Function,
+            IdentifierReference, MemberExpression, ObjectPropertyKind, Program, Statement,
+            VariableDeclaration, VariableDeclarationKind, VariableDeclarator, WithStatement,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
@@ -45,6 +45,7 @@ struct PureContext<'identities> {
     identities: &'identities SemanticIdentities,
     runtime_helpers: &'identities BTreeMap<String, RuntimeHelper>,
     initialized_reads: &'identities BTreeSet<ReferenceId>,
+    declarations: &'identities BTreeMap<BindingId, usize>,
 }
 
 fn licensed_pure_expression(expression: &Expression<'_>, context: PureContext<'_>) -> bool {
@@ -635,11 +636,19 @@ pub(super) fn analyze<'a>(
     if pure_functions.is_empty() {
         return PureOptimizationPlan::default();
     }
+    let mut references = ReferenceCollector::new(identities);
+    references.visit_program(program);
+    // Direct eval can observe bindings without static references, even through a
+    // nested closure. With can redirect var writes. Neither admits static liveness.
+    if references.contains_dynamic_scope {
+        return PureOptimizationPlan::default();
+    }
     let initialized_reads = initialized_reads::collect(program, identities);
     let context = PureContext {
         identities,
         runtime_helpers,
         initialized_reads: &initialized_reads,
+        declarations: &references.declarations,
     };
     let mut cse = CseCollector {
         identities,
@@ -653,8 +662,6 @@ pub(super) fn analyze<'a>(
     };
     cse.visit_program(program);
 
-    let mut references = ReferenceCollector::new(identities);
-    references.visit_program(program);
     let mut candidates = CandidateCollector {
         identities,
         pure_functions,
@@ -718,6 +725,8 @@ struct ReferenceCollector<'identities> {
     identities: &'identities SemanticIdentities,
     counts: BTreeMap<BindingId, usize>,
     references: Vec<BindingId>,
+    declarations: BTreeMap<BindingId, usize>,
+    contains_dynamic_scope: bool,
 }
 
 impl<'identities> ReferenceCollector<'identities> {
@@ -726,11 +735,38 @@ impl<'identities> ReferenceCollector<'identities> {
             identities,
             counts: BTreeMap::new(),
             references: Vec::new(),
+            declarations: BTreeMap::new(),
+            contains_dynamic_scope: false,
         }
     }
 }
 
 impl<'a> Visit<'a> for ReferenceCollector<'_> {
+    fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
+        if let Some(binding) = identifier
+            .symbol_id
+            .get()
+            .and_then(|symbol| self.identities.binding_for_symbol(symbol))
+        {
+            *self.declarations.entry(binding).or_default() += 1;
+        }
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        if !call.optional
+            && matches!(call.callee.get_inner_expression(), Expression::Identifier(callee)
+                if callee.name == "eval")
+        {
+            self.contains_dynamic_scope = true;
+        }
+        walk::walk_call_expression(self, call);
+    }
+
+    fn visit_with_statement(&mut self, statement: &WithStatement<'a>) {
+        self.contains_dynamic_scope = true;
+        walk::walk_with_statement(self, statement);
+    }
+
     fn visit_identifier_reference(&mut self, reference: &IdentifierReference<'a>) {
         if let Some(binding) = self.identities.binding_for_reference(reference) {
             *self.counts.entry(binding).or_default() += 1;
@@ -797,6 +833,7 @@ impl<'a> Visit<'a> for CandidateCollector<'_, '_> {
                 VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
             )
             && let Some((binding, initializer)) = declarator_binding(declarator, self.identities)
+            && self.context.declarations.get(&binding) == Some(&1)
             && licensed_pure_expression(initializer, self.context)
         {
             let dependencies = expression_dependencies(initializer, self.identities);
@@ -821,6 +858,14 @@ struct CseCollector<'identities, 'policy, 'source> {
 }
 
 impl<'a> Visit<'a> for CseCollector<'_, '_, '_> {
+    fn visit_statements(&mut self, statements: &ArenaVec<'a, Statement<'a>>) {
+        // A switch case can enter without executing any preceding case. Reuse
+        // values only within one statement list, never across its entry boundary.
+        self.available.clear();
+        walk::walk_statements(self, statements);
+        self.available.clear();
+    }
+
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         let previous_active = self.active;
         let previous_declaration = self.statement_declaration;
@@ -888,10 +933,14 @@ impl<'a> Visit<'a> for CseCollector<'_, '_, '_> {
                 walk::walk_variable_declarator(self, declarator);
                 return;
             };
-            if matches!(
-                declarator.kind,
-                VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
-            ) {
+            // Rewriting by BindingId is valid only for one declaration. A var
+            // redeclaration also writes dependencies held by earlier CSE entries.
+            if self.context.declarations.get(&binding) != Some(&1)
+                || matches!(
+                    declarator.kind,
+                    VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
+                )
+            {
                 self.available.clear();
                 walk::walk_variable_declarator(self, declarator);
                 return;

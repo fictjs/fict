@@ -292,6 +292,128 @@ for (const expression of ['Object()', 'Array()', 'RegExp("x")', 'Symbol("x")']) 
   })
 }
 
+for (const [id, body, expected] of [
+  [
+    'cse-redeclaration',
+    'const object = { value: 7 }; var result = object.value; var result = object.value; return result',
+    7,
+  ],
+  [
+    'dce-later-initializer',
+    'try { var unused = 1; var unused = +1n; return "no exception" } catch (error) { return error.name }',
+    'TypeError',
+  ],
+  [
+    'dce-earlier-initializer',
+    'try { var unused = +1n; var unused = 1; return "no exception" } catch (error) { return error.name }',
+    'TypeError',
+  ],
+  [
+    'dce-loop-initializer',
+    'try { var unused = 1; for (var unused = +1n;;) { break } return "no exception" } catch (error) { return error.name }',
+    'TypeError',
+  ],
+  [
+    'cse-later-initializer',
+    'const object = { value: 7 }; const other = { value: 9 }; const first = object.value; var result = object.value; if (true) { var result = other.value } return result',
+    9,
+  ],
+  [
+    'cse-redeclared-dependency',
+    'var object = { value: 7 }; const first = object.value; var object = { value: 9 }; const second = object.value; return [first, second]',
+    [7, 9],
+  ],
+  [
+    'cse-destructured-dependency',
+    'var object = { value: 7 }; const first = object.value; var { next: object } = { next: { value: 9 } }; const second = object.value; return [first, second]',
+    [7, 9],
+  ],
+]) {
+  test(`pure scopes preserve repeated variable declarations: ${id}`, () => {
+    const fixture = { id, source: `export function Scenario() { 'use pure'; ${body} }` }
+    assert.deepEqual(
+      executeCommonJs(fixture.source.replace('export function', 'exports.Scenario = function'), {
+        exportName: 'Scenario',
+        arguments: [],
+      }),
+      expected,
+    )
+    for (const [profile, options] of reviewProfiles) {
+      const result = compile(fixture, profile, options)
+      assert.deepEqual(
+        executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] }),
+        expected,
+        profile,
+      )
+    }
+  })
+}
+
+test('pure scopes retain bindings observed by direct eval and nested closures', () => {
+  for (const body of [
+    'const hidden = 123; return eval("hidden")',
+    'const hidden = 123; function read() { return eval("hidden") } return read()',
+    'let hidden = 1; eval("hidden = 123"); return eval("hidden")',
+  ]) {
+    const fixture = {
+      id: 'pure-direct-eval',
+      source: `export function Scenario() { 'use pure'; ${body} }`,
+    }
+    for (const [profile, options] of reviewProfiles) {
+      const result = compile(fixture, profile, options)
+      const exports = {}
+      new Function('exports', result.code)(exports)
+      assert.equal(exports.Scenario(), 123, profile)
+    }
+  }
+})
+
+test('pure scopes keep CSE values inside the switch case that initializes them', () => {
+  const fixture = {
+    id: 'pure-cse-switch-entry',
+    source: `export function Scenario() {
+      'use pure'
+      const object = { value: 7 }
+      switch (1) {
+        case 0: const first = object.value
+        case 1: const second = object.value; return second
+      }
+    }`,
+  }
+  for (const [profile, options] of reviewProfiles) {
+    const result = compile(fixture, profile, options)
+    assert.equal(
+      executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] }),
+      7,
+      profile,
+    )
+  }
+})
+
+test('pure script scopes preserve dynamically resolved with writes', () => {
+  const code = `function Scenario() {
+    'use pure'
+    const log = []
+    const object = { set value(next) { log.push(next) } }
+    with (object) { var value = 7 }
+    return log
+  }`
+  for (const [profile, options] of reviewProfiles) {
+    const result = binding.transformSync({
+      code,
+      filename: '/optimizer-diff/pure-with.js',
+      language: 'js',
+      moduleKind: 'script',
+      options: { ...options, dev: false },
+    })
+    assert.deepEqual(
+      result.diagnostics.filter(diagnostic => diagnostic.severity === 'error'),
+      [],
+    )
+    assert.deepEqual(new Function(`${result.code}; return Scenario()`)(), [7], profile)
+  }
+})
+
 for (const [id, body] of [
   ['tdz-alias', 'const unused = later; const later = 1'],
   ['tdz-call', 'const unused = later(); const later = () => 1'],

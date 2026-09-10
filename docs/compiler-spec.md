@@ -622,6 +622,13 @@ Purity annotations:
   more aggressive DCE/CSE for otherwise unknown calls and member reads.
   Impure primitives like `$state`, `$effect`, `render`, etc. are never treated as pure.
 
+Scope purity does not override known built-in exceptions or allocation identity.
+Built-in calls require a proven safe operation and argument combination before
+DCE/CSE can remove or merge them. Binding rewrites require a single declaration,
+and CSE values cannot cross independent switch-case entries. Files containing
+direct `eval` or `with` skip these optimizations because static
+references do not describe all of their binding reads and writes.
+
 ---
 
 ## 11. Rule K: Circular Dependency Detection
