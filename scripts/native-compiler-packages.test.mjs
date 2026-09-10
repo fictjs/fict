@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  closeSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -32,6 +36,7 @@ import {
   assembleNativePackage,
   assertCheckoutRevision,
   bundleNativePackage,
+  copyNativeCompilerBinary,
   createNativeCompilerSbom,
   evaluateNativePackageSize,
   loadNativePackageSizeBudget,
@@ -674,6 +679,33 @@ test('keeps Cargo checksum evidence stable across lockfile line endings', () => 
     crlfSbom.packages.find(entry => entry.name === dependencyPackage.name)?.checksums,
     [{ algorithm: 'SHA256', checksumValue: checksum }],
   )
+})
+
+test('reuses unchanged native images and preserves open images when replacing changed binaries', () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-image-test-'))
+  let loadedImage
+  try {
+    const source = path.join(tempRoot, 'compiler.dylib')
+    const destination = path.join(tempRoot, 'compiler.node')
+    writeFileSync(source, 'first native image')
+    copyNativeCompilerBinary(source, destination)
+    loadedImage = openSync(destination, 'r')
+    const initial = fstatSync(loadedImage)
+
+    copyNativeCompilerBinary(source, destination)
+    const unchanged = statSync(destination)
+    assert.equal(unchanged.ino, initial.ino)
+    assert.equal(unchanged.mtimeMs, initial.mtimeMs)
+
+    writeFileSync(source, 'newer native image')
+    copyNativeCompilerBinary(source, destination)
+    assert.equal(readFileSync(destination, 'utf8'), 'newer native image')
+    assert.equal(readFileSync(loadedImage, 'utf8'), 'first native image')
+    assert.notEqual(statSync(destination).ino, initial.ino)
+  } finally {
+    if (loadedImage !== undefined) closeSync(loadedImage)
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 })
 
 test('assembles and verifies deterministic binary metadata and checksums', () => {

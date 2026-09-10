@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -780,6 +781,21 @@ export function validateNativePackageConfiguration(root = repositoryRoot) {
   return failures
 }
 
+export function copyNativeCompilerBinary(source, destination) {
+  const previous = lstatSync(destination, { throwIfNoEntry: false })
+  if (
+    previous?.isFile() &&
+    previous.size === statSync(source).size &&
+    readFileSync(source).equals(readFileSync(destination))
+  ) {
+    return
+  }
+  // Keep loaded images intact, and keep their OS signature validation cached when the bytes
+  // are unchanged. A changed Mach-O image needs a fresh inode to avoid stale signing metadata.
+  rmSync(destination, { force: true })
+  copyFileSync(source, destination)
+}
+
 export function assembleNativePackage({
   target,
   binaryPath,
@@ -807,7 +823,7 @@ export function assembleNativePackage({
   }
 
   const binaryDestination = path.join(destination, NATIVE_COMPILER_BINARY)
-  copyFileSync(binaryPath, binaryDestination)
+  copyNativeCompilerBinary(binaryPath, binaryDestination)
   const sha256 = hashFile(binaryDestination)
   const packageManifest = readJson(path.join(destination, 'package.json'))
   const sbom = createNativeCompilerSbom({
