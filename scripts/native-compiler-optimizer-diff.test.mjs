@@ -207,6 +207,91 @@ test('pure scopes preserve exceptions from primitive coercion and BigInt arithme
   }
 })
 
+test('pure scopes preserve standard builtin call failures', () => {
+  const expressions = [
+    ['parseInt("1", 2n)', 'TypeError'],
+    ['parseInt(1n, 2n)', 'TypeError'],
+    ['Number.parseInt("1", 2n)', 'TypeError'],
+    ['Math.imul(1n, 2n)', 'TypeError'],
+    ['Math.acosh(1n)', 'TypeError'],
+    ['Math.atan2(1n, 2)', 'TypeError'],
+    ['Math.clz32(1n)', 'TypeError'],
+    ['Math.fround(1n)', 'TypeError'],
+    ['Math.log1p(1n)', 'TypeError'],
+    ['Math.sinh(1n)', 'TypeError'],
+    ['isFinite(1n)', 'TypeError'],
+    ['isNaN(1n)', 'TypeError'],
+    ['Array(1.5)', 'RangeError'],
+    ['Map()', 'TypeError'],
+    ['Promise()', 'TypeError'],
+    ['Object.create(1)', 'TypeError'],
+    ['Reflect.get(1, "value")', 'TypeError'],
+    ['JSON.parse("invalid")', 'SyntaxError'],
+    ['JSON.stringify(1n)', 'TypeError'],
+    ['String.fromCodePoint(-1)', 'RangeError'],
+    ['Symbol.keyFor(1)', 'TypeError'],
+    ['BigInt.asIntN(-1, 1n)', 'RangeError'],
+    ['decodeURIComponent("%")', 'URIError'],
+    ['encodeURI("\\ud800")', 'URIError'],
+    ['Atomics.load(0, 0)', 'TypeError'],
+    ['undefined()', 'TypeError'],
+  ]
+  const fixture = {
+    id: 'pure-builtin-exceptions',
+    source: `export function Scenario() {
+      'use pure'
+      const outcomes = []
+      ${expressions
+        .map(
+          ([expression]) => `
+        try { const unused = ${expression}; outcomes.push('no exception') }
+        catch (error) { outcomes.push(error.name) }
+      `,
+        )
+        .join('\n')}
+      return outcomes
+    }`,
+  }
+  const expected = expressions.map(([, error]) => error)
+  assert.deepEqual(
+    executeCommonJs(fixture.source.replace('export function', 'exports.Scenario = function'), {
+      exportName: 'Scenario',
+      arguments: [],
+    }),
+    expected,
+  )
+  for (const [profile, options] of reviewProfiles) {
+    const result = compile(fixture, profile, options)
+    assert.deepEqual(
+      executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] }),
+      expected,
+      profile,
+    )
+  }
+})
+
+for (const expression of ['Object()', 'Array()', 'RegExp("x")', 'Symbol("x")']) {
+  test(`pure scopes preserve builtin allocation identity: ${expression}`, () => {
+    const fixture = {
+      id: 'pure-builtin-identity',
+      source: `export function Scenario() {
+        'use pure'
+        const first = ${expression}
+        const second = ${expression}
+        return first === second
+      }`,
+    }
+    for (const [profile, options] of reviewProfiles) {
+      const result = compile(fixture, profile, options)
+      assert.equal(
+        executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] }),
+        false,
+        profile,
+      )
+    }
+  })
+}
+
 for (const [id, body] of [
   ['tdz-alias', 'const unused = later; const later = 1'],
   ['tdz-call', 'const unused = later(); const later = () => 1'],

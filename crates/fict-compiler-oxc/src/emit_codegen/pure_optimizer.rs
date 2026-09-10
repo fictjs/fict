@@ -388,13 +388,20 @@ fn builtin_call_is_safe(
                     .as_expression()
                     .is_some_and(valid_bigint_literal),
         ),
-        ("parseInt" | "parseFloat", None) => Some(
+        ("parseInt", None) | ("Number", Some("parseInt")) => Some(
             arguments
                 .first()
                 .is_none_or(|argument| argument.as_expression().is_some_and(primitive_literal))
-                && arguments
-                    .get(1)
-                    .is_none_or(|argument| argument.as_expression().is_some_and(primitive_literal)),
+                && arguments.get(1).is_none_or(|argument| {
+                    argument
+                        .as_expression()
+                        .is_some_and(primitive_number_literal)
+                }),
+        ),
+        ("parseFloat", None) | ("Number", Some("parseFloat")) => Some(
+            arguments
+                .first()
+                .is_none_or(|argument| argument.as_expression().is_some_and(primitive_literal)),
         ),
         ("Math", Some(method)) if pure_math_method(method) => {
             Some(arguments.iter().all(|argument| {
@@ -403,8 +410,81 @@ fn builtin_call_is_safe(
                     .is_some_and(primitive_number_literal)
             }))
         }
+        // A scope's purity license covers unknown user calls, but cannot override
+        // known builtin exceptions, allocations, or nondeterminism. Only the
+        // explicitly proven cases above are eligible for both DCE and CSE.
+        _ if standard_builtin_root(root) => Some(false),
         _ => None,
     }
+}
+
+fn standard_builtin_root(name: &str) -> bool {
+    matches!(
+        name,
+        "AggregateError"
+            | "Array"
+            | "ArrayBuffer"
+            | "AsyncDisposableStack"
+            | "Atomics"
+            | "BigInt"
+            | "BigInt64Array"
+            | "BigUint64Array"
+            | "Boolean"
+            | "DataView"
+            | "Date"
+            | "DisposableStack"
+            | "Error"
+            | "EvalError"
+            | "FinalizationRegistry"
+            | "Float16Array"
+            | "Float32Array"
+            | "Float64Array"
+            | "Function"
+            | "Infinity"
+            | "Int8Array"
+            | "Int16Array"
+            | "Int32Array"
+            | "Intl"
+            | "Iterator"
+            | "JSON"
+            | "Map"
+            | "Math"
+            | "NaN"
+            | "Number"
+            | "Object"
+            | "Promise"
+            | "Proxy"
+            | "RangeError"
+            | "ReferenceError"
+            | "Reflect"
+            | "RegExp"
+            | "Set"
+            | "SharedArrayBuffer"
+            | "String"
+            | "SuppressedError"
+            | "Symbol"
+            | "SyntaxError"
+            | "TypeError"
+            | "URIError"
+            | "Uint8Array"
+            | "Uint8ClampedArray"
+            | "Uint16Array"
+            | "Uint32Array"
+            | "WeakMap"
+            | "WeakRef"
+            | "WeakSet"
+            | "decodeURI"
+            | "decodeURIComponent"
+            | "encodeURI"
+            | "encodeURIComponent"
+            | "eval"
+            | "globalThis"
+            | "isFinite"
+            | "isNaN"
+            | "parseFloat"
+            | "parseInt"
+            | "undefined"
+    )
 }
 
 fn primitive_literal(expression: &Expression<'_>) -> bool {
