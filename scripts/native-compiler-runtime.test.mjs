@@ -592,6 +592,97 @@ test('function-valued state calls preserve the authored invocation chain', async
   container.remove()
 })
 
+for (const [operator, assignedInitial, skippedInitial] of [
+  ['||=', 0, 4],
+  ['&&=', 4, 0],
+  ['??=', null, 0],
+]) {
+  for (const kind of ['async', 'generator']) {
+    test(`reactive ${operator} preserves ${kind} suspension and short circuiting`, async () => {
+      const compiled = await compileAndImport(
+        `
+          import { $state, render } from 'fict'
+          export let api
+          let initial
+          function App() {
+            let value = $state(initial)
+            api = {
+              run: ${kind === 'async' ? 'async function' : 'function*'}(next) {
+                return value ${operator} (${kind === 'async' ? 'await' : 'yield'} next())
+              },
+              read: () => value,
+              write: next => value = next,
+            }
+            return <span>{value}</span>
+          }
+          export function mount(container, start) {
+            initial = start
+            return render(() => <App />, container)
+          }
+        `,
+        `logical-suspension-${operator.charCodeAt(0)}-${kind}`,
+      )
+      for (const skipped of [true, false]) {
+        const initial = skipped ? skippedInitial : assignedInitial
+        const container = document.createElement('div')
+        const dispose = compiled.mount(container, initial)
+        try {
+          let calls = 0
+          let settle
+          const pending = new Promise(resolve => {
+            settle = resolve
+          })
+          const running = compiled.api.run(() => {
+            calls++
+            return kind === 'async' ? pending : 'paused'
+          })
+          if (skipped) {
+            const result = kind === 'async' ? await running : running.next()
+            assert.deepEqual(result, kind === 'async' ? initial : { value: initial, done: true })
+            assert.equal(calls, 0)
+            assert.equal(compiled.api.read(), initial)
+          } else {
+            if (kind === 'generator') {
+              assert.deepEqual(running.next(), { value: 'paused', done: false })
+            }
+            assert.equal(calls, 1)
+            assert.equal(compiled.api.read(), initial)
+            compiled.api.write(9)
+            if (kind === 'async') {
+              settle(7)
+              assert.equal(await running, 7)
+            } else {
+              assert.deepEqual(running.next(7), { value: 7, done: true })
+            }
+            assert.equal(compiled.api.read(), 7)
+            await flushRuntime()
+            assert.equal(container.textContent, '7')
+
+            compiled.api.write(assignedInitial)
+            const error = new Error('assignment interrupted')
+            if (kind === 'async') {
+              await assert.rejects(
+                compiled.api.run(() => Promise.reject(error)),
+                value => value === error,
+              )
+            } else {
+              const interrupted = compiled.api.run(() => 'paused')
+              assert.deepEqual(interrupted.next(), { value: 'paused', done: false })
+              assert.throws(
+                () => interrupted.throw(error),
+                value => value === error,
+              )
+            }
+            assert.equal(compiled.api.read(), assignedInitial)
+          }
+        } finally {
+          dispose()
+        }
+      }
+    })
+  }
+}
+
 test('state accessors materialize at exact object and array container boundaries', async () => {
   const compiled = await compileAndImport(
     `

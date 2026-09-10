@@ -8268,23 +8268,12 @@ fn logical_compound_update<'a>(
     right: Expression<'a>,
     span: Span,
 ) -> Expression<'a> {
-    let mut identifiers = IdentifierCollector::default();
-    identifiers.visit_expression(&right);
-    let parameter = generated_parameter_name(
-        allocator,
-        signal,
-        "__fict_previous",
-        Some(&identifiers.names),
-    );
     let builder = AstBuilder::new(allocator);
-    let previous = Expression::new_identifier(span, parameter, &builder);
-    let assigned = value_preserving_setter(allocator, signal, right, span);
-    let body = Expression::new_logical_expression(span, previous, operator, assigned, &builder);
-    let arrow = expression_arrow(allocator, parameter, body, span);
+    // The native logical operator already reads once and returns the old value on a
+    // short circuit. Keep the RHS in its authored scope so await/yield remain legal.
     let current = getter_call(allocator, signal, span);
-    let mut arguments = ArenaVec::new_in(&allocator);
-    arguments.push(Argument::from(current));
-    Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
+    let assigned = value_preserving_setter(allocator, signal, right, span);
+    Expression::new_logical_expression(span, current, operator, assigned, &builder)
 }
 fn reactive_update<'a>(
     allocator: &'a Allocator,

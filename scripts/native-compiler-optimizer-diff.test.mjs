@@ -109,7 +109,7 @@ function compile(fixture, profile, options) {
     filename: `/optimizer-diff/${fixture.id}-${profile}.ts`,
     language: 'ts',
     moduleKind: 'commonjs',
-    options: { ...options, strictGuarantee: false, dev: false },
+    options: { strictGuarantee: false, ...options, dev: false },
   })
   assert.deepEqual(
     result.diagnostics.filter(diagnostic => diagnostic.severity === 'error'),
@@ -139,3 +139,191 @@ test('optimization on/off and safe/full profiles preserve observable semantics',
   }
   assert.equal(observedDifferentCode, true, 'matrix must exercise distinct optimizer output')
 })
+
+const reviewProfiles = profiles.flatMap(([profile, options]) =>
+  [false, true].map(strictGuarantee => [
+    `${profile}/strict-${strictGuarantee}`,
+    { ...options, strictGuarantee },
+  ]),
+)
+
+const selectedExpressions = [
+  ['logical-and', value => `true && (${value})`],
+  ['logical-or', value => `false || (${value})`],
+  ['nullish', value => `null ?? (${value})`],
+  ['conditional-true', value => `true ? (${value}) : null`],
+  ['conditional-false', value => `false ? null : (${value})`],
+]
+
+test('pure scopes preserve exceptions from primitive coercion and BigInt arithmetic', () => {
+  const expressions = [
+    ['+1n', 'TypeError'],
+    ['1n + 1', 'TypeError'],
+    ['1n / 0n', 'RangeError'],
+    ['1n % 0n', 'RangeError'],
+    ['1n ** -1n', 'RangeError'],
+    ['1n >>> 0n', 'TypeError'],
+    ['+(true ? 1n : 2n)', 'TypeError'],
+    ['`${1n / 0n}`', 'RangeError'],
+    ['({ [1n + 1]: 0 })', 'TypeError'],
+    ['+Symbol.iterator', 'TypeError'],
+    ['Symbol.iterator + ""', 'TypeError'],
+    ['`${Symbol.iterator}`', 'TypeError'],
+    ['BigInt("\\u00851")', 'SyntaxError'],
+    ['BigInt("1\\u0085")', 'SyntaxError'],
+    ['BigInt("\\u0085")', 'SyntaxError'],
+  ]
+  const fixture = {
+    id: 'pure-primitive-exceptions',
+    source: `export function Scenario() {
+      'use pure'
+      const outcomes = []
+      ${expressions
+        .map(
+          ([expression]) => `
+        try { const unused = ${expression}; outcomes.push('no exception') }
+        catch (error) { outcomes.push(error.name) }
+      `,
+        )
+        .join('\n')}
+      return outcomes
+    }`,
+  }
+  const expected = expressions.map(([, error]) => error)
+  assert.deepEqual(
+    executeCommonJs(fixture.source.replace('export function', 'exports.Scenario = function'), {
+      exportName: 'Scenario',
+      arguments: [],
+    }),
+    expected,
+  )
+  for (const [profile, options] of reviewProfiles) {
+    const result = compile(fixture, profile, options)
+    assert.deepEqual(
+      executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] }),
+      expected,
+      profile,
+    )
+  }
+})
+
+for (const [id, body] of [
+  ['tdz-alias', 'const unused = later; const later = 1'],
+  ['tdz-call', 'const unused = later(); const later = () => 1'],
+  ['tdz-member', 'const unused = later.value; const later = { value: 1 }'],
+  ['tdz-array', 'const unused = [later]; const later = 1'],
+  ['tdz-object', 'const unused = { value: later }; const later = 1'],
+  ['tdz-typeof', 'const unused = typeof later; const later = 1'],
+  ['tdz-void', 'const unused = void later; const later = 1'],
+  ['missing-global', 'const unused = __fict_missing_optimizer_binding__'],
+  [
+    'constructor-this',
+    `
+    class Base {}
+    class Derived extends Base {
+      constructor() { 'use pure'; const unused = this; super() }
+    }
+    new Derived()
+  `,
+  ],
+  [
+    'closure-before-initialization',
+    `
+    function read() { 'use pure'; const unused = later }
+    read()
+    const later = 1
+  `,
+  ],
+  [
+    'switch-entry',
+    `
+    switch (1) {
+      case 0: const earlier = 1; break
+      case 1: const unused = earlier
+    }
+  `,
+  ],
+]) {
+  test(`pure scopes preserve uninitialized reads: ${id}`, () => {
+    const fixture = {
+      id,
+      source: `export function Scenario() {
+        'use pure'
+        try { ${body}; return 'no exception' }
+        catch (error) { return error.name }
+      }`,
+    }
+    for (const [profile, options] of reviewProfiles) {
+      const result = compile(fixture, profile, options)
+      assert.equal(
+        executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] }),
+        'ReferenceError',
+        profile,
+      )
+    }
+  })
+}
+
+for (const [selection, select] of selectedExpressions) {
+  test(`constant ${selection} selection preserves value semantics`, () => {
+    const fixture = {
+      id: `selected-value-${selection}`,
+      source: `
+        export function Scenario() {
+          let reads = 0
+          const object = {
+            get method() { reads++; return function() { return this === undefined } },
+            value: 1,
+          }
+          const called = (${select('object.method')})()
+          const optionalCalled = (${select('object?.method')})?.()
+          const tagged = (${select('object.method')})\`tag\`
+          const deleted = delete (${select('object.value')})
+          let missing
+          try { missing = typeof (${select('__fict_missing_optimizer_reference__')}) }
+          catch (error) { missing = error.name }
+          const fn = ${select('function() {}')}
+          const arrow = ${select('() => 0')}
+          const klass = ${select('class {}')}
+          let assigned
+          assigned = ${select('function() {}')}
+          return [called, optionalCalled, tagged, deleted, object.value, missing,
+                  fn.name, arrow.name, klass.name, assigned.name, reads]
+        }
+      `,
+    }
+    const expected = [true, true, true, true, 1, 'ReferenceError', '', '', '', '', 3]
+    assert.deepEqual(
+      executeCommonJs(fixture.source.replace('export function', 'exports.Scenario = function'), {
+        exportName: 'Scenario',
+        arguments: [],
+      }),
+      expected,
+      `${selection}: authored JavaScript`,
+    )
+    for (const [profile, options] of reviewProfiles) {
+      const result = compile(fixture, profile, options)
+      assert.deepEqual(
+        executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] }),
+        expected,
+        `${selection}/${profile}`,
+      )
+    }
+  })
+
+  test(`constant ${selection} selection retains indirect eval`, () => {
+    const fixture = {
+      id: `selected-eval-${selection}`,
+      source: `export function Scenario() {
+        const __fict_optimizer_local__ = 1
+        return (${select('eval')})('typeof __fict_optimizer_local__')
+      }`,
+    }
+    for (const [profile, options] of reviewProfiles) {
+      const result = compile(fixture, profile, options)
+      const exports = {}
+      new Function('exports', result.code)(exports)
+      assert.equal(exports.Scenario(), 'undefined', `${selection}/${profile}`)
+    }
+  })
+}

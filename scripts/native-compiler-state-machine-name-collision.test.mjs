@@ -125,7 +125,4 @@ test('logical reactive updates do not capture user locals or parameters', () => 
   )
 
   assert.deepEqual(result.value, [7, 8, 9, 3, 5])
-  assert.match(result.code, /__fict_previous_1\) => __fict_previous_1 \|\|/)
-  assert.match(result.code, /__fict_previous_1\) => __fict_previous_1 &&/)
-  assert.match(result.code, /__fict_previous_1_\) => __fict_previous_1_ \?\?/)
 })

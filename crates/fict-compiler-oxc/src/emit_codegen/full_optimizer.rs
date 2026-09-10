@@ -269,21 +269,21 @@ impl<'a> AlgebraicRewriter<'a, '_> {
                 }
                 match logical.operator {
                     LogicalOperator::And if left.value == Constant::Boolean(true) => {
-                        Some(logical.right.clone_in(self.allocator))
+                        Some(self.selected_value(&logical.right, span))
                     }
                     LogicalOperator::And if left.value == Constant::Boolean(false) => {
                         constant_expression(self.allocator, &Constant::Boolean(false), span)
                     }
                     LogicalOperator::Or if left.value == Constant::Boolean(false) => {
-                        Some(logical.right.clone_in(self.allocator))
+                        Some(self.selected_value(&logical.right, span))
                     }
                     LogicalOperator::Or if left.value == Constant::Boolean(true) => {
                         constant_expression(self.allocator, &Constant::Boolean(true), span)
                     }
                     LogicalOperator::Coalesce if left.value.nullish() => {
-                        Some(logical.right.clone_in(self.allocator))
+                        Some(self.selected_value(&logical.right, span))
                     }
-                    LogicalOperator::Coalesce => Some(logical.left.clone_in(self.allocator)),
+                    LogicalOperator::Coalesce => Some(self.selected_value(&logical.left, span)),
                     LogicalOperator::And | LogicalOperator::Or => None,
                 }
             }
@@ -294,14 +294,14 @@ impl<'a> AlgebraicRewriter<'a, '_> {
                     self.plan.global_undefined_is_constant,
                 ) && test.pure
                 {
-                    return Some(
+                    return Some(self.selected_value(
                         if test.value.truthy() {
                             &conditional.consequent
                         } else {
                             &conditional.alternate
-                        }
-                        .clone_in(self.allocator),
-                    );
+                        },
+                        span,
+                    ));
                 }
                 let consequent = evaluate_literal_expression(
                     &conditional.consequent,
@@ -327,6 +327,36 @@ impl<'a> AlgebraicRewriter<'a, '_> {
             }
             _ => None,
         }
+    }
+
+    fn selected_value(&self, selected: &Expression<'a>, span: Span) -> Expression<'a> {
+        // Logical and conditional expressions perform GetValue. Keep that boundary when
+        // selecting a reference, and prevent newly exposed functions/classes from acquiring
+        // an inferred name in their parent. Parentheses alone do not enforce this boundary.
+        let inner = selected.get_inner_expression();
+        if !inner.is_member_expression()
+            && !matches!(
+                inner,
+                Expression::Identifier(_)
+                    | Expression::ChainExpression(_)
+                    | Expression::FunctionExpression(_)
+                    | Expression::ArrowFunctionExpression(_)
+                    | Expression::ClassExpression(_)
+            )
+        {
+            return selected.clone_in(self.allocator);
+        }
+        let builder = AstBuilder::new(self.allocator);
+        let mut expressions = ArenaVec::new_in(&self.allocator);
+        expressions.push(Expression::new_numeric_literal(
+            span,
+            0.0,
+            None,
+            NumberBase::Decimal,
+            &builder,
+        ));
+        expressions.push(selected.clone_in(self.allocator));
+        Expression::new_sequence_expression(span, expressions, &builder)
     }
 }
 

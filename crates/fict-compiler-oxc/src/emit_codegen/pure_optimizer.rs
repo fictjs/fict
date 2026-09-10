@@ -15,11 +15,16 @@ use oxc::{
     ast_visit::{Visit, VisitMut, walk, walk_mut},
     span::{GetSpan, Span},
     syntax::{
+        identifier::is_white_space,
+        line_terminator::is_line_terminator,
         operator::{BinaryOperator, UnaryOperator},
+        reference::ReferenceId,
         scope::ScopeFlags,
     },
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+mod initialized_reads;
 
 type SourceLocation = (u32, u32);
 
@@ -39,6 +44,7 @@ struct Candidate {
 struct PureContext<'identities> {
     identities: &'identities SemanticIdentities,
     runtime_helpers: &'identities BTreeMap<String, RuntimeHelper>,
+    initialized_reads: &'identities BTreeSet<ReferenceId>,
 }
 
 fn licensed_pure_expression(expression: &Expression<'_>, context: PureContext<'_>) -> bool {
@@ -53,9 +59,13 @@ fn licensed_pure_expression(expression: &Expression<'_>, context: PureContext<'_
         | Expression::BigIntLiteral(_)
         | Expression::RegExpLiteral(_)
         | Expression::StringLiteral(_)
-        | Expression::Identifier(_)
-        | Expression::Super(_)
-        | Expression::ThisExpression(_) => true,
+        | Expression::Super(_) => true,
+        Expression::Identifier(identifier) => identifier
+            .reference_id
+            .get()
+            .is_some_and(|reference| context.initialized_reads.contains(&reference)),
+        // A derived constructor's `this` can still be uninitialized before super().
+        Expression::ThisExpression(_) => false,
         Expression::TemplateLiteral(template) => template
             .expressions
             .iter()
@@ -208,12 +218,14 @@ fn cse_member_expression(member: &MemberExpression<'_>, context: PureContext<'_>
 }
 
 fn known_primitive_pure_expression(expression: &Expression<'_>, context: PureContext<'_>) -> bool {
+    // Primitive does not imply non-throwing: BigInt arithmetic can reject mixed
+    // types, zero divisors, or negative exponents, and Symbol coercions throw.
+    // Only certify the Number/String/Boolean/null/undefined family here.
     let expression = expression.get_inner_expression();
     match expression {
         Expression::BooleanLiteral(_)
         | Expression::NullLiteral(_)
         | Expression::NumericLiteral(_)
-        | Expression::BigIntLiteral(_)
         | Expression::StringLiteral(_) => true,
         Expression::UnaryExpression(unary) => match unary.operator {
             UnaryOperator::LogicalNot | UnaryOperator::Typeof | UnaryOperator::Void => {
@@ -234,7 +246,7 @@ fn known_primitive_pure_expression(expression: &Expression<'_>, context: PureCon
         }
         _ => expression
             .as_member_expression()
-            .is_some_and(|member| stable_member_expression(member, context)),
+            .is_some_and(|member| stable_numeric_member_expression(member, context)),
     }
 }
 
@@ -244,7 +256,6 @@ fn known_primitive_cse_expression(expression: &Expression<'_>, context: PureCont
         Expression::BooleanLiteral(_)
         | Expression::NullLiteral(_)
         | Expression::NumericLiteral(_)
-        | Expression::BigIntLiteral(_)
         | Expression::StringLiteral(_) => true,
         Expression::UnaryExpression(unary) => match unary.operator {
             UnaryOperator::LogicalNot | UnaryOperator::Typeof | UnaryOperator::Void => {
@@ -265,7 +276,7 @@ fn known_primitive_cse_expression(expression: &Expression<'_>, context: PureCont
         }
         _ => expression
             .as_member_expression()
-            .is_some_and(|member| stable_member_expression(member, context)),
+            .is_some_and(|member| stable_numeric_member_expression(member, context)),
     }
 }
 
@@ -334,6 +345,15 @@ fn pure_call_expression(call: &CallExpression<'_>, context: PureContext<'_>, cse
             helper,
             RuntimeHelper::Memo | RuntimeHelper::UseMemo | RuntimeHelper::UseContext
         );
+    }
+    if !cse
+        && context.identities.binding_for_reference(root).is_some()
+        && !root
+            .reference_id
+            .get()
+            .is_some_and(|reference| context.initialized_reads.contains(&reference))
+    {
+        return false;
     }
     if member.is_none() {
         match root.name.as_str() {
@@ -418,7 +438,8 @@ fn valid_bigint_literal(expression: &Expression<'_>) -> bool {
 }
 
 fn valid_bigint_string(value: &str) -> bool {
-    let value = value.trim();
+    let value =
+        value.trim_matches(|character| is_white_space(character) || is_line_terminator(character));
     if value.is_empty() {
         return true;
     }
@@ -514,6 +535,16 @@ fn stable_member_expression(member: &MemberExpression<'_>, context: PureContext<
     }
 }
 
+fn stable_numeric_member_expression(
+    member: &MemberExpression<'_>,
+    context: PureContext<'_>,
+) -> bool {
+    stable_member_expression(member, context)
+        && matches!(member, MemberExpression::StaticMemberExpression(member)
+            if matches!(member.object.get_inner_expression(), Expression::Identifier(root)
+                if root.name != "Symbol"))
+}
+
 pub(super) fn analyze<'a>(
     program: &Program<'a>,
     identities: &SemanticIdentities,
@@ -524,9 +555,11 @@ pub(super) fn analyze<'a>(
     if pure_functions.is_empty() {
         return PureOptimizationPlan::default();
     }
+    let initialized_reads = initialized_reads::collect(program, identities);
     let context = PureContext {
         identities,
         runtime_helpers,
+        initialized_reads: &initialized_reads,
     };
     let mut cse = CseCollector {
         identities,
