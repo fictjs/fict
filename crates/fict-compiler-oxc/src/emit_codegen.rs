@@ -60,12 +60,14 @@ mod control_flow_region;
 mod derived_inline;
 mod full_optimizer;
 mod getter_cache;
+mod named_evaluation;
 mod operation_support;
 mod polymorphic_root;
 mod pure_optimizer;
 mod reactive_mutations;
 mod semantic_identity;
 
+use named_evaluation::preserve_assignment_name;
 use operation_support::{operation_origin, unsupported_operations};
 use semantic_identity::SemanticIdentities;
 /// Lower the currently supported EmitIR subset into the original OXC program, run TypeScript
@@ -6972,6 +6974,12 @@ fn rewrite_pattern_maybe_default<'a>(
     allocator: &'a Allocator,
 ) {
     if let AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) = target {
+        if let Some((name, span)) = direct_pattern_target_identifier(&default.binding)
+            && expected.contains(&(span.start, span.end))
+        {
+            let initializer = default.init.take_in(&allocator);
+            default.init = preserve_assignment_name(allocator, &name, initializer);
+        }
         rewrite_pattern_assignment_target(&mut default.binding, expected, matched, allocator);
         return;
     }
@@ -7013,7 +7021,7 @@ fn rewrite_pattern_property<'a>(
                 Some(init) => AssignmentTargetMaybeDefault::new_assignment_target_with_default(
                     shorthand.span,
                     setter,
-                    init,
+                    preserve_assignment_name(allocator, &name, init),
                     &builder,
                 ),
                 None => AssignmentTargetMaybeDefault::from(setter),
@@ -8246,6 +8254,7 @@ fn value_preserving_setter<'a>(
     value: Expression<'a>,
     span: Span,
 ) -> Expression<'a> {
+    let value = preserve_assignment_name(allocator, signal, value);
     let parameter = generated_parameter_name(allocator, signal, "__fict_value", None);
     let parameter_value = || {
         let builder = AstBuilder::new(allocator);

@@ -70,6 +70,9 @@ metadata, caches, and bundler objects remain in the JavaScript host.
   props remain owned by `EmitPropsPlan` and `InvokeComponent`.
 - Projected reactive writes, updates, and deletes rewrite only the accessor root
   so native JavaScript preserves key/RHS order, evaluation count, and results.
+- Reactive assignment lowering preserves anonymous function and class name
+  inference, including destructuring defaults and class static initialization.
+  Short-circuit RHS expressions retain their authored `await`/`yield` scope.
 - Runtime hooks appear only in render-safe locations and helper imports match
   the runtime ABI.
 - Metadata, diagnostics, artifacts, and source maps refer to authored source

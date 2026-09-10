@@ -16,13 +16,13 @@ const binding = require(nativePath)
 // Behavioral port of 0.28.0 codegen-reactive-accessors.test.ts. The old suite inspected a
 // private dependency collector; these probes execute native CommonJS output and verify the
 // observable eager-versus-lazy boundaries that the collector existed to preserve.
-function compileAndExecute(id, code) {
+function compileAndExecute(id, code, options = {}) {
   const result = binding.transformSync({
     code,
     filename: `/reactive-accessors/${id}.ts`,
     language: 'ts',
     moduleKind: 'commonjs',
-    options: { strictGuarantee: false, dev: false },
+    options: { strictGuarantee: false, ...options, dev: false },
   })
   assert.deepEqual(
     result.diagnostics.filter(diagnostic => diagnostic.severity === 'error'),
@@ -32,6 +32,79 @@ function compileAndExecute(id, code) {
   assert.notEqual(result.code, '')
   return executeCommonJs(result.code, { exportName: 'Scenario', arguments: [] })
 }
+
+const namedAssignmentProfiles = [
+  { optimize: false, optimizeLevel: 'safe' },
+  { optimize: true, optimizeLevel: 'safe' },
+  { optimize: true, optimizeLevel: 'full' },
+  { optimize: false, optimizeLevel: 'full' },
+].flatMap(options => [false, true].map(strictGuarantee => ({ ...options, strictGuarantee })))
+
+for (const [target, initial, assign] of [
+  ['assignment', 'null', expression => `value = ${expression}`],
+  ['logical-or', 'null', expression => `value ||= ${expression}`],
+  ['logical-and', 'true', expression => `value &&= ${expression}`],
+  ['nullish', 'null', expression => `value ??= ${expression}`],
+  ['array-default', 'null', expression => `[value = ${expression}] = []`],
+  ['object-default', 'null', expression => `({ source: value = ${expression} } = {})`],
+  ['shorthand-default', 'null', expression => `({ value = ${expression} } = {})`],
+]) {
+  test(`reactive ${target} preserves anonymous function and class names`, () => {
+    for (const expression of [
+      'function () {}',
+      'function* () {}',
+      'async function () {}',
+      'async function* () {}',
+      '() => 1',
+      'async () => 1',
+      'class { static observed = this.name }',
+      'class { static name = "custom"; static observed = this.name }',
+      'function Authored() {}',
+      'class Authored { static observed = this.name }',
+      '(0, function () {})',
+      '(true ? function () {} : function () {})',
+    ]) {
+      const code = `import { $state } from 'fict';
+        export function Scenario() {
+          let value = $state(${initial});
+          (${assign(expression)});
+          return [value.name, value.observed];
+        }`
+      const authored = code
+        .replace("import { $state } from 'fict';", 'const $state = value => value;')
+        .replace('export function', 'exports.Scenario = function')
+      const expected = executeCommonJs(authored, { exportName: 'Scenario', arguments: [] })
+      for (const options of namedAssignmentProfiles) {
+        assert.deepEqual(
+          compileAndExecute(`named-${target}`, code, options),
+          expected,
+          `${expression}/${JSON.stringify(options)}`,
+        )
+      }
+    }
+  })
+}
+
+test('reactive inferred names preserve outer references and special property names', () => {
+  const code = `import { $state } from 'fict';
+    export function Scenario() {
+      let value = $state(null);
+      const fn = (value = function () { return value });
+      value = 123;
+      let __proto__ = $state(null);
+      __proto__ = function () {};
+      const direct = __proto__.name;
+      ({ __proto__ = class {} } = Object.create(null));
+      return [fn.name, fn(), direct, __proto__.name];
+    }`
+  for (const options of namedAssignmentProfiles) {
+    assert.deepEqual(
+      compileAndExecute('named-assignment-scope', code, options),
+      ['value', 123, '__proto__', '__proto__'],
+      JSON.stringify(options),
+    )
+  }
+})
 
 test('object and array function entries remain lazy while eager entries run at creation', () => {
   const actual = compileAndExecute(
