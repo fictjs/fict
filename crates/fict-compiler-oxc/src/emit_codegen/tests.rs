@@ -416,9 +416,9 @@ fn materializes_value_preserving_reactive_writes_and_updates() {
         "{}",
         output.code
     );
-    assert!(output.code.contains("__fict_previous &&"));
-    assert!(output.code.contains("__fict_previous ||"));
-    assert!(output.code.contains("__fict_previous ??"));
+    assert!(output.code.contains("count() &&"));
+    assert!(output.code.contains("count() ||"));
+    assert!(output.code.contains("count() ??"));
 }
 #[test]
 fn fails_closed_for_scoped_helpers_without_context_materialization() {

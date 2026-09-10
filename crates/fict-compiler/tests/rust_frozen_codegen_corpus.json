@@ -15,7 +15,7 @@
       "@babel/plugin-transform-typescript": "7.28.5"
     },
     "rustAuditRelease": "0.33.0",
-    "rustAuditRevision": "e0d135088b984c5e83be91a5259c4cf9dc6a63d4",
+    "rustAuditRevision": "3c0ef603b284fda1fc5a50109fa5d854aecd676d",
     "auditInputSha256": "676b022516c01b525d7e2a316e5b072eae2ee1532b2bb103573543900f13b67f",
     "requestPolicySha256": "6b459d227b9b70c163861d31104547f8e1569526ae5fb78c36cb7a11f313bec8",
     "legacyTestSourceSha256": "65e6c3961af46d92d88d40d4ee0bb50901538ea15b4468dc8c79c73eef9da8bb",
@@ -25,8 +25,8 @@
     "corpusFixtures": 1950,
     "scannedLegacyTestFiles": 107,
     "legacyTestFilesWithAuditRows": 73,
-    "reviewedRevision": "e0d135088b984c5e83be91a5259c4cf9dc6a63d4",
-    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-cb0646e6615470339106aa99eab5ec5cea02a9a4f085611d008b9819a641554f"
+    "reviewedRevision": "3c0ef603b284fda1fc5a50109fa5d854aecd676d",
+    "reviewedCompilerBuildId": "fict-rust-p1-oxc0.139.0-m1-d60996909caa03311a6dfdc988825ca65cc9d8abe93e567d3f1ec458d1e2346d"
   },
   "deviationPolicies": {
     "genuine-capability-expansion": "Rust accepts a Babel-rejected input and an executable oracle proves the newly supported behavior.",
@@ -25289,7 +25289,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "a25bc0b52719b5bbdbdc475dd07de5bb0db53b0661259c55558c0fbe04e2c9f7"
+        "codeSha256": "8cfc2fa7543136c4ae7676706936a3bfa6e5eef412784c90b33ddb0c351637b2"
       },
       "deviationPolicy": null
     },
@@ -39801,7 +39801,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "be1643ddc941999a6f61f43b49b71d68c9c64cef766b7347986e924fa7002c2c"
+        "codeSha256": "f8861df36d43c544f5dc80232599674f2216842e725e671b46b41587b3929e7e"
       },
       "deviationPolicy": null
     },
@@ -40209,7 +40209,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "640f358e469498c6f1276dc3485f92ec8729cdd3090516273a86caef842ecca9"
+        "codeSha256": "74e36fc459e1550c58035fac2a7d4ccc32cc025fae32fedfca459695088da3f5"
       },
       "deviationPolicy": null
     },
@@ -40233,7 +40233,7 @@
       "expected": {
         "status": "ok",
         "diagnostics": [],
-        "codeSha256": "e44387655865c9b4b9c53ac38f77f2e9ae39d15528715ba2bcdf84e527580eae"
+        "codeSha256": "19673b995a6a32da208da7ebafbc35a2c42a45b3c34a19c22244daca73d9b500"
       },
       "deviationPolicy": null
     },

@@ -1697,7 +1697,7 @@ test('ports the Babel state-machine collision domain to structured native contro
     assert.match(runtime, new RegExp(behavior))
   }
   assert.match(runtime, /executeCommonJs/)
-  assert.match(runtime, /__fict_previous_1_/)
+  assert.match(runtime, /const __fict_previous_1 = 2/)
   const packageJson = read('package.json')
   assert.match(packageJson, /test:compiler:state-machine-name-collision/)
   assert.match(packageJson, /native-compiler-state-machine-name-collision\.test\.mjs/)
