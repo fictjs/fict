@@ -195,7 +195,7 @@ pub fn run_core_passes(
     if options.optimize {
         for function_index in 0..hir.functions.len() {
             let function_id = FunctionId::new(count_u32(function_index));
-            let ssa = timed(&mut context, "optimizer-ssa", || {
+            let mut ssa = timed(&mut context, "optimizer-ssa", || {
                 analyze_ssa(&hir.functions[function_index])
             })?;
             optimization_iterations =
@@ -212,16 +212,20 @@ pub fn run_core_passes(
             optimization_iterations =
                 optimization_iterations.saturating_add(constants.stats.iterations as usize);
             constants_folded = constants_folded.saturating_add(constants.foldable_values.len());
-            hir = timed(&mut context, "constant-folding", || {
-                apply_constant_folding(&hir, function_id, &constants)
-            })?;
-
-            let ssa = timed(&mut context, "optimizer-ssa", || {
-                analyze_ssa(&hir.functions[function_index])
-            })?;
-            optimization_iterations =
-                optimization_iterations.saturating_add(ssa.cfg.dominator_iterations as usize);
-            let dependencies = timed(&mut context, "optimizer-dependencies", || {
+            // An empty rewrite plan preserves this exact HIR and its verified SSA.
+            // Rebuild analyses only after a mutation; final cross-function analyses
+            // still run after every function has completed optimization below.
+            if !constants.foldable_values.is_empty() {
+                hir = timed(&mut context, "constant-folding", || {
+                    apply_constant_folding(&hir, function_id, &constants)
+                })?;
+                ssa = timed(&mut context, "optimizer-ssa", || {
+                    analyze_ssa(&hir.functions[function_index])
+                })?;
+                optimization_iterations =
+                    optimization_iterations.saturating_add(ssa.cfg.dominator_iterations as usize);
+            }
+            let mut dependencies = timed(&mut context, "optimizer-dependencies", || {
                 analyze_dependencies(&hir, function_id, &ssa)
             })?;
             optimization_iterations = optimization_iterations
@@ -230,20 +234,21 @@ pub fn run_core_passes(
                 analyze_cse(&hir.functions[function_index], &ssa, &dependencies)
             })?;
             cse_replacements = cse_replacements.saturating_add(cse.replacements.len());
-            hir = timed(&mut context, "cse-rewrite", || {
-                apply_cse_rewrites(&hir, function_id, &cse)
-            })?;
-
-            let ssa = timed(&mut context, "optimizer-ssa", || {
-                analyze_ssa(&hir.functions[function_index])
-            })?;
-            optimization_iterations =
-                optimization_iterations.saturating_add(ssa.cfg.dominator_iterations as usize);
-            let dependencies = timed(&mut context, "optimizer-dependencies", || {
-                analyze_dependencies(&hir, function_id, &ssa)
-            })?;
-            optimization_iterations = optimization_iterations
-                .saturating_add(dependencies.stats.fixed_point_iterations as usize);
+            if !cse.replacements.is_empty() {
+                hir = timed(&mut context, "cse-rewrite", || {
+                    apply_cse_rewrites(&hir, function_id, &cse)
+                })?;
+                ssa = timed(&mut context, "optimizer-ssa", || {
+                    analyze_ssa(&hir.functions[function_index])
+                })?;
+                optimization_iterations =
+                    optimization_iterations.saturating_add(ssa.cfg.dominator_iterations as usize);
+                dependencies = timed(&mut context, "optimizer-dependencies", || {
+                    analyze_dependencies(&hir, function_id, &ssa)
+                })?;
+                optimization_iterations = optimization_iterations
+                    .saturating_add(dependencies.stats.fixed_point_iterations as usize);
+            }
             let aliases = timed(&mut context, "optimizer-aliases", || {
                 analyze_aliases(&hir, function_id, &ssa, &dependencies)
             })?;
@@ -253,9 +258,11 @@ pub fn run_core_passes(
                 analyze_dce(&hir, function_id, &ssa, &dependencies, &aliases)
             })?;
             dead_values = dead_values.saturating_add(dce.dead_values.len());
-            hir = timed(&mut context, "dce-compact", || {
-                apply_dce(&hir, function_id, &dce)
-            })?;
+            if !dce.dead_instructions.is_empty() || !dce.dead_values.is_empty() {
+                hir = timed(&mut context, "dce-compact", || {
+                    apply_dce(&hir, function_id, &dce)
+                })?;
+            }
         }
     }
 

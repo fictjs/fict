@@ -25,6 +25,9 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 - Preserve directives, comments, statement order, lexical ownership, JSX
   shape, TypeScript/CTS semantics, and macro identity.
 - Rebuild semantic information after syntax-changing TypeScript passes.
+- Frontend classification, TypeScript compatibility checks, and HIR construction
+  may share one parsed program and semantic graph while the syntax is unchanged.
+  Reuse stays inside the request arena and preserves diagnostic/policy ordering.
 - Parse or adaptation failure returns structured diagnostics and no partial
   output.
 
@@ -54,6 +57,14 @@ metadata, caches, and bundler objects remain in the JavaScript host.
 - Root-only historical aliases use graph reachability. Projected aliases,
   wildcard aliases, and global-object canonicalization retain path-sensitive
   traversal, and getter-free states avoid unnecessary historical getter queries.
+- Equal alias invalidation sets share immutable storage. Verifying shared members
+  once must still validate every invalidation location and report every invalid
+  set occurrence. Region indexes preserve full-scan input/output sets and the
+  deepest dominating lexical parent, with the largest region ID breaking ties.
+  Region lookups also retain support for unique unsorted binding facts accepted
+  by the existing verifier.
+- Parent compression caches only terminating paths within one immutable parent
+  snapshot. Cyclic paths retain the bounded resolver and fixed-point limits.
 
 ### Optimizer
 
@@ -65,6 +76,9 @@ metadata, caches, and bundler objects remain in the JavaScript host.
   JavaScript coercion, result types, exceptions, and evaluation count.
 - A pass that does not converge within its budget is an internal compiler error,
   not best-effort output.
+- Empty rewrite plans retain the existing HIR and its analyses. Any applied
+  rewrite invalidates dependent analyses; final cross-function facts are rebuilt
+  only after all functions have finished optimization.
 
 ### EmitIR and code generation
 
@@ -114,6 +128,10 @@ compatibility code is removed and must not grow to reimplement compiler passes.
 Rust crate and largest-file budgets are independently enforced and may not be
 relaxed to absorb unrelated work. Extract helpers along crate/pass ownership
 boundaries and document any intentional budget change.
+
+The reactivity budget is reviewed at 13,286 lines with a 13,400-line ceiling for
+shared alias facts, indexed regions, and independent invalidation/root-resolution
+regressions. The workspace ceiling and other crate ceilings are unchanged.
 
 ## Verification
 

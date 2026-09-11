@@ -11,7 +11,7 @@ use fict_hir::{
 use crate::effects::imported_reactive_dependency;
 use crate::{
     DependencyAnalysis, DependencyBase, DependencyPath, InstructionLocation, ReactiveCycleAnalysis,
-    ReactiveScopeAnalysis, SsaAnalysis, SsaDefinitionLocation, verify_reactive_cycles,
+    ReactiveScopeAnalysis, ReadFact, SsaAnalysis, SsaDefinitionLocation, verify_reactive_cycles,
     verify_reactive_scopes,
 };
 
@@ -103,6 +103,7 @@ pub fn analyze_regions(
     verify_reactive_scopes(function, ssa, dependencies, scopes)?;
     verify_reactive_cycles(function, scopes, cycles)?;
     let tracked: BTreeSet<_> = scopes.bindings.iter().map(|binding| binding.name).collect();
+    let facts = RegionFacts::new(dependencies, scopes);
     let mut active_by_block: BTreeMap<BlockId, BTreeSet<u32>> = BTreeMap::new();
     let mut phi_outputs: BTreeMap<BlockId, Vec<SsaName>> = BTreeMap::new();
     for binding in &scopes.bindings {
@@ -183,7 +184,7 @@ pub fn analyze_regions(
         let ranges = split_ranges(block, &active, &barriers);
         if ranges.is_empty() && has_phi {
             regions.push(build_region(
-                file,
+                &facts,
                 function,
                 scopes,
                 dependencies,
@@ -206,7 +207,7 @@ pub fn analyze_regions(
                 &[]
             };
             regions.push(build_region(
-                file,
+                &facts,
                 function,
                 scopes,
                 dependencies,
@@ -218,7 +219,7 @@ pub fn analyze_regions(
             ));
         }
     }
-    assign_hierarchy(file, function, ssa, &mut regions);
+    assign_hierarchy(file, ssa, &mut regions);
     let mut regions_by_block = vec![Vec::new(); function.blocks.len()];
     for region in &regions {
         for block in &region.blocks {
@@ -295,6 +296,12 @@ pub fn verify_regions(
         .iter()
         .flat_map(|cycle| cycle.nodes.iter().copied())
         .collect();
+    let control_flow_reads: BTreeSet<_> = dependencies
+        .reads
+        .iter()
+        .filter(|read| read.controls_flow)
+        .map(|read| read.location)
+        .collect();
     let mut output_owners = BTreeMap::new();
     let mut ranges_by_block: BTreeMap<BlockId, Vec<RegionInstructionRange>> = BTreeMap::new();
     for region in &analysis.regions {
@@ -345,12 +352,19 @@ pub fn verify_regions(
             }
         }
         let expected_control_flow = region.ranges.iter().any(|range| {
-            dependencies.reads.iter().any(|read| {
-                read.controls_flow
-                    && read.location.block == range.block
-                    && read.location.instruction >= range.start
-                    && read.location.instruction < range.end
-            })
+            range.start < range.end
+                && control_flow_reads
+                    .range(
+                        InstructionLocation {
+                            block: range.block,
+                            instruction: range.start,
+                        }..InstructionLocation {
+                            block: range.block,
+                            instruction: range.end,
+                        },
+                    )
+                    .next()
+                    .is_some()
         });
         if region.has_control_flow != expected_control_flow {
             diagnostics.push(region_error(
@@ -588,9 +602,58 @@ fn push_active_window(
     }
 }
 
+// Index once per function: barrier-heavy functions may have one region for each
+// instruction, so scanning every read and definition per region is quadratic.
+struct RegionFacts<'a> {
+    reads: Vec<(InstructionLocation, &'a ReadFact)>,
+    outputs: Vec<(InstructionLocation, SsaName)>,
+}
+
+impl<'a> RegionFacts<'a> {
+    fn new(dependencies: &'a DependencyAnalysis, scopes: &ReactiveScopeAnalysis) -> Self {
+        let mut reads: Vec<_> = dependencies
+            .reads
+            .iter()
+            .map(|read| (read.location, read))
+            .collect();
+        reads.sort_by_key(|(location, _)| *location);
+        let mut outputs: Vec<_> = scopes
+            .bindings
+            .iter()
+            .filter_map(|binding| {
+                if let SsaDefinitionLocation::Instruction { block, instruction } = binding.location
+                {
+                    Some((InstructionLocation { block, instruction }, binding.name))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        outputs.sort_unstable();
+        Self { reads, outputs }
+    }
+}
+
+fn facts_in_range<T>(
+    facts: &[(InstructionLocation, T)],
+    range: RegionInstructionRange,
+) -> &[(InstructionLocation, T)] {
+    let start = InstructionLocation {
+        block: range.block,
+        instruction: range.start,
+    };
+    let end = InstructionLocation {
+        block: range.block,
+        instruction: range.end,
+    };
+    let first = facts.partition_point(|(location, _)| *location < start);
+    let last = facts.partition_point(|(location, _)| *location < end);
+    &facts[first..last]
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_region(
-    _file: &HirFile,
+    facts: &RegionFacts<'_>,
     function: &HirFunction,
     scopes: &ReactiveScopeAnalysis,
     dependencies: &DependencyAnalysis,
@@ -601,26 +664,18 @@ fn build_region(
     has_barrier: bool,
 ) -> ReactiveRegion {
     let block = &function.blocks[range.block.as_usize()];
-    let contains = |location: InstructionLocation| {
-        location.block == range.block
-            && location.instruction >= range.start
-            && location.instruction < range.end
-    };
+    let reads = facts_in_range(&facts.reads, range);
     let mut outputs: BTreeSet<_> = phi_outputs.iter().copied().collect();
-    outputs.extend(scopes.bindings.iter().filter_map(|binding| {
-        if let SsaDefinitionLocation::Instruction { block, instruction } = binding.location
-            && contains(InstructionLocation { block, instruction })
-        {
-            return Some(binding.name);
-        }
-        None
-    }));
-    let mut inputs: BTreeSet<_> = dependencies
-        .reads
+    outputs.extend(
+        facts_in_range(&facts.outputs, range)
+            .iter()
+            .map(|(_, name)| *name),
+    );
+    let mut inputs: BTreeSet<_> = reads
         .iter()
-        .filter(|read| contains(read.location))
-        .map(|read| read.path.clone())
+        .map(|(_, read)| &read.path)
         .filter(|path| !matches!(path.base, DependencyBase::Ssa(name) if outputs.contains(&name)))
+        .cloned()
         .collect();
     for instruction in block
         .instructions
@@ -646,8 +701,17 @@ fn build_region(
     for output in phi_outputs {
         if let Some(binding) = scopes
             .bindings
-            .iter()
-            .find(|binding| binding.name == *output)
+            .binary_search_by_key(output, |binding| binding.name)
+            .ok()
+            .map(|index| &scopes.bindings[index])
+            // The producer sorts bindings, but the verifier also accepts a
+            // unique, unsorted list. Preserve that existing input contract.
+            .or_else(|| {
+                scopes
+                    .bindings
+                    .iter()
+                    .find(|binding| binding.name == *output)
+            })
         {
             inputs.extend(
                 binding
@@ -696,12 +760,7 @@ fn build_region(
                         }
                 )
         });
-    let has_control_flow = dependencies.reads.iter().any(|read| {
-        read.controls_flow
-            && read.location.block == range.block
-            && read.location.instruction >= range.start
-            && read.location.instruction < range.end
-    });
+    let has_control_flow = reads.iter().any(|(_, read)| read.controls_flow);
     let cycle_blocked = outputs.iter().any(|output| cyclic_nodes.contains(output));
     let should_memoize = !function.flags.no_memo
         && !inputs.is_empty()
@@ -728,32 +787,44 @@ fn build_region(
     }
 }
 
-fn assign_hierarchy(
-    file: &HirFile,
-    function: &HirFunction,
-    ssa: &SsaAnalysis,
-    regions: &mut [ReactiveRegion],
-) {
+fn assign_hierarchy(file: &HirFile, ssa: &SsaAnalysis, regions: &mut [ReactiveRegion]) {
     let scope_parent: BTreeMap<_, _> = file
         .scopes
         .iter()
         .map(|scope| (scope.id, scope.parent))
         .collect();
-    let snapshots = regions.to_vec();
+    // Within one scope/block, the previous depth/ID ordering always selected the
+    // largest region ID. Store only that candidate and walk strict ancestors.
+    let mut by_scope: BTreeMap<ScopeId, BTreeMap<BlockId, RegionId>> = BTreeMap::new();
+    for region in regions.iter() {
+        by_scope
+            .entry(region.scope)
+            .or_default()
+            .entry(region.blocks[0])
+            .and_modify(|id| *id = (*id).max(region.id))
+            .or_insert(region.id);
+    }
     for child in regions.iter_mut() {
         let child_block = child.blocks[0];
-        let mut candidates: Vec<_> = snapshots
-            .iter()
-            .filter(|parent| {
-                parent.id != child.id
-                    && scope_is_ancestor(parent.scope, child.scope, &scope_parent)
-                    && parent.scope != child.scope
-                    && ssa.cfg.dominates(parent.blocks[0], child_block)
-            })
-            .collect();
-        candidates
-            .sort_by_key(|parent| (scope_depth(parent.scope, &scope_parent), parent.id.index()));
-        child.parent = candidates.last().map(|parent| parent.id);
+        let mut scope = child.scope;
+        let mut remaining = scope_parent.len().saturating_add(1);
+        while remaining > 0 {
+            let Some(Some(parent)) = scope_parent.get(&scope) else {
+                break;
+            };
+            scope = *parent;
+            child.parent = by_scope
+                .get(&scope)
+                .into_iter()
+                .flat_map(|blocks| blocks.iter())
+                .filter(|(block, _)| ssa.cfg.dominates(**block, child_block))
+                .map(|(_, id)| *id)
+                .max();
+            if child.parent.is_some() {
+                break;
+            }
+            remaining -= 1;
+        }
     }
     let parent_links: Vec<_> = regions
         .iter()
@@ -764,40 +835,6 @@ fn assign_hierarchy(
             region.children.push(child);
         }
     }
-    let _ = function;
-}
-
-fn scope_is_ancestor(
-    ancestor: ScopeId,
-    mut scope: ScopeId,
-    parents: &BTreeMap<ScopeId, Option<ScopeId>>,
-) -> bool {
-    let mut remaining = parents.len().saturating_add(1);
-    while remaining > 0 {
-        if scope == ancestor {
-            return true;
-        }
-        let Some(Some(parent)) = parents.get(&scope) else {
-            return false;
-        };
-        scope = *parent;
-        remaining -= 1;
-    }
-    false
-}
-
-fn scope_depth(mut scope: ScopeId, parents: &BTreeMap<ScopeId, Option<ScopeId>>) -> usize {
-    let mut depth = 0_usize;
-    let mut remaining = parents.len().saturating_add(1);
-    while remaining > 0 {
-        let Some(Some(parent)) = parents.get(&scope) else {
-            break;
-        };
-        depth = depth.saturating_add(1);
-        scope = *parent;
-        remaining -= 1;
-    }
-    depth
 }
 
 fn maximum_depth(regions: &[ReactiveRegion]) -> u32 {

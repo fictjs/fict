@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
@@ -9,6 +10,8 @@ use crate::{
     BarrierKind, DependencyAnalysis, DependencyBase, EscapeKind, InstructionLocation, SsaAnalysis,
     SsaDefinitionLocation, verify_dependencies, verify_ssa,
 };
+
+mod root_resolution;
 
 /// Proven assignment alias between structural SSA identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -49,7 +52,8 @@ pub struct AliasInvalidation {
     /// Invalidation reason.
     pub reason: AliasInvalidationReason,
     /// Complete sorted class affected by the operation.
-    pub affected: Vec<SsaName>,
+    /// Equal class/all-definition sets share immutable storage within an analysis.
+    pub affected: Arc<[SsaName]>,
 }
 
 /// Alias pass statistics.
@@ -169,10 +173,7 @@ pub fn analyze_aliases(
                 }
             }
         }
-        let compressed: Vec<_> = parents
-            .iter()
-            .map(|(alias, source)| (*alias, resolve_root(*source, &parents)))
-            .collect();
+        let compressed = root_resolution::compressed_parents(&parents);
         for (alias, source) in compressed {
             if parents.get(&alias) != Some(&source) {
                 parents.insert(alias, source);
@@ -212,11 +213,12 @@ pub fn analyze_aliases(
     let member_by_name: BTreeMap<_, _> = classes
         .iter()
         .flat_map(|class| {
+            let members: Arc<[SsaName]> = class.members.clone().into();
             class
                 .members
                 .iter()
                 .copied()
-                .map(|member| (member, class.members.clone()))
+                .map(move |member| (member, Arc::clone(&members)))
         })
         .collect();
     let invalidations = build_invalidations(dependencies, &member_by_name, &all_definitions);
@@ -285,21 +287,29 @@ pub fn verify_aliases(
             "alias classes must partition every SSA definition",
         ));
     }
+    let mut verified_affected = BTreeSet::new();
     for invalidation in &analysis.invalidations {
-        if invalidation.affected.is_empty()
-            || invalidation
-                .affected
-                .windows(2)
-                .any(|pair| pair[0] >= pair[1])
-            || invalidation
-                .affected
-                .iter()
-                .any(|name| !definitions.contains(name))
+        // The borrowed analysis keeps these immutable allocations alive for the whole
+        // verification. Validate each shared set once; always validate every location.
+        // Cache only successes so malformed repeated facts retain their diagnostics.
+        let identity = (invalidation.affected.as_ptr(), invalidation.affected.len());
+        if !verified_affected.contains(&identity)
+            && (invalidation.affected.is_empty()
+                || invalidation
+                    .affected
+                    .windows(2)
+                    .any(|pair| pair[0] >= pair[1])
+                || invalidation
+                    .affected
+                    .iter()
+                    .any(|name| !definitions.contains(name)))
         {
             diagnostics.push(alias_error(
                 "FICT-ALIAS-INVALIDATION",
                 "alias invalidation must contain sorted known SSA definitions",
             ));
+        } else {
+            verified_affected.insert(identity);
         }
         if function
             .blocks
@@ -387,10 +397,11 @@ fn direct_value_sources(
 
 fn build_invalidations(
     dependencies: &DependencyAnalysis,
-    members: &BTreeMap<SsaName, Vec<SsaName>>,
+    members: &BTreeMap<SsaName, Arc<[SsaName]>>,
     all_definitions: &BTreeSet<SsaName>,
 ) -> Vec<AliasInvalidation> {
     let mut invalidations = Vec::new();
+    let all_members: Arc<[SsaName]> = all_definitions.iter().copied().collect();
     for write in &dependencies.writes {
         if write.path.segments.is_empty() {
             continue;
@@ -399,7 +410,10 @@ fn build_invalidations(
             invalidations.push(AliasInvalidation {
                 location: write.location,
                 reason: AliasInvalidationReason::ProjectedWrite,
-                affected: members.get(&name).cloned().unwrap_or_else(|| vec![name]),
+                affected: members
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| Arc::from([name])),
             });
         }
     }
@@ -422,23 +436,28 @@ fn build_invalidations(
             invalidations.push(AliasInvalidation {
                 location,
                 reason,
-                affected: members.get(&name).cloned().unwrap_or_else(|| vec![name]),
+                affected: members
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| Arc::from([name])),
             });
         }
     }
+    let mut covered_locations: BTreeSet<_> = invalidations
+        .iter()
+        .map(|invalidation| invalidation.location)
+        .collect();
     for barrier in &dependencies.barriers {
         if !barrier.kinds.contains(&BarrierKind::UnknownMutation)
             || all_definitions.is_empty()
-            || invalidations
-                .iter()
-                .any(|invalidation| invalidation.location == barrier.location)
+            || !covered_locations.insert(barrier.location)
         {
             continue;
         }
         invalidations.push(AliasInvalidation {
             location: barrier.location,
             reason: AliasInvalidationReason::UnknownBarrier,
-            affected: all_definitions.iter().copied().collect(),
+            affected: Arc::clone(&all_members),
         });
     }
     invalidations.sort_by(|left, right| {

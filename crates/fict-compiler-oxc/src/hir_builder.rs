@@ -31,7 +31,7 @@ use fict_metadata::{
     ResolvedMetadataInput,
 };
 use oxc::{
-    allocator::{Allocator, Vec as ArenaVec},
+    allocator::Vec as ArenaVec,
     ast::{
         ast::{
             AccessorProperty, Argument, ArrayAssignmentTarget, ArrayExpression,
@@ -68,7 +68,7 @@ use oxc::{
             walk_yield_expression,
         },
     },
-    semantic::{Scoping, Semantic, SemanticBuilder},
+    semantic::{Scoping, Semantic},
     span::{GetSpan, Span},
     syntax::{
         number::ToJsString as _,
@@ -84,10 +84,16 @@ use oxc::{
 
 use crate::{
     FictDirectiveKind, FrontendBinding, FrontendBindingKind, FrontendSummary, OxcCompileOptions,
-    OxcSourceLanguage, analyze_frontend, analyze_typescript_compatibility,
+    OxcSourceLanguage,
 };
 
-use super::compile::{convert_diagnostics, parse_source, sorted};
+use super::compile::sorted;
+use super::frontend::with_analyzed_frontend;
+
+mod static_alias_resolution;
+use static_alias_resolution::{
+    resolve_static_alias_path, resolve_static_alias_path_chain, resolve_static_alias_slot_path,
+};
 
 mod advisory_diagnostics;
 mod builtin_effects;
@@ -202,17 +208,39 @@ pub fn build_hir(
     compile_options: OxcCompileOptions,
     hir_options: &HirBuildOptions,
 ) -> HirBuildOutput {
-    let frontend_output = analyze_frontend(source, compile_options);
-    let Some(frontend) = frontend_output.summary else {
-        return HirBuildOutput {
-            hir: None,
-            frontend: None,
-            module_plan: None,
-            syntax_fragments: Vec::new(),
-            diagnostics: frontend_output.diagnostics,
-        };
-    };
+    with_analyzed_frontend(
+        source,
+        compile_options,
+        |frontend, diagnostics, program, semantic| {
+            build_analyzed_hir(
+                source,
+                compile_options,
+                hir_options,
+                frontend,
+                diagnostics,
+                program,
+                semantic,
+            )
+        },
+    )
+    .unwrap_or_else(|diagnostics| HirBuildOutput {
+        hir: None,
+        frontend: None,
+        module_plan: None,
+        syntax_fragments: Vec::new(),
+        diagnostics,
+    })
+}
 
+fn build_analyzed_hir(
+    source: &str,
+    compile_options: OxcCompileOptions,
+    hir_options: &HirBuildOptions,
+    frontend: FrontendSummary,
+    diagnostics: Vec<Diagnostic>,
+    program: &Program<'_>,
+    semantic: &Semantic<'_>,
+) -> HirBuildOutput {
     if let Some(diagnostic) = frontend_budget_diagnostic(&frontend, hir_options.analysis_budgets) {
         return HirBuildOutput {
             hir: None,
@@ -229,7 +257,7 @@ pub fn build_hir(
             frontend: Some(frontend),
             module_plan: None,
             syntax_fragments: Vec::new(),
-            diagnostics: frontend_output.diagnostics,
+            diagnostics,
         };
     }
 
@@ -248,52 +276,26 @@ pub fn build_hir(
         compile_options.language,
         OxcSourceLanguage::TypeScript | OxcSourceLanguage::TypeScriptJsx
     ) {
-        let compatibility = analyze_typescript_compatibility(source, compile_options);
-        if !compatibility.diagnostics.is_empty() {
+        let compatibility = super::typescript::plan_typescript_program(
+            program,
+            semantic.scoping(),
+            compile_options.module_kind,
+            &compile_options.typescript,
+        );
+        let diagnostics = super::typescript::passthrough_blockers(&compatibility);
+        if !diagnostics.is_empty() {
             return HirBuildOutput {
                 hir: None,
                 frontend: Some(frontend),
                 module_plan: None,
                 syntax_fragments: Vec::new(),
-                diagnostics: compatibility.diagnostics,
+                diagnostics,
             };
         }
     }
 
-    let allocator = Allocator::default();
-    let parsed = parse_source(&allocator, source, compile_options);
-    if !parsed.diagnostics.is_empty() {
-        return HirBuildOutput {
-            hir: None,
-            frontend: Some(frontend),
-            module_plan: None,
-            syntax_fragments: Vec::new(),
-            diagnostics: sorted(convert_diagnostics(parsed.diagnostics, "FICT-PARSE")),
-        };
-    }
-
-    let program = parsed.program;
-    let semantic_result = SemanticBuilder::new()
-        .with_build_nodes(true)
-        .with_check_syntax_error(true)
-        .with_enum_eval(true)
-        .build(&program);
-    if semantic_result.diagnostics.has_errors() {
-        return HirBuildOutput {
-            hir: None,
-            frontend: Some(frontend),
-            module_plan: None,
-            syntax_fragments: Vec::new(),
-            diagnostics: sorted(convert_diagnostics(
-                semantic_result.diagnostics,
-                "FICT-SEMANTIC",
-            )),
-        };
-    }
-
-    let semantic = semantic_result.semantic;
-    let mut builder = Builder::new(source, frontend, &semantic, hir_options);
-    builder.build(&program);
+    let mut builder = Builder::new(source, frontend, semantic, hir_options);
+    builder.build(program);
     builder.finish()
 }
 
@@ -8951,109 +8953,6 @@ struct StaticHookAliases {
     exclusive_json_replacer_arrays: BTreeSet<SymbolId>,
 }
 
-fn resolve_static_alias_path(
-    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
-    original: &StaticAliasPath,
-) -> StaticAliasPath {
-    resolve_static_alias_path_with_mode(aliases, original, true)
-}
-
-fn resolve_static_alias_slot_path(
-    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
-    original: &StaticAliasPath,
-) -> StaticAliasPath {
-    resolve_static_alias_path_with_mode(aliases, original, false)
-}
-
-fn resolve_static_alias_path_with_mode(
-    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
-    original: &StaticAliasPath,
-    allow_exact_alias: bool,
-) -> StaticAliasPath {
-    resolve_static_alias_path_chain_with_mode(aliases, original, allow_exact_alias)
-        .into_iter()
-        .last()
-        .expect("an alias resolution chain always contains its original path")
-}
-
-fn resolve_static_alias_path_chain(
-    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
-    original: &StaticAliasPath,
-) -> Vec<StaticAliasPath> {
-    resolve_static_alias_path_chain_with_mode(aliases, original, true)
-}
-
-fn resolve_static_alias_path_chain_with_mode(
-    aliases: &BTreeMap<StaticAliasPath, StaticAliasPath>,
-    original: &StaticAliasPath,
-    allow_exact_alias: bool,
-) -> Vec<StaticAliasPath> {
-    let mut current = original.clone().canonicalized();
-    let mut visited = BTreeSet::new();
-    visited.insert(current.clone());
-    let mut chain = vec![current.clone()];
-
-    while visited.len() <= aliases.len() {
-        let max_length = allow_exact_alias
-            .then_some(current.properties.len())
-            .or_else(|| current.properties.len().checked_sub(1));
-        let replacement = max_length
-            .and_then(|max_length| {
-                (0..=max_length).rev().find_map(|length| {
-                    let prefix = StaticAliasPath {
-                        root: current.root.clone(),
-                        properties: current.properties[..length].to_vec(),
-                        element_wildcard: false,
-                    };
-                    aliases.get(&prefix).map(|source| {
-                        let mut resolved = source.clone();
-                        resolved
-                            .properties
-                            .extend_from_slice(&current.properties[length..]);
-                        resolved.element_wildcard |= current.element_wildcard;
-                        resolved.canonicalized()
-                    })
-                })
-            })
-            .or_else(|| {
-                aliases
-                    .iter()
-                    .filter_map(|(target, source)| {
-                        let remaining =
-                            element_wildcard_alias_remainder(target, &current, allow_exact_alias)?;
-                        let mut resolved = source.clone();
-                        resolved.properties.extend_from_slice(remaining);
-                        Some((target.properties.len(), resolved.canonicalized()))
-                    })
-                    .max_by_key(|(length, _)| *length)
-                    .map(|(_, resolved)| resolved)
-            })
-            .or_else(|| {
-                aliases
-                    .iter()
-                    .filter_map(|(target, source)| {
-                        let remaining =
-                            dynamic_property_alias_remainder(target, &current, allow_exact_alias)?;
-                        let mut resolved = source.clone();
-                        resolved.properties.extend_from_slice(remaining);
-                        Some((target.properties.len(), resolved.canonicalized()))
-                    })
-                    .max_by_key(|(length, _)| *length)
-                    .map(|(_, resolved)| resolved)
-            });
-        let Some(replacement) = replacement else {
-            break;
-        };
-        if !visited.insert(replacement.clone()) {
-            break;
-        }
-        current = replacement;
-        chain.push(current.clone());
-    }
-
-    chain
-}
-
 fn resolve_historical_alias_paths(
     aliases: &BTreeMap<StaticAliasPath, BTreeSet<StaticAliasPath>>,
     original: &StaticAliasPath,
@@ -11918,6 +11817,12 @@ impl ExternalStorageFlowState {
     }
 
     fn attached_roots(&self, path: &StaticAliasPath) -> BTreeSet<SymbolId> {
+        if self.attached_parameters.is_empty()
+            && self.attached_alias_roots.is_empty()
+            && self.shallow_copies.is_empty()
+        {
+            return BTreeSet::new();
+        }
         let mut roots = BTreeSet::new();
         for candidate in self.alias_candidates(path) {
             if let Some(root) = candidate.binding_root()
@@ -13442,6 +13347,10 @@ fn local_object_prototype_member_paths_from_state(
     path: &StaticAliasPath,
     requires_historical: impl Fn(&StaticAliasPath) -> bool,
 ) -> BTreeSet<StaticAliasPath> {
+    // Without a recorded prototype edge, the traversal cannot inherit a path.
+    if local_object_prototypes.is_empty() {
+        return BTreeSet::new();
+    }
     let original = path.clone().canonicalized();
     let mut pending = VecDeque::from([(original.clone(), false)]);
     let mut visited = BTreeSet::from([original]);
@@ -22705,6 +22614,9 @@ impl StaticHookAliasCollector<'_> {
         &self,
         path: &StaticAliasPath,
     ) -> StaticAliasPath {
+        if self.local_object_value_enumeration_results.is_empty() {
+            return path.clone();
+        }
         let resolved = resolve_static_alias_slot_path(&self.aliases, path);
         if self
             .local_object_value_enumeration_results
@@ -23893,6 +23805,9 @@ impl StaticHookAliasCollector<'_> {
     }
 
     fn known_array_length(&self, path: &StaticAliasPath) -> Option<usize> {
+        if self.array_lengths.is_empty() {
+            return None;
+        }
         if self
             .ambiguous_alias_targets
             .iter()
@@ -24830,6 +24745,13 @@ impl StaticHookAliasCollector<'_> {
         receiver_override: Option<Vec<LocalInvocationArgument>>,
         result_discarded: bool,
     ) -> Option<(bool, usize, Vec<LocalInvocationFact>)> {
+        if self.local_getter_properties.is_empty()
+            && self.local_getter_property_history.is_empty()
+            && self.dynamic_getter_properties.is_empty()
+            && self.dynamic_getter_property_history.is_empty()
+        {
+            return None;
+        }
         let (historical, getters) = self.local_getter_resolution(property, false);
         if getters.is_empty() {
             return None;
@@ -25203,6 +25125,9 @@ impl StaticHookAliasCollector<'_> {
         target: StaticAliasPath,
         source: &StaticAliasPath,
     ) -> bool {
+        if self.local_callable_parameters.is_empty() && self.local_bound_callables.is_empty() {
+            return false;
+        }
         let resolved = resolve_static_alias_path(&self.aliases, source);
         if [source, &resolved].into_iter().any(|candidate| {
             self.path_requires_historical_aliases(candidate, self.function_depth)

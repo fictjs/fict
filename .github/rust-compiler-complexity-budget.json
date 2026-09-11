@@ -50,8 +50,8 @@
       "maxLines": 600
     },
     "fict-reactivity": {
-      "reviewedLines": 13000,
-      "maxLines": 13200
+      "reviewedLines": 13286,
+      "maxLines": 13400
     }
   },
   "fileOverrides": {

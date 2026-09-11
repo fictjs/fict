@@ -9,6 +9,7 @@ use fict_hir::{
 use fict_reactivity::{
     AliasInvalidationReason, analyze_aliases, analyze_dependencies, analyze_ssa, verify_aliases,
 };
+use std::sync::Arc;
 
 fn origin() -> Origin {
     Origin::source(SourceSpan::empty(0))
@@ -252,12 +253,22 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
     );
     assert!(analysis.invalidations.iter().any(|invalidation| {
         invalidation.reason == AliasInvalidationReason::ProjectedWrite
-            && invalidation.affected == class.members
+            && invalidation.affected.as_ref() == class.members.as_slice()
     }));
     assert!(analysis.invalidations.iter().any(|invalidation| {
         invalidation.reason == AliasInvalidationReason::UnknownCall
-            && invalidation.affected == class.members
+            && invalidation.affected.as_ref() == class.members.as_slice()
     }));
+    let class_invalidations: Vec<_> = analysis
+        .invalidations
+        .iter()
+        .filter(|invalidation| invalidation.affected.as_ref() == class.members.as_slice())
+        .collect();
+    assert!(class_invalidations.len() >= 2);
+    assert!(Arc::ptr_eq(
+        &class_invalidations[0].affected,
+        &class_invalidations[1].affected,
+    ));
     assert!(
         analysis
             .edges
@@ -274,6 +285,113 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
             .as_slice()
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-ALIAS-CLASS")
+    );
+}
+
+#[test]
+fn shares_unknown_barrier_sets_without_skipping_location_or_member_validation() {
+    let count = 128;
+    let mut values = vec![HirValue {
+        id: ValueId::new(0),
+        kind: ValueKind::Literal(LiteralValue::Undefined),
+        origin: origin(),
+    }];
+    let mut instructions = vec![HirInstruction {
+        result: Some(ValueId::new(0)),
+        kind: HirInstructionKind::Literal(LiteralValue::Undefined),
+        semantics: InstructionSemantics::PURE_EAGER,
+        origin: origin(),
+    }];
+    for index in 1..=count {
+        values.push(HirValue {
+            id: ValueId::new(index),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        });
+        instructions.push(HirInstruction {
+            result: Some(ValueId::new(index)),
+            kind: HirInstructionKind::Call(CallInstruction {
+                callee: ValueId::new(0),
+                callee_reference: None,
+                state_receiver_kind: fict_hir::StateReceiverKind::Unknown,
+                arguments: Vec::new(),
+                host: CallHost::Unknown,
+                macro_kind: None,
+                reactive_kind: None,
+                optional: false,
+            }),
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin: origin(),
+        });
+    }
+    let file = file(HirFunction {
+        id: FunctionId::new(0),
+        parent: FunctionId::new(0),
+        binding: None,
+        scope: ScopeId::new(0),
+        kind: FunctionKind::Module,
+        flags: FunctionFlags::default(),
+        parameters: Vec::new(),
+        locals: (0..count).map(|index| local(index, "entry")).collect(),
+        values,
+        blocks: vec![block(
+            0,
+            instructions,
+            TerminatorKind::Return { value: None },
+        )],
+        entry: BlockId::new(0),
+        effect_statements: Vec::new(),
+        regions: Vec::new(),
+        origin: origin(),
+    });
+    verify_hir(&file).expect("valid unknown-barrier fixture");
+    let ssa = analyze_ssa(&file.functions[0]).expect("SSA");
+    let dependencies = analyze_dependencies(&file, FunctionId::new(0), &ssa).expect("dependencies");
+    let analysis =
+        analyze_aliases(&file, FunctionId::new(0), &ssa, &dependencies).expect("aliases");
+    assert_eq!(analysis.invalidations.len(), count as usize);
+    let expected: Vec<_> = ssa
+        .definitions
+        .iter()
+        .map(|definition| definition.name)
+        .collect();
+    for invalidation in &analysis.invalidations {
+        assert_eq!(invalidation.reason, AliasInvalidationReason::UnknownBarrier);
+        assert_eq!(invalidation.affected.as_ref(), expected.as_slice());
+        assert!(Arc::ptr_eq(
+            &invalidation.affected,
+            &analysis.invalidations[0].affected
+        ));
+    }
+
+    let mut corrupted = analysis.clone();
+    corrupted.invalidations[1].location.instruction = count + 1;
+    let errors = verify_aliases(&file.functions[0], &ssa, &corrupted)
+        .expect_err("invalid location on shared set");
+    assert!(
+        errors
+            .as_slice()
+            .iter()
+            .any(|error| error.code.as_str() == "FICT-ALIAS-LOCATION")
+    );
+
+    let mut corrupted = analysis.clone();
+    Arc::make_mut(&mut corrupted.invalidations[1].affected)[0] =
+        fict_hir::SsaName::new(LocalId::new(count), fict_hir::SsaVersion::INITIAL);
+    corrupted.invalidations[2].affected = Arc::clone(&corrupted.invalidations[1].affected);
+    let errors = verify_aliases(&file.functions[0], &ssa, &corrupted)
+        .expect_err("invalid members on repeated shared set");
+    assert_eq!(
+        errors
+            .as_slice()
+            .iter()
+            .filter(|error| error.code.as_str() == "FICT-ALIAS-INVALIDATION")
+            .count(),
+        2
+    );
+    assert_eq!(
+        analysis.invalidations[0].affected.as_ref(),
+        expected.as_slice()
     );
 }
 

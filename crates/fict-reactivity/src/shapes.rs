@@ -448,7 +448,7 @@ pub fn analyze_shapes(
                 .members
                 .iter()
                 .copied()
-                .map(|member| (member, class.members.clone()))
+                .map(|member| (member, class.members.as_slice()))
         })
         .collect();
     let mut property_accesses: Vec<_> = dependencies
@@ -479,15 +479,18 @@ pub fn analyze_shapes(
             .then_with(|| left.path.cmp(&right.path))
     });
     for access in &property_accesses {
+        if access.kind == PropertyAccessKind::Read && !access.path.is_dynamic() {
+            continue;
+        }
         let DependencyBase::Ssa(name) = access.path.base else {
             continue;
         };
         let affected = members_by_name
             .get(&name)
-            .cloned()
-            .unwrap_or_else(|| vec![name]);
+            .copied()
+            .unwrap_or_else(|| std::slice::from_ref(&name));
         for member in affected {
-            let Some(shape) = shapes.get_mut(&member).and_then(Option::as_mut) else {
+            let Some(shape) = shapes.get_mut(member).and_then(Option::as_mut) else {
                 continue;
             };
             if access.path.is_dynamic() {
@@ -513,6 +516,7 @@ pub fn analyze_shapes(
             }
         }
     }
+    let mut escaping_classes = BTreeSet::new();
     for escape in &dependencies.escapes {
         if matches!(escape.kind, EscapeKind::DeferredCapture) {
             continue;
@@ -522,10 +526,15 @@ pub fn analyze_shapes(
         };
         let affected = members_by_name
             .get(&name)
-            .cloned()
-            .unwrap_or_else(|| vec![name]);
+            .copied()
+            .unwrap_or_else(|| std::slice::from_ref(&name));
+        // Escape state only changes from false to true. Every alias in this
+        // immutable class is updated together, even if many members escape.
+        if !escaping_classes.insert(affected.first().copied().unwrap_or(name)) {
+            continue;
+        }
         for member in affected {
-            if let Some(shape) = shapes.get_mut(&member).and_then(Option::as_mut) {
+            if let Some(shape) = shapes.get_mut(member).and_then(Option::as_mut) {
                 shape.escapes = true;
             }
         }
@@ -1053,6 +1062,14 @@ fn imported_hook_member_kind(
 }
 
 fn imported_hook_binding_shapes(file: &HirFile) -> BTreeMap<BindingId, &ImportedHookReturn> {
+    if !file.bindings.iter().any(|binding| {
+        binding
+            .import
+            .as_ref()
+            .is_some_and(|import| import.hook_return.is_some() || !import.hook_members.is_empty())
+    }) {
+        return BTreeMap::new();
+    }
     let mut bindings = BTreeMap::new();
     for function in &file.functions {
         let declarations: BTreeMap<_, _> = function

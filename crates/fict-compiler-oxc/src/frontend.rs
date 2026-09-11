@@ -306,27 +306,48 @@ pub struct FrontendOutput {
 /// Parse and semantically analyze source into an arena-independent frontend summary.
 #[must_use]
 pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOutput {
+    with_analyzed_frontend(source, options, |summary, diagnostics, _, _| {
+        FrontendOutput {
+            summary: Some(summary),
+            diagnostics,
+        }
+    })
+    .unwrap_or_else(|diagnostics| FrontendOutput {
+        summary: None,
+        diagnostics,
+    })
+}
+
+// The callback can reuse the verified AST and semantic graph within this request.
+// Its result cannot borrow the local arena, preserving the owned-IR boundary.
+pub(crate) fn with_analyzed_frontend<T>(
+    source: &str,
+    options: OxcCompileOptions,
+    finish: impl FnOnce(
+        FrontendSummary,
+        Vec<Diagnostic>,
+        &oxc::ast::ast::Program<'_>,
+        &Semantic<'_>,
+    ) -> T,
+) -> Result<T, Vec<Diagnostic>> {
     let Ok(source_len) = u32::try_from(source.len()) else {
-        return FrontendOutput {
-            summary: None,
-            diagnostics: vec![
-                Diagnostic::new(
-                    diagnostic_code("FICT-SOURCE-LIMIT"),
-                    DiagnosticSeverity::Error,
-                    "source exceeds the native compiler's 32-bit byte-offset limit",
-                )
-                .with_guarantee_class(GuaranteeClass::Unsupported),
-            ],
-        };
+        return Err(vec![
+            Diagnostic::new(
+                diagnostic_code("FICT-SOURCE-LIMIT"),
+                DiagnosticSeverity::Error,
+                "source exceeds the native compiler's 32-bit byte-offset limit",
+            )
+            .with_guarantee_class(GuaranteeClass::Unsupported),
+        ]);
     };
 
     let allocator = Allocator::default();
     let parsed = parse_source(&allocator, source, options);
     if !parsed.diagnostics.is_empty() {
-        return FrontendOutput {
-            summary: None,
-            diagnostics: sorted(convert_diagnostics(parsed.diagnostics, "FICT-PARSE")),
-        };
+        return Err(sorted(convert_diagnostics(
+            parsed.diagnostics,
+            "FICT-PARSE",
+        )));
     }
 
     let module_record = parsed.module_record;
@@ -342,10 +363,7 @@ pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOut
         "FICT-SEMANTIC",
     ));
     if has_errors {
-        return FrontendOutput {
-            summary: None,
-            diagnostics,
-        };
+        return Err(diagnostics);
     }
 
     let semantic = semantic_result.semantic;
@@ -357,10 +375,7 @@ pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOut
         &module_record,
         &semantic,
     );
-    FrontendOutput {
-        summary: Some(summary),
-        diagnostics,
-    }
+    Ok(finish(summary, diagnostics, &program, &semantic))
 }
 
 fn build_summary(
