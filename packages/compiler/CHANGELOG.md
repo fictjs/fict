@@ -1,5 +1,28 @@
 # @fictjs/compiler
 
+## 0.34.0
+
+### Minor Changes
+
+- Reduce compilation overhead by reusing parsed programs and semantic information within each
+  request, and retaining analysis results when an optimizer pass makes no changes.
+- Improve compilation scalability for alias-heavy and multi-component modules with worklist
+  propagation, shared alias invalidation sets, and indexed alias and reactive-region lookups.
+
+### Patch Changes
+
+- Preserve call receivers, indirect `eval`, and anonymous function and class names when
+  simplifying logical and conditional expressions.
+- Retain observable exceptions and allocation identity in `use pure` scopes, including
+  uninitialized bindings, BigInt and Symbol coercion, and standard built-in calls.
+- Respect variable redeclarations and independent `switch` case entry points during pure
+  optimization, and skip these optimizations in files containing direct `eval` or `with`.
+- Preserve anonymous function and class name inference in reactive assignments and destructuring
+  defaults, including class static initialization. Keep short-circuit `await` and `yield`
+  expressions in their original async or generator scope.
+- Preserve unchanged native-addon files during local preparation and package assembly, avoiding
+  unnecessary file replacement and repeated macOS code-signing validation.
+
 ## 0.33.0
 
 ### Minor Changes

@@ -1,5 +1,11 @@
 # @fictjs/testing-library
 
+## 0.34.0
+
+### Patch Changes
+
+- Align the testing utilities package version with the Fict 0.34 release.
+
 ## 0.33.0
 
 ### Minor Changes

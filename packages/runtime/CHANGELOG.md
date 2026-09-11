@@ -1,5 +1,14 @@
 # @fictjs/runtime
 
+## 0.34.0
+
+### Patch Changes
+
+- Preserve nested resumable component hosts and their server-rendered children when hydrating a
+  compiled insert marker, avoiding duplicate client nodes and premature child rendering.
+- Claim existing DOM nodes when hydrating generic intrinsic VNode trees, preserving nested
+  resumable hosts and DOM identity instead of replacing the server-rendered subtree.
+
 ## 0.33.0
 
 ### Minor Changes

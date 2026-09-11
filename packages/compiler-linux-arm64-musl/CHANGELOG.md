@@ -1,5 +1,18 @@
 # @fictjs/compiler-linux-arm64-musl
 
+## 0.34.0
+
+### Minor Changes
+
+- Ship the 0.34 native compiler for Linux arm64 musl with frontend reuse, faster alias analysis,
+  and indexed reactive-region construction.
+
+### Patch Changes
+
+- Include compiler fixes for expression evaluation, pure-scope exceptions and allocation
+  identity, and function and class name inference in reactive assignments.
+- Keep unchanged native binaries intact during package assembly.
+
 ## 0.33.0
 
 ### Minor Changes

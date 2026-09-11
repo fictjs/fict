@@ -1,5 +1,14 @@
 # fict
 
+## 0.34.0
+
+### Patch Changes
+
+- Adopt runtime 0.34's hydration fixes so compiled inserts and generic VNode trees preserve
+  nested resumable component hosts and their server-rendered DOM.
+- Updated dependencies
+  - @fictjs/runtime@0.34.0
+
 ## 0.33.0
 
 ### Minor Changes

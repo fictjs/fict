@@ -1,5 +1,19 @@
 # @fictjs/webpack-plugin
 
+## 0.34.0
+
+### Minor Changes
+
+- Use compiler 0.34's frontend and analysis reuse and faster alias processing for Fict module
+  transforms.
+
+### Patch Changes
+
+- Pick up compiler fixes for expression evaluation, pure-scope exceptions and allocation
+  identity, and inferred function and class names in reactive assignments.
+- Updated dependencies
+  - @fictjs/compiler@0.34.0
+
 ## 0.33.0
 
 ### Minor Changes
