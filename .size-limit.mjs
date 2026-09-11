@@ -15,7 +15,8 @@ export default [
     // hydration repair, full namespace semantics, selector ownership, and
     // reflection-safe deep-store tracking, SSR-safe form selection, stable
     // context-provider ownership, and the non-disableable production cycle guard.
-    limit: '21.4 KB',
+    // Nested resumable-host hydration (e594d7c0) adds 242 B: 21,573 B Brotli.
+    limit: '21.6 KB',
     modifyEsbuildConfig: production,
   },
   {
@@ -23,8 +24,9 @@ export default [
     path: 'packages/fict/dist/index.cjs',
     // Approved compatibility cost for stable context ownership, materializing
     // JSX values before raw-text/RCDATA coercion, and the production cycle guard;
-    // CJS retains interop overhead.
-    limit: '23.3 KB',
+    // CJS retains interop overhead. Nested resumable-host hydration (e594d7c0)
+    // adds 336 B: 23,527 B Brotli.
+    limit: '23.6 KB',
     modifyEsbuildConfig: production,
   },
 ]
