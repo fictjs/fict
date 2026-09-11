@@ -86,11 +86,15 @@ export function publishTarball(tarballPath) {
     throw new Error(`npm publish failed for ${tarballPath}:\n${result.stdout}${result.stderr}`)
   }
   process.stdout.write(result.stdout)
+  process.stderr.write(result.stderr)
 }
 
 export const NATIVE_PUBLISH_VISIBILITY_DELAYS_MS = Object.freeze([
-  2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000, 120_000, 120_000, 180_000,
+  2_000, 4_000, 8_000, 15_000, 30_000, 60_000,
 ])
+// npm scans accepted uploads before making them installable; this can exceed 15 minutes.
+export const NATIVE_PUBLISH_VISIBILITY_TIMEOUT_MS = 30 * 60_000
+const NATIVE_PUBLISH_REQUEST_TIMEOUT_MS = 30_000
 
 export async function waitForPublishedVersion(
   registry,
@@ -98,26 +102,75 @@ export async function waitForPublishedVersion(
   version,
   {
     delaysMs = NATIVE_PUBLISH_VISIBILITY_DELAYS_MS,
+    timeoutMs = NATIVE_PUBLISH_VISIBILITY_TIMEOUT_MS,
+    requestTimeoutMs = NATIVE_PUBLISH_REQUEST_TIMEOUT_MS,
     fetchImpl = fetch,
     now = Date.now,
+    onProgress = message => console.log(message),
     sleep = delay => new Promise(resolve => setTimeout(resolve, delay)),
   } = {},
 ) {
-  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
-    const document = await fetchRegistryDocument(registry, packageName, {
-      fetchImpl: (url, options) =>
-        fetchImpl(`${url}?fict-native-publish=${now()}-${attempt}`, {
-          ...options,
-          headers: { ...options.headers, 'cache-control': 'no-cache' },
-        }),
-      retryDelaysMs: [],
-    })
-    if (getPublishedVersions(document).includes(version)) return
-    if (attempt < delaysMs.length) {
-      await sleep(delaysMs[attempt])
-    }
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    !Number.isSafeInteger(requestTimeoutMs) ||
+    requestTimeoutMs <= 0 ||
+    delaysMs.length === 0 ||
+    delaysMs.some(delay => !Number.isSafeInteger(delay) || delay <= 0)
+  ) {
+    throw new Error('Publication visibility timeouts and retry delays must be positive integers')
   }
-  throw new Error(`${packageName}@${version} was not visible from ${registry} after publication`)
+
+  const startedAt = now()
+  const deadline = startedAt + timeoutMs
+  let lastObservation = 'version has not been observed'
+  for (let attempt = 0; now() < deadline; attempt += 1) {
+    let responseStatus
+    try {
+      const document = await fetchRegistryDocument(registry, packageName, {
+        fetchImpl: async (url, options) => {
+          const response = await fetchImpl(`${url}?fict-native-publish=${now()}-${attempt}`, {
+            ...options,
+            headers: { ...options.headers, 'cache-control': 'no-cache' },
+            signal: AbortSignal.timeout(Math.min(requestTimeoutMs, Math.max(1, deadline - now()))),
+          })
+          responseStatus = response.status
+          return response
+        },
+        retryDelaysMs: [],
+      })
+      if (getPublishedVersions(document).includes(version)) {
+        onProgress(
+          `[npm-publish] ${packageName}@${version} is visible after ${Math.ceil((now() - startedAt) / 1_000)}s`,
+        )
+        return
+      }
+      lastObservation =
+        responseStatus === 404
+          ? 'registry returned 404'
+          : `registry returned ${responseStatus} without version ${version}`
+    } catch (error) {
+      // Authentication and other permanent client errors will not improve by waiting.
+      if (responseStatus >= 400 && responseStatus < 500 && responseStatus !== 429) throw error
+      lastObservation = error.message ?? String(error)
+    }
+
+    const remainingMs = deadline - now()
+    if (remainingMs <= 0) break
+    const delay = Math.min(delaysMs[Math.min(attempt, delaysMs.length - 1)], remainingMs)
+    onProgress(
+      `[npm-publish] Waiting for ${packageName}@${version}: ${lastObservation}; ` +
+        `${Math.ceil((now() - startedAt) / 1_000)}s elapsed, retrying in ${Math.ceil(delay / 1_000)}s ` +
+        `(limit ${Math.ceil(timeoutMs / 1_000)}s)`,
+    )
+    await sleep(delay)
+  }
+  throw new Error(
+    `${packageName}@${version} was not visible from ${registry} after publication ` +
+      `within ${Math.ceil(timeoutMs / 1_000)}s: ${lastObservation}. ` +
+      'npm may still be scanning the accepted upload. Check registry availability before ' +
+      'rerunning the original release workflow; do not replace the tag or republish different bytes.',
+  )
 }
 
 async function main() {

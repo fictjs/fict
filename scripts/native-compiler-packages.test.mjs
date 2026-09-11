@@ -53,7 +53,7 @@ import {
   verifyNativePackageArtifact,
 } from './native-compiler-packages.mjs'
 import {
-  NATIVE_PUBLISH_VISIBILITY_DELAYS_MS,
+  NATIVE_PUBLISH_VISIBILITY_TIMEOUT_MS,
   collectNativePublishActions,
   validateNativePublishPlan,
   waitForPublishedVersion,
@@ -883,25 +883,29 @@ test('refuses a partial or facade-first native publication', () => {
 })
 
 test('waits through npm new-package propagation with cache bypass', async () => {
-  assert.deepEqual(
-    NATIVE_PUBLISH_VISIBILITY_DELAYS_MS,
-    [2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000, 120_000, 120_000, 180_000],
-  )
   const urls = []
   const delays = []
+  const messages = []
+  let nowMs = 123
   await waitForPublishedVersion(
     'https://registry.npmjs.org',
     '@fictjs/compiler-darwin-arm64',
     '1.2.3',
     {
       delaysMs: [10, 20],
-      now: () => 123,
-      sleep: async delay => delays.push(delay),
-      fetchImpl: async url => {
+      now: () => nowMs,
+      onProgress: message => messages.push(message),
+      sleep: async delay => {
+        delays.push(delay)
+        nowMs += delay
+      },
+      fetchImpl: async (url, options) => {
         urls.push(url)
+        assert.equal(options.headers['cache-control'], 'no-cache')
+        assert.ok(options.signal instanceof AbortSignal)
         return {
-          ok: true,
-          status: 200,
+          ok: urls.length > 1,
+          status: urls.length === 1 ? 404 : 200,
           json: async () => ({ versions: urls.length === 3 ? { '1.2.3': {} } : {} }),
         }
       },
@@ -909,7 +913,166 @@ test('waits through npm new-package propagation with cache bypass', async () => 
   )
   assert.deepEqual(delays, [10, 20])
   assert.equal(urls.length, 3)
-  assert.ok(urls.every((url, attempt) => url.endsWith(`?fict-native-publish=123-${attempt}`)))
+  assert.ok(
+    urls.every((url, attempt) =>
+      url.endsWith(`?fict-native-publish=${[123, 133, 153][attempt]}-${attempt}`),
+    ),
+  )
+  assert.match(messages[0], /registry returned 404/)
+  assert.match(messages[1], /registry returned 200 without version 1\.2\.3/)
+  assert.match(messages[2], /is visible/)
+})
+
+test('waits for accepted npm uploads that remain unavailable beyond sixteen minutes', async () => {
+  // The 0.34.0 darwin-x64 upload took about 16m15s to become visible.
+  const availableAtMs = 16 * 60_000 + 15_000
+  let nowMs = 0
+  let attempts = 0
+  const delays = []
+  await waitForPublishedVersion(
+    'https://registry.npmjs.org',
+    '@fictjs/compiler-darwin-x64',
+    '0.34.0',
+    {
+      now: () => nowMs,
+      onProgress: () => {},
+      sleep: async delay => {
+        delays.push(delay)
+        nowMs += delay
+      },
+      fetchImpl: async () => {
+        attempts += 1
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            versions: nowMs >= availableAtMs ? { '0.33.0': {}, '0.34.0': {} } : { '0.33.0': {} },
+          }),
+        }
+      },
+    },
+  )
+  assert.ok(nowMs >= availableAtMs)
+  assert.ok(nowMs <= availableAtMs + 60_000)
+  assert.ok(attempts > 11)
+  assert.ok(delays.every(delay => delay <= 60_000))
+})
+
+test('retries transient registry errors inside the same publication visibility deadline', async () => {
+  let nowMs = 0
+  let attempts = 0
+  const messages = []
+  await waitForPublishedVersion(
+    'https://registry.npmjs.org',
+    '@fictjs/compiler-darwin-x64',
+    '1.2.3',
+    {
+      delaysMs: [10],
+      timeoutMs: 100,
+      now: () => nowMs,
+      onProgress: message => messages.push(message),
+      sleep: async delay => {
+        nowMs += delay
+      },
+      fetchImpl: async () => {
+        attempts += 1
+        if (attempts === 1) throw new Error('temporary network failure')
+        if (attempts === 2) return { ok: false, status: 503, statusText: 'Service Unavailable' }
+        if (attempts === 3) return { ok: false, status: 429, statusText: 'Too Many Requests' }
+        return { ok: true, status: 200, json: async () => ({ versions: { '1.2.3': {} } }) }
+      },
+    },
+  )
+  assert.equal(attempts, 4)
+  assert.equal(nowMs, 30)
+  assert.match(messages[0], /temporary network failure/)
+  assert.match(messages[1], /503 Service Unavailable/)
+  assert.match(messages[2], /429 Too Many Requests/)
+})
+
+test('fails immediately on registry authentication errors after an accepted publication', async () => {
+  let attempts = 0
+  await assert.rejects(
+    waitForPublishedVersion('https://registry.npmjs.org', '@fictjs/compiler-darwin-x64', '1.2.3', {
+      onProgress: () => assert.fail('permanent registry errors must not be retried'),
+      sleep: async () => assert.fail('permanent registry errors must not be retried'),
+      fetchImpl: async () => {
+        attempts += 1
+        return { ok: false, status: 403, statusText: 'Forbidden' }
+      },
+    }),
+    /403 Forbidden/,
+  )
+  assert.equal(attempts, 1)
+})
+
+test('bounds publication visibility by a deadline even if an unrelated version is visible', async () => {
+  let nowMs = 0
+  const messages = []
+  await assert.rejects(
+    waitForPublishedVersion('https://registry.npmjs.org', '@fictjs/compiler-darwin-x64', '1.2.3', {
+      now: () => nowMs,
+      onProgress: message => messages.push(message),
+      sleep: async delay => {
+        nowMs += delay
+      },
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ 'dist-tags': { latest: '1.2.3' }, versions: { '1.2.2': {} } }),
+      }),
+    }),
+    /within 1800s: registry returned 200 without version 1\.2\.3.*original release workflow/,
+  )
+  assert.equal(nowMs, NATIVE_PUBLISH_VISIBILITY_TIMEOUT_MS)
+  assert.ok(messages.length > 11)
+})
+
+test('counts registry request time against the publication deadline and aborts a stalled request', async () => {
+  let nowMs = 0
+  const delays = []
+  let attempts = 0
+  // Keep the event loop active while AbortSignal.timeout's unref'ed timer fires.
+  const keepAlive = setInterval(() => {}, 1_000)
+  try {
+    await assert.rejects(
+      waitForPublishedVersion(
+        'https://registry.npmjs.org',
+        '@fictjs/compiler-darwin-x64',
+        '1.2.3',
+        {
+          timeoutMs: 20,
+          requestTimeoutMs: 5,
+          delaysMs: [10],
+          now: () => nowMs,
+          onProgress: () => {},
+          sleep: async delay => {
+            delays.push(delay)
+            nowMs += delay
+          },
+          fetchImpl: async (_url, { signal }) => {
+            attempts += 1
+            await new Promise((_resolve, reject) => {
+              signal.addEventListener(
+                'abort',
+                () => {
+                  nowMs += 15
+                  reject(signal.reason)
+                },
+                { once: true },
+              )
+            })
+          },
+        },
+      ),
+      /was not visible.*within 1s/,
+    )
+  } finally {
+    clearInterval(keepAlive)
+  }
+  assert.equal(attempts, 1)
+  assert.deepEqual(delays, [5])
+  assert.equal(nowMs, 20)
 })
 
 test('requires dependency-topological publication after the native packages', () => {

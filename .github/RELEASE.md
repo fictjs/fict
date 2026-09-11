@@ -311,6 +311,20 @@ are one release unit. Their versions must match exactly. The release workflow:
 7. publishes every pending tarball in dependency order, waiting for registry
    visibility after each package; all native packages precede `@fictjs/compiler`.
 
+An accepted `npm publish` does not mean the version is already installable.
+[npm's publish-time scanning](https://github.blog/changelog/2026-07-28-npm-publish-time-malware-scanning-and-dual-use-metadata/)
+can delay availability by 15 minutes or longer. The publisher waits up to
+30 minutes per package, including request time, with cache bypass, a
+30-second request timeout, and retries at most one minute apart. It logs the
+last registry observation and elapsed time, retries transient network/429/5xx
+failures, and stops immediately for permanent registry client errors. The
+target version must appear in the registry's version list before publication
+continues; a successful upload or dist-tag alone is insufficient.
+
+If this deadline expires, check whether npm is still scanning the accepted
+upload and wait for the version to become visible before resuming the original
+release run. Increasing retries cannot resolve a package held for manual review.
+
 Npm has no multi-package transaction. Fict's atomicity guarantee therefore
 means complete preflight plus native-first, resumable publication. If a native
 publish succeeds and a later one fails, rerun the failed workflow: already
