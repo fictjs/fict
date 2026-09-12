@@ -54,4 +54,41 @@ describe('cleanup dependency isolation', () => {
     expect(seen).toEqual([0, 1])
     stop()
   })
+
+  it('drains reentrant root cleanup without transferring it to the disposing effect', () => {
+    const calls: string[] = []
+    const owner = createRoot(() => {
+      onCleanup(() => {
+        calls.push('cleanup')
+        onCleanup(() => {
+          calls.push('nested cleanup')
+        })
+      })
+      onDestroy(() => {
+        calls.push('destroy')
+        onCleanup(() => {
+          calls.push('destroy cleanup')
+        })
+      })
+    })
+    const stop = createEffect(() => {
+      owner.dispose()
+      onCleanup(() => {
+        calls.push('effect cleanup')
+      })
+    })
+
+    try {
+      expect(calls).toEqual(['cleanup', 'nested cleanup', 'destroy', 'destroy cleanup'])
+    } finally {
+      stop()
+    }
+    expect(calls).toEqual([
+      'cleanup',
+      'nested cleanup',
+      'destroy',
+      'destroy cleanup',
+      'effect cleanup',
+    ])
+  })
 })

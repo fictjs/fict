@@ -374,22 +374,30 @@ export function registerEffectCleanup(fn: Cleanup): void {
 export function runCleanupList(list: Cleanup[], root?: RootContext): void {
   let error: unknown
   let didThrow = false
-  withRootContext(root, () => {
-    while (list.length > 0) {
-      try {
-        const cleanup = list.pop()
-        if (cleanup) runOutsideComponentRender(() => untrack(cleanup))
-      } catch (err) {
-        if (!didThrow) {
-          error = err
-          didThrow = true
+  const prevEffectCleanups = currentEffectCleanups
+  // Disposal can happen inside another effect's body. New cleanup registered
+  // by a teardown belongs to the root being drained, not that caller's bucket.
+  currentEffectCleanups = undefined
+  try {
+    withRootContext(root, () => {
+      while (list.length > 0) {
+        try {
+          const cleanup = list.pop()
+          if (cleanup) runOutsideComponentRender(() => untrack(cleanup))
+        } catch (err) {
+          if (!didThrow) {
+            error = err
+            didThrow = true
+          }
         }
       }
-    }
-    if (didThrow && !handleError(error, { source: 'cleanup' }, root)) {
-      throw error
-    }
-  })
+      if (didThrow && !handleError(error, { source: 'cleanup' }, root)) {
+        throw error
+      }
+    })
+  } finally {
+    currentEffectCleanups = prevEffectCleanups
+  }
 }
 
 function runLifecycle(fn: LifecycleFn): void {
