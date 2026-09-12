@@ -132,6 +132,18 @@ Recommendation:
 - Create DOM nodes using the target container's `ownerDocument` (or let Fict create
   nodes) when working across iframe/foreign-document boundaries.
 
+## Performance
+
+The [2026-09-12 runtime benchmark snapshot](../../README.md#performance) compares
+`43ecf80` with `b79c6494` using the same native-compiled js-framework-benchmark
+fixture. Seven of nine CPU total-duration means improved; creating 1,000 rows
+improved 4.04%, selection 5.64%, and page memory after clearing decreased 7.20%.
+Swap and single-row removal means increased slightly. These results are specific
+to the recorded environment and revisions.
+
+See the [measurement and reproduction guide](../../docs/runtime-benchmark.md)
+for sample counts, repeated measurements, reference results, and raw data.
+
 ## Runtime Stability Stress
 
 Run stress scenarios for runtime correctness and reliability:

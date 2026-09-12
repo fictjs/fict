@@ -518,31 +518,38 @@ return branches) and lowers them to reactive conditionals.
 
 ## Performance
 
-> 🚧 **Note**: Bundle size and memory optimizations are currently in progress.
-> Benchmarks are used as guardrails, not as the primary product claim. Fict aims
-> to stay in the fine-grained performance tier while buying React-like TSX
-> ergonomics and compile-time guarantees.
+### Runtime benchmark snapshot — 2026-09-12
 
-![Performance Benchmark](./perf.png)
+The latest local js-framework-benchmark run compares runtime `43ecf80` with
+`b79c6494` using the same native-compiled application fixture. Both builds are
+version 0.34.0; the final revision includes local runtime fixes and optimizations.
 
-### Benchmark Summary (js-framework-benchmark)
+Mean total duration in milliseconds, including browser rendering; lower is better.
+Chrome 152.0.7977.83 on macOS arm64, headless, with the harness's per-case CPU
+throttling. Each case has 15 samples; selection has 25.
 
-| Benchmark                 | Vue Vapor | Solid | Svelte 5 | Fict  | React Compiler |
-| :------------------------ | :-------- | :---- | :------- | :---- | :------------- |
-| create rows (1k)          | 24.5ms    | 24.5  | 24.5     | 26.2  | 29.3           |
-| replace all rows (1k)     | 28.1      | 28.0  | 29.1     | 30.7  | 34.8           |
-| partial update (10th row) | 14.7      | 15.0  | 15.3     | 15.3  | 18.6           |
-| select row                | 3.4       | 4.2   | 6.2      | 3.6   | 10.3           |
-| swap rows                 | 17.4      | 17.7  | 17.2     | 17.1  | 115.6          |
-| remove row                | 11.5      | 11.4  | 11.8     | 12.0  | 13.9           |
-| create many rows (10k)    | 263.7     | 256.8 | 264.6    | 270.7 | 398.2          |
-| append rows (1k to 1k)    | 29.7      | 29.0  | 29.2     | 30.4  | 35.5           |
-| clear rows (1k)           | 11.8      | 15.1  | 13.5     | 14.3  | 21.6           |
-| **Geometric Mean**        | **1.01**  | 1.04  | 1.06     | 1.07  | 1.45           |
+| Benchmark                       | Initial `43ecf80` | Final `b79c6494` | Change |
+| :------------------------------ | ----------------: | ---------------: | -----: |
+| Create rows (1k)                |            40.260 |           38.633 | -4.04% |
+| Replace all rows (1k)           |            46.880 |           45.540 | -2.86% |
+| Partial update (every 10th row) |            23.547 |           22.700 | -3.60% |
+| Select row                      |            13.132 |           12.392 | -5.64% |
+| Swap rows                       |            22.907 |           23.447 | +2.36% |
+| Remove row                      |            17.267 |           17.327 | +0.35% |
+| Create many rows (10k)          |           418.753 |          408.293 | -2.50% |
+| Append rows (1k to 1k)          |            45.420 |           44.267 | -2.54% |
+| Clear rows (1k)                 |            26.780 |           26.180 | -2.24% |
 
-_Lower is better. Geometric mean is the weighted mean of all relative factors._
+Seven of nine total-duration means improved. A separate 30-sample repeat with
+reversed execution order measured swap at **+0.90%** and clear at **-3.15%**.
+After creating and clearing rows, measured page memory decreased from
+**1.518 MiB to 1.409 MiB (-7.20%)** in separate three-sample memory batches.
 
-**Versions**: Vue Vapor 3.6.0-alpha.2 · Solid 1.9.3 · Svelte 5.42.1 · React Compiler 19.0.0
+Earlier local Solid 1.9.3 and vanilla reference runs remain faster in several
+scenarios. These results describe the recorded workloads and revisions; they do
+not establish a universal framework ranking. See the
+[measurement details and reference results](./docs/runtime-benchmark.md#recorded-snapshot-2026-09-12)
+and [raw samples and build provenance](./docs/benchmarks/runtime-2026-09-12.json).
 
 ---
 
@@ -657,11 +664,10 @@ Not directly. Fict compiles to DOM operations, not React elements.
 <details>
 <summary><strong>How big is the runtime?</strong></summary>
 
-~10kb brotli compressed for the main package. It is not the smallest
-fine-grained runtime; the extra budget pays for scheduler, hydration/resume,
-store, diagnostics, and public entrypoint coverage. Current
-js-framework-benchmark results keep Fict close to the Solid/Svelte/Vue Vapor
-tier, but Fict should be evaluated primarily on the DX + guarantee tradeoff.
+Bundle size depends on the imported entrypoints and tree shaking. The runtime
+includes scheduling, hydration/resume, stores, and diagnostics. For measured
+table-workload timing and page memory, see the [performance snapshot](#performance).
+Creation and memory costs remain higher than the local Solid reference.
 
 </details>
 

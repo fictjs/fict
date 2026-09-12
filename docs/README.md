@@ -49,6 +49,7 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 
 - `fiction-ui.md` — Product/design philosophy around the fiction layer
 - `framework-comparison.md` — Comparison with React, Solid, Vue, Svelte
+- `runtime-benchmark.md` — Runtime benchmark results, raw samples, and reproduction
 - `migration-guide.md` — Practical migration paths from React, Vue, Svelte, and Solid
 - `strict-guarantee-cookbook.md` — Common strictGuarantee failures and rewrites
 - `third-party-libraries.md` — Package metadata ABI for third-party Fict hook libraries

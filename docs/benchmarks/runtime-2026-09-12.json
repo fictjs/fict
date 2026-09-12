@@ -1,0 +1,1917 @@
+{
+  "date": "2026-09-12",
+  "environment": {
+    "platform": "macOS arm64",
+    "browser": "Chrome 152.0.7977.83",
+    "headless": true,
+    "node": "24.16.0",
+    "pnpm": "9.1.1",
+    "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+    "cpuSlowdownByCase": {
+      "01": 1,
+      "02": 1,
+      "03": 4,
+      "04": 4,
+      "05": 4,
+      "06": 2,
+      "07": 1,
+      "08": 1,
+      "09": 4
+    }
+  },
+  "fixture": {
+    "source": "scripts/fixtures/runtime-benchmark/main.tsx",
+    "compiler": "native Rust",
+    "compilerOptions": {
+      "dev": false,
+      "strictGuarantee": false
+    },
+    "bundleTarget": "es2022"
+  },
+  "provenance": {
+    "baseline": {
+      "revision": "43ecf80abde2d8c01d29c0b72e393d66ffd75e8f",
+      "runtimeDiff": "",
+      "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+      "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-4f33c58bfe9467fc32f6513d32746bffcc9a9a4b54a85af3a287afc74f541f62",
+      "nativeSha256": "68ff568d4e37fbf17166d609d5f8dc69e44d959f3f263690485655c14dc9c519",
+      "sourceSha256": "0f7260ec608a5ec81282bf6133c85b6388e87f2b278e087f09ce1ac77d079a3c",
+      "lockfileSha256": "ac37f12095d8914656cf270909181cfd411f875d4085a5ab10364bff5bfc1635",
+      "bundleSha256": "d08be376e5a38d6460ddfbfc5abdc608a5fa495e291c89b87ea6a529aa8f992b",
+      "modules": [
+        "packages/runtime/dist/resume-tVuuzny3.js",
+        "packages/runtime/dist/dom-COz4eUdr.js",
+        "packages/runtime/dist/list-helpers-Ds03HztY.js",
+        "js-framework-benchmark/frameworks/keyed/fict-baseline-43ecf80/compiled.js"
+      ]
+    },
+    "final": {
+      "revision": "b79c649481b672cf7580c25dcf4522942ccaf213",
+      "runtimeDiff": "",
+      "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+      "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-4f33c58bfe9467fc32f6513d32746bffcc9a9a4b54a85af3a287afc74f541f62",
+      "nativeSha256": "68ff568d4e37fbf17166d609d5f8dc69e44d959f3f263690485655c14dc9c519",
+      "sourceSha256": "cd885657d8fde85c1b30249939eee2bf5c0731224c81c724a34614059c322ad9",
+      "compiledSha256": "9c515000e90780f00b684791f7b4dc674d7da7ea56c00d1b7e2b0594d7c25307",
+      "lockfileSha256": "ac37f12095d8914656cf270909181cfd411f875d4085a5ab10364bff5bfc1635",
+      "bundleSha256": "9f09c653ba988a2fdab131e82a94c40bef475fae071936c7f026895433d1a369",
+      "modules": [
+        {
+          "path": "packages/runtime/dist/resume-Duh3xk_0.js",
+          "sha256": "83e6557b7f76eb147e73194f61ab89497cbc0c2ee621bf89a8102ef595013c7a"
+        },
+        {
+          "path": "packages/runtime/dist/dom-BGfPQF_J.js",
+          "sha256": "3f5c09aac82b148308063d0a04e08d1f6bb57ac56c445edb355e73813a59181b"
+        },
+        {
+          "path": "packages/runtime/dist/list-helpers-X1Ml2cMP.js",
+          "sha256": "ee5152d00f1513d7945b901b235adcb6e2d509d4906f33c5664822f71735b71e"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/fict-local/compiled.js",
+          "sha256": "9c515000e90780f00b684791f7b4dc674d7da7ea56c00d1b7e2b0594d7c25307"
+        }
+      ]
+    },
+    "verifiedArtifacts": {
+      "baseline": {
+        "compiledSha256": "9c515000e90780f00b684791f7b4dc674d7da7ea56c00d1b7e2b0594d7c25307",
+        "bundleSha256": "d08be376e5a38d6460ddfbfc5abdc608a5fa495e291c89b87ea6a529aa8f992b"
+      },
+      "final": {
+        "compiledSha256": "9c515000e90780f00b684791f7b4dc674d7da7ea56c00d1b7e2b0594d7c25307",
+        "bundleSha256": "9f09c653ba988a2fdab131e82a94c40bef475fae071936c7f026895433d1a369"
+      }
+    },
+    "references": {
+      "benchmarkRevision": "c7c90491feb3f9be93177e3a7edd99707847da27",
+      "solidVersion": "1.9.3",
+      "files": [
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/solid-fict-audit-20260912/index.html",
+          "sha256": "c381d1b4c79d59ff6b1a72a0a970e991706dc26f870dcea1d894fd364c12e557"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/solid-fict-audit-20260912/rollup.config.js",
+          "sha256": "ebc09e7a0bdf76763f95bd9d6055fe323c31eb5c90684c5e23aa3d31d852ed9a"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/solid-fict-audit-20260912/package-lock.json",
+          "sha256": "50878ee6d9d788bd5a8a7ef1cb0d61b81d1e95264ef8be0017b54311c01e75c8"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/solid-fict-audit-20260912/package.json",
+          "sha256": "6c859af4650cf4f9596d6086706f06e2b11b117ef9095adc780df4fca84b5db5"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/solid-fict-audit-20260912/dist/main.js",
+          "sha256": "9a7954aedff39e0f0107a9223f717bdcee63a1609b5bb2626065283f633314fe"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/solid-fict-audit-20260912/src/main.jsx",
+          "sha256": "6b6a3c2843e37a222202a5d3c567069f033c1b2464aac68f65cee107e18f75e2"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/vanillajs/index.html",
+          "sha256": "57e517067f4746cdce621e2642f7f88c793830bd51282a13e0bafb62740b1b44"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/vanillajs/package-lock.json",
+          "sha256": "c704c0d0fb0e97672f6396c77e3203aaa72428523744527d28e8129de04fe2a1"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/vanillajs/package.json",
+          "sha256": "44c8fabee25e449669fd69508f87de1f7f564d41b63690ab6b9e2dac796ae41f"
+        },
+        {
+          "path": "js-framework-benchmark/frameworks/keyed/vanillajs/src/Main.js",
+          "sha256": "08a5cb7d5cec199396561ed28b3c2db77577f066480f33c19f22ce6b0b0c980f"
+        }
+      ]
+    }
+  },
+  "methodology": {
+    "cpu": "Upstream total, script, and paint durations. 15 samples per case; selection uses 25. The reversed-order repeat uses 30 per case. No concurrent builds, tests, profiles, or timing runs.",
+    "memory": "performance.measureUserAgentSpecificMemory().bytes / 1024 / 1024 after forced GC; three samples per case. Final and initial/reference values come from separate batches.",
+    "references": "Solid 1.9.3 and the tracked vanilla implementation from the recorded harness. Reference CPU values were collected before the final runtime optimizations. Fict uses immutable state and direct selection equality; Solid uses per-row signals and a selector."
+  },
+  "batches": [
+    {
+      "id": "final-cpu",
+      "order": ["fict-baseline-43ecf80", "fict-local"],
+      "unit": "ms",
+      "results": [
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 39.7,
+              "max": 40.8,
+              "median": 40.2,
+              "mean": 40.26,
+              "stddev": 0.2667261838343895,
+              "values": [
+                40.2, 40.4, 40.3, 40.2, 40.3, 40.1, 40.8, 40.6, 40.1, 39.7, 40.1, 40.1, 40.3, 40.1,
+                40.6
+              ]
+            },
+            "script": {
+              "min": 13.1,
+              "max": 13.7,
+              "median": 13.5,
+              "mean": 13.45333333333333,
+              "stddev": 0.18464895909600462,
+              "values": [
+                13.3, 13.6, 13.4, 13.6, 13.3, 13.6, 13.6, 13.7, 13.4, 13.1, 13.5, 13.2, 13.7, 13.3,
+                13.5
+              ]
+            },
+            "paint": {
+              "min": 25.6,
+              "max": 26.3,
+              "median": 26,
+              "mean": 25.986666666666675,
+              "stddev": 0.19223002094465114,
+              "values": [
+                26.1, 26, 26, 25.9, 26.1, 25.8, 26.3, 26.1, 25.9, 25.8, 25.6, 26.1, 25.8, 26, 26.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 45.9,
+              "max": 48,
+              "median": 46.9,
+              "mean": 46.879999999999995,
+              "stddev": 0.5253570214625477,
+              "values": [
+                46.9, 47, 46.9, 47.3, 45.9, 48, 46.6, 46.6, 46.9, 46.1, 46.7, 47.6, 47.1, 46.6, 47
+              ]
+            },
+            "script": {
+              "min": 18.5,
+              "max": 20,
+              "median": 19.3,
+              "mean": 19.26666666666667,
+              "stddev": 0.37733400639347664,
+              "values": [
+                19.7, 19.3, 19.4, 19.7, 18.5, 20, 19.4, 19.3, 19.3, 18.7, 19, 19.2, 19.1, 19.3, 19.1
+              ]
+            },
+            "paint": {
+              "min": 26.3,
+              "max": 27.4,
+              "median": 26.8,
+              "mean": 26.746666666666666,
+              "stddev": 0.31137177288954904,
+              "values": [
+                26.3, 26.9, 26.6, 26.8, 26.5, 27.1, 26.4, 26.5, 26.8, 26.6, 26.9, 27.4, 27.1, 26.4,
+                26.9
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.5,
+              "max": 25.9,
+              "median": 23.4,
+              "mean": 23.546666666666663,
+              "stddev": 1.289998154299159,
+              "values": [
+                22.2, 22.1, 25.4, 24.1, 23, 23.8, 24.4, 25.9, 25, 22.9, 22.3, 21.5, 23.4, 24.2, 23
+              ]
+            },
+            "script": {
+              "min": 4.9,
+              "max": 6.6,
+              "median": 5.7,
+              "mean": 5.679999999999999,
+              "stddev": 0.4039094665180021,
+              "values": [5.7, 5.8, 5.8, 5.7, 5.8, 5.3, 5.8, 6.6, 5.9, 5.1, 5.7, 4.9, 5.5, 5.5, 6.1]
+            },
+            "paint": {
+              "min": 12.6,
+              "max": 16.1,
+              "median": 14.7,
+              "mean": 14.586666666666666,
+              "stddev": 0.950839228311095,
+              "values": [
+                14.7, 13.1, 14.7, 14.7, 12.6, 15.2, 15.2, 15.9, 14.9, 14.4, 14.4, 14.3, 15.1, 16.1,
+                13.5
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 12.3,
+              "max": 14.5,
+              "median": 13.1,
+              "mean": 13.131999999999998,
+              "stddev": 0.5359726361174296,
+              "values": [
+                13.4, 13.1, 13.2, 12.7, 12.9, 12.9, 13.9, 13.1, 13.1, 14, 14.5, 12.6, 13.6, 13,
+                13.2, 13, 13.4, 13.2, 12.9, 12.4, 13, 12.3, 12.5, 13.9, 12.5
+              ]
+            },
+            "script": {
+              "min": 5.8,
+              "max": 7.4,
+              "median": 6.7,
+              "mean": 6.731999999999999,
+              "stddev": 0.49220591896752597,
+              "values": [
+                7.2, 6.2, 6.5, 5.9, 7.3, 6.9, 7.2, 7.4, 5.9, 7.2, 6.4, 7.1, 7.4, 6.7, 6.6, 6.7, 7.1,
+                6.7, 6.7, 6.6, 7, 5.9, 5.8, 6.8, 7.1
+              ]
+            },
+            "paint": {
+              "min": 2.9,
+              "max": 5,
+              "median": 3.8,
+              "mean": 3.948,
+              "stddev": 0.5874521257089808,
+              "values": [
+                3.9, 5, 4.7, 3.8, 3.4, 3.8, 4, 2.9, 5, 3.8, 4.4, 3.2, 4.7, 3.7, 3.4, 4.2, 3.4, 4.6,
+                3.5, 3.3, 3.7, 4.4, 4.3, 4.3, 3.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 20.9,
+              "max": 24.5,
+              "median": 22.8,
+              "mean": 22.90666666666667,
+              "stddev": 1.0257169385825893,
+              "values": [
+                24.5, 23.7, 21.9, 20.9, 22.7, 21.9, 23.9, 23.3, 24, 22.5, 23.4, 21.9, 24, 22.8, 22.2
+              ]
+            },
+            "script": {
+              "min": 1.7,
+              "max": 3.3,
+              "median": 2.4,
+              "mean": 2.44,
+              "stddev": 0.5717142143214062,
+              "values": [2.8, 1.8, 1.8, 2.2, 2.8, 1.7, 3.2, 2.8, 2.6, 2.4, 3.2, 1.7, 3.3, 1.9, 2.4]
+            },
+            "paint": {
+              "min": 16.7,
+              "max": 18.9,
+              "median": 18.3,
+              "mean": 18.113333333333333,
+              "stddev": 0.6854265269228523,
+              "values": [
+                18.7, 18.8, 18.5, 16.7, 18.4, 18.7, 18.9, 17.7, 18.3, 16.7, 18.1, 18.4, 18, 18.2,
+                17.6
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.2,
+              "max": 18.2,
+              "median": 17.1,
+              "mean": 17.266666666666666,
+              "stddev": 0.5433581647846063,
+              "values": [
+                18.2, 17.2, 17.5, 17.6, 16.6, 17.8, 17.1, 16.2, 16.9, 17, 17.8, 17.1, 18, 17, 17
+              ]
+            },
+            "script": {
+              "min": 0.8,
+              "max": 1.2,
+              "median": 1.1,
+              "mean": 1.0799999999999996,
+              "stddev": 0.12649110640673514,
+              "values": [1.2, 1.1, 1.1, 1.1, 1, 0.8, 1.2, 0.8, 1.1, 1.1, 1.2, 1.2, 1.1, 1.1, 1.1]
+            },
+            "paint": {
+              "min": 13.9,
+              "max": 15.8,
+              "median": 14.8,
+              "mean": 14.82666666666667,
+              "stddev": 0.5637459745395296,
+              "values": [
+                15.8, 14.8, 15, 15.4, 14, 15.3, 14.6, 13.9, 14.3, 14.4, 15.5, 14.4, 15.3, 14.9, 14.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 415.7,
+              "max": 426.1,
+              "median": 417.5,
+              "mean": 418.75333333333333,
+              "stddev": 3.134569158516656,
+              "values": [
+                419.5, 417.2, 416.8, 422.7, 417.5, 416.5, 415.7, 416.8, 417.4, 424.4, 418.5, 418,
+                416.2, 418, 426.1
+              ]
+            },
+            "script": {
+              "min": 108.7,
+              "max": 132.7,
+              "median": 110,
+              "mean": 113.38000000000002,
+              "stddev": 7.0108283594532725,
+              "values": [
+                132.7, 109.1, 110.1, 121.4, 110, 108.7, 109.2, 108.9, 112, 120.2, 109, 109.8, 110.4,
+                109.2, 120
+              ]
+            },
+            "paint": {
+              "min": 291.1,
+              "max": 298.8,
+              "median": 297,
+              "mean": 296.23999999999995,
+              "stddev": 2.0690922785470054,
+              "values": [
+                297.7, 297.6, 295.8, 291.1, 297, 297.1, 296.2, 297.4, 294.8, 293.2, 298.8, 297.8,
+                295.6, 298.4, 295.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 44.6,
+              "max": 46.1,
+              "median": 45.4,
+              "mean": 45.41999999999999,
+              "stddev": 0.3985688683993555,
+              "values": [
+                45, 45.5, 44.6, 45.2, 45.7, 45.2, 45.4, 45.9, 46.1, 45.4, 45.4, 45.8, 45.7, 45.5,
+                44.9
+              ]
+            },
+            "script": {
+              "min": 13,
+              "max": 13.6,
+              "median": 13.2,
+              "mean": 13.240000000000004,
+              "stddev": 0.16818357317441654,
+              "values": [
+                13.1, 13, 13.2, 13.2, 13.3, 13.6, 13.2, 13.2, 13.3, 13.1, 13.3, 13.4, 13.2, 13.5, 13
+              ]
+            },
+            "paint": {
+              "min": 30,
+              "max": 31.3,
+              "median": 30.8,
+              "mean": 30.65333333333333,
+              "stddev": 0.42235169276439777,
+              "values": [
+                30.3, 31, 30, 30.6, 30.9, 30, 30.8, 31.2, 31.3, 30.9, 30.4, 30.8, 31, 30.5, 30.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 25.4,
+              "max": 28,
+              "median": 26.8,
+              "mean": 26.779999999999994,
+              "stddev": 0.7598872096756019,
+              "values": [
+                27.4, 26.2, 27.5, 26.7, 27.2, 25.9, 26, 25.4, 27.4, 27.6, 26.8, 28, 27, 25.9, 26.7
+              ]
+            },
+            "script": {
+              "min": 22.5,
+              "max": 24.4,
+              "median": 23.3,
+              "mean": 23.319999999999997,
+              "stddev": 0.6212889826803623,
+              "values": [
+                23.2, 22.7, 23.5, 22.6, 23.8, 22.5, 22.5, 22.7, 24.4, 24, 23.3, 23.9, 23.9, 23.1,
+                23.7
+              ]
+            },
+            "paint": {
+              "min": 0.6,
+              "max": 2.8,
+              "median": 1.6,
+              "mean": 1.6533333333333333,
+              "stddev": 0.7179998673564011,
+              "values": [1.7, 2.3, 1.6, 2.8, 2.2, 0.6, 0.9, 1.1, 1.4, 2.1, 2.6, 2.4, 1.5, 0.8, 0.8]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 37.9,
+              "max": 39.4,
+              "median": 38.5,
+              "mean": 38.633333333333326,
+              "stddev": 0.41346388107352355,
+              "values": [
+                38.9, 38.4, 38.7, 38.4, 37.9, 38.5, 39.3, 38.4, 38.5, 38.2, 38.7, 39.4, 39.2, 38.5,
+                38.5
+              ]
+            },
+            "script": {
+              "min": 11.4,
+              "max": 12.2,
+              "median": 11.6,
+              "mean": 11.739999999999998,
+              "stddev": 0.26403462976338093,
+              "values": [
+                11.5, 12.1, 11.5, 11.6, 11.5, 11.9, 12.1, 11.4, 11.8, 11.6, 11.5, 12.2, 12, 11.8,
+                11.6
+              ]
+            },
+            "paint": {
+              "min": 25.8,
+              "max": 26.6,
+              "median": 26.2,
+              "mean": 26.146666666666665,
+              "stddev": 0.23864697976798513,
+              "values": [
+                26.6, 25.8, 26.3, 26.2, 25.9, 25.9, 26.4, 26.2, 25.9, 25.8, 26.3, 26.3, 26.3, 26.1,
+                26.2
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 45,
+              "max": 46.2,
+              "median": 45.5,
+              "mean": 45.54,
+              "stddev": 0.37758631936476295,
+              "values": [
+                45.6, 45.5, 45.4, 46.2, 45.3, 46, 45.2, 45.5, 45, 45.4, 46, 45.1, 46.1, 45.6, 45.2
+              ]
+            },
+            "script": {
+              "min": 17.7,
+              "max": 18.3,
+              "median": 18.1,
+              "mean": 18.033333333333328,
+              "stddev": 0.21930626551751375,
+              "values": [
+                18.1, 18.2, 18, 18.2, 18.2, 17.7, 18.1, 18.2, 17.8, 18.3, 18.3, 17.7, 18.1, 17.9,
+                17.7
+              ]
+            },
+            "paint": {
+              "min": 26.2,
+              "max": 27.4,
+              "median": 26.6,
+              "mean": 26.64666666666666,
+              "stddev": 0.37959878568725447,
+              "values": [
+                26.6, 26.4, 26.4, 27.1, 26.2, 27.4, 26.2, 26.5, 26.4, 26.2, 26.9, 26.6, 27.2, 26.9,
+                26.7
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 20.3,
+              "max": 24.6,
+              "median": 22.9,
+              "mean": 22.7,
+              "stddev": 1.3255726525328053,
+              "values": [
+                21.4, 24, 22.3, 22.3, 23.9, 24.6, 24, 23.2, 24, 23.1, 20.4, 22.9, 22.3, 21.8, 20.3
+              ]
+            },
+            "script": {
+              "min": 4.5,
+              "max": 5.6,
+              "median": 5,
+              "mean": 5.026666666666666,
+              "stddev": 0.35145954180219596,
+              "values": [4.7, 5.4, 5, 4.6, 5.3, 5.4, 5.6, 4.8, 5.2, 5, 4.9, 4.7, 4.5, 5.5, 4.8]
+            },
+            "paint": {
+              "min": 13.4,
+              "max": 16.3,
+              "median": 14.8,
+              "mean": 14.793333333333331,
+              "stddev": 0.8189424074174365,
+              "values": [
+                14.5, 14.1, 15.2, 15.9, 15.1, 16.3, 14.6, 15.6, 14.5, 15.4, 13.8, 14.8, 14.9, 13.4,
+                13.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 10.5,
+              "max": 13.5,
+              "median": 12.4,
+              "mean": 12.392000000000001,
+              "stddev": 0.7543871685016919,
+              "values": [
+                11.9, 12.5, 13, 13.5, 13, 11.6, 13, 12.3, 12.9, 12.1, 13.5, 12.2, 13.4, 12.8, 11.9,
+                13.1, 12.4, 11.5, 12, 11.9, 13.2, 11.4, 12.5, 11.7, 10.5
+              ]
+            },
+            "script": {
+              "min": 5.5,
+              "max": 7,
+              "median": 5.9,
+              "mean": 6.035999999999999,
+              "stddev": 0.4101625693957621,
+              "values": [
+                6.2, 5.8, 6.3, 7, 6.5, 5.7, 6.3, 6, 5.6, 5.5, 6.4, 5.9, 6.6, 6.3, 5.9, 5.6, 6.5,
+                5.8, 5.8, 5.7, 6.1, 5.6, 6.6, 5.6, 5.6
+              ]
+            },
+            "paint": {
+              "min": 2.9,
+              "max": 4.9,
+              "median": 3.8,
+              "mean": 3.8040000000000003,
+              "stddev": 0.6432210610150553,
+              "values": [
+                3.3, 4, 3.9, 3.8, 4.2, 4.5, 3.2, 3.3, 4.9, 4.7, 4.2, 3.3, 4.6, 3.9, 3, 4.9, 3.5,
+                2.9, 2.9, 3.7, 4.7, 3.4, 3.3, 3.9, 3.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.7,
+              "max": 26.5,
+              "median": 23.2,
+              "mean": 23.446666666666665,
+              "stddev": 1.1243199002486963,
+              "values": [
+                23.1, 23, 25.1, 23.7, 23.6, 23.2, 21.7, 23.2, 23.8, 22.6, 23.2, 26.5, 23.4, 22.4,
+                23.2
+              ]
+            },
+            "script": {
+              "min": 1.6,
+              "max": 3.5,
+              "median": 2.5,
+              "mean": 2.546666666666667,
+              "stddev": 0.6254902838878437,
+              "values": [1.6, 1.7, 3.2, 3.2, 2.5, 1.6, 2.1, 2.1, 2.8, 2.5, 2.6, 3.1, 2.5, 3.2, 3.5]
+            },
+            "paint": {
+              "min": 16.3,
+              "max": 19.6,
+              "median": 18.3,
+              "mean": 18.16,
+              "stddev": 0.9998571326516033,
+              "values": [
+                19.6, 18.2, 19.1, 17.5, 18.3, 18.3, 16.6, 18.9, 18.7, 17.7, 17.8, 19.6, 18.7, 17.1,
+                16.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.5,
+              "max": 18.2,
+              "median": 17.2,
+              "mean": 17.326666666666668,
+              "stddev": 0.48911971462832593,
+              "values": [
+                17.1, 18.2, 17.3, 17.9, 17, 17.2, 16.9, 16.5, 17.1, 17, 17.8, 16.8, 17.8, 17.9, 17.4
+              ]
+            },
+            "script": {
+              "min": 1.1,
+              "max": 1.5,
+              "median": 1.2,
+              "mean": 1.2266666666666666,
+              "stddev": 0.12227992865708151,
+              "values": [1.1, 1.1, 1.5, 1.2, 1.2, 1.2, 1.2, 1.4, 1.2, 1.1, 1.2, 1.4, 1.3, 1.1, 1.2]
+            },
+            "paint": {
+              "min": 14.2,
+              "max": 15.4,
+              "median": 14.8,
+              "mean": 14.726666666666667,
+              "stddev": 0.3972524686009189,
+              "values": [
+                14.3, 15.3, 14.8, 14.8, 14.6, 14.2, 14.2, 14.2, 14.7, 15, 15.4, 14.5, 14.9, 15.2,
+                14.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 405.9,
+              "max": 410.5,
+              "median": 408.4,
+              "mean": 408.29333333333335,
+              "stddev": 1.5359811506779966,
+              "values": [
+                408.9, 407.5, 408.4, 405.9, 410.3, 409.6, 407.8, 410, 407, 407, 406.3, 410.5, 408.6,
+                406.7, 409.9
+              ]
+            },
+            "script": {
+              "min": 104.3,
+              "max": 106.5,
+              "median": 105.4,
+              "mean": 105.36666666666666,
+              "stddev": 0.7668736780560654,
+              "values": [
+                104.4, 106.2, 105.4, 104.6, 106.5, 105.8, 105.7, 105.2, 104.4, 105.4, 104.3, 106.3,
+                105.4, 104.6, 106.3
+              ]
+            },
+            "paint": {
+              "min": 290.8,
+              "max": 294.7,
+              "median": 292.2,
+              "mean": 292.43333333333334,
+              "stddev": 1.186631888200896,
+              "values": [
+                293.9, 290.8, 292.2, 290.8, 293.4, 292.7, 292, 294.7, 292.1, 290.9, 291.5, 293.5,
+                292.9, 291.8, 293.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 43.1,
+              "max": 45.1,
+              "median": 44.2,
+              "mean": 44.26666666666667,
+              "stddev": 0.5511891905775398,
+              "values": [
+                43.1, 44.9, 44.2, 44.3, 45.1, 44.5, 43.8, 44.8, 44.1, 45.1, 44.3, 43.9, 43.7, 44.1,
+                44.1
+              ]
+            },
+            "script": {
+              "min": 11.7,
+              "max": 12.6,
+              "median": 12,
+              "mean": 12.053333333333333,
+              "stddev": 0.22949219304078003,
+              "values": [11.9, 11.9, 12, 12, 12.6, 11.9, 12, 12, 12, 12, 12.5, 11.7, 12, 12.1, 12.2]
+            },
+            "paint": {
+              "min": 29.7,
+              "max": 31.6,
+              "median": 30.7,
+              "mean": 30.673333333333336,
+              "stddev": 0.5324695385877108,
+              "values": [
+                29.7, 31.5, 30.7, 30.7, 31, 31.1, 30.3, 31.2, 30.6, 31.6, 30.1, 30.7, 30.2, 30.4,
+                30.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 23.9,
+              "max": 28.4,
+              "median": 26.4,
+              "mean": 26.180000000000003,
+              "stddev": 1.1136811546783552,
+              "values": [
+                28.4, 26.3, 26.5, 24.8, 26.4, 25.3, 27.6, 26.6, 25.1, 26.5, 23.9, 26.9, 26.6, 26.1,
+                25.7
+              ]
+            },
+            "script": {
+              "min": 20.7,
+              "max": 24.9,
+              "median": 23.2,
+              "mean": 22.8,
+              "stddev": 1.1244046043509934,
+              "values": [
+                24.9, 22.9, 23.2, 21.1, 23.5, 22.2, 23.7, 23.3, 21.4, 23.3, 20.7, 23.8, 23.3, 22.5,
+                22.2
+              ]
+            },
+            "paint": {
+              "min": 0.9,
+              "max": 3.2,
+              "median": 1.8,
+              "mean": 1.9,
+              "stddev": 0.6129553700835696,
+              "values": [1.5, 1.6, 2.4, 1.8, 0.9, 1.9, 1.6, 1.3, 2.6, 2.2, 2, 2.6, 1.7, 3.2, 1.2]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "reversed-order-cpu",
+      "order": ["fict-local", "fict-baseline-43ecf80"],
+      "separateInvocations": true,
+      "unit": "ms",
+      "results": [
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.1,
+              "max": 24.7,
+              "median": 22.6,
+              "mean": 22.656666666666663,
+              "stddev": 0.7435624099369629,
+              "values": [
+                21.8, 24.7, 22.8, 23.9, 23.1, 22.9, 21.8, 23.8, 23.1, 23.1, 22.5, 22.5, 22.2, 22.1,
+                21.8, 22.7, 23.3, 22.6, 23.3, 21.1, 22.7, 22.4, 22, 23.5, 22.8, 22.6, 22.3, 22.2,
+                22.1, 22
+              ]
+            },
+            "script": {
+              "min": 1.4,
+              "max": 3.3,
+              "median": 2.05,
+              "mean": 2.153333333333333,
+              "stddev": 0.5630785658008727,
+              "values": [
+                1.6, 3.3, 2.4, 2.4, 1.6, 1.5, 1.9, 1.9, 1.9, 3, 1.9, 1.9, 2.2, 2.2, 1.6, 2.2, 2.6,
+                2.2, 2.9, 1.6, 3.3, 2.8, 2.5, 1.5, 2.6, 2.8, 1.5, 1.7, 1.7, 1.4
+              ]
+            },
+            "paint": {
+              "min": 15.9,
+              "max": 19.6,
+              "median": 18,
+              "mean": 17.996666666666666,
+              "stddev": 0.721819221485371,
+              "values": [
+                18.6, 17.5, 18.4, 19.1, 18.9, 18.2, 17.2, 18.6, 18.5, 17.6, 18.7, 17.5, 17.6, 16.9,
+                18.5, 17.9, 18, 17.6, 18, 17.9, 17.3, 15.9, 18, 19.6, 17.9, 18.3, 17.5, 18, 18.6,
+                17.6
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 25.3,
+              "max": 28.8,
+              "median": 26.7,
+              "mean": 26.80666666666666,
+              "stddev": 0.9839867301226531,
+              "values": [
+                28.5, 27.6, 25.3, 28, 27.4, 27.3, 27.9, 25.8, 26.4, 26, 26.8, 25.7, 26.7, 25.6,
+                26.2, 27.9, 27.5, 25.8, 26.2, 27.8, 25.3, 26.4, 27.2, 26.1, 25.9, 27.6, 26, 27.8,
+                28.8, 26.7
+              ]
+            },
+            "script": {
+              "min": 21.7,
+              "max": 24.9,
+              "median": 22.8,
+              "mean": 23.21666666666666,
+              "stddev": 0.9979576845888231,
+              "values": [
+                23.9, 23.6, 21.8, 24.5, 23.9, 24, 24.8, 22.7, 22.8, 22.3, 22.8, 22.6, 22.4, 22.1,
+                22.6, 24.6, 24.1, 22, 22.7, 24.1, 21.7, 22.7, 23.9, 22.2, 22.2, 24.3, 22.3, 24.5,
+                24.9, 23.5
+              ]
+            },
+            "paint": {
+              "min": 0.9,
+              "max": 2.9,
+              "median": 1.85,
+              "mean": 1.8599999999999999,
+              "stddev": 0.5654415424524752,
+              "values": [
+                2.5, 2.7, 2.8, 1.8, 1.6, 1.7, 1.5, 1.3, 1.1, 1.8, 2.2, 1.3, 1.9, 0.9, 1.3, 1.7, 1.9,
+                2.8, 1.2, 2.9, 2.7, 1.9, 1.2, 2, 2, 1.3, 1.9, 1.4, 2.4, 2.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.3,
+              "max": 24.2,
+              "median": 23.05,
+              "mean": 22.860000000000003,
+              "stddev": 0.8277930775926702,
+              "values": [
+                23.6, 23.1, 24.2, 22.5, 23.6, 23.7, 23.1, 23.8, 23.1, 21.3, 22.4, 23.9, 23.6, 22.9,
+                21.6, 22.8, 23.4, 22.1, 21.9, 22.2, 23, 22, 21.5, 24, 23.1, 23.4, 21.6, 22.9, 22,
+                23.5
+              ]
+            },
+            "script": {
+              "min": 1.9,
+              "max": 3.8,
+              "median": 2.45,
+              "mean": 2.549999999999999,
+              "stddev": 0.5090559213234659,
+              "values": [
+                2.4, 2.8, 3.8, 2.1, 2.8, 2.1, 2.1, 1.9, 2.5, 2.3, 2.5, 2.8, 3.1, 2.8, 2.7, 3.6, 2.8,
+                2.4, 1.9, 1.9, 2.4, 2, 1.9, 3.1, 3, 3.1, 2.2, 2.2, 2.2, 3.1
+              ]
+            },
+            "paint": {
+              "min": 16.5,
+              "max": 19,
+              "median": 17.9,
+              "mean": 17.83333333333333,
+              "stddev": 0.7092168256232548,
+              "values": [
+                17.9, 17.8, 17.3, 18.5, 18.6, 18.9, 18.4, 18.5, 18.4, 16.5, 17.6, 19, 18.2, 17.9,
+                16.5, 17.4, 18.4, 17.5, 17.4, 17.9, 18.4, 17.1, 16.9, 18.6, 16.9, 18.4, 17, 17.6,
+                17.1, 18.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 24.4,
+              "max": 27.6,
+              "median": 25.95,
+              "mean": 25.96333333333333,
+              "stddev": 0.9650739951381732,
+              "values": [
+                27.1, 27, 26.4, 26.5, 27.6, 25.1, 25.5, 27.4, 26.5, 26.5, 25.2, 24.5, 25.1, 26,
+                24.7, 26.3, 26.8, 25.7, 25.4, 24.4, 24.5, 25.6, 26.6, 24.4, 27.2, 25.9, 26.5, 27.3,
+                25.9, 25.3
+              ]
+            },
+            "script": {
+              "min": 20.5,
+              "max": 24.2,
+              "median": 22.5,
+              "mean": 22.593333333333337,
+              "stddev": 0.9551794680016703,
+              "values": [
+                23.3, 23.7, 22.9, 22.4, 23.8, 22.3, 22.4, 23.8, 23.5, 23.4, 21.6, 21.3, 22.4, 22.3,
+                21.5, 23.2, 23.6, 22.6, 21.5, 20.5, 21.2, 22.5, 23.2, 21.2, 24, 22.5, 22.6, 24.2,
+                22.3, 22.1
+              ]
+            },
+            "paint": {
+              "min": 0.9,
+              "max": 2.7,
+              "median": 1.65,
+              "mean": 1.7266666666666668,
+              "stddev": 0.5112077203381551,
+              "values": [
+                2.2, 0.9, 1.9, 2.3, 1.4, 0.9, 1.5, 1.8, 2.6, 2, 1.9, 1.2, 2.4, 1.6, 2, 2.7, 1.6,
+                1.2, 2.4, 2.6, 1.8, 1.6, 1.2, 1.3, 1.3, 1.5, 1.9, 1.1, 1.3, 1.7
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "final-memory",
+      "order": ["fict-local"],
+      "unit": "MiB",
+      "results": [
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "21_ready-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 0.8890800476074219,
+              "max": 0.899928092956543,
+              "median": 0.8983678817749023,
+              "mean": 0.8957920074462891,
+              "stddev": 0.005864841719241333,
+              "values": [0.8983678817749023, 0.899928092956543, 0.8890800476074219]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "22_run-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 5.315014839172363,
+              "max": 5.3255157470703125,
+              "median": 5.317780494689941,
+              "mean": 5.319437026977539,
+              "stddev": 0.005442916597302701,
+              "values": [5.317780494689941, 5.3255157470703125, 5.315014839172363]
+            }
+          }
+        },
+        {
+          "framework": "fict-local-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "25_run-clear-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 1.406179428100586,
+              "max": 1.4139175415039062,
+              "median": 1.4061908721923828,
+              "mean": 1.4087626139322917,
+              "stddev": 0.004464301898757905,
+              "values": [1.4061908721923828, 1.4139175415039062, 1.406179428100586]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "earlier-memory-references",
+      "unit": "MiB",
+      "results": [
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "21_ready-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 0.8852634429931641,
+              "max": 0.8927574157714844,
+              "median": 0.891758918762207,
+              "mean": 0.8899265925089518,
+              "stddev": 0.00406914875917896,
+              "values": [0.8852634429931641, 0.8927574157714844, 0.891758918762207]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "22_run-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 5.330387115478516,
+              "max": 5.331817626953125,
+              "median": 5.331439018249512,
+              "mean": 5.331214586893718,
+              "stddev": 0.0007411935272552054,
+              "values": [5.330387115478516, 5.331817626953125, 5.331439018249512]
+            }
+          }
+        },
+        {
+          "framework": "fict-baseline-43ecf80-v0.34.0-keyed",
+          "keyed": true,
+          "benchmark": "25_run-clear-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 1.5136241912841797,
+              "max": 1.5218772888183594,
+              "median": 1.5187759399414062,
+              "mean": 1.5180924733479817,
+              "stddev": 0.004168782755843264,
+              "values": [1.5218772888183594, 1.5187759399414062, 1.5136241912841797]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "21_ready-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 0.5907754898071289,
+              "max": 0.5988492965698242,
+              "median": 0.5921049118041992,
+              "mean": 0.5939098993937174,
+              "stddev": 0.004328980718260623,
+              "values": [0.5988492965698242, 0.5907754898071289, 0.5921049118041992]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "22_run-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 2.679067611694336,
+              "max": 2.6888437271118164,
+              "median": 2.6816768646240234,
+              "mean": 2.6831960678100586,
+              "stddev": 0.005062024486736444,
+              "values": [2.6816768646240234, 2.679067611694336, 2.6888437271118164]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "25_run-clear-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 0.7694244384765625,
+              "max": 0.7779102325439453,
+              "median": 0.7775058746337891,
+              "mean": 0.7749468485514323,
+              "stddev": 0.004786818996593042,
+              "values": [0.7694244384765625, 0.7775058746337891, 0.7779102325439453]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "21_ready-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 0.5626039505004883,
+              "max": 0.5666646957397461,
+              "median": 0.5632410049438477,
+              "mean": 0.5641698837280273,
+              "stddev": 0.0021839241793874388,
+              "values": [0.5632410049438477, 0.5666646957397461, 0.5626039505004883]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "22_run-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 1.8727350234985352,
+              "max": 1.8746919631958008,
+              "median": 1.873520851135254,
+              "mean": 1.87364927927653,
+              "stddev": 0.000984770828816143,
+              "values": [1.873520851135254, 1.8727350234985352, 1.8746919631958008]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "25_run-clear-memory",
+          "type": "memory",
+          "values": {
+            "DEFAULT": {
+              "min": 0.6442279815673828,
+              "max": 0.6479740142822266,
+              "median": 0.6468143463134766,
+              "mean": 0.6463387807210287,
+              "stddev": 0.0019177623027138069,
+              "values": [0.6468143463134766, 0.6479740142822266, 0.6442279815673828]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "earlier-cpu-references",
+      "unit": "ms",
+      "results": [
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 29.8,
+              "max": 31,
+              "median": 30.3,
+              "mean": 30.306666666666665,
+              "stddev": 0.3326659986633241,
+              "values": [
+                30.3, 30.6, 30.4, 31, 30.4, 29.9, 30.2, 30.1, 30.3, 30.5, 29.8, 30.7, 29.9, 30, 30.5
+              ]
+            },
+            "script": {
+              "min": 3.5,
+              "max": 3.9,
+              "median": 3.6,
+              "mean": 3.606666666666668,
+              "stddev": 0.10997835284835876,
+              "values": [3.6, 3.7, 3.6, 3.7, 3.5, 3.5, 3.5, 3.6, 3.7, 3.6, 3.6, 3.6, 3.5, 3.5, 3.9]
+            },
+            "paint": {
+              "min": 25.6,
+              "max": 26.7,
+              "median": 26.1,
+              "mean": 26.146666666666665,
+              "stddev": 0.26956755492207635,
+              "values": [
+                26.2, 26.3, 26.3, 26.7, 26.3, 25.9, 26.1, 26, 26, 26.3, 25.6, 26.5, 25.9, 26, 26.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 34,
+              "max": 35.9,
+              "median": 35,
+              "mean": 35.04666666666666,
+              "stddev": 0.49405995394813973,
+              "values": [
+                35.2, 34.9, 35.3, 34, 35.9, 35, 35.4, 35.5, 35.7, 34.8, 34.5, 34.7, 34.7, 34.8, 35.3
+              ]
+            },
+            "script": {
+              "min": 7,
+              "max": 7.7,
+              "median": 7.3,
+              "mean": 7.286666666666667,
+              "stddev": 0.18073922282301294,
+              "values": [7.3, 7.4, 7.5, 7, 7.2, 7.3, 7.3, 7.7, 7.4, 7.4, 7.2, 7.3, 7.1, 7.1, 7.1]
+            },
+            "paint": {
+              "min": 26.2,
+              "max": 27.9,
+              "median": 26.9,
+              "mean": 26.939999999999994,
+              "stddev": 0.4468940430507946,
+              "values": [
+                27, 26.7, 26.9, 26.2, 27.9, 26.7, 27.4, 27, 27.5, 26.7, 26.5, 26.5, 26.8, 26.9, 27.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 17.7,
+              "max": 19.9,
+              "median": 18.5,
+              "mean": 18.699999999999996,
+              "stddev": 0.7131419413913532,
+              "values": [
+                18.3, 18.5, 18.6, 19.6, 19, 19.9, 17.8, 19.4, 18.3, 18.1, 18.1, 19.8, 19, 18.4, 17.7
+              ]
+            },
+            "script": {
+              "min": 1,
+              "max": 2,
+              "median": 1.7,
+              "mean": 1.6199999999999999,
+              "stddev": 0.30047581314594074,
+              "values": [1.4, 1, 1.7, 1.5, 1.9, 1.8, 1.4, 1.9, 1.9, 1.2, 2, 1.5, 1.9, 1.8, 1.4]
+            },
+            "paint": {
+              "min": 13.8,
+              "max": 15.9,
+              "median": 14.7,
+              "mean": 14.753333333333334,
+              "stddev": 0.6937132658657287,
+              "values": [
+                14.3, 14.1, 14.8, 15.6, 15.4, 15.9, 14.1, 15.1, 14, 14.7, 13.8, 15.8, 14.3, 15.1,
+                14.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 5.9,
+              "max": 12.1,
+              "median": 6.6,
+              "mean": 7.119999999999999,
+              "stddev": 1.430617582258329,
+              "values": [
+                6.3, 6, 6.7, 8.8, 6.6, 6.6, 7.7, 5.9, 7.7, 6.2, 6.5, 12.1, 6.3, 6.7, 7.2, 7.6, 8,
+                6.2, 6.2, 6.7, 10.2, 6.3, 7, 6.1, 6.4
+              ]
+            },
+            "script": {
+              "min": 0.9,
+              "max": 2.6,
+              "median": 1.5,
+              "mean": 1.444,
+              "stddev": 0.37868192457522976,
+              "values": [
+                1.2, 0.9, 1.6, 2, 1.2, 1.7, 1.5, 1.4, 1.5, 1.2, 1.2, 1.1, 1.3, 1, 1.5, 1.5, 2.6, 1,
+                1.5, 1.9, 1.9, 1.5, 1.4, 1.5, 1
+              ]
+            },
+            "paint": {
+              "min": 3,
+              "max": 4.8,
+              "median": 3.9,
+              "mean": 3.86,
+              "stddev": 0.4915960401250874,
+              "values": [
+                3.2, 4.1, 4.4, 3.7, 4.6, 3.1, 3, 3.3, 4.2, 4.1, 4.3, 3.8, 3.8, 4, 3.9, 3.9, 4.8,
+                4.4, 3.7, 3.1, 3.7, 3.9, 4.1, 3.2, 4.2
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 21.3,
+              "max": 23.8,
+              "median": 22.1,
+              "mean": 22.24,
+              "stddev": 0.7753340293982053,
+              "values": [
+                22.1, 21.3, 23.8, 21.4, 21.6, 21.3, 22.1, 23.4, 22.7, 21.4, 22.3, 22.1, 23, 22.5,
+                22.6
+              ]
+            },
+            "script": {
+              "min": 1.1,
+              "max": 2.4,
+              "median": 1.8,
+              "mean": 1.7666666666666664,
+              "stddev": 0.415187851918806,
+              "values": [1.5, 1.1, 2.4, 1.9, 1.5, 1.9, 2.1, 1.6, 1.4, 1.6, 2, 1.8, 2.4, 2.2, 1.1]
+            },
+            "paint": {
+              "min": 16.3,
+              "max": 20,
+              "median": 18.3,
+              "mean": 17.98666666666667,
+              "stddev": 1.0398259927690285,
+              "values": [
+                16.3, 19.2, 19.1, 16.7, 18.3, 17.2, 18.3, 18.3, 18.5, 16.7, 17.9, 17.2, 17.6, 18.5,
+                20
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16,
+              "max": 17.7,
+              "median": 16.5,
+              "mean": 16.77333333333333,
+              "stddev": 0.5105552532945546,
+              "values": [
+                17, 16.9, 17.5, 16.5, 16.4, 16.5, 16.4, 17.6, 16.3, 16, 16.7, 17.1, 16.5, 16.5, 17.7
+              ]
+            },
+            "script": {
+              "min": 0.6,
+              "max": 0.9,
+              "median": 0.7,
+              "mean": 0.6866666666666666,
+              "stddev": 0.07432233529572065,
+              "values": [0.7, 0.6, 0.7, 0.7, 0.7, 0.6, 0.7, 0.7, 0.6, 0.7, 0.7, 0.7, 0.6, 0.7, 0.9]
+            },
+            "paint": {
+              "min": 14.2,
+              "max": 15.6,
+              "median": 15,
+              "mean": 14.926666666666666,
+              "stddev": 0.41827309374663457,
+              "values": [
+                15.2, 15, 15.4, 14.7, 14.9, 15, 14.8, 15.5, 14.6, 14.2, 15.2, 15.6, 14.3, 14.5, 15
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 328,
+              "max": 333.1,
+              "median": 330.6,
+              "mean": 330.46000000000004,
+              "stddev": 1.5117633979656255,
+              "values": [
+                330.9, 333.1, 331.8, 331.4, 328, 332.6, 330.9, 328.3, 330.6, 328.5, 331.4, 329.3,
+                329.9, 330.1, 330.1
+              ]
+            },
+            "script": {
+              "min": 32.7,
+              "max": 34.6,
+              "median": 33.3,
+              "mean": 33.43333333333334,
+              "stddev": 0.4715728494951255,
+              "values": [
+                33.7, 33.2, 32.8, 34, 33.2, 33.6, 34.6, 33.3, 33.8, 33.4, 33.2, 33.2, 32.7, 33.3,
+                33.5
+              ]
+            },
+            "paint": {
+              "min": 284.4,
+              "max": 289.6,
+              "median": 286.5,
+              "mean": 286.4866666666667,
+              "stddev": 1.496599319727744,
+              "values": [
+                286.7, 289.6, 287.8, 286.5, 284.4, 288.7, 286, 284.5, 286.8, 284.9, 287.8, 285.4,
+                286.1, 286.5, 285.6
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 35.2,
+              "max": 38,
+              "median": 36.8,
+              "mean": 36.666666666666664,
+              "stddev": 0.8820970684087083,
+              "values": [
+                37.3, 35.6, 37.2, 38, 35.2, 37.5, 35.5, 37, 37.6, 36.6, 37.3, 36.4, 35.4, 36.8, 36.6
+              ]
+            },
+            "script": {
+              "min": 3.9,
+              "max": 4.2,
+              "median": 4,
+              "mean": 4.040000000000001,
+              "stddev": 0.08280786712108244,
+              "values": [4.1, 4, 4.1, 4, 4, 4, 3.9, 4.1, 4.1, 4.1, 3.9, 4, 4.1, 4.2, 4]
+            },
+            "paint": {
+              "min": 29.9,
+              "max": 32.8,
+              "median": 31.4,
+              "mean": 31.346666666666668,
+              "stddev": 0.8475735675331976,
+              "values": [
+                31.7, 30.2, 31.9, 32.8, 29.9, 32.3, 30.4, 31.6, 32, 31.3, 32, 31.1, 30.2, 31.4, 31.4
+              ]
+            }
+          }
+        },
+        {
+          "framework": "solid-fict-audit-20260912-v1.9.3-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 16.1,
+              "max": 20.8,
+              "median": 18.4,
+              "mean": 18.560000000000002,
+              "stddev": 1.6194355277600363,
+              "values": [
+                17.3, 16.1, 17.1, 16.6, 20.2, 19.8, 18.4, 17.2, 19.4, 18, 19.9, 20.4, 16.9, 20.3,
+                20.8
+              ]
+            },
+            "script": {
+              "min": 13.4,
+              "max": 17.6,
+              "median": 14.7,
+              "mean": 15.360000000000003,
+              "stddev": 1.5164808886742644,
+              "values": [
+                14.2, 13.4, 14.2, 13.8, 16.8, 16.6, 14.6, 13.6, 16.8, 14.7, 16.6, 16.8, 13.8, 16.9,
+                17.6
+              ]
+            },
+            "paint": {
+              "min": 0.4,
+              "max": 3.2,
+              "median": 1.8,
+              "mean": 1.7933333333333334,
+              "stddev": 0.8572936375317274,
+              "values": [2.5, 0.8, 2.1, 1.3, 0.5, 1.5, 2.3, 2.8, 0.4, 1.6, 1.8, 3.2, 1.1, 2.5, 2.5]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "01_run1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 28.4,
+              "max": 29.5,
+              "median": 28.7,
+              "mean": 28.799999999999997,
+              "stddev": 0.2903200204700226,
+              "values": [
+                28.9, 28.5, 28.7, 28.6, 28.4, 28.5, 28.7, 29.2, 28.7, 29.1, 29.5, 28.8, 28.9, 28.8,
+                28.7
+              ]
+            },
+            "script": {
+              "min": 2.4,
+              "max": 2.5,
+              "median": 2.4,
+              "mean": 2.4133333333333327,
+              "stddev": 0.03518657752744988,
+              "values": [2.4, 2.4, 2.5, 2.4, 2.4, 2.4, 2.4, 2.5, 2.4, 2.4, 2.4, 2.4, 2.4, 2.4, 2.4]
+            },
+            "paint": {
+              "min": 25.4,
+              "max": 26.6,
+              "median": 25.8,
+              "mean": 25.786666666666672,
+              "stddev": 0.3044120015154904,
+              "values": [
+                25.8, 25.5, 25.7, 25.6, 25.4, 25.5, 25.6, 26.1, 25.6, 26.1, 26.6, 25.8, 25.9, 25.8,
+                25.8
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "02_replace1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 31.2,
+              "max": 32.7,
+              "median": 32.1,
+              "mean": 32.093333333333334,
+              "stddev": 0.45898438608156095,
+              "values": [
+                32.2, 32, 32.5, 31.6, 32.7, 31.7, 32, 31.9, 32.6, 31.5, 32.2, 32.1, 32.5, 31.2, 32.7
+              ]
+            },
+            "script": {
+              "min": 4.7,
+              "max": 5,
+              "median": 4.9,
+              "mean": 4.906666666666666,
+              "stddev": 0.08837151016885367,
+              "values": [4.9, 5, 5, 4.8, 5, 5, 4.9, 4.8, 5, 4.9, 4.9, 4.9, 4.9, 4.7, 4.9]
+            },
+            "paint": {
+              "min": 25.8,
+              "max": 27.2,
+              "median": 26.6,
+              "mean": 26.54666666666666,
+              "stddev": 0.40508670441676775,
+              "values": [
+                26.7, 26.4, 26.9, 26.1, 26.9, 26.2, 26.5, 26.5, 26.9, 25.8, 26.7, 26.6, 26.9, 25.9,
+                27.2
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "03_update10th1k_x16",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 15.9,
+              "max": 18.8,
+              "median": 17.5,
+              "mean": 17.419999999999998,
+              "stddev": 1.0185423758629635,
+              "values": [
+                17.5, 17.1, 16.6, 18.8, 16.3, 18.7, 16.5, 18.2, 18.7, 17.7, 17.8, 16.6, 18.6, 16.3,
+                15.9
+              ]
+            },
+            "script": {
+              "min": 0.2,
+              "max": 1,
+              "median": 0.7,
+              "mean": 0.6866666666666668,
+              "stddev": 0.28999178970315365,
+              "values": [0.2, 0.8, 0.6, 1, 0.2, 0.6, 1, 0.2, 1, 0.9, 0.7, 0.9, 0.7, 0.9, 0.6]
+            },
+            "paint": {
+              "min": 12.9,
+              "max": 16.1,
+              "median": 14.6,
+              "mean": 14.58,
+              "stddev": 0.9864800338287933,
+              "values": [
+                14.8, 14.2, 13.9, 15.4, 13.9, 16.1, 14, 15.9, 15, 14.6, 15.5, 13.5, 15.6, 13.4, 12.9
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "04_select1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 4,
+              "max": 10.6,
+              "median": 6.4,
+              "mean": 6.52,
+              "stddev": 1.9931131427994748,
+              "values": [
+                4.3, 6.5, 8.2, 9.5, 6.9, 8.8, 5.2, 5.1, 4.5, 5, 5, 10.1, 7.7, 6.6, 5.2, 10.6, 5.2,
+                4.1, 4.7, 6.4, 5.3, 8.7, 8.7, 6.7, 4
+              ]
+            },
+            "script": {
+              "min": 0.1,
+              "max": 1,
+              "median": 0.6,
+              "mean": 0.556,
+              "stddev": 0.34770677301427416,
+              "values": [
+                0.1, 0.9, 0.8, 0.6, 0.1, 0.1, 0.1, 0.8, 0.6, 0.9, 0.6, 0.9, 0.1, 0.5, 0.9, 0.9, 1,
+                0.6, 0.1, 0.5, 1, 0.8, 0.8, 0.1, 0.1
+              ]
+            },
+            "paint": {
+              "min": 2.3,
+              "max": 4.6,
+              "median": 3.7,
+              "mean": 3.6599999999999993,
+              "stddev": 0.5322906474223771,
+              "values": [
+                2.3, 4.1, 3.2, 4, 4, 4.2, 4.4, 3.2, 3.7, 3.4, 3.5, 4.3, 3.9, 2.8, 4.1, 4.6, 3.2,
+                3.3, 3.8, 3.8, 3.3, 3.9, 3.7, 3.7, 3.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "05_swap1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 18.3,
+              "max": 20.6,
+              "median": 19.7,
+              "mean": 19.62,
+              "stddev": 0.6178303049497376,
+              "values": [
+                20, 19.8, 19.4, 20.6, 19.5, 18.6, 20.6, 19.7, 19.7, 20, 19.3, 18.3, 19.5, 19.4, 19.9
+              ]
+            },
+            "script": {
+              "min": 0.1,
+              "max": 1.1,
+              "median": 0.3,
+              "mean": 0.39333333333333337,
+              "stddev": 0.34942129027184093,
+              "values": [0.5, 0.1, 0.3, 0.1, 0.4, 0.1, 1.1, 0.9, 0.1, 0.4, 0.8, 0.1, 0.8, 0.1, 0.1]
+            },
+            "paint": {
+              "min": 15.5,
+              "max": 18,
+              "median": 17.3,
+              "mean": 16.96,
+              "stddev": 0.8183607307992516,
+              "values": [
+                17.6, 18, 17.3, 17.3, 15.8, 16.6, 16.8, 16.1, 17.5, 17.7, 15.5, 16.8, 15.9, 17.6,
+                17.9
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "06_remove-one-1k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 15.4,
+              "max": 16.9,
+              "median": 16.2,
+              "mean": 16.25333333333333,
+              "stddev": 0.48383389514919056,
+              "values": [
+                16.6, 16.1, 16.7, 15.7, 15.6, 16, 16.7, 16.9, 16, 15.4, 16.6, 16.9, 16.5, 15.9, 16.2
+              ]
+            },
+            "script": {
+              "min": 0.3,
+              "max": 0.6,
+              "median": 0.6,
+              "mean": 0.5399999999999998,
+              "stddev": 0.10555973258234952,
+              "values": [0.5, 0.6, 0.6, 0.6, 0.3, 0.6, 0.6, 0.5, 0.5, 0.6, 0.6, 0.6, 0.6, 0.6, 0.3]
+            },
+            "paint": {
+              "min": 13.9,
+              "max": 15.1,
+              "median": 14.4,
+              "mean": 14.466666666666667,
+              "stddev": 0.3265986323710904,
+              "values": [
+                15, 14.3, 14.8, 14.2, 14.5, 14.3, 14.8, 15.1, 14.2, 13.9, 14.3, 14.4, 14.5, 14.4,
+                14.3
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "07_create10k",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 309.5,
+              "max": 312.9,
+              "median": 310.4,
+              "mean": 310.68,
+              "stddev": 1.0503060778377151,
+              "values": [
+                312, 312.9, 309.7, 310.7, 310.2, 309.5, 309.5, 310.4, 309.6, 311.3, 310.3, 310,
+                310.5, 311.9, 311.7
+              ]
+            },
+            "script": {
+              "min": 22.8,
+              "max": 23.7,
+              "median": 23.1,
+              "mean": 23.14,
+              "stddev": 0.3089151524748686,
+              "values": [
+                23, 23.5, 23.3, 22.8, 22.8, 23.7, 22.9, 23.3, 23.6, 23.4, 23.1, 22.8, 22.8, 23.1, 23
+              ]
+            },
+            "paint": {
+              "min": 275.7,
+              "max": 279.2,
+              "median": 277.3,
+              "mean": 277.38000000000005,
+              "stddev": 1.0923107877993583,
+              "values": [
+                279.2, 278.8, 275.8, 277.5, 277.3, 275.7, 276.7, 277.2, 275.8, 277.3, 277.2, 277.2,
+                278, 278.3, 278.7
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "08_create1k-after1k_x2",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 33.5,
+              "max": 35.6,
+              "median": 34.9,
+              "mean": 34.74,
+              "stddev": 0.6356099432828274,
+              "values": [
+                35.1, 34.5, 33.7, 35.6, 34.7, 33.7, 33.5, 35.1, 34.8, 34.9, 35.3, 34.8, 35.2, 35.3,
+                34.9
+              ]
+            },
+            "script": {
+              "min": 2.4,
+              "max": 2.5,
+              "median": 2.4,
+              "mean": 2.433333333333333,
+              "stddev": 0.048795003647426706,
+              "values": [2.5, 2.4, 2.4, 2.5, 2.4, 2.4, 2.4, 2.4, 2.4, 2.4, 2.4, 2.5, 2.5, 2.5, 2.4]
+            },
+            "paint": {
+              "min": 29.9,
+              "max": 32,
+              "median": 31.1,
+              "mean": 31.033333333333324,
+              "stddev": 0.6388233230676839,
+              "values": [
+                31.4, 30.9, 29.9, 32, 30.9, 29.9, 30, 31.4, 31.2, 31.1, 31.7, 31.1, 31.5, 31.4, 31.1
+              ]
+            }
+          }
+        },
+        {
+          "framework": "vanillajs-keyed",
+          "keyed": true,
+          "benchmark": "09_clear1k_x8",
+          "type": "cpu",
+          "values": {
+            "total": {
+              "min": 11.9,
+              "max": 15.1,
+              "median": 14.2,
+              "mean": 14.046666666666665,
+              "stddev": 0.7229568912920511,
+              "values": [
+                14.3, 15.1, 13.7, 14, 13.7, 14.6, 14, 13.8, 14.5, 11.9, 14.2, 14.3, 14.6, 14.4, 13.6
+              ]
+            },
+            "script": {
+              "min": 9.2,
+              "max": 11.9,
+              "median": 10.9,
+              "mean": 10.933333333333334,
+              "stddev": 0.6090586022316583,
+              "values": [
+                11.3, 11.9, 10.6, 10.6, 10.6, 11.4, 10.9, 10.7, 10.9, 9.2, 11.1, 11.5, 10.9, 11.1,
+                11.3
+              ]
+            },
+            "paint": {
+              "min": 0.4,
+              "max": 2.8,
+              "median": 1.8,
+              "mean": 1.646666666666667,
+              "stddev": 0.6334335760267964,
+              "values": [2.1, 1.1, 1.9, 1.9, 1.3, 1.8, 2.3, 0.7, 1.7, 1.8, 2.2, 1.1, 2.8, 1.6, 0.4]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
