@@ -75,25 +75,27 @@ export function Suspense(props: SuspenseProps): FictNode {
     ssrSession ? __fictRunWithSSRSession(ssrSession, fn) : fn()
 
   const cleanupActive = () => {
+    renderGeneration++
     const currentCleanup = cleanup
+    const currentNodes = activeNodes
     cleanup = undefined
+    activeNodes = []
     try {
       currentCleanup?.()
     } finally {
-      if (activeNodes.length) {
-        removeNodes(activeNodes)
-        activeNodes = []
-      }
+      if (currentNodes.length) removeNodes(currentNodes)
     }
   }
 
   const renderView = (view: FictNode | null, parentRoot = boundaryRoot) => {
     if (disposed) return
+    const generation = renderGeneration + 1
     cleanupActive()
 
-    if (view == null || view === false) {
+    if (disposed || generation !== renderGeneration || view == null || view === false) {
       return
     }
+    const isCurrent = () => !disposed && generation === renderGeneration
 
     const root = createRootContext(parentRoot)
     // The boundary may replay after its caller's temporary render namespace
@@ -103,10 +105,21 @@ export function Suspense(props: SuspenseProps): FictNode {
     let nodes: Node[] = []
     let boundaryPushed = false
     let didPopRoot = false
+    let attemptDestroyed = false
     const restoreRoot = () => {
       if (didPopRoot) return
       popRoot(prev)
       didPopRoot = true
+    }
+    const destroyAttempt = () => {
+      restoreRoot()
+      if (attemptDestroyed) return
+      attemptDestroyed = true
+      try {
+        destroyRoot(root)
+      } finally {
+        removeNodes(nodes)
+      }
     }
     try {
       if (streamBoundaryId) {
@@ -115,6 +128,10 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
       const output = untrack(() => createElement(view))
       nodes = toNodeArray(output, markerOwnerDocument)
+      if (!isCurrent()) {
+        destroyAttempt()
+        return
+      }
       // Suspended view: child threw a suspense token and was handled upstream.
       // Avoid replacing existing fallback content; tear down this attempt.
       const suspendedAttempt =
@@ -124,8 +141,7 @@ export function Suspense(props: SuspenseProps): FictNode {
             node => isCommentLike(node, markerOwnerDocument) && node.data === 'fict:suspend',
           ))
       if (suspendedAttempt) {
-        restoreRoot()
-        destroyRoot(root)
+        destroyAttempt()
         return
       }
       const parentNode = endMarker.parentNode as (ParentNode & Node) | null
@@ -134,10 +150,12 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
       restoreRoot()
       flushOnMount(root)
+      if (!isCurrent()) {
+        destroyAttempt()
+        return
+      }
     } catch (err) {
-      restoreRoot()
-      destroyRoot(root)
-      removeNodes(nodes)
+      destroyAttempt()
       if (!handleError(err, { source: 'render' }, hostRoot)) {
         throw err
       }
@@ -148,13 +166,7 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
     }
 
-    cleanup = () => {
-      try {
-        destroyRoot(root)
-      } finally {
-        removeNodes(nodes)
-      }
-    }
+    cleanup = destroyAttempt
     activeNodes = nodes
   }
 
@@ -169,6 +181,7 @@ export function Suspense(props: SuspenseProps): FictNode {
   let streamPending = false
   let streamResolveScheduled = false
   let disposed = false
+  let renderGeneration = 0
 
   if (streamHooks?.registerBoundary) {
     streamBoundaryId = streamHooks.registerBoundary(startMarker, endMarker) ?? null
@@ -321,20 +334,25 @@ export function Suspense(props: SuspenseProps): FictNode {
     })
   })
 
-  // Initial render - render children directly
-  // Note: This will be called synchronously during component creation.
-  // If children suspend, the handler above will be called and switch to fallback.
-  renderView(props.children ?? null)
-
   registerRootCleanup(() => {
     disposed = true
-    if (streamBoundaryId && streamHooks?.boundaryAbandoned) {
-      streamPending = false
-      streamHooks.boundaryAbandoned(streamBoundaryId)
+    try {
+      if (streamBoundaryId && streamHooks?.boundaryAbandoned) {
+        streamPending = false
+        streamHooks.boundaryAbandoned(streamBoundaryId)
+      }
+    } finally {
+      try {
+        cleanupActive()
+      } finally {
+        destroyRoot(boundaryRoot)
+      }
     }
-    cleanupActive()
-    destroyRoot(boundaryRoot)
   })
+
+  // Register ownership before rendering children, which can synchronously
+  // suspend, fail, or destroy the host while this boundary is initializing.
+  renderView(props.children ?? null)
 
   if (props.resetKeys !== undefined) {
     const getter = isReactive(props.resetKeys) ? props.resetKeys : undefined
