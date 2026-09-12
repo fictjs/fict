@@ -364,7 +364,7 @@ export function registerManagedEffectCleanup(fn: Cleanup): void {
 }
 
 export function registerEffectCleanup(fn: Cleanup): void {
-  if (currentEffectCleanups) {
+  if (currentEffectCleanups && currentEffectCleanupRoot === currentRoot) {
     currentEffectCleanups.push(fn)
   } else {
     registerRootCleanup(fn)
