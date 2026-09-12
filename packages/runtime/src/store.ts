@@ -221,6 +221,59 @@ function hasInternalSlots(value: object): boolean {
   return false
 }
 
+type BuiltinKind = 'collection' | 'raw'
+let builtinConstructorSources: Map<string, BuiltinKind> | undefined
+const functionToString = Function.prototype.toString
+
+function getBuiltinConstructorSources(): Map<string, BuiltinKind> {
+  if (builtinConstructorSources) return builtinConstructorSources
+  const sources = new Map<string, BuiltinKind>()
+  for (const ctor of [Map, Set, WeakMap, WeakSet]) {
+    sources.set(functionToString.call(ctor), 'collection')
+  }
+  for (const name of [
+    'Date',
+    'RegExp',
+    'Promise',
+    'Error',
+    'ArrayBuffer',
+    'SharedArrayBuffer',
+    'Number',
+    'String',
+    'Boolean',
+    'BigInt',
+    'Symbol',
+    ...internalSlotGlobalConstructors,
+  ]) {
+    const ctor = (globalThis as Record<string, unknown>)[name]
+    if (typeof ctor !== 'function') continue
+    const source = functionToString.call(ctor)
+    if (source.includes('[native code]')) sources.set(source, 'raw')
+  }
+  builtinConstructorSources = sources
+  return sources
+}
+
+// instanceof is realm-specific. Match native constructors on the prototype
+// chain when the local checks miss, without invoking constructor or
+// Symbol.toStringTag getters on user objects. Arrays remain deeply reactive.
+function getBuiltinKind(value: object): BuiltinKind | undefined {
+  if (Array.isArray(value)) return undefined
+  let prototype = Reflect.getPrototypeOf(value)
+  while (prototype && prototype !== Object.prototype) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(prototype, 'constructor')
+    if (descriptor && 'value' in descriptor && typeof descriptor.value === 'function') {
+      const source = functionToString.call(descriptor.value)
+      if (source.includes('[native code]')) {
+        const kind = getBuiltinConstructorSources().get(source)
+        if (kind) return kind
+      }
+    }
+    prototype = Reflect.getPrototypeOf(prototype)
+  }
+  return undefined
+}
+
 const collectionMutators = new Set(['set', 'add', 'delete', 'clear'])
 
 /**
@@ -271,12 +324,17 @@ function wrap<T>(value: T): T {
 
   if (proxyCache.has(value)) return proxyCache.get(value) as T
 
-  if (isCollection(value)) {
+  const builtinKind = isCollection(value)
+    ? 'collection'
+    : hasInternalSlots(value)
+      ? 'raw'
+      : getBuiltinKind(value)
+  if (builtinKind === 'collection') {
     const collectionProxy = wrapCollection(value)
     proxyCache.set(value, collectionProxy)
     return collectionProxy
   }
-  if (hasInternalSlots(value)) {
+  if (builtinKind === 'raw') {
     return value
   }
 
