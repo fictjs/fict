@@ -276,16 +276,17 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
   let completed = false
   try {
     try {
-      const output = view()
-      // createElement must be called within the root context
-      // so that child components register their onMount callbacks correctly
-      if (__fictIsHydrating()) {
-        withHydration(container, () => {
+      untrack(() => {
+        const output = view()
+        // Keep component lifecycle ownership inside this independent root.
+        if (__fictIsHydrating()) {
+          withHydration(container, () => {
+            dom = createElement(output)
+          })
+        } else {
           dom = createElement(output)
-        })
-      } else {
-        dom = createElement(output)
-      }
+        }
+      })
     } finally {
       popRoot(prev)
     }
@@ -347,7 +348,7 @@ export function hydrateComponent(
       withHydration(
         container,
         () => {
-          runComponentRender(view)
+          untrack(() => runComponentRender(view))
         },
         {
           onHydrationIssue: options.onHydrationIssue,
