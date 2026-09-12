@@ -1,5 +1,11 @@
 # @fictjs/compiler-darwin-x64
 
+## 0.35.0
+
+### Minor Changes
+
+- fix
+
 ## 0.34.0
 
 ### Minor Changes
