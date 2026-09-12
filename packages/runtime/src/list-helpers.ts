@@ -304,6 +304,32 @@ export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
 // Keyed List Container
 // ============================================================================
 
+interface DisposalFailure {
+  error: unknown
+}
+
+function destroyKeyedBlocks<T>(
+  blocks: Iterable<KeyedBlock<T>>,
+  remove = false,
+): DisposalFailure | undefined {
+  let failure: DisposalFailure | undefined
+  for (const block of blocks) {
+    try {
+      destroyRoot(block.root)
+    } catch (error) {
+      failure ??= { error }
+    }
+    if (remove) {
+      try {
+        removeNodes(block.nodes)
+      } catch (error) {
+        failure ??= { error }
+      }
+    }
+  }
+  return failure
+}
+
 /**
  * Create a container for managing a keyed list.
  * This sets up the marker nodes and provides cleanup.
@@ -321,43 +347,33 @@ function createKeyedListContainer<T = unknown>(
   const endMarker = endOverride ?? markerOwnerDocument.createComment('fict:list:end')
 
   const dispose = () => {
-    // Clean up all blocks
-    for (const block of container.blocks.values()) {
-      destroyRoot(block.root)
-      // Nodes are removed by parent disposal or specific cleanup if needed
-      // But for list disposal, we just clear the container
-    }
-    container.blocks.clear()
-    container.nextBlocks.clear()
-    container.duplicateKeyIdentities.clear()
-
-    // Remove nodes (including markers)
-    // Check if markers are still in DOM before using Range
-    if (!startMarker.parentNode || !endMarker.parentNode) {
-      // Markers already removed, nothing to do
+    let failure = destroyKeyedBlocks(container.blocks.values())
+    const pendingFailure = destroyKeyedBlocks(container.nextBlocks.values())
+    failure ??= pendingFailure
+    try {
+      if (startMarker.parentNode && startMarker.parentNode === endMarker.parentNode) {
+        const rangeOwnerDocument =
+          startMarker.ownerDocument ?? endMarker.ownerDocument ?? markerOwnerDocument
+        const range = rangeOwnerDocument.createRange()
+        range.setStartBefore(startMarker)
+        range.setEndAfter(endMarker)
+        range.deleteContents()
+      } else {
+        removeNodes(container.currentNodes)
+      }
+    } catch (error) {
+      failure ??= { error }
+    } finally {
+      container.blocks.clear()
+      container.nextBlocks.clear()
       container.currentNodes = []
       container.nextNodes = []
       container.orderedBlocks.length = 0
       container.nextOrderedBlocks.length = 0
       container.orderedIndexByKey.clear()
       container.duplicateKeyIdentities.clear()
-      return
     }
-    const rangeOwnerDocument =
-      startMarker.ownerDocument ?? endMarker.ownerDocument ?? markerOwnerDocument
-    const range = rangeOwnerDocument.createRange()
-    range.setStartBefore(startMarker)
-    range.setEndAfter(endMarker)
-    range.deleteContents()
-
-    // Clear cache
-    container.currentNodes = []
-    container.nextNodes = []
-    container.nextBlocks.clear()
-    container.orderedBlocks.length = 0
-    container.nextOrderedBlocks.length = 0
-    container.orderedIndexByKey.clear()
-    container.duplicateKeyIdentities.clear()
+    if (failure) throw failure.error
   }
 
   const container: KeyedListContainer<T> = {
@@ -801,10 +817,13 @@ function createFineGrainedKeyedList<T>(
       }
 
       if (newCount === 0) {
+        let failure: DisposalFailure | undefined
         if (oldBlocks.size > 0) {
           // Destroy all block roots first
-          for (const block of oldBlocks.values()) {
-            destroyRoot(block.root)
+          failure = destroyKeyedBlocks(oldBlocks.values())
+          if (disposed) {
+            if (failure) throw failure.error
+            return
           }
           // Use Range.deleteContents for efficient bulk DOM removal
           const range = (parent.ownerDocument ?? markerOwnerDocument).createRange()
@@ -821,6 +840,7 @@ function createFineGrainedKeyedList<T>(
         container.currentNodes.length = 0
         container.currentNodes.push(container.startMarker, container.endMarker)
         container.nextNodes.length = 0
+        if (failure) throw failure.error
         return
       }
 
@@ -1017,12 +1037,14 @@ function createFineGrainedKeyedList<T>(
       }
 
       // Phase 2: Remove old blocks that are no longer in the list
+      let removalFailure: DisposalFailure | undefined
       if (oldBlocks.size > 0) {
-        for (const block of oldBlocks.values()) {
-          destroyRoot(block.root)
-          removeNodes(block.nodes)
-        }
+        removalFailure = destroyKeyedBlocks(oldBlocks.values(), true)
         oldBlocks.clear()
+        if (disposed) {
+          if (removalFailure) throw removalFailure.error
+          return
+        }
       }
 
       const canReorderInPlace =
@@ -1106,6 +1128,7 @@ function createFineGrainedKeyedList<T>(
           flushOnMount(block.root)
         }
       }
+      if (removalFailure) throw removalFailure.error
     })
   }
 
@@ -1200,10 +1223,21 @@ function createFineGrainedKeyedList<T>(
       }
     },
     dispose: () => {
+      if (disposed) return
       disposed = true
-      effectDispose?.()
+      let failure: DisposalFailure | undefined
+      try {
+        effectDispose?.()
+      } catch (error) {
+        failure = { error }
+      }
       disconnectObserver()
-      container.dispose()
+      try {
+        container.dispose()
+      } catch (error) {
+        failure ??= { error }
+      }
+      if (failure) throw failure.error
     },
     __duplicateKeyIdentitySize: () => container.duplicateKeyIdentities.size,
   }
