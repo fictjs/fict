@@ -345,7 +345,13 @@ function wrap<T>(value: T): T {
       // index makes the operation return false. Publish that partial mutation.
       const lengthChanged = isArrayLength && target.length !== oldLength
       if (result || lengthChanged) {
-        trigger(target, prop, isArrayLength ? target.length : value, true)
+        if (descriptor && !('value' in descriptor)) {
+          // A setter's input need not equal the value returned by its getter.
+          // Invalidate lazily so assignment does not execute user getters.
+          invalidateProperty(target, prop)
+        } else {
+          trigger(target, prop, isArrayLength ? target.length : value, true)
+        }
         triggerPresence(target, prop)
         if (!hadKey) {
           trigger(target, ITERATE_KEY)
@@ -531,6 +537,13 @@ function triggerPresence(target: object, prop: string | symbol) {
   if (signal) {
     signal(Reflect.has(target, prop))
   }
+}
+
+function invalidateProperty(target: object, prop: string | symbol) {
+  const s = signalCache.get(target)?.get(prop)
+  // Property signals carry change tokens; actual reads always use Reflect.get.
+  // A fresh token also covers repeated assignments with the same setter input.
+  if (s) s({})
 }
 
 function trigger(
