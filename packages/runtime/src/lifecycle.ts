@@ -10,7 +10,7 @@ const isDev =
     : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 type LifecycleFn = () => void | Cleanup
-type MountPhase = 'pending' | 'flushing' | 'mounted'
+type MountPhase = 'flushing' | 'mounted'
 
 export type RenderNamespaceContext =
   | 'html'
@@ -128,7 +128,7 @@ export function createRootContext(parent?: RootContext): RootContext {
     destroyCallbacks: [],
     suspended: false,
   }
-  rootMountPhases.set(root, 'pending')
+  // Absence means pending. Short-lived evaluation roots often never mount.
   registerRootDevtools(root)
   return root
 }
