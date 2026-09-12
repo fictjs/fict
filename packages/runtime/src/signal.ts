@@ -2122,7 +2122,7 @@ if (
 // ============================================================================
 // Selector
 // ============================================================================
-const selectorStrictEquality = <T>(a: T, b: T): boolean => a === b
+const selectorStrictEquality = (a: unknown, b: unknown): boolean => a === b
 
 interface SelectorObserver {
   signal: SignalAccessor<boolean>
@@ -2135,24 +2135,26 @@ interface SelectorObserver {
  * Useful for large lists where only one item is selected.
  *
  * @param source - The source signal returning the current key
- * @param equalityFn - Optional equality function
- * @returns A selector function that takes a key and returns a boolean signal accessor
+ * @param equalityFn - Optional predicate comparing a key with the current source value
+ * @returns A selector function that reactively reports whether a key matches
  */
-export function createSelector<T>(
+export function createSelector<T, U = T>(
   source: () => T,
-  equalityFn: (a: T, b: T) => boolean = selectorStrictEquality,
-): (key: T) => boolean {
+  equalityFn: (key: U, value: T) => boolean = selectorStrictEquality,
+): (key: U) => boolean {
   let current = source()
-  const observers = new Map<T, SelectorObserver>()
+  const observers = new Map<U, SelectorObserver>()
   const usesStrictEquality = equalityFn === selectorStrictEquality
 
   const dispose = effect(() => {
     const next = source()
-    if (equalityFn(current, next)) return
+    if (current === next) return
 
     if (usesStrictEquality) {
-      observers.get(current)?.signal(false)
-      observers.get(next)?.signal(true)
+      observers.get(current as unknown as U)?.signal(false)
+      // Map uses SameValueZero, which considers NaN equal to itself. The
+      // default selector predicate uses strict equality, so NaN never matches.
+      if (next === next) observers.get(next as unknown as U)?.signal(true)
     } else {
       const updates: [SignalAccessor<boolean>, boolean][] = []
       for (const [key, observer] of observers) {
@@ -2174,7 +2176,7 @@ export function createSelector<T>(
     observers.clear()
   })
 
-  return (key: T) => {
+  return (key: U) => {
     let observer = observers.get(key)
     if (!observer) {
       observer = {
