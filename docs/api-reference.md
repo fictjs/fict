@@ -520,6 +520,7 @@ function createRoot<T>(
 
 - By default, `createRoot` is isolated and does not inherit error/suspense handlers.
 - Use `{ inherit: true }` to link to the current root when you need boundary propagation.
+- The callback runs without subscribing the caller. Effects belong to the new root and remain active until its disposer is called, even if the creating effect re-runs or stops.
 
 **Example:**
 

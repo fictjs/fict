@@ -46,4 +46,32 @@ describe('cleanup ownership across explicit roots', () => {
     stop()
     expect(cleanups).toBe(2)
   })
+
+  it('keeps child root effects alive when their creating effect re-runs or stops', () => {
+    const parentSource = createSignal(0)
+    const childSource = createSignal(0)
+    const seen: number[] = []
+    let child: ReturnType<typeof createRoot> | undefined
+    const stop = createEffect(() => {
+      parentSource()
+      child ??= createRoot(() => {
+        createEffect(() => {
+          seen.push(childSource())
+        })
+      })
+    })
+    try {
+      batch(() => parentSource(1))
+      batch(() => childSource(1))
+      stop()
+      batch(() => childSource(2))
+      expect(seen).toEqual([0, 1, 2])
+      child!.dispose()
+      batch(() => childSource(3))
+      expect(seen).toEqual([0, 1, 2])
+    } finally {
+      stop()
+      child?.dispose()
+    }
+  })
 })

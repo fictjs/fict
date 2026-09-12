@@ -317,7 +317,7 @@ export function createRoot<T>(
   let completed = false
   try {
     try {
-      value = fn()
+      value = untrack(fn)
     } finally {
       popRoot(prev)
     }
