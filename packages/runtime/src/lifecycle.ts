@@ -352,7 +352,7 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
     while (list.length > 0) {
       try {
         const cleanup = list.pop()
-        if (cleanup) runOutsideComponentRender(cleanup)
+        if (cleanup) runOutsideComponentRender(() => untrack(cleanup))
       } catch (err) {
         if (!didThrow) {
           error = err
