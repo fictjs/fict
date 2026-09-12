@@ -5,6 +5,7 @@ import {
   getCurrentRoot,
   handleError,
   handleSuspend,
+  registerManagedEffectCleanup,
   registerRootCleanup,
   withRootContext,
   type RootContext,
@@ -2142,7 +2143,7 @@ export function createSelector<T, U = T>(
   source: () => T,
   equalityFn: (key: U, value: T) => boolean = selectorStrictEquality,
 ): (key: U) => boolean {
-  let current = source()
+  let current = untrack(source)
   const observers = new Map<U, SelectorObserver>()
   const usesStrictEquality = equalityFn === selectorStrictEquality
 
@@ -2171,7 +2172,7 @@ export function createSelector<T, U = T>(
 
     current = next
   })
-  registerRootCleanup(() => {
+  registerManagedEffectCleanup(() => {
     dispose()
     observers.clear()
   })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createSelector, createSignal } from '../src/advanced'
 import { batch, createEffect, createRoot } from '../src/index'
+import { getCurrentRoot } from '../src/lifecycle'
 
 describe('selector predicates', () => {
   it('compares keys with the source instead of comparing successive sources', () => {
@@ -76,6 +77,41 @@ describe('selector predicates', () => {
 })
 
 describe('selector subscriptions', () => {
+  it('keeps source initialization private to the selector effect', () => {
+    const selected = createSignal(0)
+    let creations = 0
+    const owner = createRoot(() => {
+      createEffect(() => {
+        creations++
+        createSelector(() => selected())
+      })
+    })
+    try {
+      batch(() => selected(1))
+      expect(creations).toBe(1)
+    } finally {
+      owner.dispose()
+    }
+  })
+
+  it('releases selectors with a rerunning reactive owner', () => {
+    const generation = createSignal(0)
+    const selected = createSignal(0)
+    const owner = createRoot(() => {
+      createEffect(() => {
+        generation()
+        createSelector(() => selected())
+      })
+      return getCurrentRoot()!
+    })
+    try {
+      for (let i = 1; i <= 100; i++) batch(() => generation(i))
+      expect(owner.value.cleanups).toHaveLength(1)
+    } finally {
+      owner.dispose()
+    }
+  })
+
   it('does not retain keys read without a reactive subscriber', () => {
     const selected = createSignal(0)
     let comparisons = 0
