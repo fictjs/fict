@@ -119,9 +119,9 @@ export interface SignalNode<T = unknown> extends BaseNode {
   /** Pending value to be committed */
   pendingValue: T
   /** Previous committed value (for cleanup reads) */
-  prevValue?: T
+  prevValue?: T | undefined
   /** Flush id when prevValue was recorded */
-  prevFlushId?: number
+  prevFlushId?: number | undefined
   /** Signals don't have dependencies */
   deps?: undefined
   depsTail?: undefined
@@ -145,9 +145,9 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   /** Current computed value */
   value: T
   /** Previous computed value (for cleanup reads) */
-  prevValue?: T
+  prevValue?: T | undefined
   /** Flush id when prevValue was recorded */
-  prevFlushId?: number
+  prevFlushId?: number | undefined
   /** First dependency link */
   deps: Link | undefined
   /** Last dependency link */
@@ -302,6 +302,7 @@ let activeCleanupFlushId = 0
 // Dual-priority queue for scheduler
 const highPriorityQueue: EffectNode[] = []
 const lowPriorityQueue: EffectNode[] = []
+const cleanupSnapshotNodes: (SignalNode | ComputedNode)[] = []
 const QueuedLow = 1
 const QueuedHigh = 2
 let isInTransition = false
@@ -927,6 +928,39 @@ function disposeComputedPermanently<T>(node: ComputedNode<T>): void {
   delete node.root
   disposeNode(node)
 }
+
+function recordCleanupSnapshot<T>(node: SignalNode<T> | ComputedNode<T>, value: T): void {
+  if (!isFlushing) {
+    if (
+      node.subs === undefined ||
+      (highPriorityQueue.length === 0 && lowPriorityQueue.length === 0)
+    ) {
+      // An imperative read with no pending effects needs no previous value.
+      node.prevValue = undefined
+      node.prevFlushId = undefined
+      return
+    }
+    // Multiple eager reads before a flush must preserve the value observed
+    // before that pending update, rather than the last intermediate value.
+    if (node.prevFlushId === currentFlushId + 1) return
+  }
+  node.prevValue = value
+  node.prevFlushId = isFlushing ? currentFlushId : currentFlushId + 1
+  const type = typeof value
+  if (value != null && type !== 'number' && type !== 'boolean') {
+    // Keep the common numeric version signals off the release queue. Objects,
+    // functions, strings, symbols, and bigints can retain significant memory.
+    cleanupSnapshotNodes.push(node as SignalNode | ComputedNode)
+  }
+}
+
+function releaseCleanupSnapshots(): void {
+  for (const node of cleanupSnapshotNodes) {
+    node.prevValue = undefined
+    node.prevFlushId = undefined
+  }
+  cleanupSnapshotNodes.length = 0
+}
 /**
  * Update a signal node
  * @param s - The signal node
@@ -937,8 +971,7 @@ function updateSignal(s: SignalNode): boolean {
   const current = s.currentValue
   const pending = s.pendingValue
   if (valuesDiffer(s, current, pending)) {
-    s.prevValue = current
-    s.prevFlushId = currentFlushId
+    recordCleanupSnapshot(s, current)
     s.currentValue = pending
     return true
   }
@@ -966,8 +999,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     purgeDeps(c)
     c.thrownError = undefined
     if (valuesDiffer(c, oldValue, newValue)) {
-      c.prevValue = oldValue
-      c.prevFlushId = currentFlushId
+      recordCleanupSnapshot(c, oldValue)
       c.value = newValue
       if (isDev) updateComputedDevtools(c, newValue)
       return true
@@ -1164,6 +1196,7 @@ function flush(): void {
   try {
     flushQueues()
   } finally {
+    releaseCleanupSnapshots()
     isFlushing = false
     scheduleFlush()
   }
@@ -1777,6 +1810,7 @@ export function getBatchDepth(): number {
  * This clears effect queues, resets batch depth, and clears pending flushes.
  */
 export function __resetReactiveState(): void {
+  releaseCleanupSnapshots()
   for (const effect of highPriorityQueue) {
     if (effect) effect.queuedPriority = undefined
   }
