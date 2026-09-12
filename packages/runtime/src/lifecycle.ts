@@ -1,7 +1,7 @@
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
 import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import { runOutsideComponentRender } from './render-phase'
-import { untrack } from './signal'
+import { getActiveSub, untrack, type ReactiveNode } from './signal'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
 const isDev =
@@ -83,6 +83,8 @@ type SuspenseHandler = (token: SuspenseToken | PromiseLike<unknown>) => boolean 
 
 let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
+let currentEffectCleanupOwner: ReactiveNode | undefined
+let currentEffectCleanupRoot: RootContext | undefined
 const rootDevtoolsIds = new WeakMap<RootContext, number>()
 const rootMountPhases = new WeakMap<RootContext, MountPhase>()
 let nextRootDevtoolsId = 0
@@ -329,11 +331,30 @@ export function createRoot<T>(
 
 export function withEffectCleanups<T>(bucket: Cleanup[], fn: () => T): T {
   const prev = currentEffectCleanups
+  const prevOwner = currentEffectCleanupOwner
+  const prevRoot = currentEffectCleanupRoot
   currentEffectCleanups = bucket
+  currentEffectCleanupOwner = getActiveSub()
+  currentEffectCleanupRoot = currentRoot
   try {
     return fn()
   } finally {
     currentEffectCleanups = prev
+    currentEffectCleanupOwner = prevOwner
+    currentEffectCleanupRoot = prevRoot
+  }
+}
+
+/** Attach only effects created in the same reactive owner and root. */
+export function registerManagedEffectCleanup(fn: Cleanup): void {
+  if (
+    currentEffectCleanups &&
+    currentEffectCleanupOwner === getActiveSub() &&
+    currentEffectCleanupRoot === currentRoot
+  ) {
+    currentEffectCleanups.push(fn)
+  } else {
+    registerRootCleanup(fn)
   }
 }
 

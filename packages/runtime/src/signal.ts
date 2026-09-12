@@ -183,6 +183,8 @@ export interface EffectNode extends BaseNode {
   depsTail: Link | undefined
   /** Optional cleanup runner to be called before checkDirty */
   runCleanup?: () => void
+  /** Final cleanup when ownership links dispose this effect */
+  onDispose?: (() => void) | undefined
   /** Root context captured when the effect was created */
   root?: RootContext
   /** Debug name */
@@ -844,20 +846,45 @@ function promoteQueuedEffect(node: ReactiveNode): void {
 function purgeDeps(sub: ReactiveNode): void {
   const depsTail = sub.depsTail
   let dep = depsTail !== undefined ? depsTail.nextDep : sub.deps
-  while (dep !== undefined) dep = unlink(dep, sub)
+  let error: unknown
+  let didThrow = false
+  while (dep !== undefined) {
+    const next = dep.nextDep
+    try {
+      unlink(dep, sub)
+    } catch (err) {
+      // Unlinking an owned effect can run user cleanup. Finish detaching its
+      // siblings before reporting a failure from one child.
+      if (!didThrow) {
+        error = err
+        didThrow = true
+      }
+    }
+    dep = next
+  }
+  if (didThrow) throw error
 }
 /**
  * Dispose a reactive node
  * @param node - The node to dispose
  */
 function disposeNode(node: ReactiveNode): void {
-  if ('fn' in node && typeof node.fn === 'function') {
-    ;(node as EffectNode).disposed = true
+  const effect = 'fn' in node && typeof node.fn === 'function' ? (node as EffectNode) : undefined
+  if (effect) {
+    if (effect.disposed === true) return
+    effect.disposed = true
   }
 
   node.depsTail = undefined
   node.flags = 0
-  purgeDeps(node)
+  let error: unknown
+  let didThrow = false
+  try {
+    purgeDeps(node)
+  } catch (err) {
+    error = err
+    didThrow = true
+  }
   let sub = node.subs
   while (sub !== undefined) {
     const next = sub.nextSub
@@ -874,6 +901,19 @@ function disposeNode(node: ReactiveNode): void {
       disposeSignalDevtools(node as SignalNode)
     }
   }
+  const onDispose = effect?.onDispose
+  if (onDispose) {
+    effect.onDispose = undefined
+    try {
+      onDispose()
+    } catch (err) {
+      if (!didThrow) {
+        error = err
+        didThrow = true
+      }
+    }
+  }
+  if (didThrow) throw error
 }
 
 function disposeComputedPermanently<T>(node: ComputedNode<T>): void {
@@ -1496,6 +1536,7 @@ export function effectWithCleanup(
   cleanupRunner: () => void,
   root?: RootContext,
   options?: EffectOptions,
+  onDispose?: () => void,
 ): EffectDisposer {
   const e: EffectNode = {
     fn,
@@ -1505,6 +1546,7 @@ export function effectWithCleanup(
     depsTail: undefined,
     flags: WatchingRunning,
     runCleanup: cleanupRunner,
+    onDispose,
     ...(options?.name !== undefined ? { name: options.name } : {}),
     ...(options?.devToolsSource !== undefined ? { devToolsSource: options.devToolsSource } : {}),
     __id: undefined as number | undefined,

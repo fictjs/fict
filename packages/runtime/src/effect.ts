@@ -2,7 +2,7 @@ import {
   getCurrentRoot,
   handleError,
   handleSuspend,
-  registerRootCleanup,
+  registerManagedEffectCleanup,
   runCleanupList,
   withEffectCleanups,
 } from './lifecycle'
@@ -66,7 +66,7 @@ function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
     }
   }
 
-  const teardown = () => {
+  const finishTeardown = () => {
     if (phase !== 'active') return
     phase = 'disposing'
     const inFlight = inFlightCleanups
@@ -80,31 +80,21 @@ function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
         }
       }
     } finally {
-      try {
-        // Cleanup failures must not leave the effect subscribed. The error is
-        // rethrown after the reactive node has been detached.
-        disposeEffect()
-      } finally {
-        phase = 'disposed'
-      }
+      phase = 'disposed'
     }
   }
 
-  const disposeEffect = (() => {
+  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options, finishTeardown)
+  const teardown = () => {
     try {
-      return effectWithCleanup(run, doCleanup, rootForError, options)
-    } catch (error) {
-      phase = 'disposing'
-      try {
-        runCleanupList(takeCleanups(), rootForError)
-      } finally {
-        phase = 'disposed'
-      }
-      throw error
+      finishTeardown()
+    } finally {
+      // A cleanup failure must still detach the complete reactive subtree.
+      disposeEffect()
     }
-  })()
+  }
 
-  registerRootCleanup(teardown)
+  registerManagedEffectCleanup(teardown)
 
   return teardown
 }
