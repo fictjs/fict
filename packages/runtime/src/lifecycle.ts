@@ -162,7 +162,9 @@ export function onMount(fn: LifecycleFn): void {
 
 export function onDestroy(fn: LifecycleFn): void {
   if (currentRoot) {
-    currentRoot.destroyCallbacks.push(() => runLifecycle(fn))
+    const cleanup = () => runLifecycle(fn)
+    if (currentRoot.destroyed) runCleanupList([cleanup], currentRoot)
+    else currentRoot.destroyCallbacks.push(cleanup)
     return
   }
   runLifecycle(fn)
@@ -236,7 +238,10 @@ export function withRootContext<T>(root: RootContext | undefined, fn: () => T): 
 
 export function registerRootCleanup(fn: Cleanup): void {
   if (currentRoot) {
-    currentRoot.cleanups.push(fn)
+    // A synchronous callback can destroy its owner before a newly created
+    // effect registers its disposer. Never append work to a terminal root.
+    if (currentRoot.destroyed) runCleanupList([fn], currentRoot)
+    else currentRoot.cleanups.push(fn)
   }
 }
 
