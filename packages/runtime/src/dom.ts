@@ -67,6 +67,7 @@ import {
   onCleanup,
   resolveParentOwnerDocument,
   resolveParentRenderNamespace,
+  type RootContext,
   type RenderNamespaceContext,
 } from './lifecycle'
 import { toNodeArray } from './node-ops'
@@ -255,6 +256,8 @@ function annotateComponentElements(
 // Main Render Function
 // ============================================================================
 
+const renderOwners = new WeakMap<HTMLElement, RootContext>()
+
 /**
  * Render a Fict view into a container element.
  *
@@ -274,6 +277,21 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
   const prev = pushRoot(root)
   let dom: DOMElement = undefined as unknown as DOMElement
   let completed = false
+  let disposed = false
+  const teardown = () => {
+    if (disposed) return
+    disposed = true
+    try {
+      destroyRoot(root)
+    } finally {
+      // Cleanup may render a replacement into this container synchronously.
+      // Only the root which still owns it may clear its contents.
+      if (renderOwners.get(container) === root) {
+        renderOwners.delete(container)
+        container.innerHTML = ''
+      }
+    }
+  }
   try {
     try {
       untrack(() => {
@@ -291,6 +309,7 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
       popRoot(prev)
     }
 
+    renderOwners.set(container, root)
     if (!__fictIsHydrating()) {
       container.replaceChildren(dom)
     }
@@ -298,21 +317,11 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
 
     flushOnMount(root)
 
-    const teardown = () => {
-      try {
-        destroyRoot(root)
-      } finally {
-        // An unhandled cleanup error is still reported to the caller, but it
-        // must not leave the rendered tree mounted.
-        container.innerHTML = ''
-      }
-    }
-
     completed = true
     return teardown
   } finally {
     if (!completed) {
-      destroyRoot(root)
+      teardown()
     }
   }
 }
