@@ -341,8 +341,11 @@ function wrap<T>(value: T): T {
       } finally {
         releaseDefineSuppression()
       }
-      if (result) {
-        trigger(target, prop, value, true)
+      // ArraySetLength may delete trailing elements before a nonconfigurable
+      // index makes the operation return false. Publish that partial mutation.
+      const lengthChanged = isArrayLength && target.length !== oldLength
+      if (result || lengthChanged) {
+        trigger(target, prop, isArrayLength ? target.length : value, true)
         triggerPresence(target, prop)
         if (!hadKey) {
           trigger(target, ITERATE_KEY)
@@ -379,7 +382,7 @@ function wrap<T>(value: T): T {
               }
             }
           }
-          trigger(target, ITERATE_KEY)
+          if (lengthChanged) trigger(target, ITERATE_KEY)
         }
       }
       return result
@@ -389,7 +392,9 @@ function wrap<T>(value: T): T {
       const oldLength = Array.isArray(target) ? target.length : undefined
       const oldDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
       const result = Reflect.defineProperty(target, prop, descriptor)
-      if (!result || isDefineNotificationSuppressed(target, prop)) {
+      const partialTruncation =
+        Array.isArray(target) && prop === 'length' && target.length !== oldLength
+      if ((!result && !partialTruncation) || isDefineNotificationSuppressed(target, prop)) {
         return result
       }
 
