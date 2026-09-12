@@ -1,6 +1,17 @@
 import { isReactive, type MaybeReactive } from './binding'
 import { createEffect } from './effect'
-import { createRoot, onCleanup, registerRootCleanup } from './lifecycle'
+import {
+  createRootContext,
+  destroyRoot,
+  flushOnMount,
+  getCurrentRoot,
+  onCleanup,
+  popRoot,
+  pushRoot,
+  registerRootCleanup,
+  type RootContext,
+} from './lifecycle'
+import { untrack } from './signal'
 
 export { effectScope } from './signal'
 
@@ -14,20 +25,47 @@ export interface ReactiveScope {
  * The scope registers with the current root for cleanup.
  */
 export function createScope(): ReactiveScope {
-  let dispose: (() => void) | null = null
+  const owner = getCurrentRoot()
+  let activeRoot: RootContext | undefined
+  let generation = 0
 
   const stop = () => {
-    if (dispose) {
-      dispose()
-      dispose = null
-    }
+    generation++
+    const root = activeRoot
+    activeRoot = undefined
+    if (root) destroyRoot(root)
   }
 
   const run = <T>(fn: () => T): T => {
-    stop()
-    const { dispose: rootDispose, value } = createRoot(fn, { inherit: true })
-    dispose = rootDispose
-    return value
+    const currentGeneration = ++generation
+    const previousRoot = activeRoot
+    activeRoot = undefined
+    if (previousRoot) destroyRoot(previousRoot)
+
+    const root = createRootContext(owner)
+    const isCurrent = () =>
+      generation === currentGeneration && !owner?.destroying && !owner?.destroyed
+    if (isCurrent()) activeRoot = root
+    else destroyRoot(root)
+
+    let completed = false
+    const previous = pushRoot(root)
+    try {
+      let value: T
+      try {
+        value = untrack(fn)
+      } finally {
+        popRoot(previous)
+      }
+      flushOnMount(root)
+      completed = true
+      return value
+    } finally {
+      if (!completed || !isCurrent()) {
+        if (activeRoot === root) activeRoot = undefined
+        destroyRoot(root)
+      }
+    }
   }
 
   registerRootCleanup(stop)

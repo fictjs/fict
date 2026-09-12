@@ -1456,6 +1456,10 @@ The compiler marks generated getters automatically. Use `reactive(fn)` only when
 
 Create an explicit reactive scope that can be re-run and disposed manually.
 
+The scope retains the root in which it was created, including its context and error boundaries, even when `run` is called later. Each run replaces the previous one. Stopping during initialization cleans up that run; a replacement started reentrantly by cleanup remains owned by the scope.
+
+After the owning root is destroyed, `run` still returns the callback's result, but created effects and cleanup are disposed immediately and mount callbacks are skipped.
+
 ```typescript
 import { createScope } from 'fict/advanced'
 
