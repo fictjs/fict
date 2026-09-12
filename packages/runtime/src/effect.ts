@@ -68,6 +68,10 @@ function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
 
   const finishTeardown = () => {
     if (phase !== 'active') return
+    if (cleanups.length === 0 && !inFlightCleanups) {
+      phase = 'disposed'
+      return
+    }
     phase = 'disposing'
     const inFlight = inFlightCleanups
     inFlightCleanups = undefined
@@ -86,6 +90,9 @@ function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
 
   const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options, finishTeardown)
   const teardown = () => {
+    // An enclosing reactive scope may already have detached this effect and
+    // drained its cleanup through onDispose before the root reaches this entry.
+    if (phase === 'disposed') return
     try {
       finishTeardown()
     } finally {
