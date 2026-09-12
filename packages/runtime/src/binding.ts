@@ -88,6 +88,10 @@ function configureRootForDOMParent(
   root.renderNamespace = resolveParentRenderNamespace(parent, root.renderNamespace)
 }
 
+function isRootDisposed(root: RootContext | undefined): boolean {
+  return root?.destroying === true || root?.destroyed === true
+}
+
 function rollbackRootAfterFailure(root: RootContext): void {
   try {
     destroyRoot(root)
@@ -1180,6 +1184,7 @@ export function insert(
   let currentText: Text | null = null
   let currentRoot: RootContext | null = null
   let initialHydrating = __fictIsHydrating()
+  let disposed = false
 
   const expectedMarker = (marker as Node & { [HYDRATED_TEMPLATE_NODE]?: Node })[
     HYDRATED_TEMPLATE_NODE
@@ -1246,6 +1251,7 @@ export function insert(
   let dispose: Cleanup
   try {
     dispose = createRenderEffect(() => {
+      if (disposed || isRootDisposed(hostRoot)) return
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       const root = createRootContext(hostRoot)
       configureRootForDOMParent(root, parentNode ?? parent, markerOwnerDocument)
@@ -1258,6 +1264,10 @@ export function insert(
         throw error
       } finally {
         popRoot(evaluationRoot)
+      }
+      if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+        destroyRoot(root)
+        return
       }
       const isPrimitive =
         value == null ||
@@ -1280,7 +1290,16 @@ export function insert(
         return
       }
 
-      clearCurrentNodes()
+      try {
+        clearCurrentNodes()
+      } catch (error) {
+        rollbackRootAfterFailure(root)
+        throw error
+      }
+      if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+        destroyRoot(root)
+        return
+      }
 
       const prev = pushRoot(root)
       let nodes: Node[] = []
@@ -1343,6 +1362,10 @@ export function insert(
         }
 
         nodes = toNodeArray(newNode, ownerDocument)
+        if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+          release()
+          return
+        }
         if (root.suspended) {
           initialHydrating = false
           release()
@@ -1350,6 +1373,10 @@ export function insert(
         }
         if (parentNode && !hydrationScopeHost) {
           nodes = insertNodesBefore(parentNode, nodes, marker)
+        }
+        if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+          release()
+          return
         }
         currentRoot = root
         currentNodes = nodes
@@ -1392,7 +1419,6 @@ export function insert(
     throw error
   }
 
-  let disposed = false
   const cleanup = () => {
     if (disposed) return
     disposed = true
@@ -1428,6 +1454,7 @@ export function insertBetween(
   let currentText: Text | null = null
   let currentRoot: RootContext | null = null
   let initialHydrating = __fictIsHydrating()
+  let disposed = false
 
   const collectBetween = (): Node[] => {
     const nodes: Node[] = []
@@ -1479,6 +1506,7 @@ export function insertBetween(
   let dispose: Cleanup
   try {
     dispose = createRenderEffect(() => {
+      if (disposed || isRootDisposed(hostRoot)) return
       const parentNode = start.parentNode as (ParentNode & Node) | null
       const root = createRootContext(hostRoot)
       configureRootForDOMParent(root, parentNode, markerOwnerDocument)
@@ -1495,6 +1523,10 @@ export function insertBetween(
         throw error
       } finally {
         popRoot(evaluationRoot)
+      }
+      if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+        destroyRoot(root)
+        return
       }
       const isPrimitive =
         value == null ||
@@ -1525,7 +1557,16 @@ export function insertBetween(
         return
       }
 
-      clearCurrentNodes()
+      try {
+        clearCurrentNodes()
+      } catch (error) {
+        rollbackRootAfterFailure(root)
+        throw error
+      }
+      if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+        destroyRoot(root)
+        return
+      }
 
       const prev = pushRoot(root)
       let nodes: Node[]
@@ -1581,6 +1622,10 @@ export function insertBetween(
         }
 
         nodes = toNodeArray(newNode, ownerDocument)
+        if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+          release()
+          return
+        }
         ownedNodes = nodes
         if (root.suspended) {
           if (initialHydrating) {
@@ -1595,6 +1640,10 @@ export function insertBetween(
           nodes = insertNodesBefore(parentNode, nodes, end)
         }
         ownedNodes = initialHydrating ? collectBetween() : nodes
+        if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+          release()
+          return
+        }
         currentRoot = root
         currentNodes = ownedNodes
         initialHydrating = false
@@ -1637,7 +1686,6 @@ export function insertBetween(
     throw error
   }
 
-  let disposed = false
   const cleanup = () => {
     if (disposed) return
     disposed = true
@@ -2344,6 +2392,7 @@ function bindAssignedChildren(
   let currentText: Text | null = null
   let currentRoot: RootContext | null = null
   let initialHydrating = __fictIsHydrating()
+  let disposed = false
 
   const collectCurrentChildren = (): Node[] => Array.from(node.childNodes)
 
@@ -2405,6 +2454,7 @@ function bindAssignedChildren(
   let dispose: Cleanup
   try {
     dispose = createRenderEffect(() => {
+      if (disposed || isRootDisposed(hostRoot)) return
       const root = createRootContext(hostRoot)
       configureRootForDOMParent(root, node, node.ownerDocument ?? document)
       const evaluationRoot = pushRoot(root)
@@ -2421,6 +2471,10 @@ function bindAssignedChildren(
       } finally {
         popRoot(evaluationRoot)
       }
+      if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+        destroyRoot(root)
+        return
+      }
       const isPrimitive =
         value == null ||
         value === false ||
@@ -2436,7 +2490,16 @@ function bindAssignedChildren(
         return
       }
 
-      clearCurrentNodes()
+      try {
+        clearCurrentNodes()
+      } catch (error) {
+        rollbackRootAfterFailure(root)
+        throw error
+      }
+      if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+        destroyRoot(root)
+        return
+      }
 
       const prev = pushRoot(root)
       let nodes: Node[]
@@ -2483,6 +2546,10 @@ function bindAssignedChildren(
 
         nodes = toNodeArray(newNode, ownerDocument)
         ownedNodes = nodes
+        if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+          release()
+          return
+        }
         if (root.suspended) {
           if (initialHydrating) {
             currentNodes = collectCurrentChildren()
@@ -2507,6 +2574,10 @@ function bindAssignedChildren(
           node.replaceChildren(...nodes)
         }
         ownedNodes = currentHydratedNodes ?? nodes
+        if (disposed || isRootDisposed(root) || isRootDisposed(hostRoot)) {
+          release()
+          return
+        }
         currentRoot = root
         currentNodes = ownedNodes
         initialHydrating = false
@@ -2550,6 +2621,8 @@ function bindAssignedChildren(
   }
 
   return () => {
+    if (disposed) return
+    disposed = true
     try {
       dispose()
     } finally {
