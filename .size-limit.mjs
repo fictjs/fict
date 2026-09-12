@@ -11,22 +11,20 @@ export default [
   {
     name: 'Fict (ESM)',
     path: 'packages/fict/dist/index.js',
-    // Approved production baseline after cross-module correctness, resumability,
-    // hydration repair, full namespace semantics, selector ownership, and
-    // reflection-safe deep-store tracking, SSR-safe form selection, stable
-    // context-provider ownership, and the non-disableable production cycle guard.
-    // Nested resumable-host hydration (e594d7c0) adds 242 B: 21,573 B Brotli.
-    limit: '21.6 KB',
+    // Production Brotli baseline after hydration, cleanup/selector ownership,
+    // deep-store correctness, and keyed-rendering optimizations. Isolated builds
+    // with the same dependencies: ecacec8b 21,573 B; 27dbe2d9 21,998 B;
+    // 64f2f083 22,076 B (+78 B for the latest performance optimizations).
+    limit: '22.1 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    // Approved compatibility cost for stable context ownership, materializing
-    // JSX values before raw-text/RCDATA coercion, and the production cycle guard;
-    // CJS retains interop overhead. Nested resumable-host hydration (e594d7c0)
-    // adds 336 B: 23,527 B Brotli.
-    limit: '23.6 KB',
+    // The same production baseline with CJS interop overhead. Isolated builds:
+    // ecacec8b 23,527 B; 27dbe2d9 23,934 B; 64f2f083 24,021 B
+    // (+87 B for the latest performance optimizations).
+    limit: '24.1 KB',
     modifyEsbuildConfig: production,
   },
 ]

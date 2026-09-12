@@ -114,8 +114,7 @@ implementation, not an npm release or an upstream benchmark submission.
 ## Framework comparison: 2026-09-12
 
 This historical comparison records the five-framework CPU batch before the
-fixture and compiler/runtime optimizations. Its table remains in the
-[README performance history](../README.md#performance). The
+fixture and compiler/runtime optimizations. The
 [archived comparison data](./benchmarks/js-framework-benchmark-2026-09-12.json)
 contains all 45 original result records, individual samples, source and bundle
 hashes, dependency versions, the runner command, and aggregation details.
@@ -144,8 +143,7 @@ bundle as the completed runtime audit; its bundle digest was checked over HTTP.
 The CPU geometric mean assigns equal weight to the nine cases. For each case,
 divide each implementation's mean total duration by the lowest mean among these
 five, then take the geometric mean of those nine ratios. Memory and size are
-excluded. The README rounds timings and ratios to two decimal places; the archive
-retains the original precision and samples.
+excluded. The archive retains the original precision and samples.
 
 These are explicit local versions, rather than claims about the latest releases.
 Each framework retains its own benchmark implementation: Fict uses immutable
