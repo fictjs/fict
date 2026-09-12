@@ -346,6 +346,11 @@ function mountKeyedBlocks<T>(
   return failure
 }
 
+function rollbackKeyedBlocks<T>(createdBlocks: KeyedBlock<T>[]): void {
+  const failure = destroyKeyedBlocks(createdBlocks, true)
+  if (failure) console.error('[fict] Failed to roll back a keyed list update.', failure.error)
+}
+
 /**
  * Create a container for managing a keyed list.
  * This sets up the marker nodes and provides cleanup.
@@ -778,41 +783,62 @@ function createFineGrainedKeyedList<T>(
         }
 
         const createdBlocks: KeyedBlock<T>[] = []
-        withHydrationRange(
-          container.startMarker.nextSibling,
-          container.endMarker,
-          parent.ownerDocument ?? markerOwnerDocument,
-          () => {
-            for (let entryIndex = 0; entryIndex < newEntries.length; entryIndex++) {
-              const { item, index } = newEntries[entryIndex]!
-              const { key, identityKey, occurrence } = resolveListKey(
-                container,
-                keyFn,
-                item,
-                index,
-                hydrateKeyOccurrences,
-              )
-              if (occurrence > 0) {
-                warnDuplicateListKey(key, 'hydration')
+        try {
+          withHydrationRange(
+            container.startMarker.nextSibling,
+            container.endMarker,
+            parent.ownerDocument ?? markerOwnerDocument,
+            () => {
+              for (let entryIndex = 0; entryIndex < newEntries.length; entryIndex++) {
+                if (disposed) break
+                const { item, index } = newEntries[entryIndex]!
+                const { key, identityKey, occurrence } = resolveListKey(
+                  container,
+                  keyFn,
+                  item,
+                  index,
+                  hydrateKeyOccurrences,
+                )
+                if (occurrence > 0) {
+                  warnDuplicateListKey(key, 'hydration')
+                }
+                const block = createKeyedBlock<T>(
+                  key,
+                  identityKey,
+                  item,
+                  index,
+                  renderItem,
+                  needsIndex,
+                  hostRoot,
+                  namespace,
+                  parent,
+                )
+                createdBlocks.push(block)
+                newBlocks.set(identityKey, block)
+                orderedIndexByKey.set(identityKey, nextOrderedBlocks.length)
+                nextOrderedBlocks.push(block)
               }
-              const block = createKeyedBlock<T>(
-                key,
-                identityKey,
-                item,
-                index,
-                renderItem,
-                needsIndex,
-                hostRoot,
-                namespace,
-                parent,
-              )
-              createdBlocks.push(block)
-              newBlocks.set(identityKey, block)
-              orderedIndexByKey.set(identityKey, nextOrderedBlocks.length)
-              nextOrderedBlocks.push(block)
-            }
-          },
-        )
+            },
+          )
+        } catch (error) {
+          rollbackKeyedBlocks(createdBlocks)
+          newBlocks.clear()
+          nextOrderedBlocks.length = 0
+          orderedIndexByKey.clear()
+          container.duplicateKeyIdentities.clear()
+          if (!disposed) {
+            container.currentNodes = [
+              container.startMarker,
+              ...collectBetween(),
+              container.endMarker,
+            ]
+          }
+          throw error
+        }
+        if (disposed) {
+          rollbackKeyedBlocks(createdBlocks)
+          return
+        }
 
         container.blocks = newBlocks
         container.nextBlocks = oldBlocks
@@ -906,102 +932,143 @@ function createFineGrainedKeyedList<T>(
       let mismatchSecond = -1
       let hasDuplicateKey = false
       const keyOccurrences = new Map<ListKey, number>()
+      let updatedBlocks: { block: KeyedBlock<T>; item: T; index: number }[] | undefined
 
       // Phase 1: Build new blocks map (reuse or create)
-      newEntries.forEach(({ item, index }) => {
-        const { key, identityKey, occurrence } = resolveListKey(
-          container,
-          keyFn,
-          item,
-          index,
-          keyOccurrences,
-        )
-        if (occurrence > 0) {
-          warnDuplicateListKey(key, 'rendering')
-          hasDuplicateKey = true
-        }
-        // Micro-optimization: single Map.get instead of has+get
-        let block = oldBlocks.get(identityKey)
-        const existed = block !== undefined
-
-        if (block) {
-          if (block.rawItem !== item) {
-            block.rawItem = item
-            block.item(item)
-          }
-          if (needsIndex && block.rawIndex !== index) {
-            block.rawIndex = index
-            block.index(index)
-          }
-        }
-
-        if (block) {
-          // Reusing existing block from oldBlocks
-          newBlocks.set(identityKey, block)
-          oldBlocks.delete(identityKey)
-        } else {
-          // Create new block
-          block = createKeyedBlock<T>(
-            key,
-            identityKey,
+      try {
+        for (const { item, index } of newEntries) {
+          if (disposed) break
+          const { key, identityKey, occurrence } = resolveListKey(
+            container,
+            keyFn,
             item,
             index,
-            renderItem,
-            needsIndex,
-            hostRoot,
-            namespace,
-            parent,
+            keyOccurrences,
           )
-          createdBlocks.push(block)
-        }
-
-        const resolvedBlock = block
-
-        newBlocks.set(identityKey, resolvedBlock)
-
-        // Micro-optimization: single Map.get instead of checking position multiple times
-        const position = orderedIndexByKey.get(identityKey)
-        if (position !== undefined) {
-          appendCandidate = false
-          const prior = nextOrderedBlocks[position]
-          if (prior && prior !== resolvedBlock) {
-            destroyRoot(prior.root)
-            removeNodes(prior.nodes)
+          if (occurrence > 0) {
+            warnDuplicateListKey(key, 'rendering')
+            hasDuplicateKey = true
           }
-          nextOrderedBlocks[position] = resolvedBlock
-        } else {
-          if (appendCandidate) {
-            if (index < prevCount) {
-              if (
-                !prevOrderedBlocks[index] ||
-                prevOrderedBlocks[index]!.identityKey !== identityKey
-              ) {
+          // Micro-optimization: single Map.get instead of has+get
+          let block = oldBlocks.get(identityKey)
+          const existed = block !== undefined
+
+          if (block) {
+            if (block.rawItem !== item || (needsIndex && block.rawIndex !== index)) {
+              ;(updatedBlocks ??= []).push({ block, item: block.rawItem, index: block.rawIndex })
+            }
+            if (block.rawItem !== item) {
+              block.rawItem = item
+              block.item(item)
+            }
+            if (needsIndex && block.rawIndex !== index) {
+              block.rawIndex = index
+              block.index(index)
+            }
+          }
+
+          if (block) {
+            // Reusing existing block from oldBlocks
+            newBlocks.set(identityKey, block)
+            oldBlocks.delete(identityKey)
+          } else {
+            // Create new block
+            block = createKeyedBlock<T>(
+              key,
+              identityKey,
+              item,
+              index,
+              renderItem,
+              needsIndex,
+              hostRoot,
+              namespace,
+              parent,
+            )
+            createdBlocks.push(block)
+          }
+
+          const resolvedBlock = block
+
+          newBlocks.set(identityKey, resolvedBlock)
+
+          // Micro-optimization: single Map.get instead of checking position multiple times
+          const position = orderedIndexByKey.get(identityKey)
+          if (position !== undefined) {
+            appendCandidate = false
+            const prior = nextOrderedBlocks[position]
+            if (prior && prior !== resolvedBlock) {
+              destroyRoot(prior.root)
+              removeNodes(prior.nodes)
+            }
+            nextOrderedBlocks[position] = resolvedBlock
+          } else {
+            if (appendCandidate) {
+              if (index < prevCount) {
+                if (
+                  !prevOrderedBlocks[index] ||
+                  prevOrderedBlocks[index]!.identityKey !== identityKey
+                ) {
+                  appendCandidate = false
+                }
+              } else if (existed) {
                 appendCandidate = false
               }
-            } else if (existed) {
-              appendCandidate = false
+            }
+            const nextIndex = nextOrderedBlocks.length
+            orderedIndexByKey.set(identityKey, nextIndex)
+            nextOrderedBlocks.push(resolvedBlock)
+            if (
+              mismatchCount < 3 &&
+              (nextIndex >= prevCount || prevOrderedBlocks[nextIndex] !== resolvedBlock)
+            ) {
+              if (mismatchCount === 0) {
+                mismatchFirst = nextIndex
+              } else if (mismatchCount === 1) {
+                mismatchSecond = nextIndex
+              }
+              mismatchCount++
             }
           }
-          const nextIndex = nextOrderedBlocks.length
-          orderedIndexByKey.set(identityKey, nextIndex)
-          nextOrderedBlocks.push(resolvedBlock)
-          if (
-            mismatchCount < 3 &&
-            (nextIndex >= prevCount || prevOrderedBlocks[nextIndex] !== resolvedBlock)
-          ) {
-            if (mismatchCount === 0) {
-              mismatchFirst = nextIndex
-            } else if (mismatchCount === 1) {
-              mismatchSecond = nextIndex
-            }
-            mismatchCount++
-          }
-        }
 
-        if (appendCandidate && index >= prevCount) {
-          appendedBlocks.push(resolvedBlock)
+          if (appendCandidate && index >= prevCount) {
+            appendedBlocks.push(resolvedBlock)
+          }
         }
-      })
+      } catch (error) {
+        rollbackKeyedBlocks(createdBlocks)
+        if (!disposed) {
+          // The construction pass moves retained blocks into the scratch map.
+          // Restore ownership and values before any queued effects can flush.
+          oldBlocks.clear()
+          orderedIndexByKey.clear()
+          const previousOccurrences = new Map<ListKey, number>()
+          for (let index = 0; index < prevOrderedBlocks.length; index++) {
+            const block = prevOrderedBlocks[index]!
+            oldBlocks.set(block.identityKey, block)
+            orderedIndexByKey.set(block.identityKey, index)
+            previousOccurrences.set(block.key, (previousOccurrences.get(block.key) ?? 0) + 1)
+          }
+          for (const previous of updatedBlocks ?? []) {
+            const { block, item, index } = previous
+            if (block.rawItem !== item) {
+              block.rawItem = item
+              block.item(item)
+            }
+            if (needsIndex && block.rawIndex !== index) {
+              block.rawIndex = index
+              block.index(index)
+            }
+          }
+          newBlocks.clear()
+          nextOrderedBlocks.length = 0
+          pruneDuplicateKeyIdentities(container, previousOccurrences)
+        }
+        throw error
+      }
+      if (disposed) {
+        rollbackKeyedBlocks(createdBlocks)
+        return
+      }
 
       const canAppend =
         appendCandidate &&
