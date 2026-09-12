@@ -518,9 +518,42 @@ return branches) and lowers them to reactive conditionals.
 
 ## Performance
 
-### Runtime benchmark snapshot — 2026-09-12
+### js-framework-benchmark — 2026-09-12
 
-The latest local js-framework-benchmark run compares runtime `43ecf80` with
+Fresh same-run comparison of Vue Vapor, Solid, Svelte, the final Fict runtime,
+and React Compiler. Mean total durations are milliseconds, including browser
+rendering; lower is better. Chrome 152.0.7977.83 on macOS arm64, headless, using
+identical per-case CPU throttling. Each case has 15 samples; selection has 25.
+
+| Benchmark                       | Vue Vapor |  Solid | Svelte 5 |   Fict | React Compiler |
+| :------------------------------ | --------: | -----: | -------: | -----: | -------------: |
+| Create rows (1k)                |     31.08 |  30.39 |    30.85 |  38.91 |          37.35 |
+| Replace all rows (1k)           |     35.12 |  35.23 |    36.53 |  45.84 |          44.87 |
+| Partial update (every 10th row) |     19.61 |  18.89 |    19.56 |  22.79 |          24.51 |
+| Select row                      |      5.70 |   6.76 |     9.23 |  12.60 |          13.85 |
+| Swap rows                       |     21.71 |  22.42 |    22.51 |  23.20 |         144.46 |
+| Remove row                      |     16.94 |  16.78 |    17.15 |  17.68 |          19.64 |
+| Create many rows (10k)          |    338.77 | 332.86 |   338.22 | 408.42 |         617.73 |
+| Append rows (1k to 1k)          |     37.09 |  36.87 |    37.29 |  45.02 |          43.68 |
+| Clear rows (1k)                 |     15.49 |  19.05 |    17.43 |  26.79 |          28.07 |
+| **CPU geometric mean**          |      1.01 |   1.05 |     1.09 |   1.33 |           1.75 |
+
+The geometric mean gives equal weight to all nine CPU cases, with each case
+normalized to the fastest mean among these five implementations (1.00).
+
+**Versions:** Vue Vapor 3.6.0-alpha.2 · Solid 1.9.3 · Svelte 5.42.1 · Fict 0.34.0
+(runtime `b79c6494`) · React 19.0.0 with React Compiler
+`19.0.0-beta-37ed2a7-20241206`.
+
+All five entries passed the official keyed correctness checks. These are the
+recorded versions and workload implementations, not a survey of current releases.
+See [conditions and implementation details](./docs/runtime-benchmark.md#framework-comparison-2026-09-12)
+and [all 45 results, samples, and provenance](./docs/benchmarks/js-framework-benchmark-2026-09-12.json).
+
+<details>
+<summary><strong>Runtime audit: changes and memory</strong></summary>
+
+The earlier runtime audit compared runtime `43ecf80` with
 `b79c6494` using the same native-compiled application fixture. Both builds are
 version 0.34.0; the final revision includes local runtime fixes and optimizations.
 
@@ -545,11 +578,11 @@ reversed execution order measured swap at **+0.90%** and clear at **-3.15%**.
 After creating and clearing rows, measured page memory decreased from
 **1.518 MiB to 1.409 MiB (-7.20%)** in separate three-sample memory batches.
 
-Earlier local Solid 1.9.3 and vanilla reference runs remain faster in several
-scenarios. These results describe the recorded workloads and revisions; they do
-not establish a universal framework ranking. See the
-[measurement details and reference results](./docs/runtime-benchmark.md#recorded-snapshot-2026-09-12)
-and [raw samples and build provenance](./docs/benchmarks/runtime-2026-09-12.json).
+[Runtime audit details](./docs/runtime-benchmark.md#recorded-snapshot-2026-09-12)
+and [its original data](./docs/benchmarks/runtime-2026-09-12.json) record the
+separate before/after and memory batches.
+
+</details>
 
 ---
 

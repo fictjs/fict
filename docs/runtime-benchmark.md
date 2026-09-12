@@ -2,9 +2,51 @@
 
 The runtime benchmark uses the native compiler and the current workspace runtime. It writes a separate `keyed/fict-local` entry in a local [js-framework-benchmark checkout](https://github.com/krausest/js-framework-benchmark), preserving any existing `keyed/fict` implementation and results.
 
+## Framework comparison: 2026-09-12
+
+The [README comparison table](../README.md#performance) reports one fresh CPU
+batch for all five implementations. The
+[archived comparison data](./benchmarks/js-framework-benchmark-2026-09-12.json)
+contains all 45 original result records, individual samples, source and bundle
+hashes, dependency versions, the runner command, and aggregation details.
+
+| Implementation | Version                                                                  |
+| -------------- | ------------------------------------------------------------------------ |
+| Vue Vapor      | 3.6.0-alpha.2                                                            |
+| Solid          | 1.9.3                                                                    |
+| Svelte         | 5.42.1                                                                   |
+| Fict           | 0.34.0, runtime `b79c649481b672cf7580c25dcf4522942ccaf213`               |
+| React Compiler | React / React DOM 19.0.0; compiler plugin `19.0.0-beta-37ed2a7-20241206` |
+
+The harness revision is `c7c90491feb3f9be93177e3a7edd99707847da27`. Chrome
+152.0.7977.83 ran headless on macOS arm64. There are 15 samples per CPU case,
+except selection with 25. CPU slowdown is 4× for partial update, selection, swap,
+and clear; 2× for removal; and disabled for creation, replacement, and append.
+No builds, tests, profiles, or other timing runs ran concurrently.
+
+The runner sorted entries as Fict, React Compiler, Solid, Svelte, and Vue Vapor
+within each case. All five passed official keyed creation/removal/swap checks.
+Reference entries use the harness source and locked dependencies, with production
+builds in isolated directories. React's build enables the compiler plugin with
+`compilationMode: "infer"`. Fict uses the same frozen native-compiled fixture and
+bundle as the completed runtime audit; its bundle digest was checked over HTTP.
+
+The CPU geometric mean assigns equal weight to the nine cases. For each case,
+divide each implementation's mean total duration by the lowest mean among these
+five, then take the geometric mean of those nine ratios. Memory and size are
+excluded. The README rounds timings and ratios to two decimal places; the archive
+retains the original precision and samples.
+
+These are explicit local versions, rather than claims about the latest releases.
+Each framework retains its own benchmark implementation: Fict uses immutable
+`$state` row data and direct selected-row equality, while Solid uses per-row
+signals and a selector. The comparison therefore measures the resulting compiled
+applications, including representation and compiler differences. It is not an
+isolated comparison of reactive primitives or a universal ranking.
+
 ## Recorded snapshot: 2026-09-12
 
-The [README CPU table](../README.md#performance) compares initial runtime
+The [README runtime-audit details](../README.md#performance) compare initial runtime
 `43ecf80abde2d8c01d29c0b72e393d66ffd75e8f` with final runtime
 `b79c649481b672cf7580c25dcf4522942ccaf213`. Both identify as 0.34.0; the latter is
 a local revision with the runtime audit fixes. This snapshot is not an npm or
@@ -63,10 +105,14 @@ the initial and reference values, using the same harness and browser.
 | Create 1,000 rows     |     5.331215 |   5.319437 | -0.22% |    2.683196 | 1.873649 |
 | Create and clear rows |     1.518092 |   1.408763 | -7.20% |    0.774947 | 0.646339 |
 
-### Reference workloads
+### Historical reference workloads
 
-The archived Solid 1.9.3 and vanilla CPU results come from an earlier batch in the
-same audit, before the final runtime optimizations. For example, their 1,000-row
+The fresh five-framework CPU comparison above supersedes these earlier CPU
+reference measurements for README comparisons. The memory measurements in this
+snapshot remain part of the original runtime audit.
+
+The runtime-audit archive retains Solid 1.9.3 and vanilla CPU results from an
+earlier batch in the same audit, before the final runtime optimizations. Their 1,000-row
 creation means were 30.307 ms and 28.800 ms, compared with final Fict's 38.633 ms
 in the later runtime comparison. These separate batches do not form a fresh
 same-run final ranking.
