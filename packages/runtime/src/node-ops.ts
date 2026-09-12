@@ -303,8 +303,8 @@ function getChildAtPathIndex(current: Node, index: number): Node | null {
     let currentIndex = 0
     for (let offset = 0; offset < hydratedNodes.length; offset += 1) {
       const child = hydratedNodes[offset]!
+      if (currentIndex === index) return child
       if (isSlotStart(child)) {
-        if (currentIndex === index) return child
         const end = getSlotEnd(child)
         const endOffset = hydratedNodes.indexOf(end, offset + 1)
         if (endOffset !== -1) {
@@ -313,7 +313,6 @@ function getChildAtPathIndex(current: Node, index: number): Node | null {
         currentIndex += 1
         continue
       }
-      if (currentIndex === index) return child
       currentIndex += 1
     }
     return null
@@ -322,14 +321,13 @@ function getChildAtPathIndex(current: Node, index: number): Node | null {
   let child: Node | null = childRoot.firstChild
   let currentIndex = 0
   while (child) {
+    if (currentIndex === index) return child
     if (isSlotStart(child)) {
-      if (currentIndex === index) return child
       const end = getSlotEnd(child as Comment)
       child = end.nextSibling
       currentIndex++
       continue
     }
-    if (currentIndex === index) return child
     currentIndex++
     child = child.nextSibling
   }
