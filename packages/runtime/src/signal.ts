@@ -1051,6 +1051,7 @@ function runEffectInRoot(e: EffectNode): void {
       activeSub = prevSub
       const ranFlags = e.flags
       if (isDisposed()) {
+        e.depsTail = undefined
         purgeDeps(e)
         return
       }
@@ -1063,6 +1064,8 @@ function runEffectInRoot(e: EffectNode): void {
       activeSub = prevSub
       if (!isDisposed()) {
         e.flags = Watching
+      } else {
+        e.depsTail = undefined
       }
       // Keep dependency graph consistent even when effect throws.
       // Without this, stale old deps can remain subscribed.
@@ -1104,6 +1107,7 @@ function runEffectInRoot(e: EffectNode): void {
         activeSub = prevSub
         const ranFlags = e.flags
         if (isDisposed()) {
+          e.depsTail = undefined
           purgeDeps(e)
           return
         }
@@ -1116,6 +1120,8 @@ function runEffectInRoot(e: EffectNode): void {
         activeSub = prevSub
         if (!isDisposed()) {
           e.flags = Watching
+        } else {
+          e.depsTail = undefined
         }
         // Keep dependency graph consistent even when effect throws.
         // Without this, stale old deps can remain subscribed.
@@ -1505,7 +1511,12 @@ export function effect(fn: () => void, options?: EffectOptions): EffectDisposer 
     thrown = err
   } finally {
     activeSub = prevSub
-    if (didThrow) {
+    if (e.disposed === true) {
+      // A parent can dispose this effect during its initial body. Reads made
+      // after that disposal must not reconnect the terminal node to the graph.
+      e.depsTail = undefined
+      purgeDeps(e)
+    } else if (didThrow) {
       // Initial execution failed: fully detach partially collected graph links.
       disposeNode(e)
     } else {
@@ -1572,7 +1583,10 @@ export function effectWithCleanup(
     thrown = err
   } finally {
     activeSub = prevSub
-    if (didThrow) {
+    if (e.disposed === true) {
+      e.depsTail = undefined
+      purgeDeps(e)
+    } else if (didThrow) {
       // Initial execution failed: fully detach partially collected graph links.
       disposeNode(e)
     } else {
