@@ -2177,6 +2177,9 @@ export function createSelector<T, U = T>(
   })
 
   return (key: U) => {
+    // Imperative reads need the current answer, not a retained subscription.
+    if (activeSub === undefined) return equalityFn(key, current)
+
     let observer = observers.get(key)
     if (!observer) {
       observer = {

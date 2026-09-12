@@ -74,3 +74,31 @@ describe('selector predicates', () => {
     }
   })
 })
+
+describe('selector subscriptions', () => {
+  it('does not retain keys read without a reactive subscriber', () => {
+    const selected = createSignal(0)
+    let comparisons = 0
+    const owner = createRoot(() => {
+      const matches = createSelector(
+        () => selected(),
+        (key, value) => {
+          comparisons++
+          return key === value
+        },
+      )
+      for (let key = 0; key < 1000; key++) expect(matches(key)).toBe(key === 0)
+      return matches
+    })
+
+    try {
+      comparisons = 0
+      batch(() => selected(1))
+      expect(comparisons).toBe(0)
+      expect(owner.value(1)).toBe(true)
+      expect(owner.value(0)).toBe(false)
+    } finally {
+      owner.dispose()
+    }
+  })
+})
