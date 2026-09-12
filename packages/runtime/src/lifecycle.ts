@@ -381,17 +381,20 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
   currentEffectCleanups = undefined
   try {
     withRootContext(root, () => {
-      while (list.length > 0) {
-        try {
-          const cleanup = list.pop()
-          if (cleanup) runOutsideComponentRender(() => untrack(cleanup))
-        } catch (err) {
-          if (!didThrow) {
-            error = err
-            didThrow = true
+      runOutsideComponentRender(() =>
+        untrack(() => {
+          while (list.length > 0) {
+            try {
+              list.pop()?.()
+            } catch (err) {
+              if (!didThrow) {
+                error = err
+                didThrow = true
+              }
+            }
           }
-        }
-      }
+        }),
+      )
       if (didThrow && !handleError(error, { source: 'cleanup' }, root)) {
         throw error
       }
