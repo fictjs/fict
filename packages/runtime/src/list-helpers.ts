@@ -330,6 +330,22 @@ function destroyKeyedBlocks<T>(
   return failure
 }
 
+function mountKeyedBlocks<T>(
+  createdBlocks: KeyedBlock<T>[],
+  liveBlocks: Map<InternalListKey, KeyedBlock<T>>,
+): DisposalFailure | undefined {
+  let failure: DisposalFailure | undefined
+  for (const block of createdBlocks) {
+    if (liveBlocks.get(block.identityKey) !== block) continue
+    try {
+      flushOnMount(block.root)
+    } catch (error) {
+      failure ??= { error }
+    }
+  }
+  return failure
+}
+
 /**
  * Create a container for managing a keyed list.
  * This sets up the marker nodes and provides cleanup.
@@ -807,11 +823,8 @@ function createFineGrainedKeyedList<T>(
         container.currentNodes = [container.startMarker, ...collectBetween(), container.endMarker]
         container.nextNodes.length = 0
 
-        for (const block of createdBlocks) {
-          if (newBlocks.get(block.identityKey) === block) {
-            flushOnMount(block.root)
-          }
-        }
+        const mountFailure = mountKeyedBlocks(createdBlocks, newBlocks)
+        if (mountFailure) throw mountFailure.error
 
         return
       }
@@ -1028,11 +1041,8 @@ function createFineGrainedKeyedList<T>(
         container.nextBlocks = oldBlocks
         container.orderedBlocks = nextOrderedBlocks
         container.nextOrderedBlocks = prevOrderedBlocks
-        for (const block of createdBlocks) {
-          if (newBlocks.get(block.identityKey) === block) {
-            flushOnMount(block.root)
-          }
-        }
+        const mountFailure = mountKeyedBlocks(createdBlocks, newBlocks)
+        if (mountFailure) throw mountFailure.error
         return
       }
 
@@ -1123,12 +1133,9 @@ function createFineGrainedKeyedList<T>(
       container.orderedBlocks = nextOrderedBlocks
       container.nextOrderedBlocks = prevOrderedBlocks
       pruneDuplicateKeyIdentities(container, keyOccurrences)
-      for (const block of createdBlocks) {
-        if (newBlocks.get(block.identityKey) === block) {
-          flushOnMount(block.root)
-        }
-      }
+      const mountFailure = mountKeyedBlocks(createdBlocks, newBlocks)
       if (removalFailure) throw removalFailure.error
+      if (mountFailure) throw mountFailure.error
     })
   }
 
