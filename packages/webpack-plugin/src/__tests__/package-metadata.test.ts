@@ -73,12 +73,28 @@ interface StoredWebpackMetadata {
   metadataDependencies: string[]
 }
 
+function moduleMetadata(stats: Stats): { resource: unknown; metadata: unknown }[] {
+  return [...stats.compilation.modules].map(candidate => ({
+    resource: (candidate as { resource?: unknown }).resource,
+    metadata: (candidate as { buildInfo?: Record<string, unknown> }).buildInfo
+      ?.fictWebpackMetadataV7,
+  }))
+}
+
+const metadataSnapshots = new WeakMap<Stats, ReturnType<typeof moduleMetadata>>()
+
+function captureStoredMetadata(stats: Stats): void {
+  // Watch builds reuse modules and reset buildInfo before the next loader run. Capture at
+  // completion so an asynchronous assertion cannot observe a later build's partial state.
+  metadataSnapshots.set(stats, structuredClone(moduleMetadata(stats)))
+}
+
 function storedMetadata(stats: Stats, resource: string): StoredWebpackMetadata {
-  const candidates = [...stats.compilation.modules].filter(
-    candidate => (candidate as { resource?: unknown }).resource === resource,
-  ) as { buildInfo?: Record<string, unknown> }[]
+  const candidates = (metadataSnapshots.get(stats) ?? moduleMetadata(stats)).filter(
+    candidate => candidate.resource === resource,
+  )
   const stored = candidates
-    .map(candidate => candidate.buildInfo?.fictWebpackMetadataV7)
+    .map(candidate => candidate.metadata)
     .filter(
       (metadata): metadata is Record<string, unknown> =>
         metadata !== null && typeof metadata === 'object',
@@ -149,6 +165,34 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     expect(storedMetadata(stats, resource)).toBe(expected)
   })
 
+  it('preserves completed metadata when a later watch build resets the same module', () => {
+    const resource = '/virtual/entry.ts'
+    const expected: StoredWebpackMetadata = {
+      version: 7,
+      incomplete: false,
+      dependencyFingerprint: 'completed-build',
+      metadataDependencies: ['/virtual/hook.fict.meta.json'],
+    }
+    const module = {
+      resource,
+      buildInfo: { fictWebpackMetadataV7: expected } as Record<string, unknown>,
+    }
+    const stats = {
+      compilation: { modules: new Set([module]) },
+    } as unknown as Stats
+    captureStoredMetadata(stats)
+
+    module.buildInfo = {}
+    expected.metadataDependencies.push('/virtual/later.fict.meta.json')
+
+    expect(storedMetadata(stats, resource)).toEqual({
+      version: 7,
+      incomplete: false,
+      dependencyFingerprint: 'completed-build',
+      metadataDependencies: ['/virtual/hook.fict.meta.json'],
+    })
+  })
+
   it('watches package manifests and sidecars and rebuilds their importer', async () => {
     const root = await createFixture({
       'entry.ts': entrySource,
@@ -170,6 +214,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     const builds = createBuildQueue()
     const firstBuild = builds.next()
     const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
+      if (stats) captureStoredMetadata(stats)
       builds.push(error, stats)
     })!
 
@@ -314,6 +359,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     const builds = createBuildQueue()
     const firstBuild = builds.next()
     const watching = compiler.watch(fixtureWatchOptions, (error, stats) => {
+      if (stats) captureStoredMetadata(stats)
       builds.push(error, stats)
     })!
 
