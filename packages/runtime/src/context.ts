@@ -223,28 +223,30 @@ export function createContext<T>(defaultValue: T): Context<T> {
 
     let contentRoot: RootContext | undefined
     let activeNodes: Node[] = []
+    let disposed = false
+    let contentGeneration = 0
 
     const cleanupActive = () => {
+      contentGeneration++
+      const currentRoot = contentRoot
+      const currentNodes = activeNodes
+      contentRoot = undefined
+      activeNodes = []
       try {
-        if (contentRoot) {
-          const currentRoot = contentRoot
-          contentRoot = undefined
-          destroyRoot(currentRoot)
-        }
+        if (currentRoot) destroyRoot(currentRoot)
       } finally {
-        if (activeNodes.length) {
-          removeNodes(activeNodes)
-          activeNodes = []
-        }
+        if (currentNodes.length) removeNodes(currentNodes)
       }
     }
 
     const renderChildren = (children: FictNode) => {
       cleanupActive()
 
-      if (children == null || children === false) {
+      if (disposed || children == null || children === false) {
         return
       }
+      const generation = contentGeneration
+      const isCurrent = () => !disposed && contentGeneration === generation
 
       // Child identity changes receive a fresh content root, while value-only
       // changes retain this root and all descendant DOM/lifecycle state.
@@ -255,6 +257,9 @@ export function createContext<T>(defaultValue: T): Context<T> {
         markerParent,
         nextContentRoot.ownerDocument ?? marker.ownerDocument ?? markerOwnerDocument,
       )
+      // Publish ownership before rendering or mounting descendants: either can
+      // synchronously destroy the host and must be able to find this root.
+      contentRoot = nextContentRoot
 
       const prev = pushRoot(nextContentRoot)
       let nodes: Node[] = []
@@ -267,14 +272,30 @@ export function createContext<T>(defaultValue: T): Context<T> {
       try {
         const output = createElement(children)
         nodes = toNodeArray(output, nextContentRoot.ownerDocument ?? markerOwnerDocument)
+        if (!isCurrent()) {
+          removeNodes(nodes)
+          restoreRoot()
+          return
+        }
+        activeNodes = nodes
         const parentNode = marker.parentNode as (ParentNode & Node) | null
         if (parentNode) {
           nodes = insertNodesBefore(parentNode, nodes, marker)
         }
+        if (!isCurrent()) {
+          removeNodes(nodes)
+          restoreRoot()
+          return
+        }
+        activeNodes = nodes
         restoreRoot()
         flushOnMount(nextContentRoot)
       } catch (err) {
         restoreRoot()
+        if (contentRoot === nextContentRoot) {
+          contentRoot = undefined
+          activeNodes = []
+        }
         try {
           destroyRoot(nextContentRoot)
         } finally {
@@ -282,12 +303,10 @@ export function createContext<T>(defaultValue: T): Context<T> {
         }
         throw err
       }
-
-      contentRoot = nextContentRoot
-      activeNodes = nodes
     }
 
     registerRootCleanup(() => {
+      disposed = true
       try {
         cleanupActive()
       } finally {
@@ -300,6 +319,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
     let previousChildren: FictNode | typeof unsetChildren = unsetChildren
     let previousValue = initialValue
     createRenderEffect(() => {
+      if (disposed) return
       const nextValue = props.value
       const children = props.children
       const valueChanged = !Object.is(previousValue, nextValue)
