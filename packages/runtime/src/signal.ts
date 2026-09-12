@@ -1481,6 +1481,7 @@ function readDisposedComputed<T>(computed: ComputedNode<T>): T {
 export function effect(fn: () => void, options?: EffectOptions): EffectDisposer {
   const e: EffectNode = {
     fn,
+    disposed: false,
     subs: undefined,
     subsTail: undefined,
     deps: undefined,
@@ -1551,6 +1552,7 @@ export function effectWithCleanup(
 ): EffectDisposer {
   const e: EffectNode = {
     fn,
+    disposed: false,
     subs: undefined,
     subsTail: undefined,
     deps: undefined,
