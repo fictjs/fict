@@ -5,6 +5,7 @@ import {
   registerManagedEffectCleanup,
   runCleanupList,
   withEffectCleanups,
+  type EffectCleanupScope,
 } from './lifecycle'
 import { effectWithCleanup, type EffectOptions } from './signal'
 import type { Cleanup } from './types'
@@ -16,33 +17,26 @@ import type { Cleanup } from './types'
 export type Effect = () => void | Cleanup
 
 function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
-  let cleanups: Cleanup[] = []
-  let inFlightCleanups: Cleanup[] | undefined
+  const cleanupScope: EffectCleanupScope = { cleanups: undefined }
   let phase: 'active' | 'disposing' | 'disposed' = 'active'
   const rootForError = getCurrentRoot()
 
-  const takeCleanups = () => {
-    const pending = cleanups
-    cleanups = []
-    return pending
-  }
-
   // Cleanup runner - called by runEffect BEFORE signal values are committed
   const doCleanup = () => {
-    runCleanupList(takeCleanups(), rootForError)
+    const pending = cleanupScope.cleanups
+    cleanupScope.cleanups = undefined
+    if (pending) runCleanupList(pending, rootForError)
   }
 
   const run = () => {
     if (phase !== 'active') return
     // Note: cleanups are now run by signal.ts runEffect before this function is called
-    const bucket: Cleanup[] = []
-    inFlightCleanups = bucket
     try {
-      withEffectCleanups(bucket, () => {
+      withEffectCleanups(cleanupScope, () => {
         try {
           const maybeCleanup = fn()
           if (typeof maybeCleanup === 'function') {
-            bucket.push(maybeCleanup)
+            ;(cleanupScope.cleanups ??= []).push(maybeCleanup)
           }
         } catch (err) {
           if (handleSuspend(err as Parameters<typeof handleSuspend>[0], rootForError)) {
@@ -55,34 +49,21 @@ function createManagedEffect(fn: Effect, options?: EffectOptions): () => void {
         }
       })
     } finally {
-      if (inFlightCleanups === bucket) {
-        inFlightCleanups = undefined
-      }
-      if (phase === 'active') {
-        cleanups = bucket
-      } else if (bucket.length > 0) {
-        runCleanupList(bucket, rootForError)
-      }
+      // A body can dispose itself and then register more cleanup before it
+      // returns. Drain that late work without retaining a second run bucket.
+      if (phase !== 'active') doCleanup()
     }
   }
 
   const finishTeardown = () => {
     if (phase !== 'active') return
-    if (cleanups.length === 0 && !inFlightCleanups) {
+    if (!cleanupScope.cleanups) {
       phase = 'disposed'
       return
     }
     phase = 'disposing'
-    const inFlight = inFlightCleanups
-    inFlightCleanups = undefined
     try {
-      try {
-        runCleanupList(takeCleanups(), rootForError)
-      } finally {
-        if (inFlight) {
-          runCleanupList(inFlight, rootForError)
-        }
-      }
+      doCleanup()
     } finally {
       phase = 'disposed'
     }

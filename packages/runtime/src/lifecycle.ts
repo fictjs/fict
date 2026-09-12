@@ -82,7 +82,11 @@ type ErrorHandler = (err: unknown, info?: ErrorInfo) => boolean | void
 type SuspenseHandler = (token: SuspenseToken | PromiseLike<unknown>) => boolean | void
 
 let currentRoot: RootContext | undefined
-let currentEffectCleanups: Cleanup[] | undefined
+export interface EffectCleanupScope {
+  cleanups: Cleanup[] | undefined
+}
+
+let currentEffectCleanups: EffectCleanupScope | undefined
 let currentEffectCleanupOwner: ReactiveNode | undefined
 let currentEffectCleanupRoot: RootContext | undefined
 const rootDevtoolsIds = new WeakMap<RootContext, number>()
@@ -334,7 +338,7 @@ export function createRoot<T>(
   }
 }
 
-export function withEffectCleanups<T>(bucket: Cleanup[], fn: () => T): T {
+export function withEffectCleanups<T>(bucket: EffectCleanupScope, fn: () => T): T {
   const prev = currentEffectCleanups
   const prevOwner = currentEffectCleanupOwner
   const prevRoot = currentEffectCleanupRoot
@@ -357,7 +361,7 @@ export function registerManagedEffectCleanup(fn: Cleanup): void {
     currentEffectCleanupOwner === getActiveSub() &&
     currentEffectCleanupRoot === currentRoot
   ) {
-    currentEffectCleanups.push(fn)
+    ;(currentEffectCleanups.cleanups ??= []).push(fn)
   } else {
     registerRootCleanup(fn)
   }
@@ -365,7 +369,7 @@ export function registerManagedEffectCleanup(fn: Cleanup): void {
 
 export function registerEffectCleanup(fn: Cleanup): void {
   if (currentEffectCleanups && currentEffectCleanupRoot === currentRoot) {
-    currentEffectCleanups.push(fn)
+    ;(currentEffectCleanups.cleanups ??= []).push(fn)
   } else {
     registerRootCleanup(fn)
   }
