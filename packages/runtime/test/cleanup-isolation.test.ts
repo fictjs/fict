@@ -22,8 +22,8 @@ describe('cleanup dependency isolation', () => {
             }).dispose
       const seen: number[] = []
       const stop = createEffect(() => {
-        seen.push(update())
         dispose()
+        seen.push(update())
       })
 
       try {

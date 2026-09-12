@@ -372,6 +372,7 @@ export function registerEffectCleanup(fn: Cleanup): void {
 }
 
 export function runCleanupList(list: Cleanup[], root?: RootContext): void {
+  if (list.length === 0) return
   let error: unknown
   let didThrow = false
   const prevEffectCleanups = currentEffectCleanups
