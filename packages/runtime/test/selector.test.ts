@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import { createSelector, createSignal } from '../src/advanced'
-import { batch, createEffect, createRoot } from '../src/index'
+import { batch, createEffect, createMemo, createRoot } from '../src/index'
 import { getCurrentRoot } from '../src/lifecycle'
+import { effect as rawEffect } from '../src/signal'
 
 describe('selector predicates', () => {
   it('compares keys with the source instead of comparing successive sources', () => {
@@ -77,6 +78,61 @@ describe('selector predicates', () => {
 })
 
 describe('selector subscriptions', () => {
+  it.each(['effect', 'raw effect', 'memo'])('releases keys after the last %s stops', mode => {
+    const selected = createSignal(0)
+    let comparisons = 0
+    const owner = createRoot(() =>
+      createSelector(
+        () => selected(),
+        (key, value) => {
+          comparisons++
+          return key === value
+        },
+      ),
+    )
+    const read = mode === 'memo' ? createMemo(() => owner.value(1)) : () => owner.value(1)
+    const stop = (mode === 'raw effect' ? rawEffect : createEffect)(() => {
+      read()
+    })
+    try {
+      stop()
+      comparisons = 0
+      batch(() => selected(1))
+      expect(comparisons).toBe(0)
+    } finally {
+      stop()
+      owner.dispose()
+    }
+  })
+
+  it('retains only the live keys of a consumer that changes its selection key', () => {
+    const selected = createSignal(-1)
+    const key = createSignal(0)
+    let comparisons = 0
+    const owner = createRoot(() => {
+      const matches = createSelector(
+        () => selected(),
+        (candidate, value) => {
+          comparisons++
+          return candidate === value
+        },
+      )
+      createEffect(() => {
+        matches(key())
+      })
+      return getCurrentRoot()!
+    })
+    try {
+      for (let i = 1; i <= 1000; i++) batch(() => key(i))
+      comparisons = 0
+      batch(() => selected(1000))
+      expect(comparisons).toBe(2)
+      expect(owner.value.cleanups).toHaveLength(2)
+    } finally {
+      owner.dispose()
+    }
+  })
+
   it('keeps source initialization private to the selector effect', () => {
     const selected = createSignal(0)
     let creations = 0

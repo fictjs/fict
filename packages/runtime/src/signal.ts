@@ -134,6 +134,8 @@ export interface SignalNode<T = unknown> extends BaseNode {
   name?: string
   /** Source location */
   devToolsSource?: string
+  /** Internal observer lifetime hook, used by selectors. */
+  onUnwatched?: () => void
 }
 
 /**
@@ -599,6 +601,8 @@ function unwatched(dep: ReactiveNode): void {
     dep.depsTail = undefined
     dep.flags = MutableDirty
     purgeDeps(dep)
+  } else {
+    ;(dep as SignalNode).onUnwatched?.()
   }
 }
 /**
@@ -2127,8 +2131,23 @@ const selectorStrictEquality = (a: unknown, b: unknown): boolean => a === b
 
 interface SelectorObserver {
   signal: SignalAccessor<boolean>
-  owners: Set<RootContext>
-  retainedWithoutOwner: boolean
+}
+
+function createSelectorSignal(value: boolean, onUnwatched: () => void): SignalAccessor<boolean> {
+  const node: SignalNode<boolean> = {
+    currentValue: value,
+    pendingValue: value,
+    subs: undefined,
+    subsTail: undefined,
+    flags: Mutable,
+    __id: undefined,
+    onUnwatched,
+  }
+  if (isDev) registerSignalDevtools(node)
+  const accessor = (signalOper<boolean>).bind(node) as SignalAccessor<boolean> &
+    Record<symbol, boolean>
+  accessor[SIGNAL_MARKER] = true
+  return accessor
 }
 
 /**
@@ -2184,29 +2203,13 @@ export function createSelector<T, U = T>(
     let observer = observers.get(key)
     if (!observer) {
       observer = {
-        signal: signal(equalityFn(key, current)),
-        owners: new Set(),
-        retainedWithoutOwner: false,
+        signal: createSelectorSignal(equalityFn(key, current), () => {
+          // A disposed selector may have been read again before an older
+          // consumer detaches. Only release the observer that owns this hook.
+          if (observers.get(key) === observer) observers.delete(key)
+        }),
       }
       observers.set(key, observer)
-    }
-
-    const owner = getCurrentRoot()
-    if (!owner) {
-      observer.retainedWithoutOwner = true
-    } else if (!observer.owners.has(owner)) {
-      observer.owners.add(owner)
-      const retainedObserver = observer
-      registerRootCleanup(() => {
-        retainedObserver.owners.delete(owner)
-        if (
-          retainedObserver.owners.size === 0 &&
-          !retainedObserver.retainedWithoutOwner &&
-          observers.get(key) === retainedObserver
-        ) {
-          observers.delete(key)
-        }
-      })
     }
     return observer.signal()
   }
