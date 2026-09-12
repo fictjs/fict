@@ -51,12 +51,13 @@ function matchesDomConstructor<T>(
   const ownerCtor =
     ownerDocument && ownerDocument !== valueDocument ? hasCtor<T>(ownerDocument, name) : undefined
 
-  const constructors = [...new Set([valueCtor, ownerCtor].filter(Boolean))] as DomConstructor<T>[]
   let foundBrandGetter = false
-  let matchesInstance = false
 
-  for (const ctor of constructors) {
-    matchesInstance ||= value instanceof ctor
+  // There are at most two constructors. Avoid allocating a Set and three
+  // arrays for every DOM node tested while keeping both realm checks.
+  for (let i = 0; i < 2; i++) {
+    const ctor = i === 0 ? valueCtor : ownerCtor
+    if (!ctor || (i === 1 && ctor === valueCtor)) continue
     const getter = getDomBrandGetter(ctor, brandProperty)
     if (!getter) continue
     foundBrandGetter = true
@@ -68,7 +69,9 @@ function matchesDomConstructor<T>(
   }
 
   if (foundBrandGetter) return false
-  return constructors.length > 0 ? matchesInstance : undefined
+  if (valueCtor && value instanceof valueCtor) return true
+  if (ownerCtor && ownerCtor !== valueCtor) return value instanceof ownerCtor
+  return valueCtor ? false : undefined
 }
 
 export function isNodeLike(value: unknown, ownerDocument?: Document): value is Node {
